@@ -737,8 +737,6 @@ impl ParserState {
         let end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_error_at(start, end - start, message, code);
     }
-
-    /// Report escaped sequence diagnostics for string and template tokens.
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
         let token_text = self.scanner.get_token_text_ref().to_string();
         if token_text.is_empty()

@@ -313,6 +313,7 @@ pub struct Completions<'a> {
 mod context;
 mod filters;
 mod render;
+mod string_literals;
 mod symbols;
 use render::compare_case_sensitive_ui;
 use symbols::{DEPRECATED_GLOBALS, GLOBAL_VARS, KEYWORDS, KEYWORDS_INSIDE_FUNCTION};
@@ -454,22 +455,33 @@ impl<'a> Completions<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
 
-        // 2. Filter out positions where completions should not appear
+        // 2. Find the node at this offset using improved lookup
+        let node_idx = self.find_completions_node(root, offset);
+
+        // 3. Contextual string-literal completions for call arguments.
+        // This path intentionally runs before no-completion suppression, because
+        // ordinary string literals are suppressed by default.
+        if self.interner.is_some()
+            && self.file_name.is_some()
+            && let Some(items) =
+                self.get_string_literal_completions(node_idx, offset, type_cache.as_deref_mut())
+        {
+            return if items.is_empty() { None } else { Some(items) };
+        }
+
+        // 4. Filter out positions where completions should not appear
         if self.is_in_no_completion_context(offset) {
             return Some(Vec::new());
         }
 
-        // 3. Find the node at this offset using improved lookup
-        let node_idx = self.find_completions_node(root, offset);
-
-        // 4. Check for member completion (after a dot)
+        // 5. Check for member completion (after a dot)
         if let Some(expr_idx) = self.member_completion_target(node_idx, offset)
             && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
         {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // 5. Check for object literal property completion (contextual completions)
+        // 6. Check for object literal property completion (contextual completions)
         if self.interner.is_some()
             && self.file_name.is_some()
             && let Some(items) = self.get_object_literal_completions(node_idx, type_cache)
@@ -477,7 +489,7 @@ impl<'a> Completions<'a> {
             return if items.is_empty() { None } else { Some(items) };
         }
 
-        // 6. Get the scope chain at this position
+        // 7. Get the scope chain at this position
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let scope_chain = if let Some(scope_cache) = scope_cache {
             Cow::Borrowed(walker.get_scope_chain_cached(root, node_idx, scope_cache, scope_stats))
@@ -485,7 +497,7 @@ impl<'a> Completions<'a> {
             Cow::Owned(walker.get_scope_chain(root, node_idx))
         };
 
-        // 7. Collect all visible identifiers from the scope chain
+        // 8. Collect all visible identifiers from the scope chain
         let mut completions = Vec::new();
         let mut seen_names = FxHashSet::default();
 
@@ -541,9 +553,17 @@ impl<'a> Completions<'a> {
             }
         }
 
-        // 8. Add global variables (globalThis, undefined, Array, etc.)
-        //    These are always available and match tsserver's globalsVars.
+        // 9. Add global variables (globalThis, Array, etc.)
+        //    These are always available and match fourslash globalsVars order.
         let inside_func = self.is_inside_function(offset);
+        if !seen_names.contains("globalThis") {
+            seen_names.insert("globalThis".to_string());
+            let mut item =
+                CompletionItem::new("globalThis".to_string(), CompletionItemKind::Variable);
+            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(item);
+        }
+
         for &(name, kind) in GLOBAL_VARS {
             if !seen_names.contains(name) {
                 seen_names.insert(name.to_string());
@@ -556,10 +576,7 @@ impl<'a> Completions<'a> {
                     item.kind_modifiers = Some("deprecated,declare".to_string());
                 } else {
                     item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
-                    // globalThis and undefined don't get "declare" modifier
-                    if name != "globalThis" && name != "undefined" {
-                        item.kind_modifiers = Some("declare".to_string());
-                    }
+                    item.kind_modifiers = Some("declare".to_string());
                 }
                 if kind == CompletionItemKind::Function {
                     item.insert_text = Some(format!("{name}($1)"));
@@ -569,7 +586,15 @@ impl<'a> Completions<'a> {
             }
         }
 
-        // 9. If inside a function, also add "arguments" as a local variable
+        if !seen_names.contains("undefined") {
+            seen_names.insert("undefined".to_string());
+            let mut item =
+                CompletionItem::new("undefined".to_string(), CompletionItemKind::Variable);
+            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(item);
+        }
+
+        // 10. If inside a function, also add "arguments" as a local variable
         if inside_func && !seen_names.contains("arguments") {
             seen_names.insert("arguments".to_string());
             let mut item =
@@ -578,7 +603,7 @@ impl<'a> Completions<'a> {
             completions.push(item);
         }
 
-        // 10. Add keywords for non-member completions
+        // 11. Add keywords for non-member completions
         let keywords = if inside_func {
             KEYWORDS_INSIDE_FUNCTION
         } else {
@@ -1442,7 +1467,20 @@ impl<'a> Completions<'a> {
                 if let Some(arg_idx) = arg_index {
                     // Get the function signature type
                     let func_type = checker.get_type_of_node(call.expression);
-                    return self.get_parameter_type_at(func_type, arg_idx, checker);
+                    if let Some(param_type) =
+                        self.get_parameter_type_at(func_type, arg_idx, checker)
+                    {
+                        return Some(param_type);
+                    }
+
+                    if let Some(sym_id) = self.resolve_member_target_symbol(call.expression) {
+                        let symbol_type = checker.get_type_of_symbol(sym_id);
+                        if let Some(param_type) =
+                            self.get_parameter_type_at(symbol_type, arg_idx, checker)
+                        {
+                            return Some(param_type);
+                        }
+                    }
                 }
             }
             _ => {}

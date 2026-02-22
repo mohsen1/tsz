@@ -1669,19 +1669,8 @@ impl<'a> FlowGraphBuilder<'a> {
 
     /// Check if modifiers list contains 'static'.
     fn has_static_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if mod_idx.is_none() {
-                    continue;
-                }
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::StaticKeyword)
     }
 }
 

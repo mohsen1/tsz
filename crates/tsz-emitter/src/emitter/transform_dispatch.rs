@@ -390,9 +390,18 @@ impl<'a> Printer<'a> {
                         }
                     } else {
                         let export_name = names.first().copied();
-                        self.emit_commonjs_export(names.as_ref(), is_default, |this| {
-                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                        });
+                        // Function declarations are hoisted, so tsc emits
+                        // `exports.default = f;` before the function body.
+                        let is_hoisted =
+                            is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                        self.emit_commonjs_export_with_hoisting(
+                            names.as_ref(),
+                            is_default,
+                            is_hoisted,
+                            &mut |this| {
+                                this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                            },
+                        );
                     }
                 }
             }
@@ -846,13 +855,19 @@ impl<'a> Printer<'a> {
                 }
 
                 let export_name = names.first().copied();
-                self.emit_commonjs_export(names.as_ref(), *is_default, |this| {
-                    if index == 0 {
-                        this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                    } else {
-                        this.emit_chained_directive(node, idx, directives, index - 1);
-                    }
-                });
+                let is_hoisted = *is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                self.emit_commonjs_export_with_hoisting(
+                    names.as_ref(),
+                    *is_default,
+                    is_hoisted,
+                    &mut |this| {
+                        if index == 0 {
+                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        } else {
+                            this.emit_chained_directive(node, idx, directives, index - 1);
+                        }
+                    },
+                );
             }
             EmitDirective::CommonJSExportDefaultExpr => {
                 // Check if this is an anonymous class/function

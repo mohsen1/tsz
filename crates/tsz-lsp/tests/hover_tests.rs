@@ -120,6 +120,94 @@ fn test_hover_contextually_typed_function_expression_parameter() {
     );
 }
 
+#[test]
+fn test_hover_property_uses_explicit_function_type_annotation() {
+    let source =
+        "class C1T5 {\n    foo: (i: number, s: string) => number = function(i) { return i; }\n}";
+    let info = get_hover_at(source, 1, 4).expect("Should find hover info for property");
+    assert_eq!(
+        info.display_string, "(property) C1T5.foo: (i: number, s: string) => number",
+        "Property hover should prefer the explicit declaration type annotation over inferred any"
+    );
+}
+
+#[test]
+fn test_hover_property_initializer_parameter_uses_contextual_annotation() {
+    let source =
+        "class C1T5 {\n    foo: (i: number, s: string) => number = function(i) { return i; }\n}";
+    let info = get_hover_at(source, 1, 53)
+        .expect("Should find hover info for contextually typed parameter");
+    assert_eq!(
+        info.display_string, "(parameter) i: number",
+        "Parameter hover should use contextual type from class property function type annotation"
+    );
+}
+
+#[test]
+fn test_hover_array_element_function_parameter_uses_contextual_call_signature() {
+    let source = "var fns: {(n: number, s: string): string;}[] = [function(n, s) { return s; }];";
+    let info = get_hover_at(source, 0, 57)
+        .expect("Should find hover info for contextually typed array-element parameter");
+    assert_eq!(
+        info.display_string, "(parameter) n: number",
+        "Parameter hover should use contextual call signature from typed array element"
+    );
+}
+
+#[test]
+fn test_hover_namespace_exported_var_includes_namespace_container() {
+    let source = "namespace C2T5 {\n    export var foo: (i: number, s: string) => number = function(i) { return i; };\n}";
+    let info = get_hover_at(source, 1, 15).expect("Should find hover info for namespace var");
+    assert_eq!(
+        info.display_string, "var C2T5.foo: (i: number, s: string) => number",
+        "Namespace-exported variable hover should include namespace container in display string"
+    );
+}
+
+#[test]
+fn test_hover_contextual_object_literal_property_name() {
+    let source = "interface IFoo { n: number; }\ninterface IBar { foo: IFoo; }\nvar c3t12: IBar = {\n    foo: <IFoo>({})\n};";
+    let info = get_hover_at(source, 3, 4)
+        .expect("Should find hover info for object-literal property name");
+    assert_eq!(
+        info.display_string, "(property) IBar.foo: IFoo",
+        "Property-name hover in contextually typed object literal should use interface property type"
+    );
+}
+
+#[test]
+fn test_hover_best_common_type_object_literal_array_multiline() {
+    let source =
+        "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c");
+    assert_eq!(
+        info.display_string, "var c: {\n    name: string;\n    age: number;\n}[]",
+        "Quick-info display string should render object-literal array element types in multiline tsserver style"
+    );
+}
+
+#[test]
+fn test_hover_union_array_precedence_preserved() {
+    let source = "var a2 = { name: 'bob', age: 18, address: 'springfield' };\nvar b2 = { name: 'jim', age: 20, dob: 1 };\nvar c2 = [a2, b2];\nc2;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
+    assert_eq!(
+        info.display_string,
+        "var c2: ({\n    name: string;\n    age: number;\n    address: string;\n} | {\n    name: string;\n    age: number;\n    dob: number;\n})[]",
+        "Quick-info display should preserve array-vs-union precedence with parenthesized union element type"
+    );
+}
+
+#[test]
+fn test_hover_date_constructor_rewrites_error_property_type() {
+    let source = "var a2 = { name: 'bob', age: 18, address: 'springfield' };\nvar b2 = { name: 'jim', age: 20, dob: new Date() };\nvar c2 = [a2, b2];\nc2;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
+    assert!(
+        info.display_string.contains("dob: Date"),
+        "Quick-info display should normalize constructor-based error property type to Date, got: {}",
+        info.display_string
+    );
+}
+
 // =========================================================================
 // New tests for tsserver-compatible quickinfo format
 // =========================================================================

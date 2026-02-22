@@ -1,4 +1,5 @@
 use super::Printer;
+use crate::transforms::emit_utils;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{MethodDeclData, Node};
@@ -41,7 +42,7 @@ impl<'a> Printer<'a> {
         let mut current_start = 0;
 
         for (i, &elem_idx) in elements.iter().enumerate() {
-            if self.is_spread_element(elem_idx) {
+            if emit_utils::is_spread_element(self.arena, elem_idx) {
                 // Add non-spread segment before this spread
                 if current_start < i {
                     segments.push(ArraySegment::Elements(&elements[current_start..i]));
@@ -157,15 +158,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn is_spread_element(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-            || node.kind == syntax_kind_ext::SPREAD_ELEMENT
-    }
-
     pub(super) fn emit_spread_expression(&mut self, node: &Node) {
         // Get the expression inside the spread element
         if let Some(spread) = self.arena.get_spread(node) {
@@ -256,7 +248,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_async = self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
+        let is_async = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
             self.emit_async_function_es5_body("", &method.parameters.nodes, method.body, "this");
             return;
@@ -275,33 +269,6 @@ impl<'a> Printer<'a> {
             self.emit(method.body);
         }
         self.pop_temp_scope();
-    }
-
-    /// Check if a property member has a computed property name
-    pub(super) fn is_computed_property_member(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        let name_idx = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                self.arena.get_property_assignment(node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.arena.get_method_decl(node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.arena.get_accessor(node).map(|a| a.name)
-            }
-            _ => None,
-        };
-
-        if let Some(name_idx) = name_idx
-            && let Some(name_node) = self.arena.get(name_idx)
-        {
-            return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
-        }
-        false
     }
 
     /// Emit ES5-compatible object literal with computed properties and spread
@@ -330,7 +297,9 @@ impl<'a> Printer<'a> {
         }
 
         // Check if we have any spread elements
-        let has_spread = elements.iter().any(|&idx| self.is_spread_element(idx));
+        let has_spread = elements
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx));
 
         if !has_spread {
             // No spread - use the old computed property logic
@@ -350,7 +319,7 @@ impl<'a> Printer<'a> {
     ) {
         let first_computed_idx = elements
             .iter()
-            .position(|&idx| self.is_computed_property_member(idx))
+            .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
             .unwrap_or(elements.len());
 
         if first_computed_idx == elements.len() {
@@ -423,7 +392,7 @@ impl<'a> Printer<'a> {
         let mut current_start = 0;
 
         for (i, &elem_idx) in elements.iter().enumerate() {
-            if self.is_spread_element(elem_idx) {
+            if emit_utils::is_spread_element(self.arena, elem_idx) {
                 // Add non-spread segment before this spread
                 if current_start < i {
                     segments.push(ObjectSegment::Elements(&elements[current_start..i]));
@@ -450,7 +419,7 @@ impl<'a> Printer<'a> {
                 // But check if we have computed properties
                 let has_computed = elems
                     .iter()
-                    .any(|&idx| self.is_computed_property_member(idx));
+                    .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 if has_computed {
                     self.emit_object_literal_without_spread_es5(elems, source_range);
                 } else {
@@ -472,7 +441,7 @@ impl<'a> Printer<'a> {
                 // Elements then spread: { a: 1, ...b } → __assign({ a: 1 }, b)
                 let has_computed = elems
                     .iter()
-                    .any(|&idx| self.is_computed_property_member(idx));
+                    .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 if has_computed {
                     // Need temp var for computed properties
                     let temp_var = self.make_unique_name_hoisted();
@@ -533,7 +502,7 @@ impl<'a> Printer<'a> {
                     ObjectSegment::Elements(elems) => {
                         let has_computed = elems
                             .iter()
-                            .any(|&idx| self.is_computed_property_member(idx));
+                            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                         if has_computed {
                             // Use temp var for computed properties
                             let temp_var = self.ctx.destructuring_state.next_temp_var();
@@ -542,7 +511,7 @@ impl<'a> Printer<'a> {
                             self.write(" = ");
                             self.emit_object_literal_entries_es5(elems);
                             for elem in *elems {
-                                if self.is_computed_property_member(*elem) {
+                                if emit_utils::is_computed_property_member(self.arena, *elem) {
                                     self.write(", ");
                                     self.emit_property_assignment_es5(*elem, &temp_var);
                                 }
@@ -568,9 +537,9 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                     match segment {
                         ObjectSegment::Elements(elems) => {
-                            let has_computed = elems
-                                .iter()
-                                .any(|&idx| self.is_computed_property_member(idx));
+                            let has_computed = elems.iter().any(|&idx| {
+                                emit_utils::is_computed_property_member(self.arena, idx)
+                            });
                             if has_computed {
                                 let temp_var = self.ctx.destructuring_state.next_temp_var();
                                 self.write("(");
@@ -578,7 +547,7 @@ impl<'a> Printer<'a> {
                                 self.write(" = ");
                                 self.emit_object_literal_entries_es5(elems);
                                 for elem in *elems {
-                                    if self.is_computed_property_member(*elem) {
+                                    if emit_utils::is_computed_property_member(self.arena, *elem) {
                                         self.write(", ");
                                         self.emit_property_assignment_es5(*elem, &temp_var);
                                     }
@@ -952,7 +921,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare function)
-        if self.has_declare_modifier(&func.modifiers) {
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return;
         }
 

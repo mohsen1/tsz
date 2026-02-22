@@ -4,7 +4,6 @@ use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
-use tsz_binder::symbol_flags;
 use tsz_common::interner::Atom;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
@@ -15,6 +14,20 @@ use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
     TypeSubstitution, Visibility, instantiate_type,
 };
+
+#[inline]
+const fn can_skip_base_instantiation(
+    base_type_param_count: usize,
+    explicit_type_arg_count: usize,
+) -> bool {
+    base_type_param_count == 0 && explicit_type_arg_count == 0
+}
+
+#[inline]
+const fn exceeds_class_inheritance_depth_limit(depth: usize) -> bool {
+    // Keep well above realistic inheritance chains while bounding pathological recursion.
+    depth > 256
+}
 
 // =============================================================================
 // Class Type Resolution
@@ -106,15 +119,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                     &[&name_text],
                 );
-                // Avoid duplicate emission
-
-                if !self.ctx.diagnostics.iter().any(|d| d.code == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION && d.start == self.ctx.arena.get(error_node).map_or(0, |n| n.pos)) {
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                    );
-                }
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                );
                 return TypeId::ERROR;
             }
         } else {
@@ -138,6 +147,12 @@ impl<'a> CheckerState<'a> {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
             return TypeId::ERROR; // Circular reference detected via node index
+        }
+        if exceeds_class_inheritance_depth_limit(visited_nodes.len()) {
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR;
         }
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
@@ -174,6 +189,7 @@ impl<'a> CheckerState<'a> {
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
         let mut has_nominal_members = false;
+        let mut merged_interface_type_for_class: Option<TypeId> = None;
 
         // Process all class members
         for &member_idx in &class.members.nodes {
@@ -578,11 +594,26 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 };
+                let base_class_decl = self.get_class_declaration_from_symbol(base_sym_id);
+
+                // Canonicalize class symbol for cycle guards. Some paths can observe
+                // alias/default-export symbols while the active resolution set tracks
+                // the declaration symbol; check both to avoid recursion leaks.
+                let canonical_base_sym =
+                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                let base_in_resolution_set = self
+                    .ctx
+                    .class_instance_resolution_set
+                    .contains(&base_sym_id)
+                    || canonical_base_sym
+                        .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym));
+                let base_visited = visited.contains(&base_sym_id)
+                    || canonical_base_sym.is_some_and(|sym| visited.contains(&sym));
 
                 // CRITICAL: Check for self-referential class BEFORE processing
                 // This catches class C extends C, class D<T> extends D<T>, etc.
                 if let Some(current_sym) = current_sym {
-                    if base_sym_id == current_sym {
+                    if base_sym_id == current_sym || canonical_base_sym == Some(current_sym) {
                         // Self-referential inheritance - emit error and stop
                         self.error_circular_class_inheritance(expr_idx, class_idx);
                         break;
@@ -590,11 +621,7 @@ impl<'a> CheckerState<'a> {
 
                     // CRITICAL: Check global resolution set to prevent infinite recursion
                     // If the base class is currently being resolved, skip it immediately
-                    if self
-                        .ctx
-                        .class_instance_resolution_set
-                        .contains(&base_sym_id)
-                    {
+                    if base_in_resolution_set {
                         // Base class is already being resolved up the call stack
                         // Skip to prevent infinite recursion
                         break;
@@ -602,20 +629,15 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check for circular inheritance using symbol tracking
-                if visited.contains(&base_sym_id) {
+                if base_visited {
                     break;
                 }
 
-                let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
-                else {
+                let Some(base_class_idx) = base_class_decl else {
                     // Base class node not found in current arena (cross-file case).
                     // Try to resolve the base class type through the symbol system.
                     // If base class is being resolved, skip to prevent infinite loop
-                    if self
-                        .ctx
-                        .class_instance_resolution_set
-                        .contains(&base_sym_id)
-                    {
+                    if base_in_resolution_set {
                         break;
                     }
 
@@ -683,58 +705,49 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let (base_type_params, base_type_param_updates) =
-                    self.push_type_parameters(&base_class.type_parameters);
-
-                if type_args.len() < base_type_params.len() {
-                    for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
-                        type_args.push(fallback);
-                    }
-                }
-                if type_args.len() > base_type_params.len() {
-                    type_args.truncate(base_type_params.len());
-                }
-
-                // Get the base class instance type
-                // IMPORTANT: Use class_instance_type_from_symbol for class symbols to get the
-                // instance type (properties, methods), NOT the constructor type which is what
-                // get_type_of_symbol returns for classes.
-                //
-                // NOTE: We use `base_sym_id` (resolved from heritage clause via
-                // `resolve_heritage_symbol`) rather than `get_node_symbol(base_class_idx)`
-                // because `export default class` overwrites the node-symbol mapping to
-                // point at the "default" alias symbol instead of the class symbol.
-                // Using `base_sym_id` ensures we always get the actual class symbol.
-                let base_instance_type = {
-                    let base_sym = base_sym_id;
-                    if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
-                        if base_symbol.flags & symbol_flags::CLASS != 0 {
-                            // Ensure the class is tracked in symbol_resolution_stack to prevent
-                            // infinite recursion when evaluating base class properties.
-                            // get_type_of_symbol returns the constructor type, but also caches
-                            // the instance type as a side-effect.
-                            let _ = self.get_type_of_symbol(base_sym);
-                            // Use class_instance_type_from_symbol to get the instance type
-                            self.class_instance_type_from_symbol(base_sym)
-                                .unwrap_or(TypeId::ANY)
-                        } else {
-                            // For non-class symbols (interfaces, etc.), use get_type_of_symbol
-                            self.get_type_of_symbol(base_sym)
-                        }
-                    } else {
-                        TypeId::ANY
-                    }
-                };
+                // Get the base class instance type.
+                // We already resolved a concrete class declaration (`base_class_idx`) above, so
+                // we can read through the declaration cache directly and avoid an extra symbol
+                // resolution round trip on this hot inheritance path.
+                let base_instance_type = self
+                    .ctx
+                    .class_instance_type_cache
+                    .get(&base_class_idx)
+                    .copied()
+                    .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
-                let substitution =
-                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                let base_instance_type =
-                    instantiate_type(self.ctx.types, base_instance_type, &substitution);
-                self.pop_type_parameters(base_type_param_updates);
+                let base_instance_type = if can_skip_base_instantiation(
+                    base_class
+                        .type_parameters
+                        .as_ref()
+                        .map_or(0, |params| params.nodes.len()),
+                    type_args.len(),
+                ) {
+                    base_instance_type
+                } else {
+                    let (base_type_params, base_type_param_updates) =
+                        self.push_type_parameters(&base_class.type_parameters);
+
+                    if type_args.len() < base_type_params.len() {
+                        for param in base_type_params.iter().skip(type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            type_args.push(fallback);
+                        }
+                    }
+                    if type_args.len() > base_type_params.len() {
+                        type_args.truncate(base_type_params.len());
+                    }
+
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                    let instantiated =
+                        instantiate_type(self.ctx.types, base_instance_type, &substitution);
+                    self.pop_type_parameters(base_type_param_updates);
+                    instantiated
+                };
 
                 if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
@@ -880,6 +893,7 @@ impl<'a> CheckerState<'a> {
                 let interface_type = lowering.lower_interface_declarations(&interface_decls);
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
+                merged_interface_type_for_class = Some(interface_type);
 
                 if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                     for prop in &shape.properties {
@@ -930,38 +944,8 @@ impl<'a> CheckerState<'a> {
 
         // Final interface merging pass
         if let Some(sym_id) = current_sym {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let interface_decls: Vec<NodeIndex> = symbol
-                    .declarations
-                    .iter()
-                    .copied()
-                    .filter(|decl_idx| {
-                        self.ctx
-                            .arena
-                            .get(*decl_idx)
-                            .and_then(|node| self.ctx.arena.get_interface(node))
-                            .is_some()
-                    })
-                    .collect();
-
-                if !interface_decls.is_empty() {
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = TypeLowering::with_resolvers(
-                        self.ctx.arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    let interface_type = lowering.lower_interface_declarations(&interface_decls);
-                    let interface_type =
-                        self.merge_interface_heritage_types(&interface_decls, interface_type);
-                    instance_type = self.merge_interface_types(instance_type, interface_type);
-                }
+            if let Some(interface_type) = merged_interface_type_for_class {
+                instance_type = self.merge_interface_types(instance_type, interface_type);
             }
             visited.remove(&sym_id);
             visited_nodes.remove(&class_idx);
@@ -984,5 +968,26 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{can_skip_base_instantiation, exceeds_class_inheritance_depth_limit};
+
+    #[test]
+    fn skip_base_instantiation_only_without_generics() {
+        assert!(can_skip_base_instantiation(0, 0));
+        assert!(!can_skip_base_instantiation(1, 0));
+        assert!(!can_skip_base_instantiation(0, 1));
+        assert!(!can_skip_base_instantiation(2, 3));
+    }
+
+    #[test]
+    fn class_inheritance_depth_guard_is_conservative() {
+        assert!(!exceeds_class_inheritance_depth_limit(1));
+        assert!(!exceeds_class_inheritance_depth_limit(100));
+        assert!(!exceeds_class_inheritance_depth_limit(256));
+        assert!(exceeds_class_inheritance_depth_limit(257));
     }
 }

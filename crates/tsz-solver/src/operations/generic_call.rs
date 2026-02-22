@@ -65,6 +65,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
+        self.constraint_fixed_union_members.borrow_mut().clear();
         *self.constraint_recursion_depth.borrow_mut() = 0;
         *self.constraint_step_count.borrow_mut() = 0;
 
@@ -779,6 +780,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
+        self.constraint_fixed_union_members.borrow_mut().clear();
         *self.constraint_recursion_depth.borrow_mut() = 0;
         *self.constraint_step_count.borrow_mut() = 0;
 

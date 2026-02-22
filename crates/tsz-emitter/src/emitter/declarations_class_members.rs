@@ -60,13 +60,18 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_async = self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
+        let is_async = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         let needs_async_lowering =
             is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
 
         if needs_async_lowering {
             // Emit static modifier if present
-            if self.has_modifier(&method.modifiers, SyntaxKind::StaticKeyword as u16) {
+            if self
+                .arena
+                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+            {
                 self.write("static ");
             }
         } else {
@@ -237,7 +242,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip abstract property declarations (they don't exist at runtime)
-        if self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16) {
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -252,8 +260,9 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(prop.name)
                 .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-            let has_accessor =
-                self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
+            let has_accessor = self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
             if !is_private && !has_accessor {
                 self.skip_comments_for_erased_node(node);
                 return;
@@ -413,13 +422,11 @@ impl<'a> Printer<'a> {
             || !self.hoisted_assignment_value_temps.is_empty()
             || !self.hoisted_for_of_temps.is_empty();
 
+        let has_prologue =
+            !param_props.is_empty() || !field_inits.is_empty() || !auto_accessor_inits.is_empty();
+
         // Empty constructor with no prologue: check source format
-        if block.statements.nodes.is_empty()
-            && param_props.is_empty()
-            && field_inits.is_empty()
-            && auto_accessor_inits.is_empty()
-            && !has_function_temps
-        {
+        if block.statements.nodes.is_empty() && !has_prologue && !has_function_temps {
             // TypeScript preserves the source formatting: if the body was
             // on a single line in the source (e.g. `{ }`), keep it single-line.
             // If it was multi-line, emit multi-line with empty body.
@@ -433,6 +440,22 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Single-line non-empty constructor body: preserve single-line formatting
+        // when source was on one line, there's no prologue to inject, and no
+        // hoisted temps. e.g. `constructor(x) { this.a = x; }` stays on one line.
+        if block.statements.nodes.len() == 1
+            && !has_prologue
+            && !has_function_temps
+            && self.is_single_line(block_node)
+        {
+            self.map_opening_brace(block_node);
+            self.write("{ ");
+            self.emit(block.statements.nodes[0]);
+            self.map_closing_brace(block_node);
+            self.write(" }");
+            return;
+        }
+
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -440,9 +463,6 @@ impl<'a> Printer<'a> {
         if has_function_temps {
             self.emit_function_body_hoisted_temps();
         }
-
-        let has_prologue =
-            !param_props.is_empty() || !field_inits.is_empty() || !auto_accessor_inits.is_empty();
 
         // Find the super() call index so we can emit prologue after it.
         // In derived class constructors, super() must be called before
@@ -935,6 +955,40 @@ mod tests {
         assert!(
             output.contains("@dec(1, 2)"),
             "Decorator with arguments should be emitted verbatim.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn single_line_constructor_body_preserved() {
+        let source = "class B {\n    constructor(x: number) { this.x = x; }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("constructor(x) { this.x = x; }"),
+            "Single-line constructor body should stay on one line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn multiline_constructor_body_stays_multiline() {
+        let source = "class B {\n    constructor(x: number) {\n        this.x = x;\n    }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("constructor(x) {\n"),
+            "Multi-line constructor body should stay multiline.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("constructor(x) { this.x = x; }"),
+            "Multi-line constructor body should not be collapsed to one line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn single_line_constructor_body_with_return() {
+        let source = "class C {\n    constructor(x: number) { return null; }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("constructor(x) { return null; }"),
+            "Single-line constructor body with return should stay on one line.\nOutput: {output}"
         );
     }
 }

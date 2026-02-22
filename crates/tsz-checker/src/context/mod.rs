@@ -432,6 +432,19 @@ pub struct CheckerContext<'a> {
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
     pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
 
+    /// Cache heritage expression node -> resolved symbol lookups.
+    /// Stores misses as `None` to avoid repeating namespace/alias walks across
+    /// class and interface inheritance passes.
+    pub heritage_symbol_cache: RefCell<FxHashMap<NodeIndex, Option<SymbolId>>>,
+
+    /// Cache constructor type fallback for heritage expressions with no explicit type args.
+    /// Avoids repeatedly re-evaluating anonymous/complex `extends` expressions.
+    pub base_constructor_expr_cache: RefCell<FxHashMap<NodeIndex, Option<TypeId>>>,
+
+    /// Cache instance type fallback for heritage expressions with no explicit type args.
+    /// Reuses constructor->instance fallback work across class instance checks.
+    pub base_instance_expr_cache: RefCell<FxHashMap<NodeIndex, Option<TypeId>>>,
+
     /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
     /// Avoids repeating private-brand scans on hot miss paths.
     pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,
@@ -473,6 +486,11 @@ pub struct CheckerContext<'a> {
     /// Positions (start) of syntax parse errors (excluding conflict markers TS1185).
     /// Used for targeted TS2304 suppression near parse error sites.
     pub syntax_parse_error_positions: Vec<u32>,
+    /// Whether the file has "real" syntax errors (TS1005, TS1109, TS1127, TS1128,
+    /// TS1135, etc.) that indicate actual parse failure, as opposed to grammar
+    /// checks (TS1100, TS1173, TS1212, etc.) which are semantic errors emitted
+    /// during parsing. Used for broader TS2304 suppression matching tsc behavior.
+    pub has_real_syntax_errors: bool,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
@@ -1521,24 +1539,6 @@ impl<'a> CheckerContext<'a> {
     #[inline]
     pub fn leave_recursion(&self) {
         self.recursion_depth.borrow_mut().leave();
-    }
-
-    /// Check if a modifier list contains a specific modifier kind.
-    pub fn has_modifier(
-        &self,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-        kind: u16,
-    ) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == kind
-                {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     // =========================================================================

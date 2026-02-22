@@ -13,6 +13,35 @@ use tsz::lsp::semantic_tokens::SemanticTokensProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn tsserver_call_hierarchy_name_kind(name: &str, kind: &str) -> (String, String) {
+        if kind == "file" {
+            return (name.to_string(), "script".to_string());
+        }
+        if kind == "property" {
+            if let Some(stripped) = name.strip_prefix("get ") {
+                return (stripped.to_string(), "getter".to_string());
+            }
+            if let Some(stripped) = name.strip_prefix("set ") {
+                return (stripped.to_string(), "setter".to_string());
+            }
+        }
+        (name.to_string(), kind.to_string())
+    }
+
+    fn apply_inferred_project_options(&mut self, options: Option<&serde_json::Value>) {
+        if let Some(options) = options {
+            self.allow_importing_ts_extensions = options
+                .get("allowImportingTsExtensions")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.inferred_module_is_none_for_projects = options
+                .get("module")
+                .is_some_and(Self::inferred_module_option_is_none);
+            self.auto_imports_allowed_for_inferred_projects =
+                Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
     pub(crate) fn inferred_auto_imports_allowed(options: &serde_json::Value) -> bool {
         let module_none = options
             .get("module")
@@ -67,6 +96,25 @@ impl Server {
             .map(std::string::ToString::to_string)
             .collect();
         self.stub_response(seq, request, Some(serde_json::json!(codes)))
+    }
+
+    pub(crate) fn handle_apply_code_action_command(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let body = if request
+            .arguments
+            .get("command")
+            .is_some_and(serde_json::Value::is_array)
+        {
+            serde_json::json!([])
+        } else {
+            serde_json::json!({
+                "successMessage": ""
+            })
+        };
+        self.stub_response(seq, request, Some(body))
     }
 
     pub(crate) fn handle_encoded_semantic_classifications_full(
@@ -206,26 +254,46 @@ impl Server {
             return (edit.range, edit.new_text.clone());
         }
 
-        let old_trimmed = old_text.trim_start_matches([' ', '\t']);
-        let new_trimmed = edit.new_text.trim_start_matches([' ', '\t']);
-        if old_trimmed != new_trimmed {
+        let mut prefix = 0usize;
+        for ((old_idx, old_ch), (_, new_ch)) in
+            old_text.char_indices().zip(edit.new_text.char_indices())
+        {
+            if old_ch != new_ch {
+                break;
+            }
+            prefix = old_idx + old_ch.len_utf8();
+        }
+
+        let old_after_prefix = &old_text[prefix..];
+        let new_after_prefix = &edit.new_text[prefix..];
+
+        let mut old_suffix_bytes = 0usize;
+        let mut new_suffix_bytes = 0usize;
+        let mut old_rev = old_after_prefix.char_indices().rev();
+        let mut new_rev = new_after_prefix.char_indices().rev();
+        while let (Some((old_idx, old_ch)), Some((new_idx, new_ch))) =
+            (old_rev.next(), new_rev.next())
+        {
+            if old_ch != new_ch {
+                break;
+            }
+            old_suffix_bytes = old_after_prefix.len() - old_idx;
+            new_suffix_bytes = new_after_prefix.len() - new_idx;
+        }
+
+        let old_mid_end = old_text.len().saturating_sub(old_suffix_bytes);
+        let new_mid_end = edit.new_text.len().saturating_sub(new_suffix_bytes);
+        let narrowed_start = start_off + prefix as u32;
+        let narrowed_end = start_off + old_mid_end as u32;
+        let start_pos = line_map.offset_to_position(narrowed_start, source_text);
+        let end_pos = line_map.offset_to_position(narrowed_end, source_text);
+        let new_text = edit.new_text[prefix..new_mid_end].to_string();
+
+        if narrowed_start == start_off && narrowed_end == end_off && new_text == edit.new_text {
             return (edit.range, edit.new_text.clone());
         }
 
-        let old_indent_len = old_text.len().saturating_sub(old_trimmed.len());
-        let new_indent_len = edit.new_text.len().saturating_sub(new_trimmed.len());
-        if old_indent_len == 0 && new_indent_len == 0 {
-            return (edit.range, edit.new_text.clone());
-        }
-
-        let indent_start = start_off;
-        let indent_end = start_off + old_indent_len as u32;
-        let start_pos = line_map.offset_to_position(indent_start, source_text);
-        let end_pos = line_map.offset_to_position(indent_end, source_text);
-        (
-            Range::new(start_pos, end_pos),
-            edit.new_text[..new_indent_len].to_string(),
-        )
+        (Range::new(start_pos, end_pos), new_text)
     }
 
     pub(crate) fn handle_format_on_key(
@@ -303,17 +371,19 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        let options = request.arguments.get("options");
-        self.allow_importing_ts_extensions = request
+        let options = request
             .arguments
             .get("options")
-            .and_then(|o| o.get("allowImportingTsExtensions"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        self.auto_imports_allowed_for_inferred_projects = options
-            .map(Self::inferred_auto_imports_allowed)
-            .unwrap_or(true);
-        self.stub_response(seq, request, None)
+            .filter(|value| value.is_object())
+            .or_else(|| {
+                request
+                    .arguments
+                    .get("compilerOptions")
+                    .filter(|value| value.is_object())
+            })
+            .or_else(|| request.arguments.is_object().then_some(&request.arguments));
+        self.apply_inferred_project_options(options);
+        self.stub_response(seq, request, Some(serde_json::json!(true)))
     }
 
     pub(crate) fn handle_external_project(
@@ -321,6 +391,106 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        match request.command.as_str() {
+            "openExternalProject" => {
+                self.apply_inferred_project_options(request.arguments.get("options"));
+                let project_name = request
+                    .arguments
+                    .get("projectFileName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+
+                let mut tracked_files = Vec::new();
+                if let Some(root_files) = request
+                    .arguments
+                    .get("rootFiles")
+                    .and_then(serde_json::Value::as_array)
+                {
+                    for entry in root_files {
+                        let Some(file_name) = entry.get("fileName").and_then(|v| v.as_str()) else {
+                            continue;
+                        };
+                        let content = entry
+                            .get("content")
+                            .and_then(serde_json::Value::as_str)
+                            .map(std::string::ToString::to_string)
+                            .or_else(|| std::fs::read_to_string(file_name).ok());
+                        if let Some(content) = content {
+                            self.open_files.insert(file_name.to_string(), content);
+                            tracked_files.push(file_name.to_string());
+                        }
+                    }
+                }
+                if !project_name.is_empty() {
+                    self.external_project_files
+                        .insert(project_name, tracked_files);
+                }
+            }
+            "openExternalProjects" => {
+                if let Some(projects) = request
+                    .arguments
+                    .get("projects")
+                    .and_then(serde_json::Value::as_array)
+                {
+                    for project in projects {
+                        self.apply_inferred_project_options(project.get("options"));
+                        let project_name = project
+                            .get("projectFileName")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+
+                        let mut tracked_files = Vec::new();
+                        if let Some(root_files) = project
+                            .get("rootFiles")
+                            .and_then(serde_json::Value::as_array)
+                        {
+                            for entry in root_files {
+                                let Some(file_name) =
+                                    entry.get("fileName").and_then(|v| v.as_str())
+                                else {
+                                    continue;
+                                };
+                                let content = entry
+                                    .get("content")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(std::string::ToString::to_string)
+                                    .or_else(|| std::fs::read_to_string(file_name).ok());
+                                if let Some(content) = content {
+                                    self.open_files.insert(file_name.to_string(), content);
+                                    tracked_files.push(file_name.to_string());
+                                }
+                            }
+                        }
+                        if !project_name.is_empty() {
+                            self.external_project_files
+                                .insert(project_name, tracked_files);
+                        }
+                    }
+                }
+            }
+            "closeExternalProject" => {
+                if let Some(project_name) = request
+                    .arguments
+                    .get("projectFileName")
+                    .and_then(serde_json::Value::as_str)
+                    && let Some(files) = self.external_project_files.remove(project_name)
+                {
+                    for file in files {
+                        let still_owned_elsewhere = self
+                            .external_project_files
+                            .values()
+                            .any(|other_files| other_files.iter().any(|p| p == &file));
+                        if !still_owned_elsewhere {
+                            self.open_files.remove(&file);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
         self.stub_response(seq, request, None)
     }
 
@@ -491,10 +661,35 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
-            let item = provider.prepare(root, position)?;
-            Some(serde_json::json!([{
-                "name": item.name,
-                "kind": format!("{:?}", item.kind).to_lowercase(),
+            let mut item = provider.prepare(root, position);
+            if item.is_none()
+                && let Some(base_offset) = line_map.position_to_offset(position, &source_text)
+            {
+                let len = source_text.len() as u32;
+                let mut probes = [base_offset; 2];
+                let mut probe_count = 0usize;
+                if base_offset < len {
+                    probes[probe_count] = base_offset.saturating_add(1).min(len);
+                    probe_count += 1;
+                }
+                if base_offset > 0 {
+                    probes[probe_count] = base_offset - 1;
+                    probe_count += 1;
+                }
+                for probe_offset in probes.into_iter().take(probe_count) {
+                    let probe = line_map.offset_to_position(probe_offset, &source_text);
+                    item = provider.prepare(root, probe);
+                    if item.is_some() {
+                        break;
+                    }
+                }
+            }
+            let item = item?;
+            let raw_kind = format!("{:?}", item.kind).to_lowercase();
+            let (name, kind) = Self::tsserver_call_hierarchy_name_kind(&item.name, &raw_kind);
+            let mut body_item = serde_json::json!({
+                "name": name,
+                "kind": kind,
                 "file": item.uri,
                 "span": {
                     "start": Self::lsp_to_tsserver_position(item.range.start),
@@ -504,7 +699,11 @@ impl Server {
                     "start": Self::lsp_to_tsserver_position(item.selection_range.start),
                     "end": Self::lsp_to_tsserver_position(item.selection_range.end),
                 },
-            }]))
+            });
+            if let Some(container_name) = item.container_name {
+                body_item["containerName"] = serde_json::json!(container_name);
+            }
+            Some(serde_json::json!([body_item]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -523,12 +722,36 @@ impl Server {
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
+            let mut positions = vec![position];
+            if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
+                let len = source_text.len() as u32;
+                if base_offset < len {
+                    positions.push(
+                        line_map.offset_to_position(
+                            base_offset.saturating_add(1).min(len),
+                            &source_text,
+                        ),
+                    );
+                }
+                if base_offset > 0 {
+                    positions.push(line_map.offset_to_position(base_offset - 1, &source_text));
+                }
+            }
 
             if is_incoming {
-                let calls = provider.incoming_calls(root, position);
+                let mut calls = Vec::new();
+                for probe in &positions {
+                    calls = provider.incoming_calls(root, *probe);
+                    if !calls.is_empty() {
+                        break;
+                    }
+                }
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
+                        let raw_kind = format!("{:?}", call.from.kind).to_lowercase();
+                        let (name, kind) =
+                            Self::tsserver_call_hierarchy_name_kind(&call.from.name, &raw_kind);
                         let from_ranges: Vec<serde_json::Value> = call
                             .from_ranges
                             .iter()
@@ -539,10 +762,10 @@ impl Server {
                                 })
                             })
                             .collect();
-                        serde_json::json!({
+                        let mut from = serde_json::json!({
                             "from": {
-                                "name": call.from.name,
-                                "kind": format!("{:?}", call.from.kind).to_lowercase(),
+                                "name": name,
+                                "kind": kind,
                                 "file": call.from.uri,
                                 "span": {
                                     "start": Self::lsp_to_tsserver_position(call.from.range.start),
@@ -554,15 +777,33 @@ impl Server {
                                 },
                             },
                             "fromSpans": from_ranges,
-                        })
+                        });
+                        if let Some(container_name) = &call.from.container_name {
+                            from["from"]["containerName"] = serde_json::json!(container_name);
+                        }
+                        from
                     })
                     .collect();
                 Some(serde_json::json!(body))
             } else {
-                let calls = provider.outgoing_calls(root, position);
+                // Prefer exact-position outgoing calls; if the cursor sits on a
+                // token boundary where prepare fails, probe adjacent offsets to
+                // recover the same behavior used by prepare/incoming handlers.
+                let mut calls = provider.outgoing_calls(root, position);
+                if calls.is_empty() && provider.prepare(root, position).is_none() {
+                    for probe in positions.iter().skip(1) {
+                        if provider.prepare(root, *probe).is_some() {
+                            calls = provider.outgoing_calls(root, *probe);
+                            break;
+                        }
+                    }
+                }
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
+                        let raw_kind = format!("{:?}", call.to.kind).to_lowercase();
+                        let (name, kind) =
+                            Self::tsserver_call_hierarchy_name_kind(&call.to.name, &raw_kind);
                         let from_ranges: Vec<serde_json::Value> = call
                             .from_ranges
                             .iter()
@@ -573,10 +814,10 @@ impl Server {
                                 })
                             })
                             .collect();
-                        serde_json::json!({
+                        let mut to = serde_json::json!({
                             "to": {
-                                "name": call.to.name,
-                                "kind": format!("{:?}", call.to.kind).to_lowercase(),
+                                "name": name,
+                                "kind": kind,
                                 "file": call.to.uri,
                                 "span": {
                                     "start": Self::lsp_to_tsserver_position(call.to.range.start),
@@ -588,7 +829,11 @@ impl Server {
                                 },
                             },
                             "fromSpans": from_ranges,
-                        })
+                        });
+                        if let Some(container_name) = &call.to.container_name {
+                            to["to"]["containerName"] = serde_json::json!(container_name);
+                        }
+                        to
                     })
                     .collect();
                 Some(serde_json::json!(body))

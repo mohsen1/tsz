@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# timeout: 10800
 cat <<'PROMPT'
 You are working in /Users/mohsenazimi/code/tsz.
 Goal: make tsz 2x faster than tsgo across all benchmarks — WITHOUT breaking

@@ -26,6 +26,8 @@
 
 mod exports;
 mod helpers;
+mod interfaces;
+mod type_emission;
 pub mod usage_analyzer;
 
 #[cfg(test)]
@@ -620,7 +622,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Check for export modifier
-        let is_exported = self.has_export_modifier(&func.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
 
         if !self.should_emit_public_api_member(&func.modifiers) {
             return;
@@ -708,11 +712,15 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&class.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&class.modifiers) {
             return;
         }
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         if is_exported {
@@ -802,9 +810,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
 
         // Check if abstract for special handling
-        let is_abstract = self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword);
         // Check if private for type annotation omission
-        let is_private = self.has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword);
 
         // Modifiers
         self.emit_member_modifiers(&prop.modifiers);
@@ -875,8 +887,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
 
         // Check if private/abstract
-        let is_private = self.has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword as u16);
-        let _is_abstract = self.has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
+        let _is_abstract = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword);
 
         // Modifiers
         self.emit_member_modifiers(&method.modifiers);
@@ -1063,7 +1079,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Check if this accessor is private
-        let is_private = self.has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword);
 
         self.write_indent();
 
@@ -1145,362 +1163,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn emit_interface_declaration(&mut self, iface_idx: NodeIndex) {
-        let Some(iface_node) = self.arena.get(iface_idx) else {
-            return;
-        };
-        let Some(iface) = self.arena.get_interface(iface_node) else {
-            return;
-        };
-
-        let is_exported = self.has_export_modifier(&iface.modifiers);
-        if !self.should_emit_public_api_member(&iface.modifiers) {
-            return;
-        }
-
-        self.write_indent();
-        if is_exported {
-            self.write("export ");
-        }
-        self.write("interface ");
-
-        // Name
-        self.emit_node(iface.name);
-
-        // Type parameters
-        if let Some(ref type_params) = iface.type_parameters
-            && !type_params.nodes.is_empty()
-        {
-            self.emit_type_parameters(type_params);
-        }
-
-        // Heritage (extends)
-        if let Some(ref heritage) = iface.heritage_clauses {
-            self.emit_heritage_clauses(heritage);
-        }
-
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        // Members
-        for &member_idx in &iface.members.nodes {
-            self.emit_interface_member(member_idx);
-        }
-
-        self.decrease_indent();
-        self.write_indent();
-        self.write("}");
-        self.write_line();
-    }
-
-    fn emit_interface_member(&mut self, member_idx: NodeIndex) {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return;
-        };
-
-        self.write_indent();
-
-        match member_node.kind {
-            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    // Modifiers
-                    self.emit_member_modifiers(&sig.modifiers);
-                    self.emit_node(sig.name);
-                    if sig.question_token {
-                        self.write("?");
-                    }
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    self.emit_node(sig.name);
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CALL_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    self.write("new ");
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
-                if let Some(sig) = self.arena.get_index_signature(member_node) {
-                    self.write("[");
-                    self.emit_parameters(&sig.parameters);
-                    self.write("]");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::MAPPED_TYPE => {
-                if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
-                    // Emit readonly modifier if present
-                    if mapped_type.readonly_token.is_some() {
-                        self.write("readonly ");
-                    }
-
-                    self.write("[");
-
-                    // Get the TypeParameter data
-                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
-                        && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
-                    {
-                        // Emit the parameter name (e.g., "P")
-                        self.emit_node(type_param.name);
-
-                        // Emit " in "
-                        self.write(" in ");
-
-                        // Emit the constraint (e.g., "keyof T")
-                        if type_param.constraint.is_some() {
-                            self.emit_type(type_param.constraint);
-                        }
-                    }
-
-                    // Handle the optional 'as' clause (key remapping)
-                    if mapped_type.name_type.is_some() {
-                        self.write(" as ");
-                        self.emit_type(mapped_type.name_type);
-                    }
-
-                    self.write("]");
-
-                    // Optionally emit question token (after the bracket)
-                    if mapped_type.question_token.is_some() {
-                        self.write("?");
-                    }
-
-                    self.write(": ");
-
-                    // Emit type annotation
-                    self.emit_type(mapped_type.type_node);
-
-                    // Mapped types don't end with semicolon - return early
-                    self.write_line();
-                    return;
-                }
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR => {
-                if let Some(accessor) = self.arena.get_accessor(member_node) {
-                    self.write("get ");
-                    self.emit_node(accessor.name);
-                    self.write("(");
-                    self.emit_parameters(&accessor.parameters);
-                    self.write(")");
-                    if accessor.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(accessor.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::SET_ACCESSOR => {
-                if let Some(accessor) = self.arena.get_accessor(member_node) {
-                    self.write("set ");
-                    self.emit_node(accessor.name);
-                    self.write("(");
-                    self.emit_parameters(&accessor.parameters);
-                    self.write(")");
-                }
-            }
-            _ => {}
-        }
-
-        self.write(";");
-        self.write_line();
-    }
-
-    /// Emit interface member without indentation or trailing newline.
-    /// Used for inline type literals like `{ id: string }`
-    fn emit_interface_member_inline(&mut self, member_idx: NodeIndex) {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return;
-        };
-
-        match member_node.kind {
-            k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    // Modifiers
-                    self.emit_member_modifiers(&sig.modifiers);
-                    self.emit_node(sig.name);
-                    if sig.question_token {
-                        self.write("?");
-                    }
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    self.emit_node(sig.name);
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CALL_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    self.write("new ");
-                    if let Some(ref type_params) = sig.type_parameters {
-                        self.emit_type_parameters(type_params);
-                    }
-                    self.write("(");
-                    if let Some(ref params) = sig.parameters {
-                        self.emit_parameters(params);
-                    }
-                    self.write(")");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::INDEX_SIGNATURE => {
-                if let Some(sig) = self.arena.get_index_signature(member_node) {
-                    self.write("[");
-                    self.emit_parameters(&sig.parameters);
-                    self.write("]");
-                    if sig.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(sig.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::MAPPED_TYPE => {
-                if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
-                    // Emit readonly modifier if present
-                    if mapped_type.readonly_token.is_some() {
-                        self.write("readonly ");
-                    }
-
-                    self.write("[");
-
-                    // Get the TypeParameter data
-                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
-                        && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
-                    {
-                        // Emit the parameter name (e.g., "P")
-                        self.emit_node(type_param.name);
-
-                        // Emit " in "
-                        self.write(" in ");
-
-                        // Emit constraint
-                        if type_param.constraint.is_some() {
-                            self.emit_type(type_param.constraint);
-                        }
-                    }
-
-                    self.write("]");
-
-                    // Emit name type annotation
-                    if mapped_type.name_type.is_some() {
-                        self.write(": ");
-                        self.emit_type(mapped_type.name_type);
-                    }
-
-                    // Mapped types don't add semicolon in inline mode
-                }
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR => {
-                if let Some(accessor) = self.arena.get_accessor(member_node) {
-                    self.write("get ");
-                    self.emit_node(accessor.name);
-                    self.write("(");
-                    self.emit_parameters(&accessor.parameters);
-                    self.write(")");
-                    if accessor.type_annotation.is_some() {
-                        self.write(": ");
-                        self.emit_type(accessor.type_annotation);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::SET_ACCESSOR => {
-                if let Some(accessor) = self.arena.get_accessor(member_node) {
-                    self.write("set ");
-                    self.emit_node(accessor.name);
-                    self.write("(");
-                    self.emit_parameters(&accessor.parameters);
-                    self.write(")");
-                }
-            }
-            _ => {}
-        }
-
-        // Note: no semicolon or newline here - caller handles separation
-    }
-
     fn emit_type_alias_declaration(&mut self, alias_idx: NodeIndex) {
         let Some(alias_node) = self.arena.get(alias_idx) else {
             return;
@@ -1509,7 +1171,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&alias.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&alias.modifiers)
             && !self.should_emit_public_api_dependency(alias.name)
         {
@@ -1546,11 +1210,15 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&enum_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&enum_data.modifiers) {
             return;
         }
-        let is_const = self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword as u16);
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
         if is_exported {
@@ -1653,7 +1321,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&var_stmt.modifiers) {
             return;
         }

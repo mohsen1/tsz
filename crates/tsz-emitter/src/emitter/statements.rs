@@ -237,15 +237,22 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare var/let/const)
-        if self.has_declare_modifier(&var_stmt.modifiers) {
+        if self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
 
         let is_exported = self.ctx.is_commonjs()
-            && self.has_export_modifier(&var_stmt.modifiers)
+            && self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
             && !self.ctx.module_state.has_export_assignment;
-        let is_default = self.has_default_modifier(&var_stmt.modifiers);
+        let is_default = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::DefaultKeyword);
 
         // For CommonJS exported variables with no initializers, skip the
         // declaration entirely. The preamble `exports.X = void 0;` already
@@ -1090,6 +1097,97 @@ mod tests {
         assert!(
             output.contains("case 0: {"),
             "Case clause with block on same line should stay on one line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn ts_check_comment_preserved_in_output() {
+        let source = "// @ts-check\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-check"),
+            "// @ts-check directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn ts_nocheck_comment_preserved_in_output() {
+        let source = "// @ts-nocheck\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-nocheck"),
+            "// @ts-nocheck directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_at_directive_comments_preserved() {
+        // tsc preserves all source-level `// @` comments in JS output.
+        // The test harness strips actual test directives from the baseline
+        // source before the emitter sees them, so any `// @` comment
+        // in the source is a legitimate comment to preserve.
+        let source = "// @target: esnext\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @target"),
+            "// @target directive should be preserved in output (tsc preserves all source comments).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_ts_ignore_directive_preserved() {
+        // // @ts-ignore is a runtime directive that tsc preserves.
+        let source = "// @ts-ignore\nvar x: number = 'hello';\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-ignore"),
+            "// @ts-ignore directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_ts_expect_error_directive_preserved() {
+        // // @ts-expect-error is a runtime directive that tsc preserves.
+        let source = "// @ts-expect-error\nvar x: number = 'hello';\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-expect-error"),
+            "// @ts-expect-error directive should be preserved in output.\nOutput:\n{output}"
         );
     }
 }

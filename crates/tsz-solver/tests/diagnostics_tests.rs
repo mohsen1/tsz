@@ -56,6 +56,19 @@ fn test_format_object_type() {
 }
 
 #[test]
+fn test_format_object_type_preserves_property_insertion_order() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("name"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("age"), TypeId::NUMBER),
+    ]);
+
+    assert_eq!(formatter.format(obj), "{ name: string; age: number; }");
+}
+
+#[test]
 fn test_format_union_type() {
     let interner = TypeInterner::new();
     let mut formatter = TypeFormatter::new(&interner);
@@ -75,6 +88,21 @@ fn test_format_array_type() {
 
     let arr = interner.array(TypeId::STRING);
     assert_eq!(formatter.format(arr), "string[]");
+}
+
+#[test]
+fn test_format_array_of_union_type_parenthesized() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let arr = interner.array(elem);
+
+    let formatted = formatter.format(arr);
+    assert!(formatted.starts_with('(') && formatted.ends_with(")[]"));
+    assert!(formatted.contains("string"));
+    assert!(formatted.contains("number"));
+    assert!(formatted.contains(" | "));
 }
 
 #[test]

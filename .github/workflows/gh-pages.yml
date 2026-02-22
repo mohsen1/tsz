@@ -105,16 +105,16 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build WASM (bundler target)
+      - name: Build WASM (web target)
         run: |
           cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
-          wasm-pack build crates/tsz-wasm --target bundler --out-dir ../../pkg/bundler
+          wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wasm-bundler
-          path: pkg/bundler/
+          name: wasm-web
+          path: pkg/web/
           retention-days: 7
 
   build:
@@ -150,8 +150,8 @@ jobs:
       - name: Download WASM
         uses: actions/download-artifact@v4
         with:
-          name: wasm-bundler
-          path: pkg/bundler
+          name: wasm-web
+          path: pkg/web
         continue-on-error: true
 
       # Rename to expected filename

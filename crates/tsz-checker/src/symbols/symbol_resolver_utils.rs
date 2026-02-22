@@ -175,30 +175,53 @@ impl<'a> CheckerState<'a> {
     /// - Qualified names (e.g., `class B extends Namespace.A`)
     /// - Property access expressions (e.g., `class B extends module.A`)
     pub(crate) fn resolve_heritage_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        if let Some(cached) = self.ctx.heritage_symbol_cache.borrow().get(&idx).copied() {
+            return cached;
+        }
+
         let node = self.ctx.arena.get(idx)?;
 
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self.resolve_identifier_symbol(idx);
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.resolve_qualified_symbol(idx);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.ctx.arena.get_access_expr(node)?;
-            let left_sym_raw = self.resolve_heritage_symbol(access.expression)?;
-            let name = self
+        let resolved = if node.kind == SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol(idx)
+        } else if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            self.resolve_qualified_symbol(idx)
+        } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                self.ctx
+                    .heritage_symbol_cache
+                    .borrow_mut()
+                    .insert(idx, None);
+                return None;
+            };
+            let Some(left_sym_raw) = self.resolve_heritage_symbol(access.expression) else {
+                self.ctx
+                    .heritage_symbol_cache
+                    .borrow_mut()
+                    .insert(idx, None);
+                return None;
+            };
+            let Some(name) = self
                 .ctx
                 .arena
                 .get_identifier_at(access.name_or_argument)
-                .map(|ident| ident.escaped_text.clone())?;
+                .map(|ident| ident.escaped_text.clone())
+            else {
+                self.ctx
+                    .heritage_symbol_cache
+                    .borrow_mut()
+                    .insert(idx, None);
+                return None;
+            };
 
             // First, check the raw symbol's direct exports (for namespace symbols)
             if let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym_raw) {
                 if let Some(exports) = left_symbol.exports.as_ref()
                     && let Some(member_sym) = exports.get(&name)
                 {
+                    self.ctx
+                        .heritage_symbol_cache
+                        .borrow_mut()
+                        .insert(idx, Some(member_sym));
                     return Some(member_sym);
                 }
 
@@ -210,6 +233,10 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .module_resolves_to_non_module_entity(module_specifier)
                     {
+                        self.ctx
+                            .heritage_symbol_cache
+                            .borrow_mut()
+                            .insert(idx, None);
                         return None;
                     }
                     let mut visited_aliases = Vec::new();
@@ -218,6 +245,10 @@ impl<'a> CheckerState<'a> {
                         &name,
                         &mut visited_aliases,
                     ) {
+                        self.ctx
+                            .heritage_symbol_cache
+                            .borrow_mut()
+                            .insert(idx, Some(member_sym));
                         return Some(member_sym);
                     }
                 }
@@ -234,6 +265,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(exports) = resolved_symbol.exports.as_ref()
                     && let Some(member_sym) = exports.get(&name)
                 {
+                    self.ctx
+                        .heritage_symbol_cache
+                        .borrow_mut()
+                        .insert(idx, Some(member_sym));
                     return Some(member_sym);
                 }
                 // Also check module_exports on the resolved symbol
@@ -244,14 +279,24 @@ impl<'a> CheckerState<'a> {
                         &mut visited_aliases,
                     )
                 {
+                    self.ctx
+                        .heritage_symbol_cache
+                        .borrow_mut()
+                        .insert(idx, Some(member_sym));
                     return Some(member_sym);
                 }
             }
 
-            return None;
-        }
+            None
+        } else {
+            None
+        };
 
-        None
+        self.ctx
+            .heritage_symbol_cache
+            .borrow_mut()
+            .insert(idx, resolved);
+        resolved
     }
 
     /// Check if an expression is a property access on an unresolved import.

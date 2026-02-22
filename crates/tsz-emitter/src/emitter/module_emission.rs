@@ -2,6 +2,7 @@ use super::is_valid_identifier_name;
 use super::{ModuleKind, Printer};
 use crate::transform_context::IdentifierId;
 use crate::transforms::ClassES5Emitter;
+use crate::transforms::emit_utils;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -22,17 +23,33 @@ impl<'a> Printer<'a> {
         format!("{base}_{next}")
     }
 
-    pub(super) fn emit_commonjs_export<F>(
+    /// Emit a CommonJS export with optional hoisting of the export assignment.
+    ///
+    /// When `is_hoisted_declaration` is true (for function declarations), the
+    /// `exports.default = name;` assignment is emitted BEFORE the declaration.
+    /// tsc does this because JS function declarations are hoisted — the binding
+    /// exists at the top of the scope regardless of textual position.
+    pub(super) fn emit_commonjs_export_with_hoisting<F>(
         &mut self,
         names: &[IdentifierId],
         is_default: bool,
-        mut emit_inner: F,
+        is_hoisted_declaration: bool,
+        emit_inner: &mut F,
     ) where
         F: FnMut(&mut Self),
     {
         if names.is_empty() {
             emit_inner(self);
             return;
+        }
+
+        // For default exports of hoisted declarations (functions), emit
+        // the export assignment before the declaration body, matching tsc.
+        if is_default && is_hoisted_declaration {
+            self.write("exports.default = ");
+            self.write_identifier_by_id(names[0]);
+            self.write(";");
+            self.write_line();
         }
 
         let prev_module = self.ctx.options.module;
@@ -49,6 +66,14 @@ impl<'a> Printer<'a> {
         // the export assignment. The preamble `exports.X = void 0;` already
         // handles the forward declaration.
         if !inner_emitted {
+            return;
+        }
+
+        // For hoisted default exports, the assignment was already emitted above.
+        if is_default && is_hoisted_declaration {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
             return;
         }
 
@@ -160,687 +185,8 @@ impl<'a> Printer<'a> {
     }
 
     // =========================================================================
-    // Imports/Exports
+    // Exports
     // =========================================================================
-
-    pub(super) fn emit_import_declaration(&mut self, node: &Node) {
-        if self.ctx.is_commonjs() {
-            self.emit_import_declaration_commonjs(node);
-        } else {
-            self.emit_import_declaration_es6(node);
-        }
-    }
-
-    pub(super) fn emit_import_declaration_es6(&mut self, node: &Node) {
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return;
-        };
-
-        if import.import_clause.is_none() {
-            self.write("import ");
-            self.emit(import.module_specifier);
-            self.write_semicolon();
-            return;
-        }
-
-        let Some(clause_node) = self.arena.get(import.import_clause) else {
-            return;
-        };
-        let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return;
-        };
-
-        if clause.is_type_only {
-            return;
-        }
-
-        let mut has_default = false;
-        let mut namespace_name = None;
-        let mut value_specs = Vec::new();
-        let mut raw_named_bindings = None;
-        let mut trailing_comma = false;
-
-        if clause.name.is_some() {
-            has_default = true;
-        }
-
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-        {
-            if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                    namespace_name = Some(named_imports.name);
-                } else {
-                    value_specs = self.collect_value_specifiers(&named_imports.elements);
-                    trailing_comma = self
-                        .has_trailing_comma_in_source(bindings_node, &named_imports.elements.nodes);
-                }
-            } else {
-                raw_named_bindings = Some(clause.named_bindings);
-            }
-        }
-
-        let has_named =
-            namespace_name.is_some() || !value_specs.is_empty() || raw_named_bindings.is_some();
-        if !has_default && !has_named {
-            return;
-        }
-
-        self.write("import ");
-        if has_default {
-            self.emit(clause.name);
-        }
-
-        if has_named {
-            if has_default {
-                self.write(", ");
-            }
-            if let Some(name) = namespace_name {
-                self.write("* as ");
-                self.emit(name);
-            } else if !value_specs.is_empty() {
-                self.write("{ ");
-                self.emit_comma_separated(&value_specs);
-                if trailing_comma {
-                    self.write(",");
-                }
-                self.write(" }");
-            } else if let Some(raw_node) = raw_named_bindings {
-                self.emit(raw_node);
-            }
-        }
-
-        self.write(" from ");
-        self.emit(import.module_specifier);
-        self.write_semicolon();
-    }
-
-    pub(super) fn emit_import_declaration_commonjs(&mut self, node: &Node) {
-        use crate::transforms::module_commonjs;
-
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return;
-        };
-
-        let Some(clause_node) = self.arena.get(import.import_clause) else {
-            if matches!(
-                self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-            ) {
-                return;
-            }
-            // Side-effect import: import "module"; -> emit require
-            let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
-                if let Some(lit) = self.arena.get_literal(spec_node) {
-                    lit.text.clone()
-                } else {
-                    return;
-                }
-            } else {
-                return;
-            };
-
-            self.write("require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
-            return;
-        };
-        let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return;
-        };
-
-        if clause.is_type_only {
-            return;
-        }
-
-        // Module specifier is needed for both binding and side-effect-only CommonJS emit.
-        let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
-            if let Some(lit) = self.arena.get_literal(spec_node) {
-                lit.text.clone()
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-
-        // Wrapped module formats bind imports via wrapper parameters/setters.
-        // Suppress per-statement CommonJS `require(...)` emission in the body.
-        if matches!(
-            self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-        ) {
-            return;
-        }
-
-        let mut has_value_binding = clause.name.is_some();
-        let mut named_bindings_all_type_only = false;
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-        {
-            if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-                    has_value_binding = true;
-                } else {
-                    let value_specs = self.collect_value_specifiers(&named_imports.elements);
-                    if !value_specs.is_empty() {
-                        has_value_binding = true;
-                    } else if !named_imports.elements.nodes.is_empty() {
-                        // `import { type Foo } from "x"` has no runtime impact in CommonJS.
-                        named_bindings_all_type_only = true;
-                    }
-                }
-            } else {
-                has_value_binding = true;
-            }
-        }
-
-        if !has_value_binding {
-            if named_bindings_all_type_only {
-                return;
-            }
-            // `import {} from "x"` has no local value bindings but is still a runtime side effect.
-            self.write("require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
-            return;
-        }
-
-        // Generate module var name: "./foo" -> "foo_1"
-        let module_var = self.next_commonjs_module_var(&module_spec);
-        self.register_commonjs_named_import_substitutions(node, &module_var);
-        let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
-        let mut is_named_default_only_ast = false;
-        if clause.name.is_none()
-            && clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-            && named_imports.name.is_none()
-        {
-            let value_specs = self.collect_value_specifiers(&named_imports.elements);
-            is_named_default_only_ast = !value_specs.is_empty()
-                && value_specs.iter().all(|&spec_idx| {
-                    self.arena.get(spec_idx).is_some_and(|spec_node| {
-                        self.arena.get_specifier(spec_node).is_some_and(|spec| {
-                            let import_name = if spec.property_name.is_some() {
-                                self.get_identifier_text_idx(spec.property_name)
-                            } else {
-                                self.get_identifier_text_idx(spec.name)
-                            };
-                            import_name == "default"
-                        })
-                    })
-                });
-        }
-
-        if is_default_only_ast || is_named_default_only_ast {
-            self.write_var_or_const();
-            self.write(&module_var);
-            if self.ctx.options.es_module_interop {
-                // With esModuleInterop:
-                // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
-                self.write(" = __importDefault(require(\"");
-                self.write(&module_spec);
-                self.write("\"));");
-            } else {
-                // Without esModuleInterop:
-                // `import X from "m"` -> `const m_1 = require("m");`
-                self.write(" = require(\"");
-                self.write(&module_spec);
-                self.write("\");");
-            }
-            self.write_line();
-            return;
-        }
-
-        // Check if this is a namespace-only import (import * as ns from "mod")
-        // Detect from AST: named_bindings has a name but no elements
-        let is_namespace_only_ast = clause.name.is_none()
-            && clause.named_bindings.is_some()
-            && self
-                .arena
-                .get(clause.named_bindings)
-                .and_then(|n| self.arena.get_named_imports(n))
-                .is_some_and(|ni| ni.name.is_some() && ni.elements.nodes.is_empty());
-
-        if is_namespace_only_ast {
-            // Get the namespace name from the AST
-            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
-                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-            {
-                let ns_name = self.get_identifier_text_idx(named_imports.name);
-                if !ns_name.is_empty() {
-                    self.write_var_or_const();
-                    self.write(&ns_name);
-                    if self.ctx.options.es_module_interop {
-                        // `import * as ns from "mod"` -> `const ns = __importStar(require("mod"));`
-                        self.write(" = __importStar(require(\"");
-                        self.write(&module_spec);
-                        self.write("\"));");
-                    } else {
-                        // `import * as ns from "mod"` -> `const ns = require("mod");`
-                        self.write(" = require(\"");
-                        self.write(&module_spec);
-                        self.write("\");");
-                    }
-                    self.write_line();
-                }
-            }
-            return;
-        }
-
-        let es_module_interop = self.ctx.options.es_module_interop;
-        let bindings =
-            module_commonjs::get_import_bindings(self.arena, node, &module_var, es_module_interop);
-
-        let is_default_only = bindings.len() == 1 && bindings[0].contains("__importDefault(");
-
-        if is_default_only {
-            // Inline: var name = __importDefault(require("mod"));
-            let binding = &bindings[0];
-            if let Some(eq_pos) = binding.find(" = ") {
-                let var_name = &binding[4..eq_pos]; // Skip "var "
-                let rest = &binding[eq_pos + 3..]; // After " = "
-                // Check if it's using __importDefault
-                if rest.contains("__importDefault") {
-                    self.write_var_or_const();
-                    self.write(var_name);
-                    self.write(" = __importDefault(require(\"");
-                    self.write(&module_spec);
-                    self.write("\"));");
-                    self.write_line();
-                } else {
-                    self.write_var_or_const();
-                    self.write(&module_var);
-                    self.write(" = require(\"");
-                    self.write(&module_spec);
-                    self.write("\");");
-                    self.write_line();
-                    for binding in bindings {
-                        self.write(&binding);
-                        self.write_line();
-                    }
-                }
-            } else {
-                self.write_var_or_const();
-                self.write(&module_var);
-                self.write(" = require(\"");
-                self.write(&module_spec);
-                self.write("\");");
-                self.write_line();
-                for binding in bindings {
-                    self.write(&binding);
-                    self.write_line();
-                }
-            }
-        } else {
-            // Emit: var module_1 = require("module");
-            self.write_var_or_const();
-            self.write(&module_var);
-            self.write(" = require(\"");
-            self.write(&module_spec);
-            self.write("\");");
-            self.write_line();
-
-            // Emit bindings
-            for binding in bindings {
-                self.write(&binding);
-                self.write_line();
-            }
-        }
-    }
-
-    fn register_commonjs_named_import_substitutions(&mut self, node: &Node, module_var: &str) {
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return;
-        };
-        let Some(clause_node) = self.arena.get(import.import_clause) else {
-            return;
-        };
-        let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return;
-        };
-        if clause.name.is_some()
-            && let Some(default_name_node) = self.arena.get(clause.name)
-            && let Some(default_ident) = self.arena.get_identifier(default_name_node)
-        {
-            self.commonjs_named_import_substitutions.insert(
-                default_ident.escaped_text.to_string(),
-                format!("{module_var}.default"),
-            );
-        }
-        if !clause.named_bindings.is_some() {
-            return;
-        }
-        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
-            return;
-        };
-        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
-            return;
-        };
-
-        // Skip namespace imports (`import * as ns from "x"`).
-        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-            return;
-        }
-
-        for &spec_idx in &named_imports.elements.nodes {
-            let Some(spec_node) = self.arena.get(spec_idx) else {
-                continue;
-            };
-            let Some(spec) = self.arena.get_specifier(spec_node) else {
-                continue;
-            };
-            if spec.is_type_only {
-                continue;
-            }
-            let Some(local_name_node) = self.arena.get(spec.name) else {
-                continue;
-            };
-            let Some(local_ident) = self.arena.get_identifier(local_name_node) else {
-                continue;
-            };
-            let import_name = if spec.property_name.is_some() {
-                if let Some(prop_name_node) = self.arena.get(spec.property_name) {
-                    if let Some(prop_ident) = self.arena.get_identifier(prop_name_node) {
-                        prop_ident.escaped_text.as_str()
-                    } else {
-                        local_ident.escaped_text.as_str()
-                    }
-                } else {
-                    local_ident.escaped_text.as_str()
-                }
-            } else {
-                local_ident.escaped_text.as_str()
-            };
-            self.commonjs_named_import_substitutions.insert(
-                local_ident.escaped_text.to_string(),
-                format!("{module_var}.{import_name}"),
-            );
-        }
-    }
-
-    pub(super) fn emit_import_equals_declaration(&mut self, node: &Node) {
-        let before_len = self.writer.len();
-        self.emit_import_equals_declaration_inner(node);
-        if self.writer.len() > before_len {
-            self.write_semicolon();
-        }
-    }
-
-    pub(super) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return;
-        };
-
-        if !self.import_decl_has_runtime_value(import) {
-            return;
-        }
-
-        if import.import_clause.is_none() {
-            return;
-        }
-
-        let Some(module_node) = self.arena.get(import.module_specifier) else {
-            return;
-        };
-
-        // Parser recovery can produce missing/invalid module references for
-        // malformed `import x = ...;` declarations. TSC skips JS alias emission
-        // in that case and preserves only trailing recovered expressions.
-        if !self.is_valid_import_equals_reference(import.module_specifier) {
-            if self.is_recovered_import_equals_expression(module_node) {
-                self.emit(import.module_specifier);
-            } else if self
-                .recovered_import_equals_rhs_text(node)
-                .is_some_and(|rhs| rhs == "null")
-            {
-                self.write("null");
-            }
-            return;
-        }
-
-        let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
-            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
-
-        // Wrapped module formats (AMD/UMD/System) bind external imports via wrapper
-        // parameters/setters, so we must not emit a duplicate runtime require here.
-        if is_external
-            && matches!(
-                self.ctx.original_module_kind,
-                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-            )
-        {
-            return;
-        }
-
-        // `import X = require("module")` uses const/var based on target.
-        // `import X = Y` (entity name) always uses `var` per TSC behavior.
-        if is_external {
-            self.write_var_or_const();
-        } else {
-            self.write("var ");
-        }
-        self.emit(import.import_clause);
-        self.write(" = ");
-
-        if module_node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(module_node) {
-                self.write("require(\"");
-                self.write(&lit.text);
-                self.write("\")");
-            }
-            return;
-        }
-
-        self.emit_entity_name(import.module_specifier);
-    }
-
-    fn is_valid_import_equals_reference(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16 => true,
-            k if k == SyntaxKind::Identifier as u16 => self
-                .arena
-                .get_identifier(node)
-                .is_some_and(|id| !id.escaped_text.is_empty()),
-            k if k == SyntaxKind::ThisKeyword as u16 || k == SyntaxKind::SuperKeyword as u16 => {
-                true
-            }
-            k if k == syntax_kind_ext::QUALIFIED_NAME => {
-                self.arena.get_qualified_name(node).is_some_and(|name| {
-                    self.is_valid_import_equals_reference(name.left)
-                        && self.is_valid_import_equals_reference(name.right)
-                })
-            }
-            _ => false,
-        }
-    }
-
-    const fn is_recovered_import_equals_expression(&self, node: &Node) -> bool {
-        matches!(
-            node.kind,
-            k if k == SyntaxKind::NullKeyword as u16
-                || k == SyntaxKind::TrueKeyword as u16
-                || k == SyntaxKind::FalseKeyword as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        )
-    }
-
-    fn recovered_import_equals_rhs_text(&self, import_node: &Node) -> Option<&'a str> {
-        let source = self.source_text_for_map()?;
-        let start = import_node.pos as usize;
-        let end = (import_node.end as usize).min(source.len());
-        if start >= end {
-            return None;
-        }
-
-        let declaration_text = &source[start..end];
-        let equals_pos = declaration_text.find('=')?;
-        let rhs_with_suffix = &declaration_text[equals_pos + 1..];
-        let rhs = rhs_with_suffix
-            .split_once(';')
-            .map_or(rhs_with_suffix, |(before_semicolon, _)| before_semicolon)
-            .trim();
-
-        (!rhs.is_empty()).then_some(rhs)
-    }
-
-    pub(super) fn emit_import_clause(&mut self, node: &Node) {
-        let Some(clause) = self.arena.get_import_clause(node) else {
-            return;
-        };
-
-        let mut has_default = false;
-
-        // Default import
-        if clause.name.is_some() {
-            self.emit(clause.name);
-            has_default = true;
-        }
-
-        // Named bindings
-        if clause.named_bindings.is_some() {
-            if has_default {
-                self.write(", ");
-            }
-            self.emit(clause.named_bindings);
-        }
-    }
-
-    pub(super) fn emit_wrapped_import_interop_prologue(
-        &mut self,
-        statements: &tsz_parser::parser::NodeList,
-    ) {
-        if !matches!(
-            self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-        ) {
-            return;
-        }
-
-        for &stmt_idx in &statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
-                continue;
-            }
-            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
-                continue;
-            };
-            if !self.import_decl_has_runtime_value(import_decl) {
-                continue;
-            }
-            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
-                continue;
-            };
-            let Some(clause) = self.arena.get_import_clause(clause_node) else {
-                continue;
-            };
-            if clause.is_type_only {
-                continue;
-            }
-
-            if clause.name.is_some() {
-                let local_name = self.get_identifier_text_idx(clause.name);
-                if !local_name.is_empty()
-                    && let Some(subst) = self
-                        .commonjs_named_import_substitutions
-                        .get(local_name.as_str())
-                    && let Some(dep_var) = subst.strip_suffix(".default")
-                {
-                    let dep_var = dep_var.to_string();
-                    self.write(&dep_var);
-                    self.write(" = __importDefault(");
-                    self.write(&dep_var);
-                    self.write(");");
-                    self.write_line();
-                }
-            }
-
-            if clause.named_bindings.is_some()
-                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                && named_imports.name.is_some()
-                && named_imports.elements.nodes.is_empty()
-            {
-                let local_name = self.get_identifier_text_idx(named_imports.name);
-                if !local_name.is_empty() {
-                    self.write(&local_name);
-                    self.write(" = __importStar(");
-                    self.write(&local_name);
-                    self.write(");");
-                    self.write_line();
-                }
-            }
-        }
-    }
-
-    pub(super) fn emit_named_imports(&mut self, node: &Node) {
-        let Some(imports) = self.arena.get_named_imports(node) else {
-            return;
-        };
-
-        // Filter out type-only import specifiers
-        let value_imports: Vec<_> = imports
-            .elements
-            .nodes
-            .iter()
-            .filter(|&spec_idx| {
-                if let Some(spec_node) = self.arena.get(*spec_idx) {
-                    if let Some(spec) = self.arena.get_specifier(spec_node) {
-                        !spec.is_type_only
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        // If all imports are type-only, don't emit the named bindings at all
-        if value_imports.is_empty() {
-            return;
-        }
-
-        if imports.name.is_some() && value_imports.is_empty() {
-            self.write("* as ");
-            self.emit(imports.name);
-            return;
-        }
-
-        self.write("{ ");
-        // Convert Vec<&NodeIndex> to Vec<NodeIndex> for emit_comma_separated
-        let value_refs: Vec<NodeIndex> = value_imports.iter().map(|&&idx| idx).collect();
-        self.emit_comma_separated(&value_refs);
-        // Preserve trailing comma from source
-        let has_trailing_comma = self.has_trailing_comma_in_source(node, &imports.elements.nodes);
-        if has_trailing_comma {
-            self.write(",");
-        }
-        self.write(" }");
-    }
-
-    pub(super) fn emit_import_specifier(&mut self, node: &Node) {
-        let Some(spec) = self.arena.get_specifier(node) else {
-            return;
-        };
-
-        if spec.property_name.is_some() {
-            self.emit(spec.property_name);
-            self.write(" as ");
-        }
-        self.emit(spec.name);
-    }
 
     pub(super) fn emit_export_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
@@ -1220,13 +566,10 @@ impl<'a> Printer<'a> {
                 }
                 // export function f() {} or export default function f() {}
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    // Emit the function declaration
-                    self.emit_function_declaration(clause_node, export.export_clause);
-                    self.write_line();
-
-                    // For default exports, emit exports.default = name; after the function.
-                    // For named exports, the preamble already emitted exports.f = f;
-                    // (since function declarations are hoisted).
+                    // For default exports of named functions, tsc emits the
+                    // `exports.default = name;` assignment BEFORE the function
+                    // declaration. This works because JS function declarations
+                    // are hoisted, so the binding exists at the top of the scope.
                     if !self.ctx.module_state.has_export_assignment
                         && export.is_default_export
                         && let Some(func) = self.arena.get_function(clause_node)
@@ -1237,6 +580,10 @@ impl<'a> Printer<'a> {
                         self.write(";");
                         self.write_line();
                     }
+
+                    // Emit the function declaration
+                    self.emit_function_declaration(clause_node, export.export_clause);
+                    self.write_line();
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -1437,6 +784,18 @@ impl<'a> Printer<'a> {
                                     export_name.clone()
                                 };
 
+                                // Skip function export specifiers already handled
+                                // by the preamble (`exports.f = f;` before statements).
+                                if self
+                                    .ctx
+                                    .module_state
+                                    .hoisted_func_exports
+                                    .iter()
+                                    .any(|n| n == &export_name)
+                                {
+                                    continue;
+                                }
+
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");
@@ -1615,14 +974,7 @@ impl<'a> Printer<'a> {
 
     /// Get identifier text from optional node index
     pub(super) fn get_identifier_text_opt(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            self.arena
-                .get_identifier(node)
-                .map(|id| id.escaped_text.clone())
-        } else {
-            None
-        }
+        crate::transforms::emit_utils::identifier_text(self.arena, idx)
     }
 
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -1649,13 +1001,7 @@ impl<'a> Printer<'a> {
 
     /// Get identifier text from a node index
     pub(super) fn get_identifier_text_idx(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && node.kind == SyntaxKind::Identifier as u16
-            && let Some(id) = self.arena.get_identifier(node)
-        {
-            return id.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     pub(super) fn emit_entity_name(&mut self, idx: NodeIndex) {
@@ -1729,42 +1075,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
-        match clause_node.kind {
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => true,
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                let Some(enum_decl) = self.arena.get_enum(clause_node) else {
-                    return false;
-                };
-                self.has_declare_modifier(&enum_decl.modifiers)
-                    || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
-            }
-            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                let Some(class_decl) = self.arena.get_class(clause_node) else {
-                    return false;
-                };
-                self.has_declare_modifier(&class_decl.modifiers)
-            }
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                let Some(func_decl) = self.arena.get_function(clause_node) else {
-                    return false;
-                };
-                self.has_declare_modifier(&func_decl.modifiers)
-            }
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                let Some(var_decl) = self.arena.get_variable(clause_node) else {
-                    return false;
-                };
-                self.has_declare_modifier(&var_decl.modifiers)
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                let Some(module_decl) = self.arena.get_module(clause_node) else {
-                    return false;
-                };
-                self.has_declare_modifier(&module_decl.modifiers)
-            }
-            _ => false,
-        }
+        crate::transforms::emit_utils::export_clause_is_type_only(self.arena, clause_node)
     }
 
     /// Check if the file contains an export assignment (export =)
@@ -1817,11 +1128,10 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     if self.arena.get_class(stmt_node).is_some_and(|class_decl| {
                         self.get_identifier_text_idx(class_decl.name) == assigned_name
-                    }) && !self
-                        .arena
-                        .get_class(stmt_node)
-                        .is_some_and(|class_decl| self.has_declare_modifier(&class_decl.modifiers))
-                    {
+                    }) && !self.arena.get_class(stmt_node).is_some_and(|class_decl| {
+                        self.arena
+                            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    }) {
                         matched_runtime = true;
                     }
                 }
@@ -1829,7 +1139,10 @@ impl<'a> Printer<'a> {
                     if self.arena.get_function(stmt_node).is_some_and(|func| {
                         self.get_identifier_text_idx(func.name) == assigned_name
                     }) && self.arena.get_function(stmt_node).is_some_and(|func| {
-                        func.body.is_some() && !self.has_declare_modifier(&func.modifiers)
+                        func.body.is_some()
+                            && !self
+                                .arena
+                                .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                     }) {
                         matched_runtime = true;
                     }
@@ -1838,9 +1151,12 @@ impl<'a> Printer<'a> {
                     if self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
                         self.get_identifier_text_idx(enum_decl.name) == assigned_name
                     }) && self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
-                        !self.has_declare_modifier(&enum_decl.modifiers)
+                        !self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                             && !self
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                     }) {
                         matched_runtime = true;
                     }
@@ -1849,7 +1165,9 @@ impl<'a> Printer<'a> {
                     if self.arena.get_module(stmt_node).is_some_and(|module_decl| {
                         self.get_identifier_text_idx(module_decl.name) == assigned_name
                     }) && self.arena.get_module(stmt_node).is_some_and(|module_decl| {
-                        !self.has_declare_modifier(&module_decl.modifiers)
+                        !self
+                            .arena
+                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
                             && self.is_instantiated_module(module_decl.body)
                     }) {
                         matched_runtime = true;
@@ -1860,10 +1178,10 @@ impl<'a> Printer<'a> {
                         .collect_variable_names_from_node(stmt_node)
                         .iter()
                         .any(|n| n == &assigned_name)
-                        && !self
-                            .arena
-                            .get_variable(stmt_node)
-                            .is_some_and(|var_decl| self.has_declare_modifier(&var_decl.modifiers))
+                        && !self.arena.get_variable(stmt_node).is_some_and(|var_decl| {
+                            self.arena
+                                .has_modifier(&var_decl.modifiers, SyntaxKind::DeclareKeyword)
+                        })
                     {
                         matched_runtime = true;
                     }
@@ -1910,6 +1228,10 @@ impl<'a> Printer<'a> {
     /// including type-only imports/exports, declared exports, and exported
     /// interfaces/type aliases.
     pub(super) fn file_is_module(&self, statements: &NodeList) -> bool {
+        // moduleDetection=force: treat all non-declaration files as modules
+        if self.ctx.options.module_detection_force {
+            return true;
+        }
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
@@ -1932,49 +1254,63 @@ impl<'a> Printer<'a> {
                     // Check for export modifier on any declaration type
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
-                            && self.has_export_modifier(&var_stmt.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         if let Some(func) = self.arena.get_function(node)
-                            && self.has_export_modifier(&func.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         if let Some(class) = self.arena.get_class(node)
-                            && self.has_export_modifier(&class.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::ENUM_DECLARATION => {
                         if let Some(enum_decl) = self.arena.get_enum(node)
-                            && self.has_export_modifier(&enum_decl.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::MODULE_DECLARATION => {
                         if let Some(module) = self.arena.get_module(node)
-                            && self.has_export_modifier(&module.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                         if let Some(iface) = self.arena.get_interface(node)
-                            && self.has_export_modifier(&iface.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                         if let Some(type_alias) = self.arena.get_type_alias(node)
-                            && self.has_export_modifier(&type_alias.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&type_alias.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
@@ -2000,7 +1336,8 @@ impl<'a> Printer<'a> {
                     if !self.import_decl_has_runtime_value(import_decl) {
                         continue;
                     }
-                    if let Some(text) = self.get_module_specifier_text(import_decl.module_specifier)
+                    if let Some(text) =
+                        emit_utils::module_specifier_text(self.arena, import_decl.module_specifier)
                         && !deps.contains(&text)
                     {
                         deps.push(text);
@@ -2015,7 +1352,8 @@ impl<'a> Printer<'a> {
                 if !self.export_decl_has_runtime_value(export_decl) {
                     continue;
                 }
-                if let Some(text) = self.get_module_specifier_text(export_decl.module_specifier)
+                if let Some(text) =
+                    emit_utils::module_specifier_text(self.arena, export_decl.module_specifier)
                     && !deps.contains(&text)
                 {
                     deps.push(text);
@@ -2024,17 +1362,6 @@ impl<'a> Printer<'a> {
         }
 
         deps
-    }
-
-    fn get_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
-        if specifier.is_none() {
-            return None;
-        }
-
-        let node = self.arena.get(specifier)?;
-        let literal = self.arena.get_literal(node)?;
-
-        Some(literal.text.clone())
     }
 
     pub(super) fn import_decl_has_runtime_value(
@@ -2121,50 +1448,7 @@ impl<'a> Printer<'a> {
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
     ) -> bool {
-        if export_decl.is_type_only {
-            return false;
-        }
-
-        if export_decl.is_default_export {
-            return true;
-        }
-
-        if export_decl.export_clause.is_none() {
-            return true;
-        }
-
-        let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
-            return false;
-        };
-
-        if let Some(named) = self.arena.get_named_imports(clause_node) {
-            if named.name.is_some() {
-                return true;
-            }
-
-            if named.elements.nodes.is_empty() {
-                return true;
-            }
-
-            for &spec_idx in &named.elements.nodes {
-                let Some(spec_node) = self.arena.get(spec_idx) else {
-                    continue;
-                };
-                if let Some(spec) = self.arena.get_specifier(spec_node)
-                    && !spec.is_type_only
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        if self.export_clause_is_type_only(clause_node) {
-            return false;
-        }
-
-        true
+        crate::transforms::emit_utils::export_decl_has_runtime_value(self.arena, export_decl)
     }
 
     /// Check if we should emit the __esModule marker.
@@ -2177,6 +1461,11 @@ impl<'a> Printer<'a> {
         // Type-only `export =` aliases (e.g. interface) are filtered out.
         if self.has_export_assignment(statements) {
             return false;
+        }
+
+        // moduleDetection=force: treat all non-declaration files as modules
+        if self.ctx.options.module_detection_force {
+            return true;
         }
 
         // Second check: look for ANY module syntax (including type-only)
@@ -2209,49 +1498,63 @@ impl<'a> Printer<'a> {
                     // (including declare and type-only declarations)
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
-                            && self.has_export_modifier(&var_stmt.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         if let Some(func) = self.arena.get_function(node)
-                            && self.has_export_modifier(&func.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         if let Some(class) = self.arena.get_class(node)
-                            && self.has_export_modifier(&class.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::ENUM_DECLARATION => {
                         if let Some(enum_decl) = self.arena.get_enum(node)
-                            && self.has_export_modifier(&enum_decl.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::MODULE_DECLARATION => {
                         if let Some(module) = self.arena.get_module(node)
-                            && self.has_export_modifier(&module.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                         if let Some(iface) = self.arena.get_interface(node)
-                            && self.has_export_modifier(&iface.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                         if let Some(type_alias) = self.arena.get_type_alias(node)
-                            && self.has_export_modifier(&type_alias.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&type_alias.modifiers, SyntaxKind::ExportKeyword)
                         {
                             return true;
                         }
@@ -2272,5 +1575,227 @@ impl<'a> Printer<'a> {
         } else {
             self.write("const ");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+    use tsz_parser::ParserState;
+
+    /// When moduleDetection=force, a file without any import/export syntax
+    /// should still be treated as a module and get the CJS __esModule preamble.
+    #[test]
+    fn module_detection_force_emits_esmodule_marker() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("Object.defineProperty(exports, \"__esModule\""),
+            "moduleDetection=force should emit __esModule marker for non-module file.\nOutput:\n{output}"
+        );
+    }
+
+    /// Without moduleDetection=force, a file without import/export syntax
+    /// should NOT get the CJS __esModule preamble.
+    #[test]
+    fn no_module_detection_force_skips_esmodule_marker() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: false,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("__esModule"),
+            "Without moduleDetection=force, non-module file should NOT get __esModule.\nOutput:\n{output}"
+        );
+    }
+
+    /// moduleDetection=force should also cause "use strict" to be emitted
+    /// for CJS modules (since the file is now treated as a module).
+    #[test]
+    fn module_detection_force_emits_use_strict_for_cjs() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"use strict\""),
+            "moduleDetection=force with CJS should emit \"use strict\".\nOutput:\n{output}"
+        );
+    }
+
+    /// `export default function f()` in CJS should emit `exports.default = f;`
+    /// BEFORE the function declaration, because JS function declarations are
+    /// hoisted. This matches tsc's output ordering.
+    #[test]
+    fn default_export_function_hoists_export_assignment() {
+        let source = "export default function f() { return 1; }\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // exports.default = f; must appear before `function f()`
+        let export_pos = output.find("exports.default = f;");
+        let func_pos = output.find("function f()");
+        assert!(
+            export_pos.is_some() && func_pos.is_some(),
+            "Should emit both exports.default = f; and function f().\nOutput:\n{output}"
+        );
+        assert!(
+            export_pos.unwrap() < func_pos.unwrap(),
+            "exports.default = f; should appear before function f() (hoisting).\nOutput:\n{output}"
+        );
+    }
+
+    /// Non-default function exports should NOT have the export hoisted before
+    /// the function — they are handled in the preamble instead.
+    #[test]
+    fn named_export_function_not_hoisted() {
+        let source = "export function g() { return 2; }\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // For named exports, the preamble emits `exports.g = g;` before the
+        // function, and there's no second assignment after.
+        let preamble_pos = output.find("exports.g = g;");
+        let func_pos = output.find("function g()");
+        assert!(
+            preamble_pos.is_some() && func_pos.is_some(),
+            "Should emit both exports.g = g; and function g().\nOutput:\n{output}"
+        );
+        assert!(
+            preamble_pos.unwrap() < func_pos.unwrap(),
+            "Preamble exports.g = g; should appear before function g().\nOutput:\n{output}"
+        );
+    }
+
+    /// `export { f }` where `f` is a function declaration should emit
+    /// `exports.f = f;` in the preamble (hoisted) and NOT emit a duplicate
+    /// assignment at the `export { f }` statement position.
+    #[test]
+    fn named_export_specifier_for_function_hoisted() {
+        let source = r#"function isValid(x: unknown): x is string {
+    return typeof x === "string";
+}
+export { isValid };
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The preamble should contain `exports.isValid = isValid;`
+        assert!(
+            output.contains("exports.isValid = isValid;"),
+            "Should emit hoisted exports.isValid = isValid; in preamble.\nOutput:\n{output}"
+        );
+        // Should NOT contain `exports.isValid = void 0;`
+        assert!(
+            !output.contains("exports.isValid = void 0"),
+            "Function export should NOT get void 0 initialization.\nOutput:\n{output}"
+        );
+        // The hoisted assignment should appear before the function body
+        let export_pos = output.find("exports.isValid = isValid;").unwrap();
+        let func_pos = output.find("function isValid(").unwrap();
+        assert!(
+            export_pos < func_pos,
+            "exports.isValid = isValid; should appear before function isValid().\nOutput:\n{output}"
+        );
+        // Should only appear once (no duplicate from the inline export { } handler)
+        let count = output.matches("exports.isValid = isValid;").count();
+        assert_eq!(
+            count, 1,
+            "exports.isValid = isValid; should appear exactly once.\nOutput:\n{output}"
+        );
+    }
+
+    /// `export { f as g }` where `f` is a function should still hoist
+    /// the export with the exported name `g` in the preamble.
+    #[test]
+    fn named_export_specifier_aliased_function_hoisted() {
+        let source = r#"function impl() { return 42; }
+export { impl as myFunc };
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The preamble should contain `exports.myFunc = myFunc;` (using the exported name)
+        assert!(
+            output.contains("exports.myFunc = myFunc;"),
+            "Should emit hoisted exports.myFunc = myFunc; in preamble.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("exports.myFunc = void 0"),
+            "Aliased function export should NOT get void 0.\nOutput:\n{output}"
+        );
     }
 }

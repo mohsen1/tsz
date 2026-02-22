@@ -672,6 +672,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
 
                 if export_decl.module_specifier.is_none()
+                    && !self.is_inside_namespace_declaration(export_idx)
                     && self
                         .ctx
                         .arena

@@ -37,6 +37,15 @@ pub mod traversal;
 
 use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 
+// Re-export shared predicates from visitor_predicates to avoid duplication.
+// These are the canonical implementations; type_queries re-exports them so
+// callers can use a single `type_queries::*` import.
+pub use crate::visitors::visitor_predicates::{
+    is_array_type, is_conditional_type, is_empty_object_type, is_function_type,
+    is_index_access_type, is_intersection_type, is_literal_type, is_mapped_type,
+    is_object_like_type, is_primitive_type, is_template_literal_type, is_tuple_type, is_union_type,
+};
+
 // Re-export sub-module items so callers can use `type_queries::*`
 pub use classifiers::{
     AssignabilityEvalKind, AugmentationTargetKind, BindingElementTypeKind, ConstructorAccessKind,
@@ -149,27 +158,6 @@ pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
-/// Check if a type is a tuple type.
-///
-/// Returns true for `TypeData::Tuple`.
-pub fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Tuple(_)))
-}
-
-/// Check if a type is a union type (A | B).
-///
-/// Returns true for `TypeData::Union`.
-pub fn is_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Union(_)))
-}
-
-/// Check if a type is an intersection type (A & B).
-///
-/// Returns true for `TypeData::Intersection`.
-pub fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Intersection(_)))
-}
-
 /// Check if a type is an object type (with or without index signatures).
 ///
 /// Returns true for `TypeData::Object` and `TypeData::ObjectWithIndex`.
@@ -178,20 +166,6 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         db.lookup(type_id),
         Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
     )
-}
-
-/// Check if a type is an array type (T[]).
-///
-/// Returns true for `TypeData::Array`.
-pub fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Array(_)))
-}
-
-/// Check if a type is a literal type (specific value).
-///
-/// Returns true for `TypeData::Literal`.
-pub fn is_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
 /// Check if a type is a generic type application (Base<Args>).
@@ -209,27 +183,6 @@ pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         db.lookup(type_id),
         Some(TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::BoundParameter(_))
     )
-}
-
-/// Check if a type is a conditional type (T extends U ? X : Y).
-///
-/// Returns true for `TypeData::Conditional`.
-pub fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Conditional(_)))
-}
-
-/// Check if a type is a mapped type ({ [K in Keys]: V }).
-///
-/// Returns true for `TypeData::Mapped`.
-pub fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Mapped(_)))
-}
-
-/// Check if a type is a template literal type (`hello${T}world`).
-///
-/// Returns true for `TypeData::TemplateLiteral`.
-pub fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
 }
 
 /// Check if a type is a type parameter, bound parameter, or infer type.
@@ -266,13 +219,6 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))
     )
-}
-
-/// Check if a type is an index access type (T[K]).
-///
-/// Returns true for `TypeData::IndexAccess`.
-pub fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
 /// Check if a type is a keyof type.
@@ -380,20 +326,6 @@ pub fn is_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Intrinsic(_)))
 }
 
-/// Check if a type is a primitive type (intrinsic or literal).
-///
-/// Returns true for intrinsic types and literal types.
-pub fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Check well-known intrinsic TypeIds first
-    if type_id.is_intrinsic() {
-        return true;
-    }
-    matches!(
-        db.lookup(type_id),
-        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
-    )
-}
-
 // =============================================================================
 // Intrinsic Type Queries
 // =============================================================================
@@ -462,59 +394,6 @@ define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 // Composite Type Queries
 // =============================================================================
 
-/// Check if a type is an object-like type suitable for typeof "object".
-///
-/// Returns true for: Object, `ObjectWithIndex`, Array, Tuple, Mapped
-pub fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_object_like_type_impl(db, type_id)
-}
-
-fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
-        Some(
-            TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Array(_)
-            | TypeData::Tuple(_)
-            | TypeData::Mapped(_)
-            | TypeData::Function(_)
-            | TypeData::Callable(_)
-            | TypeData::Intrinsic(IntrinsicKind::Object | IntrinsicKind::Function),
-        ) => true,
-        Some(TypeData::ReadonlyType(inner)) => is_object_like_type_impl(db, inner),
-        Some(TypeData::Intersection(members)) => {
-            let members = db.type_list(members);
-            members
-                .iter()
-                .all(|&member| is_object_like_type_impl(db, member))
-        }
-        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
-            .constraint
-            .is_some_and(|constraint| is_object_like_type_impl(db, constraint)),
-        _ => false,
-    }
-}
-
-/// Check if a type is a function type (Function or Callable).
-///
-/// This also handles intersections containing function types.
-pub fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_function_type_impl(db, type_id)
-}
-
-fn is_function_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
-        Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
-        Some(TypeData::Intersection(members)) => {
-            let members = db.type_list(members);
-            members
-                .iter()
-                .any(|&member| is_function_type_impl(db, member))
-        }
-        _ => false,
-    }
-}
-
 /// Check if a type is valid for object spreading (`{...x}`).
 ///
 /// Returns `true` for types that can be spread into an object literal:
@@ -573,23 +452,6 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters, lazy refs, applications, etc.
         _ => true,
-    }
-}
-
-/// Check if a type is an empty object type (no properties, no index signatures).
-pub fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            shape.properties.is_empty()
-        }
-        Some(TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            shape.properties.is_empty()
-                && shape.string_index.is_none()
-                && shape.number_index.is_none()
-        }
-        _ => false,
     }
 }
 

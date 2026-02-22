@@ -144,6 +144,11 @@ pub struct ModuleTransformState {
     /// Whether "use strict" has been emitted
     pub strict_mode_emitted: bool,
 
+    /// Names of function exports that were hoisted to the preamble
+    /// (`exports.f = f;` emitted before any statements). Used to skip
+    /// duplicate inline emission in `export { f }` clauses.
+    pub hoisted_func_exports: Vec<String>,
+
     /// Whether the file contains an `export =` assignment (`CommonJS` export assignment)
     /// If true, other named exports should be suppressed in `CommonJS` emit.
     pub has_export_assignment: bool,
@@ -166,6 +171,7 @@ impl ModuleTransformState {
     pub fn exit_commonjs(&mut self) {
         self.commonjs_mode = false;
         self.pending_exports.clear();
+        self.hoisted_func_exports.clear();
         self.module_temp_counter = 0;
         self.module_temp_counters.clear();
     }

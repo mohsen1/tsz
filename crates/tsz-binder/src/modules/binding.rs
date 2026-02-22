@@ -722,13 +722,6 @@ impl BinderState {
 
     /// Check if any modifier in a `NodeList` is the export keyword.
     pub(crate) fn has_export_modifier_any(arena: &NodeArena, modifiers: &NodeList) -> bool {
-        for &mod_idx in &modifiers.nodes {
-            if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == SyntaxKind::ExportKeyword as u16
-            {
-                return true;
-            }
-        }
-        false
+        arena.has_modifier_ref(Some(modifiers), SyntaxKind::ExportKeyword)
     }
 }

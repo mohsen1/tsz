@@ -12,6 +12,7 @@
 //! - `children` corresponds to tsserver's `childItems`
 //! - `container_name` provides the parent container for flat symbol lists
 
+use crate::utils::node_range;
 use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -794,13 +795,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
     /// Convert node range to LSP Range.
     fn get_range(&self, node_idx: NodeIndex) -> Range {
-        if let Some(node) = self.arena.get(node_idx) {
-            let start = self.line_map.offset_to_position(node.pos, self.source_text);
-            let end = self.line_map.offset_to_position(node.end, self.source_text);
-            Range::new(start, end)
-        } else {
-            Range::new(Position::new(0, 0), Position::new(0, 0))
-        }
+        node_range(self.arena, self.line_map, self.source_text, node_idx)
     }
 
     /// Get range for a keyword (when no identifier exists, e.g. "constructor").

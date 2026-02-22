@@ -66,7 +66,10 @@ impl<'a> ES5ClassTransformer<'a> {
         let class_data = self.arena.get_class(class_node)?;
 
         // Skip ambient/declare classes
-        if self.has_declare_modifier(&class_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -805,13 +808,7 @@ impl<'a> ES5ClassTransformer<'a> {
     // Helper methods
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        let Some(node) = self.arena.get(idx) else {
-            return String::new();
-        };
-        if let Some(ident) = self.arena.get_identifier(node) {
-            return ident.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     fn get_method_name(&self, name_idx: NodeIndex) -> IRMethodName {
@@ -865,21 +862,6 @@ impl<'a> ES5ClassTransformer<'a> {
             _ => "?",
         }
         .to_string()
-    }
-
-    fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-        for &mod_idx in &mods.nodes {
-            let Some(mod_node) = self.arena.get(mod_idx) else {
-                continue;
-            };
-            if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                return true;
-            }
-        }
-        false
     }
 
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {
@@ -1314,13 +1296,7 @@ impl<'a> ES5AsyncTransformer<'a> {
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        let Some(node) = self.arena.get(idx) else {
-            return String::new();
-        };
-        if let Some(ident) = self.arena.get_identifier(node) {
-            return ident.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Check if body contains any await expressions

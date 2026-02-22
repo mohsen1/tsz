@@ -14,12 +14,24 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
-    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypePredicate,
-    Visibility,
+    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+    TypePredicate, Visibility,
 };
 use crate::visitor::contains_this_type;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+
+/// Build a `TypeSubstitution` that maps each type parameter to its constraint
+/// (or `unknown` if unconstrained). This corresponds to tsc's `getErasedSignature` /
+/// `getCanonicalSignature` behavior — used when generic signatures need to be
+/// compared structurally after erasing their type parameter identities.
+fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubstitution {
+    let mut sub = TypeSubstitution::new();
+    for tp in type_params {
+        sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+    }
+    sub
+}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if parameter types are compatible based on variance settings.
@@ -477,11 +489,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 // Strategy 2: canonicalize target — replace type params with constraints,
                 // then fall through to the generic-source → non-generic-target inference path
-                let mut canonical_substitution = TypeSubstitution::new();
-                for tp in &target_instantiated.type_params {
-                    canonical_substitution
-                        .insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-                }
+                let canonical_substitution =
+                    erase_type_params_to_constraints(&target_instantiated.type_params);
                 target_instantiated =
                     self.instantiate_function_shape(&target_instantiated, &canonical_substitution);
             }
@@ -497,17 +506,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !target_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() != target_instantiated.type_params.len()
         {
-            let mut source_canonical = TypeSubstitution::new();
-            for tp in &source_instantiated.type_params {
-                source_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-            }
+            let source_canonical =
+                erase_type_params_to_constraints(&source_instantiated.type_params);
             source_instantiated =
                 self.instantiate_function_shape(&source_instantiated, &source_canonical);
 
-            let mut target_canonical = TypeSubstitution::new();
-            for tp in &target_instantiated.type_params {
-                target_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-            }
+            let target_canonical =
+                erase_type_params_to_constraints(&target_instantiated.type_params);
             target_instantiated =
                 self.instantiate_function_shape(&target_instantiated, &target_canonical);
         }
@@ -525,11 +530,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // Inference failed (e.g., bounds violation). Fall back to tsc's
                     // `getErasedSignature` behavior: replace type params with their
                     // constraints (or `unknown` if unconstrained).
-                    let mut constraint_sub = TypeSubstitution::new();
-                    for tp in &source_instantiated.type_params {
-                        constraint_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-                    }
-                    constraint_sub
+                    erase_type_params_to_constraints(&source_instantiated.type_params)
                 }
             };
             source_instantiated =

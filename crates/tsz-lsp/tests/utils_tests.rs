@@ -1,5 +1,6 @@
 use super::*;
 use tsz_parser::ParserState;
+use tsz_scanner::SyntaxKind;
 
 #[test]
 fn test_find_node_at_offset_simple() {
@@ -44,4 +45,30 @@ fn test_find_nodes_in_range() {
     // Find nodes in the first line
     let nodes = find_nodes_in_range(arena, 0, 12);
     assert!(!nodes.is_empty(), "Should find nodes in first line");
+}
+
+#[test]
+fn test_is_symbol_query_node_for_module_namespace_string_literal() {
+    let source = "const foo = \"foo\";\nexport { foo as \"__alias\" };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let target = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != SyntaxKind::StringLiteral as u16 {
+                return None;
+            }
+            let text = source.get(node.pos as usize..node.end as usize)?;
+            (text == "\"__alias\"").then_some(tsz_parser::NodeIndex(idx as u32))
+        })
+        .expect("expected string-literal export alias node");
+
+    assert!(
+        is_symbol_query_node(arena, target),
+        "module namespace string literal alias should be a symbol-query node"
+    );
 }

@@ -315,3 +315,128 @@ fn test_inherited_private_constructor() {
         2675,
     );
 }
+
+fn test_no_specific_error(source: &str, forbidden_code: u32) {
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
+
+    let ctx = TestContext::new();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let forbidden: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == forbidden_code)
+        .collect();
+
+    assert!(
+        forbidden.is_empty(),
+        "Expected no TS{} errors, got {}: {:?}",
+        forbidden_code,
+        forbidden.len(),
+        forbidden
+    );
+}
+
+/// Test that super() in if/else branches satisfies TS2377.
+/// Derived class constructors with super() in control flow should NOT emit TS2377.
+#[test]
+fn test_super_call_in_if_else_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class A { constructor(s: string, t: string) {} }
+        class B extends A {
+            constructor() {
+                if (true) {
+                    super('a', 'b');
+                } else {
+                    super('c', 'd');
+                }
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that super() in try/catch satisfies TS2377.
+#[test]
+fn test_super_call_in_try_catch_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class Foo {
+            constructor(shouldThrow: boolean) {}
+        }
+        class Bar extends Foo {
+            constructor() {
+                try {
+                    super(true);
+                } catch (e) {
+                    super(false);
+                }
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that super() in an expression context (object literal value) satisfies TS2377.
+#[test]
+fn test_super_call_in_expression_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class A { foo() {} }
+        class B extends A {
+            constructor() {
+                var x = { x: super() };
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that a constructor with NO super() in a derived class DOES emit TS2377.
+#[test]
+fn test_missing_super_call_emits_ts2377() {
+    test_constructor_accessibility(
+        r#"
+        class A { constructor() {} }
+        class B extends A {
+            constructor() {
+                // no super() call
+            }
+        }
+        "#,
+        2377,
+    );
+}

@@ -1,6 +1,6 @@
 //! AST name collection utilities and modifier helpers for the binder.
 //!
-//! Extracted from `state_node_binding.rs` — provides functions for:
+//! Provides functions for:
 //! - Extracting property/identifier names from AST nodes
 //! - Collecting binding identifiers from destructuring patterns
 //! - Collecting file-scope names and hoisted names
@@ -15,7 +15,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-use super::state::BinderState;
+use crate::state::BinderState;
 
 impl BinderState {
     /// Get property name from a node index.
@@ -475,45 +475,31 @@ impl BinderState {
 
     /// Check if modifiers list contains the 'abstract' keyword.
     pub(crate) fn has_abstract_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::AbstractKeyword)
+        arena.has_modifier_ref(modifiers, SyntaxKind::AbstractKeyword)
     }
 
     /// Check if modifiers list contains the 'static' keyword.
     pub(crate) fn has_static_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::StaticKeyword)
+        arena.has_modifier_ref(modifiers, SyntaxKind::StaticKeyword)
     }
 
     /// Check if modifiers list contains the 'export' keyword.
     pub(crate) fn has_export_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::ExportKeyword)
+        arena.has_modifier_ref(modifiers, SyntaxKind::ExportKeyword)
     }
 
     /// Check if modifiers list contains the 'private' keyword.
     pub(crate) fn has_private_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::PrivateKeyword)
+        arena.has_modifier_ref(modifiers, SyntaxKind::PrivateKeyword)
     }
 
     /// Check if modifiers list contains the 'declare' keyword.
     pub(crate) fn has_declare_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::DeclareKeyword)
+        arena.has_modifier_ref(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     /// Check if modifiers list contains the 'const' keyword.
     pub(crate) fn has_const_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        Self::has_modifier(arena, modifiers, SyntaxKind::ConstKeyword)
-    }
-
-    /// Check if modifiers list contains a specific keyword.
-    fn has_modifier(arena: &NodeArena, modifiers: Option<&NodeList>, keyword: SyntaxKind) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx)
-                    && mod_node.kind == keyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        arena.has_modifier_ref(modifiers, SyntaxKind::ConstKeyword)
     }
 }

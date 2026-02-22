@@ -30,6 +30,7 @@
 //! ```
 
 mod check;
+mod handlers_code_fixes;
 mod handlers_completions;
 mod handlers_diagnostics;
 mod handlers_editing;
@@ -512,6 +513,8 @@ pub(crate) struct Server {
     pub(crate) response_seq: u64,
     /// Open files (for tsserver protocol)
     pub(crate) open_files: FxHashMap<String, String>,
+    /// Files registered by each external project (`openExternalProject`).
+    pub(crate) external_project_files: FxHashMap<String, Vec<String>>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Completion/codefix preference: import module specifier preference.
@@ -528,6 +531,8 @@ pub(crate) struct Server {
     pub(crate) allow_importing_ts_extensions: bool,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
     pub(crate) auto_imports_allowed_for_inferred_projects: bool,
+    /// Whether inferred projects should be checked as `module:none`.
+    pub(crate) inferred_module_is_none_for_projects: bool,
     /// Server mode
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
@@ -584,6 +589,7 @@ impl Server {
             checks_completed: 0,
             response_seq: 0,
             open_files: FxHashMap::default(),
+            external_project_files: FxHashMap::default(),
             completion_import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             organize_imports_type_order: None,
@@ -592,6 +598,7 @@ impl Server {
             auto_import_specifier_exclude_regexes: Vec::new(),
             allow_importing_ts_extensions: false,
             auto_imports_allowed_for_inferred_projects: true,
+            inferred_module_is_none_for_projects: false,
             _server_mode: server_mode,
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,
@@ -783,6 +790,7 @@ impl Server {
             "rename" | "rename-full" => self.handle_rename(seq, &request),
             "getCodeFixes" => self.handle_get_code_fixes(seq, &request),
             "getCombinedCodeFix" => self.handle_get_combined_code_fix(seq, &request),
+            "applyCodeActionCommand" => self.handle_apply_code_action_command(seq, &request),
             "getSupportedCodeFixes" => self.handle_get_supported_code_fixes(seq, &request),
             "getApplicableRefactors" => self.handle_get_applicable_refactors(seq, &request),
             "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
@@ -794,7 +802,7 @@ impl Server {
             "compilerOptionsForInferredProjects" => {
                 self.handle_compiler_options_for_inferred(seq, &request)
             }
-            "openExternalProject" | "closeExternalProject" => {
+            "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
                 self.handle_external_project(seq, &request)
             }
             "updateOpen" => self.handle_update_open(seq, &request),

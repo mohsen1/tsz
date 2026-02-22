@@ -204,6 +204,14 @@ fn test_format_no_double_semicolons() {
 }
 
 #[test]
+fn test_format_normalizes_as_operator_spacing() {
+    let source = "var x = 3   as  number;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert_eq!(formatted, "var x = 3 as number;\n");
+}
+
+#[test]
 fn test_format_tab_size_2() {
     let source = "function foo() {\nlet x = 1;\n}";
     let options = FormattingOptions {
@@ -397,6 +405,18 @@ fn test_format_arrow_function() {
 }
 
 #[test]
+fn test_format_pasted_class_member_spacing_matches_tsserver_shape() {
+    let source =
+        "namespace TestModule {\n class TestClass{\nprivate   foo;\npublic testMethod( )\n{}\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert_eq!(
+        formatted,
+        "namespace TestModule {\n    class TestClass {\n        private foo;\n        public testMethod() { }\n    }\n}\n"
+    );
+}
+
+#[test]
 fn test_format_multiline_import() {
     let source = "import { foo } from \"bar\";\n";
     let options = FormattingOptions::default();
@@ -405,4 +425,53 @@ fn test_format_multiline_import() {
         formatted.contains("import { foo } from \"bar\";"),
         "got: {formatted}"
     );
+}
+
+#[test]
+fn test_compute_line_edits_descending_order_preserves_markers_on_sequential_apply() {
+    fn position_to_offset(text: &str, position: Position) -> usize {
+        let mut line = 0u32;
+        let mut character = 0u32;
+        for (idx, ch) in text.char_indices() {
+            if line == position.line && character == position.character {
+                return idx;
+            }
+            if ch == '\n' {
+                line += 1;
+                character = 0;
+            } else {
+                character += 1;
+            }
+        }
+        if line == position.line && character == position.character {
+            return text.len();
+        }
+        panic!("invalid position: {position:?}");
+    }
+
+    let source = "class TestClass {\n    private testMethod1(param1: boolean,\n                        param2/*1*/: boolean) {\n    }\n\n    public testMethod2(a: number, b: number, c: number) {\n        if (a === b) {\n        }\n        else if (a != c &&\n                 a/*2*/ > b &&\n                 b/*3*/ < c) {\n        }\n\n    }\n}\n";
+    let options = FormattingOptions::default();
+    let edits = DocumentFormattingProvider::apply_basic_formatting(source, &options).unwrap();
+
+    assert!(!edits.is_empty());
+    for window in edits.windows(2) {
+        let current = &window[0].range.start;
+        let next = &window[1].range.start;
+        assert!(
+            current.line > next.line
+                || (current.line == next.line && current.character >= next.character),
+            "edits must be sorted descending: {edits:#?}"
+        );
+    }
+
+    let mut text = source.to_string();
+    for edit in edits {
+        let start = position_to_offset(&text, edit.range.start);
+        let end = position_to_offset(&text, edit.range.end);
+        text.replace_range(start..end, &edit.new_text);
+    }
+
+    assert!(text.contains("/*1*/"), "marker 1 was removed: {text}");
+    assert!(text.contains("/*2*/"), "marker 2 was removed: {text}");
+    assert!(text.contains("/*3*/"), "marker 3 was removed: {text}");
 }

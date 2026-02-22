@@ -7,7 +7,7 @@
 //!
 //! - CLI: `tsz check --sound`
 //! - tsconfig.json: `{ "compilerOptions": { "sound": true } }`
-//! - Per-file pragma: `// @ts-sound`
+//! - Per-file pragma: `// @tsz-sound`
 //!
 //! ## What Sound Mode Catches
 //!

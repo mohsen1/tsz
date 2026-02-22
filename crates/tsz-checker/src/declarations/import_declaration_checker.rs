@@ -1406,6 +1406,7 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .find_enclosing_scope(self.ctx.arena, binding_node_idx);
 
+                        // Check 1: merged declarations on the import's own symbol
                         has_conflict = sym.declarations.iter().any(|&decl_idx| {
                             if decl_idx == binding_node_idx
                                 || decl_idx == clause_idx
@@ -1454,6 +1455,47 @@ impl<'a> CheckerState<'a> {
                                 false
                             }
                         });
+
+                        // Check 2: separate symbols with the same name (binder may
+                        // create distinct symbols instead of merging declarations).
+                        if !has_conflict {
+                            let all_symbols = self.ctx.binder.symbols.find_all_by_name(&name);
+                            for other_sym_id in all_symbols {
+                                if other_sym_id == sym_id {
+                                    continue;
+                                }
+                                if let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) {
+                                    if (other_sym.flags & symbol_flags::VALUE) == 0 {
+                                        continue;
+                                    }
+                                    // Must have a declaration in the same scope
+                                    let decl_in_same_scope =
+                                        other_sym.declarations.iter().any(|&decl_idx| {
+                                            if let Some(import_scope_id) = import_scope {
+                                                self.ctx
+                                                    .binder
+                                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                                    == Some(import_scope_id)
+                                            } else {
+                                                true
+                                            }
+                                        });
+                                    if !decl_in_same_scope {
+                                        continue;
+                                    }
+                                    // Must be in the current file
+                                    let has_local_decl =
+                                        other_sym.declarations.iter().any(|&decl_idx| {
+                                            self.ctx.binder.node_symbols.get(&decl_idx.0)
+                                                == Some(&other_sym_id)
+                                        });
+                                    if has_local_decl {
+                                        has_conflict = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if has_conflict {

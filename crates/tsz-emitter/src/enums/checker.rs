@@ -73,8 +73,12 @@ impl<'a> EnumChecker<'a> {
         self.check_duplicate_members(&enum_data.members);
 
         // Check if this is a const enum
-        let is_const = self.is_const_enum(&enum_data.modifiers);
-        let is_ambient = self.is_ambient_enum(&enum_data.modifiers);
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+        let is_ambient = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword);
 
         // Evaluate enum values
         let mut evaluator = EnumEvaluator::new(self.arena);
@@ -98,7 +102,8 @@ impl<'a> EnumChecker<'a> {
                 continue;
             };
 
-            let member_name = self.get_member_name(member_data.name);
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             if member_name.is_empty() {
                 continue;
             }
@@ -135,7 +140,8 @@ impl<'a> EnumChecker<'a> {
                 continue;
             };
 
-            let member_name = self.get_member_name(member_data.name);
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             let has_initializer = member_data.initializer.is_some();
 
             // Get evaluated value
@@ -269,47 +275,6 @@ impl<'a> EnumChecker<'a> {
             // Everything else is invalid
             _ => false,
         }
-    }
-
-    /// Check if an enum has the const modifier
-    fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Check if an enum has the declare modifier (ambient)
-    fn is_ambient_enum(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Get member name from node
-    fn get_member_name(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
-            if let Some(lit) = self.arena.get_literal(node) {
-                return lit.text.clone();
-            }
-        }
-        String::new()
     }
 
     /// Get cached enum values for an enum declaration

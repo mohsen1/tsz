@@ -356,7 +356,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     if is_source_number {
                         // If target is the full Enum Type (e.g., `let x: E = 1`), allow it.
                         if self.subtype.resolver.is_enum_type(target, self.interner) {
-                            return Some(true);
+                            // Allow bare `number` type but not arbitrary literals
+                            if source == TypeId::NUMBER {
+                                return Some(true);
+                            }
+                            // For number literals, fall through to structural check
+                            return None;
                         }
 
                         // If target is a specific member (e.g., `let x: E.A = 1`),

@@ -893,6 +893,10 @@ impl<'a> CheckerState<'a> {
                         if !namespace_is_instantiated {
                             continue;
                         }
+                        // Skip if the namespace is ambient (`declare namespace`)
+                        if self.is_ambient_declaration(namespace_idx) {
+                            continue;
+                        }
                         if self.is_ambient_function_declaration(function_idx) {
                             continue;
                         }

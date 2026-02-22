@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tsz_common::position::{LineMap, Position, Range};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
@@ -93,29 +94,186 @@ pub fn find_nodes_in_range(arena: &NodeArena, start: u32, end: u32) -> Vec<NodeI
     result
 }
 
+/// Convert a node to an LSP Range using the line map.
+///
+/// Returns a zero-width range at (0,0) if the node index is invalid.
+pub fn node_range(
+    arena: &NodeArena,
+    line_map: &LineMap,
+    source_text: &str,
+    node_idx: NodeIndex,
+) -> Range {
+    if let Some(node) = arena.get(node_idx) {
+        let start = line_map.offset_to_position(node.pos, source_text);
+        let end = line_map.offset_to_position(node.end, source_text);
+        Range::new(start, end)
+    } else {
+        Range::new(Position::new(0, 0), Position::new(0, 0))
+    }
+}
+
+/// Get the text of an identifier node, or `None` if the node is not an identifier.
+pub fn identifier_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+    if node_idx.is_none() {
+        return None;
+    }
+    let node = arena.get(node_idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        arena.get_identifier(node).map(|id| id.escaped_text.clone())
+    } else {
+        None
+    }
+}
+
 /// Check whether a node is a valid symbol-query target for LSP symbol-resolution flows.
 /// This includes identifiers and keyword tokens (used for declaration keyword fallbacks).
 pub fn is_symbol_query_node(arena: &NodeArena, node: NodeIndex) -> bool {
-    let Some(node) = arena.get(node) else {
+    let Some(node_data) = arena.get(node) else {
         return false;
     };
 
-    if node.kind == SyntaxKind::Identifier as u16
-        || node.kind == SyntaxKind::PrivateIdentifier as u16
+    if node_data.kind == SyntaxKind::Identifier as u16
+        || node_data.kind == SyntaxKind::PrivateIdentifier as u16
+    {
+        return true;
+    }
+
+    if node_data.kind == SyntaxKind::StringLiteral as u16
+        && let Some(ext) = arena.get_extended(node)
+        && ext.parent.is_some()
+        && let Some(parent_node) = arena.get(ext.parent)
+        && (parent_node.kind == tsz_parser::syntax_kind_ext::IMPORT_SPECIFIER
+            || parent_node.kind == tsz_parser::syntax_kind_ext::EXPORT_SPECIFIER)
     {
         return true;
     }
 
     // Include tagged template span nodes so references can fall back to the tag symbol.
-    if node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        || node.kind == SyntaxKind::TemplateHead as u16
-        || node.kind == SyntaxKind::TemplateMiddle as u16
-        || node.kind == SyntaxKind::TemplateTail as u16
+    if node_data.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        || node_data.kind == SyntaxKind::TemplateHead as u16
+        || node_data.kind == SyntaxKind::TemplateMiddle as u16
+        || node_data.kind == SyntaxKind::TemplateTail as u16
     {
         return true;
     }
 
-    node.kind >= SyntaxKind::BreakKeyword as u16 && node.kind <= SyntaxKind::DeferKeyword as u16
+    node_data.kind >= SyntaxKind::BreakKeyword as u16
+        && node_data.kind <= SyntaxKind::DeferKeyword as u16
+}
+
+/// Search backward from `offset` (up to 256 chars or newline) for the nearest
+/// symbol-query node.  Returns `None` if no identifier/keyword is found.
+pub fn find_symbol_query_node_at_or_before(
+    arena: &NodeArena,
+    source_text: &str,
+    offset: u32,
+) -> Option<NodeIndex> {
+    let mut probe = offset.min(source_text.len() as u32);
+    let bytes = source_text.as_bytes();
+    let mut remaining = 256u32;
+
+    while probe > 0 && remaining > 0 {
+        probe -= 1;
+        remaining -= 1;
+
+        let candidate = find_node_at_or_before_offset(arena, probe, source_text);
+        if candidate.is_some() && is_symbol_query_node(arena, candidate) {
+            return Some(candidate);
+        }
+
+        let ch = bytes[probe as usize];
+        if ch == b'\n' || ch == b'\r' {
+            break;
+        }
+    }
+
+    None
+}
+
+/// Heuristic: is the cursor sitting inside (or immediately adjacent to) a comment?
+pub fn is_comment_context(source_text: &str, offset: u32) -> bool {
+    let bytes = source_text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let idx = (offset as usize).min(bytes.len());
+
+    if idx > 0 {
+        let prev = bytes[idx - 1];
+        if prev == b'/' || prev == b'*' {
+            return true;
+        }
+    }
+    if idx < bytes.len() {
+        let current = bytes[idx];
+        if current == b'/' || current == b'*' {
+            return true;
+        }
+    }
+
+    let prefix = &source_text[..idx];
+    if let Some(start) = prefix.rfind("/*")
+        && prefix[start + 2..].rfind("*/").is_none()
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Heuristic: the cursor is at the end of an identifier token (i.e. previous
+/// char is word-like, current char is not), so the user likely wants the
+/// symbol immediately before the cursor.
+pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bool {
+    let bytes = source_text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let idx = (offset as usize).min(bytes.len());
+    if idx == 0 {
+        return false;
+    }
+
+    let prev = bytes[idx - 1];
+    if !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$') {
+        return false;
+    }
+
+    if idx >= bytes.len() {
+        return true;
+    }
+
+    let current = bytes[idx];
+    !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
+}
+
+/// Check if a node is the `import` keyword (for dynamic import expressions).
+pub fn is_import_keyword(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    if node_idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    node.kind == SyntaxKind::ImportKeyword as u16
+}
+
+/// Check if a node is a `require` identifier.
+pub fn is_require_identifier(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    if node_idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    if node.kind != SyntaxKind::Identifier as u16 {
+        return false;
+    }
+    let Some(ident_data) = arena.get_identifier(node) else {
+        return false;
+    };
+    ident_data.escaped_text == "require"
 }
 
 /// Calculate the new relative path for an import statement after a file rename.

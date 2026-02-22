@@ -20,6 +20,7 @@ pub mod flags;
 pub mod node;
 mod node_access;
 mod node_arena;
+mod node_modifiers;
 pub mod parse_rules;
 pub(crate) mod spelling;
 pub mod state;

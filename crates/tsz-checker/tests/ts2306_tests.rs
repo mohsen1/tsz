@@ -40,7 +40,11 @@ fn test_ts2306_emitted_for_non_module_import() {
         binder_a.as_ref(),
         &types,
         "a.ts".to_string(),
-        CheckerOptions::default(),
+        CheckerOptions {
+            // Enable side-effect import checking so the import is actually verified
+            no_unchecked_side_effect_imports: true,
+            ..CheckerOptions::default()
+        },
     );
     setup_lib_contexts(&mut checker);
 

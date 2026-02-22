@@ -56,7 +56,7 @@ use crate::types::{
 };
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tracing::debug;
 
@@ -174,6 +174,9 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub(crate) constraint_step_count: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
     pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
+    /// Memoized fixed members for target union types during one inference pass.
+    /// Keyed by the union `TypeId` used as the target in constrain-types.
+    pub(crate) constraint_fixed_union_members: RefCell<FxHashMap<TypeId, FxHashSet<TypeId>>>,
     /// After a generic call resolves, holds the instantiated type predicate (if any).
     /// This lets the checker retrieve the predicate with inferred type arguments applied.
     pub last_instantiated_predicate: Option<(TypePredicate, Vec<ParamInfo>)>,
@@ -191,6 +194,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             constraint_recursion_depth: RefCell::new(0),
             constraint_step_count: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
+            constraint_fixed_union_members: RefCell::new(FxHashMap::default()),
             last_instantiated_predicate: None,
         }
     }

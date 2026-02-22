@@ -75,7 +75,10 @@ impl<'a> EnumES5Transformer<'a> {
         let enum_data = self.arena.get_enum(enum_node)?;
 
         // Check for const enum - erase by default (preserveConstEnums not yet supported)
-        if self.is_const_enum(&enum_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        {
             return None;
         }
 
@@ -142,7 +145,8 @@ impl<'a> EnumES5Transformer<'a> {
         let Some(enum_data) = self.arena.get_enum(enum_node) else {
             return false;
         };
-        self.is_const_enum(&enum_data.modifiers)
+        self.arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
     }
 
     /// Transform enum members to IR statements
@@ -157,7 +161,8 @@ impl<'a> EnumES5Transformer<'a> {
                 continue;
             };
 
-            let member_name = self.get_member_name(member_data.name);
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             let has_initializer = member_data.initializer.is_some();
 
             let stmt = if has_initializer {
@@ -411,19 +416,6 @@ impl<'a> EnumES5Transformer<'a> {
         .to_string()
     }
 
-    fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// Try to evaluate a constant expression to its numeric value
     /// Returns None if the expression can't be statically evaluated
     fn evaluate_constant_expression(&self, idx: NodeIndex) -> Option<i64> {
@@ -489,25 +481,7 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node)
-        {
-            return ident.escaped_text.clone();
-        }
-        String::new()
-    }
-
-    fn get_member_name(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            // Can be identifier or string literal for computed names
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
-            if let Some(lit) = self.arena.get_literal(node) {
-                return lit.text.clone();
-            }
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 }
 

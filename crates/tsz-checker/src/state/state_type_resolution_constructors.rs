@@ -11,6 +11,14 @@ use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[inline]
+const fn should_cache_base_expr_result(
+    type_argument_count: usize,
+    has_active_type_parameter_scope: bool,
+) -> bool {
+    type_argument_count == 0 && !has_active_type_parameter_scope
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn apply_type_arguments_to_constructor_type(
         &mut self,
@@ -247,6 +255,22 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         type_arguments: Option<&NodeList>,
     ) -> Option<TypeId> {
+        let type_argument_count = type_arguments.map_or(0, |args| args.nodes.len());
+        let should_cache = should_cache_base_expr_result(
+            type_argument_count,
+            !self.ctx.type_parameter_scope.is_empty(),
+        );
+        if should_cache
+            && let Some(cached) = self
+                .ctx
+                .base_constructor_expr_cache
+                .borrow()
+                .get(&expr_idx)
+                .copied()
+        {
+            return cached;
+        }
+
         if let Some(name) = self.heritage_name_text(expr_idx) {
             // Filter out primitive types and literals that cannot be used in class extends
             if matches!(
@@ -263,6 +287,12 @@ impl<'a> CheckerState<'a> {
                     | "unknown"
                     | "any"
             ) {
+                if should_cache {
+                    self.ctx
+                        .base_constructor_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, None);
+                }
                 return None;
             }
         }
@@ -277,7 +307,20 @@ impl<'a> CheckerState<'a> {
         tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
             if evaluated_type == TypeId::NULL {
-                return Some(TypeId::NULL);
+                let null_ctor = Some(TypeId::NULL);
+                if should_cache {
+                    self.ctx
+                        .base_constructor_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, null_ctor);
+                }
+                return null_ctor;
+            }
+            if should_cache {
+                self.ctx
+                    .base_constructor_expr_cache
+                    .borrow_mut()
+                    .insert(expr_idx, None);
             }
             return None;
         }
@@ -287,7 +330,15 @@ impl<'a> CheckerState<'a> {
             let factory = self.ctx.types.factory();
             factory.intersection(ctor_types)
         };
-        Some(self.apply_type_arguments_to_constructor_type(ctor_type, type_arguments))
+        let resolved =
+            Some(self.apply_type_arguments_to_constructor_type(ctor_type, type_arguments));
+        if should_cache {
+            self.ctx
+                .base_constructor_expr_cache
+                .borrow_mut()
+                .insert(expr_idx, resolved);
+        }
+        resolved
     }
 
     pub(crate) fn constructor_types_from_type(&mut self, type_id: TypeId) -> Vec<TypeId> {
@@ -445,8 +496,31 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         type_arguments: Option<&NodeList>,
     ) -> Option<TypeId> {
+        let type_argument_count = type_arguments.map_or(0, |args| args.nodes.len());
+        let should_cache = should_cache_base_expr_result(
+            type_argument_count,
+            !self.ctx.type_parameter_scope.is_empty(),
+        );
+        if should_cache
+            && let Some(cached) = self
+                .ctx
+                .base_instance_expr_cache
+                .borrow()
+                .get(&expr_idx)
+                .copied()
+        {
+            return cached;
+        }
+
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
-        self.instance_type_from_constructor_type(ctor_type)
+        let resolved = self.instance_type_from_constructor_type(ctor_type);
+        if should_cache {
+            self.ctx
+                .base_instance_expr_cache
+                .borrow_mut()
+                .insert(expr_idx, resolved);
+        }
+        resolved
     }
 
     pub(crate) fn merge_constructor_properties_from_type(
@@ -777,5 +851,18 @@ impl<'a> CheckerState<'a> {
 
         // Class is transparent - return the type parameter
         Some(base_type_param)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_cache_base_expr_result;
+
+    #[test]
+    fn base_expr_cache_predicate_only_caches_non_generic_paths() {
+        assert!(should_cache_base_expr_result(0, false));
+        assert!(!should_cache_base_expr_result(0, true));
+        assert!(!should_cache_base_expr_result(1, false));
+        assert!(!should_cache_base_expr_result(3, false));
     }
 }

@@ -203,15 +203,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Stop at function/arrow boundaries - parameters are only at the top level
-                if matches!(parent_node.kind,
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION ||
-                         k == syntax_kind_ext::FUNCTION_EXPRESSION ||
-                         k == syntax_kind_ext::ARROW_FUNCTION ||
-                         k == syntax_kind_ext::METHOD_DECLARATION ||
-                         k == syntax_kind_ext::CONSTRUCTOR ||
-                         k == syntax_kind_ext::GET_ACCESSOR ||
-                         k == syntax_kind_ext::SET_ACCESSOR
-                ) {
+                if parent_node.is_function_like() {
                     return false;
                 }
             }
@@ -437,15 +429,7 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check if we're inside a function-like or source-file container scope
-                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SOURCE_FILE
-                {
+                if node.is_function_like() || node.kind == syntax_kind_ext::SOURCE_FILE {
                     found_container_scope = true;
                     break;
                 }
@@ -473,14 +457,7 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::SOURCE_FILE {
                 return true;
             }
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::CONSTRUCTOR
-                || node.kind == syntax_kind_ext::GET_ACCESSOR
-                || node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
+            if node.is_function_like() {
                 return false;
             }
             let Some(next) = self.ctx.arena.node_info(current).map(|n| n.parent) else {
@@ -504,14 +481,7 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 return false;
             };
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::CONSTRUCTOR
-                || node.kind == syntax_kind_ext::GET_ACCESSOR
-                || node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
+            if node.is_function_like() {
                 return true;
             }
             if node.kind == syntax_kind_ext::SOURCE_FILE {
@@ -639,12 +609,32 @@ impl<'a> CheckerState<'a> {
     /// This performs flow-sensitive analysis to determine if a variable
     /// has been assigned on all code paths leading to the usage point.
     pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
-        // Get the flow node for this identifier usage
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => {
-                tracing::debug!("No flow info for {idx:?}");
-                return true;
+        // Get the flow node for this identifier usage.
+        // Identifier reference nodes (e.g., `a` in `console.log(a)`) typically
+        // don't have direct flow nodes recorded — the binder only records flow
+        // for statements and declarations. Walk up the AST to find the nearest
+        // ancestor with a flow node, mirroring `apply_flow_narrowing`'s fallback.
+        let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
+            flow
+        } else {
+            let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            let mut found = None;
+            while let Some(parent) = current {
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                    found = Some(flow);
+                    break;
+                }
+                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            }
+            match found {
+                Some(flow) => flow,
+                None => {
+                    tracing::debug!("No flow info for {idx:?} or its ancestors");
+                    return true;
+                }
             }
         };
 
@@ -1092,16 +1082,7 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::parser::NodeArena,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx)
-                    && mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        arena.has_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a node is in a type-only context (type annotation, type query, heritage clause).

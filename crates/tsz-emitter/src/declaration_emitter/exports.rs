@@ -218,7 +218,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         self.write("export default ");
@@ -377,7 +379,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         if !self.inside_declare_namespace {
@@ -831,7 +835,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&module.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_module(is_exported) {
             return;
         }
@@ -911,7 +917,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&import_eq.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&import_eq.modifiers, SyntaxKind::ExportKeyword);
         let is_public_exported = is_exported && !already_exported;
 
         // Only write indent if not already exported (caller handles indent for exported case)
@@ -1105,9 +1113,9 @@ impl<'a> DeclarationEmitter<'a> {
                     match mod_node.kind {
                         // In constructor parameters, strip accessibility and readonly modifiers
                         k if k == SyntaxKind::PublicKeyword as u16 => {
-                            if !self.in_constructor_params {
-                                self.write("public ");
-                            }
+                            // In .d.ts files, `public` is the default and is omitted by tsc.
+                            // Only emit it for constructor parameter properties
+                            // (which is handled separately and already skips it).
                         }
                         k if k == SyntaxKind::PrivateKeyword as u16 => {
                             if !self.in_constructor_params {
