@@ -196,6 +196,33 @@ const bad: number = options?.nested?.flags?.safe ?? false;
 }
 
 #[test]
+fn test_class_extends_inherits_instance_members_via_symbol_path() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    value!: T;
+}
+
+class Mid<T> extends Base<T> {}
+
+class Derived extends Mid<string> {}
+
+const ok: string = new Derived().value;
+const bad: number = new Derived().value;
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning inherited string member to number.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect circular-base TS2506 in linear inheritance.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_constrained_type_param_no_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
