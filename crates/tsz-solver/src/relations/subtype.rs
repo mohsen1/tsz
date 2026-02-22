@@ -524,10 +524,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
-                // DEBUG LOGGING
-                // println!("source: {:?}, target member: {:?}, source_members: {:?}, i_list: {:?}, contains: {}",
-                //          self.interner.lookup(source), self.interner.lookup(member), source_members, i_list, contains_all);
-
                 if contains_all {
                     let mut rem = Vec::new();
                     for &i_m in i_list.iter() {
@@ -544,7 +540,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if all_contain_source && !factored_members.is_empty() {
                 let factored_target = self.interner.union(factored_members);
-                // println!("ALL CONTAIN SOURCE! checking subtype against factored target: {:?}", self.interner.lookup(factored_target));
                 if self.check_subtype(source, factored_target).is_true() {
                     return SubtypeResult::True;
                 }
