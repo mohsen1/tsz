@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 876/1193 = 73.4% JS, 39/88 = 44.3% DTS)
+## Pattern Analysis (JS+DTS mode, current 5056/7163 = 70.6% JS, 415/1036 = 40.1% DTS)
 
 ### Fixed This Session
+- **Hoisted CJS exports for `export { f }` referencing function declarations** (+2 JS):
+  When `export { f }` re-exports a locally-declared function, tsc emits `exports.f = f;` in
+  the CJS preamble (before the function body) because JS function declarations are hoisted.
+  tsz was categorizing these as non-function exports, producing `exports.f = void 0;` plus
+  a duplicate `exports.f = f;` after. Three changes: (1) `collect_export_names_categorized`
+  now resolves named export specifiers back to their declarations — if the local name matches
+  a function declaration, it's categorized as hoisted. (2) `ModuleTransformState` gains
+  `hoisted_func_exports` to track preamble-emitted names. (3) The `NAMED_EXPORTS` inline
+  handler skips specifiers in `hoisted_func_exports` to prevent duplicate emission.
+  Two unit tests added.
+  Tests fixed: `assertionFunctionWildcardImport2`, `exportRedeclarationTypeAliases`.
+  JS: 5054 → 5056, DTS unchanged, zero regressions.
+  Note: ~46 other baselines have this hoisted function export pattern but still fail due
+  to overlapping issues (missing helpers, other export ordering issues, ambient re-exports).
+
+### Previously Fixed
 - **Unterminated template literal emission preserves source verbatim** (+5 JS):
   tsc preserves unterminated template literals verbatim in emitted JS — no closing backtick
   is added when the source doesn't have one (error recovery). tsz was always writing a closing
