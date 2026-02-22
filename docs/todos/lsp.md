@@ -33,3 +33,7 @@ Investigated but punted:
   Reason: likely requires tracing interaction between node_modules package-specifier logic and `paths` wildcard resolution in this mixed config shape.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: missing `parent` class-member snippet completion in export-equals/default-merged class hierarchy.
   Reason: requires ClassMemberSnippet parity work (inheritance-aware snippet generation + completion details/code-action shaping) beyond this targeted auto-import metadata fix.
+- `TypeScript/tests/cases/fourslash/autoImportJsDocImport1.ts`: still returns `Expected 1 import fixes, got 8`.
+  Reason: tracked through tsserver-side import-fix shaping and added local handler experiments, but fourslash bridge path still fans out multiple import candidates; requires deeper bridge/request tracing and likely completion/code-fix pipeline alignment rather than a small isolated patch.
+- `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: still returns `Expected 'isNewIdentifierLocation' to be false, got true`.
+  Reason: quick tsserver-side flag override caused regressions in other auto-import completion tests (`isNewIdentifierLocation` expected true), so the robust fix needs context-sensitive parity logic in completion source selection.
