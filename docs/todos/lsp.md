@@ -312,3 +312,18 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `31`: expected `(parameter) i: number`, got `(parameter) i: any`).
   Reason: remaining gap is tsserver quickinfo contextual parameter typing for function-expression parameters inside contextually typed object-literal property assignments, which needs a follow-up in quickinfo parameter-type extraction/bridge logic beyond this targeted property-name hover parity patch.
+
+## 2026-02-22 (autoImportTypeOnlyPreferred3 TS2503 follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred3.ts` marker `e` by enabling missing-import quick-fix generation for `TS2503` (`Cannot find namespace`) in `crates/tsz-lsp/src/code_actions/code_action_imports.rs`.
+- Extended diagnostics-driven import candidate collection to include `TS2503` and added targeted handling for `export * as default from "..."` namespace re-export defaults in `crates/tsz-lsp/src/project/imports.rs`.
+- Prevented duplicate import quick-fixes caused by duplicate diagnostics by deduping diagnostics in tsserver `getCodeFixes` (`crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`).
+- Added focused unit tests:
+  - `crates/tsz-lsp/src/project/imports.rs` (`diagnostics_import_candidates_include_default_from_export_star_as_default`)
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` (`handle_get_code_fixes_missing_namespace_type_only_default_import`)
+- Verified targeted fourslash parity with `./scripts/run-fourslash.sh --filter=autoImportTypeOnlyPreferred3 --verbose` (now passing).
+- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: improved from `187/200` to `188/200` passing in this run.
+
+Investigated but punted:
+- None in this pass.

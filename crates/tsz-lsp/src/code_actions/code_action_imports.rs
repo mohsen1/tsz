@@ -1334,7 +1334,9 @@ impl<'a> CodeActionProvider<'a> {
             Some(code) => code,
             None => return Vec::new(),
         };
-        if code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME {
+        if code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+            && code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE
+        {
             return Vec::new();
         }
 

@@ -159,6 +159,9 @@ impl Server {
             {
                 diagnostics.push(diag);
             }
+            let mut seen_diags = rustc_hash::FxHashSet::default();
+            diagnostics
+                .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
             let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .into_iter()
@@ -5164,6 +5167,177 @@ mod tests {
         assert_eq!(
             updated,
             "import { A, type B } from \"./a\";\n\nnew A();\nlet x: B;\n"
+        );
+    }
+
+    #[test]
+    fn handle_get_code_fixes_missing_namespace_type_only_default_import() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/tsconfig.json".to_string(),
+            "{\n  \"compilerOptions\": {\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\"\n  }\n}\n".to_string(),
+        );
+        server
+            .open_files
+            .insert("/a.ts".to_string(), "export class A {}\n".to_string());
+        server.open_files.insert(
+            "/ns.ts".to_string(),
+            "export * as default from \"./a\";\n".to_string(),
+        );
+        let original = "let x: ns.A;\n";
+        server
+            .open_files
+            .insert("/e.ts".to_string(), original.to_string());
+
+        let diag_req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "semanticDiagnosticsSync".to_string(),
+            arguments: serde_json::json!({
+                "file": "/e.ts",
+                "includeLinePosition": true
+            }),
+        };
+        let diag_resp = server.handle_semantic_diagnostics_sync(1, &diag_req);
+        assert!(
+            diag_resp.success,
+            "expected semanticDiagnosticsSync to succeed"
+        );
+
+        let namespace_diag = diag_resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .and_then(|diags| {
+                diags.iter().find(|diag| {
+                    diag.get("code")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|code| code as u32)
+                        == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE)
+                })
+            })
+            .cloned()
+            .expect("expected cannot-find-namespace diagnostic");
+
+        let (start_line, start_offset, end_line, end_offset) =
+            if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
+                namespace_diag
+                    .get("start")
+                    .and_then(|start| start.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                namespace_diag
+                    .get("start")
+                    .and_then(|start| start.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+                namespace_diag
+                    .get("end")
+                    .and_then(|end| end.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                namespace_diag
+                    .get("end")
+                    .and_then(|end| end.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+            ) {
+                (
+                    start_line as u32,
+                    start_offset as u32,
+                    end_line as u32,
+                    end_offset as u32,
+                )
+            } else {
+                let line_map = super::LineMap::build(original);
+                let start_off = namespace_diag
+                    .get("start")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic start offset") as u32;
+                let length = namespace_diag
+                    .get("length")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic length") as u32;
+                let start = line_map.offset_to_position(start_off, original);
+                let end = line_map.offset_to_position(start_off + length, original);
+                (
+                    start.line + 1,
+                    start.character + 1,
+                    end.line + 1,
+                    end.character + 1,
+                )
+            };
+
+        let req = TsServerRequest {
+            seq: 2,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/e.ts",
+                "startLine": start_line,
+                "startOffset": start_offset,
+                "endLine": end_line,
+                "endOffset": end_offset,
+                "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE],
+                "preferences": {
+                    "preferTypeOnlyAutoImports": true
+                }
+            }),
+        };
+        let resp = server.handle_get_code_fixes(2, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+
+        let actions = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected actions array");
+        let import_text = actions
+            .iter()
+            .find(|action| {
+                action.get("fixName").and_then(serde_json::Value::as_str) == Some("import")
+            })
+            .and_then(|action| action.get("changes"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|changes| changes.first())
+            .and_then(|change| change.get("textChanges"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|text_changes| text_changes.first())
+            .and_then(|text_change| text_change.get("newText"))
+            .and_then(serde_json::Value::as_str)
+            .expect("expected import code fix text change");
+
+        assert!(
+            import_text.contains("import type ns from \"./ns\";"),
+            "expected type-only default namespace import edit, got: {import_text}"
+        );
+
+        // Fourslash `importFixAtPosition` probes a point location; ensure we
+        // still surface the namespace import fix when no explicit error code is supplied.
+        let point_req = TsServerRequest {
+            seq: 3,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/e.ts",
+                "startLine": start_line,
+                "startOffset": start_offset,
+                "endLine": start_line,
+                "endOffset": start_offset,
+                "preferences": {
+                    "preferTypeOnlyAutoImports": true
+                }
+            }),
+        };
+        let point_resp = server.handle_get_code_fixes(3, &point_req);
+        assert!(point_resp.success, "expected point getCodeFixes to succeed");
+        let point_actions = point_resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected point actions array");
+        assert!(
+            point_actions.iter().any(|action| action
+                .get("fixName")
+                .and_then(serde_json::Value::as_str)
+                == Some("import")),
+            "expected point-position request to return import fix, got: {point_actions:?}"
         );
     }
 
