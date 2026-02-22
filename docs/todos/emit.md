@@ -1,8 +1,19 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS-only mode, current 9239/13623 = 67.8%)
+## Pattern Analysis (JS+DTS mode, current 9228/13623 = 67.7% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **Deduplicate overloaded function exports in CommonJS** (+4 JS tests):
+  Overloaded functions produce multiple `FUNCTION_DECLARATION` AST nodes (one per
+  overload signature + implementation). `collect_export_names` and
+  `collect_export_names_categorized` in `module_commonjs.rs` pushed the name for
+  each declaration without dedup, causing repeated `exports.X = X;` lines.
+  Fixed by adding `!exports.contains(&name)` / `!func_exports.contains(&name)` guards
+  in all three collection paths (direct function, wrapped export-declaration function,
+  and `collect_export_name_from_declaration` helper).
+  Results: JS 9224→9228, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **"use strict" emission fixes + CLI Preserve mapping** (+17 JS, +1 DTS tests):
   Three targeted fixes:
   1. `args.rs`: `Self::Preserve` was incorrectly mapped to `ModuleKind::ESNext` instead of
@@ -69,6 +80,9 @@
 
 ### Investigated but Deferred (this session)
 
+- **Remaining duplicate-export affected tests (~90)**: The overload dedup fix resolves the duplicate `exports.X = X;` issue, but ~90 tests that had this as one of multiple issues remain failing due to other causes (missing helpers, wrong comment placement, module transform gaps). No action needed on the dedup side; remaining failures need other fixes.
+- **`exports.default` ordering (~19 tests)**: tsc emits `exports.default = X;` in the preamble (before the function), but tsz emits it after the function body. Requires reordering default export assignment in the CommonJS preamble emission path.
+- **Missing `exports.X = X;` for scoped declarations (~42 tests)**: tsc emits `exports.X = X;` for class/function exports declared inside nested scopes (e.g., conditionals, namespaces). The export collector only scans top-level statements, missing these. Would need deeper AST traversal or a different approach.
 - `ambientModuleDeclarationWithReservedIdentifierInDottedPath` / `ambientModuleDeclarationWithReservedIdentifierInDottedPath2`: ambient dotted module declarations now still emit wrong declaration shapes when mixed with declaration emit filtering; requires namespace/ambient-module emitter refactor, so deferred for later session.
 - `abstractPropertyInitializer` / `abstractPropertyDeclaration`: DTS accessor parity still regresses on mixed abstract/private getter/setter edge cases; we fixed only private setter parameter naming and deferred broader declaration-transform compatibility work.
 - `accessor*` and `private*` DTS test filters: remaining failures appear to require cross-module declaration helper/mapping changes, which is outside the smallest emitter-only fix scope for this pass.
