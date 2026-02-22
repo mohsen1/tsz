@@ -878,30 +878,37 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // Check for removed compiler options (TS5102)
         // These options were deprecated in TS 5.0 and removed in TS 5.5/6.0.
+        // When ignoreDeprecations is set to "5.0", suppress TS5102 (tsc behavior).
+        let ignore_deprecations_valid = matches!(
+            compiler_opts.get("ignoreDeprecations"),
+            Some(serde_json::Value::String(v)) if v == "5.0"
+        );
         let mut removed_keys: Vec<String> = Vec::new();
         for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
             if removed_compiler_option(&key).is_some() {
-                let value = compiler_opts.get(&key);
-                // Only emit TS5102 if the option is actually set (non-null, non-default)
-                let is_set = match value {
-                    Some(serde_json::Value::Bool(b)) => *b,
-                    Some(serde_json::Value::String(s)) => !s.is_empty(),
-                    Some(serde_json::Value::Null) | None => false,
-                    Some(_) => true,
-                };
-                if is_set {
-                    let start = find_key_offset_in_source(&stripped, &key);
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                        &[&key],
-                    );
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        key.len() as u32 + 2, // include quotes
-                        msg,
-                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                    ));
+                if !ignore_deprecations_valid {
+                    let value = compiler_opts.get(&key);
+                    // Only emit TS5102 if the option is actually set (non-null, non-default)
+                    let is_set = match value {
+                        Some(serde_json::Value::Bool(b)) => *b,
+                        Some(serde_json::Value::String(s)) => !s.is_empty(),
+                        Some(serde_json::Value::Null) | None => false,
+                        Some(_) => true,
+                    };
+                    if is_set {
+                        let start = find_key_offset_in_source(&stripped, &key);
+                        let msg = format_message(
+                            diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                            &[&key],
+                        );
+                        diagnostics.push(Diagnostic::error(
+                            file_path,
+                            start,
+                            key.len() as u32 + 2, // include quotes
+                            msg,
+                            diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                        ));
+                    }
                 }
                 removed_keys.push(key);
             }
@@ -955,7 +962,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // Only "5.0" is currently accepted as a valid value.
+        // Only "5.0" is accepted as a valid value (tsc 6.0 does not accept "6.0").
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
         {
@@ -2511,6 +2518,36 @@ mod tests {
         assert!(
             codes.contains(&5102),
             "Expected TS5102 for removed option importsNotUsedAsValues, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5102_suppressed_with_ignore_deprecations() {
+        // When ignoreDeprecations: "5.0" is set, tsc suppresses TS5102 for removed options
+        let source =
+            r#"{"compilerOptions":{"ignoreDeprecations":"5.0","noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5102),
+            "Should NOT emit TS5102 when ignoreDeprecations is '5.0', got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5102_not_suppressed_with_invalid_ignore_deprecations() {
+        // Invalid ignoreDeprecations value should NOT suppress TS5102
+        let source =
+            r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5102),
+            "Should emit TS5102 when ignoreDeprecations is invalid, got: {codes:?}"
+        );
+        assert!(
+            codes.contains(&5103),
+            "Should also emit TS5103 for invalid ignoreDeprecations, got: {codes:?}"
         );
     }
 
