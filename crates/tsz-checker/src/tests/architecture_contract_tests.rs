@@ -476,51 +476,63 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 
 #[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
-    let source = fs::read_to_string("src/assignability_checker.rs")
+    let assignability_source = fs::read_to_string("src/assignability_checker.rs")
         .expect("failed to read src/assignability_checker.rs for architecture guard");
+    let subtype_source = fs::read_to_string("src/subtype_identity_checker.rs")
+        .expect("failed to read src/subtype_identity_checker.rs for architecture guard");
 
+    // Neither file should use the raw query_relation helpers
+    for (name, source) in [
+        ("assignability_checker", assignability_source.as_str()),
+        ("subtype_identity_checker", subtype_source.as_str()),
+    ] {
+        assert!(
+            !source.contains("query_relation_with_overrides("),
+            "{name} should route compatibility checks through query_boundaries/assignability helpers"
+        );
+        assert!(
+            !source.contains("query_relation_with_resolver("),
+            "{name} should route subtype/redecl checks through query_boundaries/assignability helpers"
+        );
+    }
+
+    // Assignability helpers live in assignability_checker
     assert!(
-        !source.contains("query_relation_with_overrides("),
-        "assignability_checker should route compatibility checks through query_boundaries/assignability helpers"
-    );
-    assert!(
-        !source.contains("query_relation_with_resolver("),
-        "assignability_checker should route subtype/redecl checks through query_boundaries/assignability helpers"
-    );
-    assert!(
-        source.contains("is_assignable_with_overrides("),
+        assignability_source.contains("is_assignable_with_overrides("),
         "assignability_checker should use query_boundaries::assignability::is_assignable_with_overrides"
     );
     assert!(
-        source.contains("is_assignable_with_resolver("),
-        "assignability_checker should use query_boundaries::assignability::is_assignable_with_resolver"
-    );
-    assert!(
-        source.contains("is_assignable_bivariant_with_resolver("),
+        assignability_source.contains("is_assignable_bivariant_with_resolver("),
         "assignability_checker should use query_boundaries::assignability::is_assignable_bivariant_with_resolver"
     );
+
+    // Subtype/redecl/union helpers live in subtype_identity_checker
     assert!(
-        source.contains("is_subtype_with_resolver("),
-        "assignability_checker should use query_boundaries::assignability::is_subtype_with_resolver"
+        subtype_source.contains("is_subtype_with_resolver("),
+        "subtype_identity_checker should use query_boundaries::assignability::is_subtype_with_resolver"
     );
     assert!(
-        source.contains("is_redeclaration_identical_with_resolver("),
-        "assignability_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
+        subtype_source.contains("is_redeclaration_identical_with_resolver("),
+        "subtype_identity_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
+    );
+    assert!(
+        subtype_source.contains("is_assignable_with_resolver("),
+        "subtype_identity_checker should use query_boundaries::assignability::is_assignable_with_resolver for union checks"
     );
 }
 
 #[test]
 fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
-    let source = fs::read_to_string("src/assignability_checker.rs")
-        .expect("failed to read src/assignability_checker.rs for architecture guard");
+    let source = fs::read_to_string("src/subtype_identity_checker.rs")
+        .expect("failed to read src/subtype_identity_checker.rs for architecture guard");
 
     let subtype_start = source
         .find("pub fn is_subtype_of(")
-        .expect("missing is_subtype_of in assignability_checker");
+        .expect("missing is_subtype_of in subtype_identity_checker");
     let subtype_end = source[subtype_start..]
         .find("pub fn is_subtype_of_with_env(")
         .map(|offset| subtype_start + offset)
-        .expect("missing is_subtype_of_with_env in assignability_checker");
+        .expect("missing is_subtype_of_with_env in subtype_identity_checker");
     let subtype_src = &source[subtype_start..subtype_end];
 
     let ensure_apps_pos = subtype_src

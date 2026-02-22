@@ -39,6 +39,7 @@ pub mod property_checker;
 mod query_boundaries;
 pub mod signature_builder;
 pub mod statements;
+pub mod subtype_identity_checker;
 pub mod triple_slash_validator;
 
 #[path = "classes/mod.rs"]
