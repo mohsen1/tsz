@@ -2,7 +2,7 @@
 //!
 //! These [`TypeVisitor`] implementations extract specific type information
 //! (return types, parameter types, property types, etc.) from contextual types.
-//! They are used by [`super::contextual::ContextualTypeContext`] to implement
+//! They are used by [`super::ContextualTypeContext`] to implement
 //! bidirectional type inference.
 
 use crate::TypeDatabase;
