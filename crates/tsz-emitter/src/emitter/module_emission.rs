@@ -1910,6 +1910,10 @@ impl<'a> Printer<'a> {
     /// including type-only imports/exports, declared exports, and exported
     /// interfaces/type aliases.
     pub(super) fn file_is_module(&self, statements: &NodeList) -> bool {
+        // moduleDetection=force: treat all non-declaration files as modules
+        if self.ctx.options.module_detection_force {
+            return true;
+        }
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
@@ -2179,6 +2183,11 @@ impl<'a> Printer<'a> {
             return false;
         }
 
+        // moduleDetection=force: treat all non-declaration files as modules
+        if self.ctx.options.module_detection_force {
+            return true;
+        }
+
         // Second check: look for ANY module syntax (including type-only)
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
@@ -2272,5 +2281,86 @@ impl<'a> Printer<'a> {
         } else {
             self.write("const ");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+    use tsz_parser::ParserState;
+
+    /// When moduleDetection=force, a file without any import/export syntax
+    /// should still be treated as a module and get the CJS __esModule preamble.
+    #[test]
+    fn module_detection_force_emits_esmodule_marker() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("Object.defineProperty(exports, \"__esModule\""),
+            "moduleDetection=force should emit __esModule marker for non-module file.\nOutput:\n{output}"
+        );
+    }
+
+    /// Without moduleDetection=force, a file without import/export syntax
+    /// should NOT get the CJS __esModule preamble.
+    #[test]
+    fn no_module_detection_force_skips_esmodule_marker() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: false,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("__esModule"),
+            "Without moduleDetection=force, non-module file should NOT get __esModule.\nOutput:\n{output}"
+        );
+    }
+
+    /// moduleDetection=force should also cause "use strict" to be emitted
+    /// for CJS modules (since the file is now treated as a module).
+    #[test]
+    fn module_detection_force_emits_use_strict_for_cjs() {
+        let source = r#"console.log("hello");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            module_detection_force: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"use strict\""),
+            "moduleDetection=force with CJS should emit \"use strict\".\nOutput:\n{output}"
+        );
     }
 }

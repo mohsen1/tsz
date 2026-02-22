@@ -1,8 +1,27 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9435/13623 = 69.3% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 2510/3586 = 70.0% JS, 184/495 = 37.2% DTS)
 
 ### Fixed This Session
+- **moduleDetection=force support** (+31 JS, +1 DTS tests):
+  `moduleDetection=force` was parsed by the CLI (`args.rs`) but never threaded to the emitter.
+  Files without import/export syntax were not treated as modules, so the CJS `__esModule` marker,
+  `"use strict"`, and export preamble were missing. Fixed by:
+  1. Adding `module_detection_force: bool` to `PrinterOptions`.
+  2. Threading from CLI (`apply_cli_overrides`) and tsconfig (`resolve_compiler_options`).
+  3. Adding early-return `true` guards in all three module-detection functions:
+     `file_is_module` (emitter), `file_is_module` (lowering pass), `should_emit_es_module_marker`.
+  Also added `module_detection` field to `CompilerOptions` struct and `merge_options` macro.
+
+- **Async arrow param parenthesization** (+2 JS tests):
+  tsc always parenthesizes async arrow function parameters (`async (x) => ...`), even when
+  the source omits parens (`async x => ...`). The native emit path in `emit_arrow_function_native`
+  only checked `source_had_parens || !is_simple` but missed `func.is_async`. The lowered path
+  (`emit_arrow_function_async_lowered`) already always parenthesized. Fixed by adding
+  `|| func.is_async` to the `needs_parens` condition.
+  Tests fixed: `asyncUnParenthesizedArrowFunction_es2017`, `modularizeLibrary_Worker.asynciterable`.
+
+### Previously Fixed
 - **JS input file compilation (allowJs parity)** (+33 JS tests):
   Two bugs prevented `.js`/`.jsx`/`.mjs`/`.cjs` input files from being emitted:
   1. `js_extension_for()` in `driver_resolution.rs` returned `None` for JS input extensions,
@@ -186,7 +205,7 @@
 - **Numeric literal not downleveled for ES5 (~13 tests)**: Octal literals (`01`, `0o00`) and hex literals (`0xA0B0C0`) are emitted verbatim instead of being converted to decimal equivalents for ES3/ES5 targets. Affects `scannerES3NumericLiteral*`, `scannerNumericLiteral*`, `octalLiteralInStrictModeES3`.
 - **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
 - **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
-- **Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**: CJS module preamble is missing for `moduleDetection=force` and related edge cases.
+- ~~**Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**~~ — **FIXED** (see "Fixed This Session").
 - **Remaining duplicate-export affected tests (~90)**: The overload dedup fix resolves the duplicate `exports.X = X;` issue, but ~90 tests that had this as one of multiple issues remain failing due to other causes (missing helpers, wrong comment placement, module transform gaps). No action needed on the dedup side; remaining failures need other fixes.
 - **`exports.default` ordering (~19 tests)**: tsc emits `exports.default = X;` in the preamble (before the function), but tsz emits it after the function body. Requires reordering default export assignment in the CommonJS preamble emission path.
 - **Missing `exports.X = X;` for scoped declarations (~42 tests)**: tsc emits `exports.X = X;` for class/function exports declared inside nested scopes (e.g., conditionals, namespaces). The export collector only scans top-level statements, missing these. Would need deeper AST traversal or a different approach.

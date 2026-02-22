@@ -685,6 +685,10 @@ impl<'a> LoweringPass<'a> {
     }
 
     pub(super) fn file_is_module(&self, statements: &NodeList) -> bool {
+        // moduleDetection=force: treat all non-declaration files as modules
+        if self.ctx.options.module_detection_force {
+            return true;
+        }
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
