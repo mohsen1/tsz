@@ -16,6 +16,14 @@ use tsz_solver::{
     TypeSubstitution, Visibility, instantiate_type,
 };
 
+#[inline]
+const fn can_skip_base_instantiation(
+    base_type_param_count: usize,
+    explicit_type_arg_count: usize,
+) -> bool {
+    base_type_param_count == 0 && explicit_type_arg_count == 0
+}
+
 // =============================================================================
 // Class Type Resolution
 // =============================================================================
@@ -685,22 +693,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let (base_type_params, base_type_param_updates) =
-                    self.push_type_parameters(&base_class.type_parameters);
-
-                if type_args.len() < base_type_params.len() {
-                    for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
-                        type_args.push(fallback);
-                    }
-                }
-                if type_args.len() > base_type_params.len() {
-                    type_args.truncate(base_type_params.len());
-                }
-
                 // Get the base class instance type
                 // IMPORTANT: Use class_instance_type_from_symbol for class symbols to get the
                 // instance type (properties, methods), NOT the constructor type which is what
@@ -728,11 +720,38 @@ impl<'a> CheckerState<'a> {
                     }
                 };
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
-                let substitution =
-                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                let base_instance_type =
-                    instantiate_type(self.ctx.types, base_instance_type, &substitution);
-                self.pop_type_parameters(base_type_param_updates);
+                let base_instance_type = if can_skip_base_instantiation(
+                    base_class
+                        .type_parameters
+                        .as_ref()
+                        .map_or(0, |params| params.nodes.len()),
+                    type_args.len(),
+                ) {
+                    base_instance_type
+                } else {
+                    let (base_type_params, base_type_param_updates) =
+                        self.push_type_parameters(&base_class.type_parameters);
+
+                    if type_args.len() < base_type_params.len() {
+                        for param in base_type_params.iter().skip(type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            type_args.push(fallback);
+                        }
+                    }
+                    if type_args.len() > base_type_params.len() {
+                        type_args.truncate(base_type_params.len());
+                    }
+
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                    let instantiated =
+                        instantiate_type(self.ctx.types, base_instance_type, &substitution);
+                    self.pop_type_parameters(base_type_param_updates);
+                    instantiated
+                };
 
                 if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
@@ -982,5 +1001,18 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::can_skip_base_instantiation;
+
+    #[test]
+    fn skip_base_instantiation_only_without_generics() {
+        assert!(can_skip_base_instantiation(0, 0));
+        assert!(!can_skip_base_instantiation(1, 0));
+        assert!(!can_skip_base_instantiation(0, 1));
+        assert!(!can_skip_base_instantiation(2, 3));
     }
 }
