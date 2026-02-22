@@ -8,3 +8,7 @@ pub(crate) use super::common::{
 pub(crate) fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::type_includes_undefined(db, type_id)
 }
+
+pub(crate) fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::has_call_signatures(db, type_id)
+}
