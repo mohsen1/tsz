@@ -58,3 +58,5 @@ Investigated but punted:
   Reason: requires additional SessionClient/TestState adapter coverage for Program-returning harness paths (or native parity), which is broader than this JSDoc import-fix patch.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`: still generates a new local baseline with missing auto-import completions/codefix snapshots.
   Reason: likely needs deeper auto-import candidate surfacing for `export =` ambient modules plus CommonJS object-literal exports under `verbatimModuleSyntax`, beyond this focused diagnostics/codefix rewrite.
+- `TypeScript/tests/cases/fourslash/automaticConstructorToggling.ts`: still fails constructor quick-info parity for edited generic constructors (`Bsig`/`Dsig` in this run).
+  Reason: robust parity appears to require deeper integration between edit-state-aware quick-info and constructor signature inference/instantiation (beyond a safe small fix in this pass).

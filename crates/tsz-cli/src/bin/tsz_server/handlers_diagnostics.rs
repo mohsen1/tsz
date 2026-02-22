@@ -3673,17 +3673,31 @@ impl Server {
 
         let mut candidates =
             project.get_import_candidates_for_diagnostics(current_file_path, diagnostics);
-        let fallback_candidates = if candidates.is_empty() {
-            project.get_import_candidates_for_prefix(current_file_path, "")
-        } else {
-            Vec::new()
-        };
+        if candidates.is_empty() {
+            let mut fallback_names = rustc_hash::FxHashSet::default();
+            for diag in diagnostics {
+                if let Some(name) = Self::missing_name_from_diagnostic_message(&diag.message) {
+                    fallback_names.insert(name);
+                }
+            }
+            if fallback_names.is_empty() {
+                // Preserve legacy behavior for diagnostics whose message shape does not
+                // include a directly parseable missing identifier.
+                candidates.extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+            } else {
+                for missing_name in fallback_names {
+                    candidates.extend(
+                        project.get_import_candidates_for_prefix(current_file_path, &missing_name),
+                    );
+                }
+            }
+        }
 
         let mut seen: rustc_hash::FxHashSet<(String, String, String, bool)> =
             rustc_hash::FxHashSet::default();
-        let mut deduped = Vec::with_capacity(candidates.len() + fallback_candidates.len());
+        let mut deduped = Vec::with_capacity(candidates.len());
 
-        for mut candidate in candidates.drain(..).chain(fallback_candidates) {
+        for mut candidate in candidates.drain(..) {
             if is_commonjs_js_file
                 && !matches!(
                     candidate.kind,
@@ -3716,6 +3730,23 @@ impl Server {
 
         reorder_import_candidates_for_package_roots(&mut deduped);
         deduped
+    }
+
+    fn missing_name_from_diagnostic_message(message: &str) -> Option<String> {
+        let prefixes = [
+            ("Cannot find name '", '\''),
+            ("Cannot find name \"", '"'),
+            ("Cannot find name `", '`'),
+        ];
+        for (prefix, terminator) in prefixes {
+            if let Some(rest) = message.strip_prefix(prefix)
+                && let Some(end) = rest.find(terminator)
+                && end > 0
+            {
+                return Some(rest[..end].to_string());
+            }
+        }
+        None
     }
 
     pub(crate) fn handle_get_combined_code_fix(
@@ -4885,6 +4916,55 @@ mod tests {
         assert_eq!(
             module_specifiers,
             vec!["pkg".to_string(), "pkg/utils".to_string()]
+        );
+    }
+
+    #[test]
+    fn collect_import_candidates_respects_node_next_package_exports_root_only() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/node_modules/pack/package.json".to_string(),
+            r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        ".": "./main.mjs"
+    }
+}"#
+            .to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/pack/main.d.mts".to_string(),
+            "import {} from \"./unreachable.mjs\";\nexport const fromMain = 0;".to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/pack/unreachable.d.mts".to_string(),
+            "export const fromUnreachable = 0;".to_string(),
+        );
+        server.open_files.insert(
+            "/index.mts".to_string(),
+            "import { fromMain } from \"pack\";\nfromUnreachable".to_string(),
+        );
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(1, 0),
+                tsz::lsp::position::Position::new(1, 15),
+            ),
+            message: "Cannot find name 'fromUnreachable'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates =
+            server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None);
+        assert!(
+            candidates.is_empty(),
+            "expected no import candidates for unreachable node-next subpath export, got {candidates:?}"
         );
     }
 
