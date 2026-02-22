@@ -52,3 +52,5 @@ Investigated but punted:
   Reason: ordering parity is now closer (`abstract, any, Array...`), but list cardinality/content still diverges (`globalsPlus` surface mismatch), which requires broader tsserver global-table parity work beyond this targeted completion ordering adjustment.
 - `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` under `module:none` + `target:es5`.
   Reason: fixing this path robustly appears to require adapter-level inferred compiler option propagation for fourslash virtual files; quick bridge patches caused harness regressions and need a dedicated, isolated bridge follow-up.
+- `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: after narrowing `isNewIdentifierLocation` heuristics, failure mode shifts to missing completion `ts` in this run.
+  Reason: this now appears blocked on deeper auto-import candidate surfacing/ranking in type-only + `verbatimModuleSyntax` contexts (tsserver bridge/project completion integration), beyond a safe small heuristic-only patch.

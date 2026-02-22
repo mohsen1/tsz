@@ -981,6 +981,42 @@ fn test_is_new_identifier_location_not_in_normal_expression() {
 }
 
 #[test]
+fn test_is_new_identifier_location_false_after_object_property_colon() {
+    let source = "const value = { foo: ";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        !completions.compute_is_new_identifier_location(root, offset),
+        "Object property value position after ':' should not be treated as new identifier declaration location"
+    );
+}
+
+#[test]
+fn test_is_new_identifier_location_false_for_type_annotation_identifier_prefix() {
+    let source = "interface VFS { getSourceFile(path: string): ts";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        !completions.compute_is_new_identifier_location(root, offset),
+        "Type annotation identifier prefixes should not be treated as new identifier declaration locations"
+    );
+}
+
+#[test]
+fn test_is_new_identifier_location_false_for_interface_member_return_type_prefix() {
+    let source = "export interface VFS {\n  getSourceFile(path: string): ts";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        !completions.compute_is_new_identifier_location(root, offset),
+        "Interface member return type positions should not be treated as new identifier declaration locations"
+    );
+}
+
+#[test]
 fn test_is_new_identifier_location_false_for_identifier_prefix_after_statement_boundary() {
     let source = "import { x } from \"./a\";\nf";
     let (root, arena, binder, line_map, src) = make_completions_provider(source);
