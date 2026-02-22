@@ -109,7 +109,7 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
    - ~~`control_flow_narrowing.rs` (1,883 lines)~~ ✅ Split — extracted reference matching, literal parsing, and symbol resolution (~680 LOC) into `control_flow_references.rs`, reducing to 1,204 LOC
    - ~~`control_flow_assignment.rs` (1,837 lines)~~ ✅ Split — extracted condition-based narrowing (switch, binary, logical, typeof/instanceof) (~970 LOC) into `control_flow_condition_narrowing.rs`, reducing to 878 LOC
    - ~~`class_type.rs` (1,818 lines)~~ ✅ Split — extracted constructor type resolution (~811 LOC) into `class_type_constructor.rs`, reducing to 1,025 LOC
-   - `type_checking_utilities.rs` (1,778 lines)
+   - ~~`type_checking_utilities.rs` (1,778 lines)~~ ✅ Split — extracted return type inference (~776 LOC) into `type_checking_utilities_return.rs`, reducing to 1,002 LOC
    - ~~`assignability_checker.rs` (1,447 lines)~~ ✅ Split — extracted subtype/identity/compat methods (~273 LOC) into `subtype_identity_checker.rs`, reducing to 1,176 LOC
 2. **Monitor near-threshold files** in the 1,700-1,900 range for growth.
 3. **Solver top-level file sprawl**: Remaining file families to organize into subdirectories (following the pattern now established by `narrowing/`, `relations/`, `evaluation/`, `inference/`, `instantiation/`, `visitors/`, `caches/`, `operations/`):
@@ -121,3 +121,4 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
 5. ~~**Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit~~ ✅ Done — extracted constructor/class/instance classifiers (~482 LOC) into `extended_constructors.rs`, reducing `extended.rs` to ~1,442 LOC.
 6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 LOC by extracting iterable classifications into `iterable.rs`. Still contains traversal, property lookup, evaluation, signature, and constraint sections that could be further split if growth continues.
 7. **Solver `visitors/visitor.rs`** reduced from 1,945 → ~1,130 LOC by extracting type predicates (`is_*`, `contains_*`, `classify_*`, `ObjectTypeKind`) and their internal helper structs into `visitor_predicates.rs` (~585 LOC). The `ConstAssertionVisitor` (~178 LOC) remains in `visitor.rs` but could be extracted if the file grows again.
+8. **Solver `relations/subtype.rs`** reduced from 1,899 → 1,568 LOC by extracting the caching/cycle-detection layer (`check_subtype` method, ~331 LOC) into `subtype_cache.rs`. The main file now focuses on structural dispatch (`check_subtype_inner`) while the cache file handles fast paths, memoization, coinductive cycle detection (TypeId, DefId, SymbolId levels), and pre-evaluation intrinsic checks.
