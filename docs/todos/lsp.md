@@ -37,3 +37,5 @@ Investigated but punted:
   Reason: tracked through tsserver-side import-fix shaping and added local handler experiments, but fourslash bridge path still fans out multiple import candidates; requires deeper bridge/request tracing and likely completion/code-fix pipeline alignment rather than a small isolated patch.
 - `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: still returns `Expected 'isNewIdentifierLocation' to be false, got true`.
   Reason: quick tsserver-side flag override caused regressions in other auto-import completion tests (`isNewIdentifierLocation` expected true), so the robust fix needs context-sensitive parity logic in completion source selection.
+- `TypeScript/tests/cases/fourslash/alignmentAfterFormattingOnMultilineExpressionAndParametersList.ts`: still returns `Marker "1" has been invalidated by unrecoverable edits to the file`.
+  Reason: requires a dedicated tsserver-parity range-format edit strategy for multiline alignment/marker stability; current session focused on paste-format normalization (`autoFormattingOnPasting`) with a minimal targeted fix.

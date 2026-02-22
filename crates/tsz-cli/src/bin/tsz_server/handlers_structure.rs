@@ -133,6 +133,10 @@ impl Server {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let source_text = self.open_files.get(file)?.clone();
+            let has_explicit_range = request.arguments.get("line").is_some()
+                && request.arguments.get("offset").is_some()
+                && request.arguments.get("endLine").is_some()
+                && request.arguments.get("endOffset").is_some();
 
             let options = tsz::lsp::formatting::FormattingOptions {
                 tab_size: request
@@ -160,12 +164,15 @@ impl Server {
                     let body: Vec<serde_json::Value> = edits
                         .iter()
                         .map(|edit| {
-                            let (normalized_range, normalized_text) =
+                            let (normalized_range, normalized_text) = if has_explicit_range {
+                                (edit.range, edit.new_text.clone())
+                            } else {
                                 Self::narrow_to_indentation_only_edit_if_possible(
                                     &source_text,
                                     &line_map,
                                     edit,
-                                );
+                                )
+                            };
                             serde_json::json!({
                                 "start": Self::lsp_to_tsserver_position(normalized_range.start),
                                 "end": Self::lsp_to_tsserver_position(normalized_range.end),

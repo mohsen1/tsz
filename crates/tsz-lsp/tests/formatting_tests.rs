@@ -405,6 +405,18 @@ fn test_format_arrow_function() {
 }
 
 #[test]
+fn test_format_pasted_class_member_spacing_matches_tsserver_shape() {
+    let source =
+        "namespace TestModule {\n class TestClass{\nprivate   foo;\npublic testMethod( )\n{}\n}\n}";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert_eq!(
+        formatted,
+        "namespace TestModule {\n    class TestClass {\n        private foo;\n        public testMethod() { }\n    }\n}\n"
+    );
+}
+
+#[test]
 fn test_format_multiline_import() {
     let source = "import { foo } from \"bar\";\n";
     let options = FormattingOptions::default();

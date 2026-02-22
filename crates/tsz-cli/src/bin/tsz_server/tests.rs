@@ -36,6 +36,32 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
     }
 }
 
+fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) -> String {
+    let mut spans: Vec<(usize, usize, String)> = edits
+        .iter()
+        .filter_map(|edit| {
+            let start = edit.get("start")?;
+            let end = edit.get("end")?;
+            let start_line = start.get("line")?.as_u64()? as u32;
+            let start_offset = start.get("offset")?.as_u64()? as u32;
+            let end_line = end.get("line")?.as_u64()? as u32;
+            let end_offset = end.get("offset")?.as_u64()? as u32;
+            let new_text = edit.get("newText")?.as_str()?.to_string();
+            let start_byte = Server::line_offset_to_byte(&source, start_line, start_offset);
+            let end_byte = Server::line_offset_to_byte(&source, end_line, end_offset);
+            Some((start_byte, end_byte, new_text))
+        })
+        .collect();
+
+    spans.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    for (start, end, new_text) in spans {
+        if start <= end && end <= source.len() {
+            source.replace_range(start..end, &new_text);
+        }
+    }
+    source
+}
+
 #[test]
 fn test_line_offset_to_byte_first_char() {
     assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 1), 0);
@@ -266,6 +292,43 @@ fn test_quickinfo_fallback_has_valid_spans() {
     assert!(resp.success);
     let body = resp.body.expect("quickinfo fallback should return a body");
     assert_valid_span(&body, "quickinfo fallback on whitespace");
+}
+
+#[test]
+fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
+    let mut server = make_server();
+    let file = "/test.ts";
+    let source = "namespace TestModule {\n class TestClass{\nprivate   foo;\npublic testMethod( )\n{}\n}\n}\n";
+    server
+        .open_files
+        .insert(file.to_string(), source.to_string());
+
+    let req = make_request(
+        "format",
+        serde_json::json!({
+            "file": file,
+            "line": 2,
+            "offset": 1,
+            "endLine": 6,
+            "endOffset": 2,
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true
+            }
+        }),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let edits = resp
+        .body
+        .expect("format should return edits")
+        .as_array()
+        .expect("format body should be array")
+        .clone();
+    let updated = apply_tsserver_text_edits(source.to_string(), &edits);
+    let expected = "namespace TestModule {\n    class TestClass {\n        private foo;\n        public testMethod() { }\n    }\n}\n";
+    assert_eq!(updated, expected);
 }
 
 #[test]
