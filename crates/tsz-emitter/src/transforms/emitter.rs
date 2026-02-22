@@ -19,7 +19,7 @@
 //! No direct dependency on internal submodules!
 //! ```
 
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 
 /// Trait for transform emitters that can emit transformed JavaScript code

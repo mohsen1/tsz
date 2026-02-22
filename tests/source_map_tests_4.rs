@@ -1,8 +1,8 @@
 //! Source map tests - Part 4 (JSX, utility types, remaining tests)
 
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
 use crate::emitter::{Printer, PrinterOptions, ScriptTarget};
-use crate::lowering_pass::LoweringPass;
+use crate::lowering::LoweringPass;
 use crate::parser::ParserState;
 use crate::source_map_test_utils::decode_mappings;
 use serde_json::Value;

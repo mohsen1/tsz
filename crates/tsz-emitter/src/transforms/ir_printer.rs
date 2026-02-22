@@ -23,8 +23,8 @@ use std::fmt::Write;
 #[path = "ir_printer_helpers.rs"]
 mod ir_printer_helpers;
 
+use crate::context::transform::TransformContext;
 use crate::emitter::{Printer as AstPrinter, PrinterOptions};
-use crate::transform_context::TransformContext;
 use crate::transforms::ir::{
     EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
@@ -1184,7 +1184,7 @@ impl<'a> IRPrinter<'a> {
                                 matches!(
                                     transforms.get(*decl_idx),
                                     Some(
-                                        crate::transform_context::TransformDirective::ES5VariableDeclarationList { .. }
+                                        crate::context::transform::TransformDirective::ES5VariableDeclarationList { .. }
                                     )
                                 )
                             });
@@ -1259,7 +1259,7 @@ impl<'a> IRPrinter<'a> {
                         // Handle ES5ArrowFunction directive
                         if matches!(
                             directive,
-                            crate::transform_context::TransformDirective::ES5ArrowFunction { .. }
+                            crate::context::transform::TransformDirective::ES5ArrowFunction { .. }
                         ) && node.kind == syntax_kind_ext::ARROW_FUNCTION
                             && let Some(func_data) = arena.get_function(node)
                         {
@@ -1268,7 +1268,7 @@ impl<'a> IRPrinter<'a> {
                         }
 
                         // Handle SubstituteThis directive
-                        if let crate::transform_context::TransformDirective::SubstituteThis {
+                        if let crate::context::transform::TransformDirective::SubstituteThis {
                             ref capture_name,
                         } = directive
                             && let Some(_ident) = arena.get_identifier(node)
@@ -1280,7 +1280,7 @@ impl<'a> IRPrinter<'a> {
                         // Handle SubstituteArguments directive
                         if matches!(
                             directive,
-                            crate::transform_context::TransformDirective::SubstituteArguments
+                            crate::context::transform::TransformDirective::SubstituteArguments
                         ) && let Some(_ident) = arena.get_identifier(node)
                         {
                             self.write("arguments");

@@ -22,9 +22,9 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
+use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
-use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -640,9 +640,9 @@ impl<'a> Printer<'a> {
             && self.transforms.is_empty()
         {
             let format = match self.ctx.options.module {
-                ModuleKind::AMD => Some(crate::transform_context::ModuleFormat::AMD),
-                ModuleKind::UMD => Some(crate::transform_context::ModuleFormat::UMD),
-                ModuleKind::System => Some(crate::transform_context::ModuleFormat::System),
+                ModuleKind::AMD => Some(crate::context::transform::ModuleFormat::AMD),
+                ModuleKind::UMD => Some(crate::context::transform::ModuleFormat::UMD),
+                ModuleKind::System => Some(crate::context::transform::ModuleFormat::System),
                 _ => None,
             };
             if let Some(format) = format

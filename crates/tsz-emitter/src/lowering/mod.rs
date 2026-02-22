@@ -40,8 +40,8 @@
 mod helpers;
 mod visit_children;
 
-use crate::emit_context::EmitContext;
-use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
+use crate::context::emit::EmitContext;
+use crate::context::transform::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
 use std::sync::Arc;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};

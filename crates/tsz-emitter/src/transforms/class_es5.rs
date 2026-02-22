@@ -31,7 +31,7 @@
 //! - Uses `IRPrinter` to emit IR nodes as JavaScript strings
 //! - Maintains the same public API as the original implementation for backward compatibility
 
-use crate::transform_context::TransformContext;
+use crate::context::transform::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_common::source_map::Mapping;

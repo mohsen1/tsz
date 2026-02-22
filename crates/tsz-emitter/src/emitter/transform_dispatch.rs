@@ -63,7 +63,7 @@ enum EmitDirective {
     SubstituteArguments,
     ES5SuperCall,
     ModuleWrapper {
-        format: crate::transform_context::ModuleFormat,
+        format: crate::context::transform::ModuleFormat,
         dependencies: Arc<[String]>,
     },
     Chain(Vec<Self>),

@@ -1,8 +1,8 @@
 //! Source map tests - Part 1 (VLQ, decorators, basic source maps)
 
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
 use crate::emitter::{Printer, PrinterOptions, ScriptTarget};
-use crate::lowering_pass::LoweringPass;
+use crate::lowering::LoweringPass;
 use crate::parser::ParserState;
 use crate::source_map::*;
 use crate::source_map_test_utils::{decode_mappings, find_line_col, has_mapping_for_prefixes};

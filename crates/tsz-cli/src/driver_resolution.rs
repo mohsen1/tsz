@@ -1973,12 +1973,12 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
             printer_options.type_only_nodes = type_only_nodes;
 
             // Run the lowering pass to generate transform directives
-            let mut ctx = tsz::emit_context::EmitContext::with_options(printer_options.clone());
+            let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
             // Enable auto-detect module: when module is None and file has imports/exports,
             // the emitter should switch to CommonJS (matching tsc behavior)
             ctx.auto_detect_module = true;
             let transforms =
-                tsz::lowering_pass::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
+                tsz::lowering::LoweringPass::new(&file.arena, &ctx).run(file.source_file);
 
             let mut printer =
                 Printer::with_transforms_and_options(&file.arena, transforms, printer_options);
