@@ -21,3 +21,9 @@ Investigated but punted:
   Reason: requires deeper tsserver-parity work on completion global tables and lib-sensitive keyword/global population beyond this targeted `getCombinedCodeFix` import-merge fix.
 - `TypeScript/tests/cases/fourslash/autoImportSpecifierExcludeRegexes3.ts`: import-fix module-specifier ordering remains reversed (`pkg/utils` before `pkg`).
   Reason: ordering appears to be finalized in a different post-processing layer than `CodeActionProvider` merge ordering and needs deeper trace through tsserver bridge code-fix result shaping.
+- `TypeScript/tests/cases/fourslash/autoImportPaths.ts`: import-fix still prefers relative `../package2/file1.js` over `paths` alias `package2/file1`.
+  Reason: module-specifier preference used by this import-fix path appears to be decided outside `path_mapping_specifiers_from_files`; likely requires tracing preference propagation from fourslash/user options into candidate selection.
+- `TypeScript/tests/cases/fourslash/autoImportPathsAliasesAndBarrels.ts`: completion for `Thing2B` still prefers `~/dirB/thing2B` instead of barrel `~/dirB`.
+  Reason: needs deeper re-export-aware completion candidate ranking that preserves existing re-export behavior (naive shortest-path dedupe caused regressions in existing re-export tests).
+- `TypeScript/tests/cases/fourslash/autoImportPathsNodeModules.ts`: import-fix module specifier mismatch persists for `@woltlab/wcf` path-mapped node_modules target.
+  Reason: likely requires tracing interaction between node_modules package-specifier logic and `paths` wildcard resolution in this mixed config shape.
