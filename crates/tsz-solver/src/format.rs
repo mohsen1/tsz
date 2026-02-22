@@ -242,7 +242,23 @@ impl<'a> TypeFormatter<'a> {
                 let members = self.interner.type_list(*members);
                 self.format_intersection(members.as_ref())
             }
-            TypeData::Array(elem) => format!("{}[]", self.format(*elem)),
+            TypeData::Array(elem) => {
+                let elem_formatted = self.format(*elem);
+                let needs_parens = matches!(
+                    self.interner.lookup(*elem),
+                    Some(
+                        TypeData::Union(_)
+                            | TypeData::Intersection(_)
+                            | TypeData::Function(_)
+                            | TypeData::Callable(_)
+                    )
+                );
+                if needs_parens {
+                    format!("({elem_formatted})[]")
+                } else {
+                    format!("{elem_formatted}[]")
+                }
+            }
             TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(*elements);
                 self.format_tuple(elements.as_ref())
@@ -424,24 +440,15 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
-        let mut sorted_props: Vec<&PropertyInfo> = props.iter().collect();
-        sorted_props.sort_by(|a, b| {
-            self.interner
-                .resolve_atom_ref(a.name)
-                .cmp(&self.interner.resolve_atom_ref(b.name))
-        });
         if props.len() > 3 {
-            let first_three: Vec<String> = sorted_props
+            let first_three: Vec<String> = props
                 .iter()
                 .take(3)
                 .map(|p| self.format_property(p))
                 .collect();
             return format!("{{ {}; ...; }}", first_three.join("; "));
         }
-        let formatted: Vec<String> = sorted_props
-            .iter()
-            .map(|p| self.format_property(p))
-            .collect();
+        let formatted: Vec<String> = props.iter().map(|p| self.format_property(p)).collect();
         format!("{{ {}; }}", formatted.join("; "))
     }
 
@@ -533,13 +540,7 @@ impl<'a> TypeFormatter<'a> {
         if let Some(ref idx) = shape.number_index {
             parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
         }
-        let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
-        sorted_props.sort_by(|a, b| {
-            self.interner
-                .resolve_atom_ref(a.name)
-                .cmp(&self.interner.resolve_atom_ref(b.name))
-        });
-        for prop in sorted_props {
+        for prop in &shape.properties {
             parts.push(self.format_property(prop));
         }
 

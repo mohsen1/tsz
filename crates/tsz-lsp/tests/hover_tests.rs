@@ -120,6 +120,39 @@ fn test_hover_contextually_typed_function_expression_parameter() {
     );
 }
 
+#[test]
+fn test_hover_best_common_type_object_literal_array_multiline() {
+    let source =
+        "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c");
+    assert_eq!(
+        info.display_string, "var c: {\n    name: string;\n    age: number;\n}[]",
+        "Quick-info display string should render object-literal array element types in multiline tsserver style"
+    );
+}
+
+#[test]
+fn test_hover_union_array_precedence_preserved() {
+    let source = "var a2 = { name: 'bob', age: 18, address: 'springfield' };\nvar b2 = { name: 'jim', age: 20, dob: 1 };\nvar c2 = [a2, b2];\nc2;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
+    assert_eq!(
+        info.display_string,
+        "var c2: ({\n    name: string;\n    age: number;\n    address: string;\n} | {\n    name: string;\n    age: number;\n    dob: number;\n})[]",
+        "Quick-info display should preserve array-vs-union precedence with parenthesized union element type"
+    );
+}
+
+#[test]
+fn test_hover_date_constructor_rewrites_error_property_type() {
+    let source = "var a2 = { name: 'bob', age: 18, address: 'springfield' };\nvar b2 = { name: 'jim', age: 20, dob: new Date() };\nvar c2 = [a2, b2];\nc2;";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info for c2");
+    assert!(
+        info.display_string.contains("dob: Date"),
+        "Quick-info display should normalize constructor-based error property type to Date, got: {}",
+        info.display_string
+    );
+}
+
 // =========================================================================
 // New tests for tsserver-compatible quickinfo format
 // =========================================================================
