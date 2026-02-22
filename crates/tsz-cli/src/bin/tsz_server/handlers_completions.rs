@@ -331,10 +331,7 @@ impl Server {
                         }
                     };
                     let index_penalty = |candidate: &str| -> u8 {
-                        if candidate == "."
-                            || candidate == ".."
-                            || candidate.ends_with("/index")
-                        {
+                        if candidate == "." || candidate == ".." || candidate.ends_with("/index") {
                             1
                         } else {
                             0
