@@ -7,7 +7,7 @@
 //! - Tuple rest elements and expansion
 //! - Array-to-tuple and tuple-to-array compatibility
 
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
 use crate::visitor::{array_element_type, tuple_list_id};
 

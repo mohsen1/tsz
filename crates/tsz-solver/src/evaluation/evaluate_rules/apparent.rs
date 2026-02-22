@@ -4,7 +4,7 @@
 //! Apparent types define the shape of primitive values (e.g., string has .length, .`charAt()`, etc.)
 
 use crate::apparent::apparent_primitive_members;
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::Visibility;
 use crate::types::{
     FunctionShape, IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape,

@@ -1,7 +1,7 @@
 use super::*;
 use crate::SubtypeFailureReason;
 use crate::TypeInterner;
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
@@ -4354,7 +4354,7 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
 #[test]
 fn test_best_common_type_array_literal_inference() {
     let interner = TypeInterner::new();
-    let ctx = crate::infer::InferenceContext::new(&interner);
+    let ctx = crate::inference::infer::InferenceContext::new(&interner);
 
     // Array literal with mixed types: [1, "hello", true]
     // Best common type should be the union: number | string | boolean
@@ -4369,7 +4369,7 @@ fn test_best_common_type_array_literal_inference() {
 #[test]
 fn test_best_common_type_with_supertype() {
     let interner = TypeInterner::new();
-    let ctx = crate::infer::InferenceContext::new(&interner);
+    let ctx = crate::inference::infer::InferenceContext::new(&interner);
 
     let name = interner.intern_string("name");
 
@@ -4415,7 +4415,7 @@ fn test_best_common_type_with_supertype() {
 #[test]
 fn test_best_common_type_empty_array() {
     let interner = TypeInterner::new();
-    let ctx = crate::infer::InferenceContext::new(&interner);
+    let ctx = crate::inference::infer::InferenceContext::new(&interner);
 
     // Empty array should infer to unknown[] (or any[])
     let types: Vec<TypeId> = vec![];
@@ -4428,7 +4428,7 @@ fn test_best_common_type_empty_array() {
 #[test]
 fn test_best_common_type_single_element() {
     let interner = TypeInterner::new();
-    let ctx = crate::infer::InferenceContext::new(&interner);
+    let ctx = crate::inference::infer::InferenceContext::new(&interner);
 
     // Single element array should just be that type
     let types = vec![TypeId::STRING];
@@ -4444,7 +4444,7 @@ fn test_best_common_type_single_element() {
 #[test]
 fn test_best_common_type_with_literal_widening() {
     let interner = TypeInterner::new();
-    let ctx = crate::infer::InferenceContext::new(&interner);
+    let ctx = crate::inference::infer::InferenceContext::new(&interner);
 
     // [1, "a"] should infer to (number | string)[]
     let types = vec![TypeId::NUMBER, TypeId::STRING];

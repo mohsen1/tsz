@@ -7,7 +7,7 @@
 //! 4. Intrinsic coercion in template literals
 
 use crate::intern::TypeInterner;
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::*;
 
 #[test]

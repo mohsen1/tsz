@@ -1,7 +1,7 @@
 use super::*;
 use crate::TypeInterner;
 use crate::def::DefId;
-use crate::instantiate::MAX_INSTANTIATION_DEPTH;
+use crate::instantiation::instantiate::MAX_INSTANTIATION_DEPTH;
 
 #[test]
 fn test_substitution_basic() {

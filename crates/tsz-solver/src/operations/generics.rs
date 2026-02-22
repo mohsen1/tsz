@@ -5,7 +5,7 @@
 //! (e.g., `foo<number>(x)`).
 
 use crate::TypeDatabase;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::AssignabilityChecker;
 use crate::types::{TypeId, TypeParamInfo};
 use tsz_common::interner::Atom;

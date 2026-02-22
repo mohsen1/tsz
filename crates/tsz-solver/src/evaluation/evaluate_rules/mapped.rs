@@ -3,9 +3,9 @@
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::Visibility;
 use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,

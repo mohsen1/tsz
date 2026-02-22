@@ -8,11 +8,11 @@
 //! - Constraint strengthening and propagation
 //! - Variable fixing and substitution building
 
-use crate::infer::{
+use crate::inference::infer::{
     InferenceCandidate, InferenceContext, InferenceError, InferenceInfo, InferenceVar,
     MAX_CONSTRAINT_ITERATIONS, MAX_TYPE_RECURSION_DEPTH,
 };
-use crate::instantiate::TypeSubstitution;
+use crate::instantiation::instantiate::TypeSubstitution;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
 use crate::widening;
 use rustc_hash::FxHashSet;

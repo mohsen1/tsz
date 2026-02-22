@@ -5,8 +5,8 @@
 //! detailed error diagnostics (TS2322, TS2739, TS2740, TS2741, etc.).
 
 use crate::diagnostics::SubtypeFailureReason;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
-use crate::subtype::SubtypeChecker;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::SubtypeChecker;
 use crate::type_resolver::TypeResolver;
 use crate::types::{
     FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo,

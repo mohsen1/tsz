@@ -3,7 +3,7 @@
 //! This module contains common utilities used across multiple solver components
 //! to avoid code duplication.
 
-use crate::db::TypeDatabase;
+use crate::caches::db::TypeDatabase;
 use crate::types::{ObjectShapeId, PropertyInfo, PropertyLookup, TypeId};
 use tsz_common::interner::Atom;
 

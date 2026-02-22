@@ -5,8 +5,8 @@
 //! recursive traversal of complex type structures (objects, functions, tuples,
 //! conditionals, mapped types, etc.) to extract inference candidates.
 
-use crate::infer::InferenceContext;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::inference::infer::InferenceContext;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::types::{
     CallSignature, FunctionShape, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
@@ -21,7 +21,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(crate) fn constrain_types(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
         priority: crate::types::InferencePriority,
@@ -51,7 +51,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_types_impl(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: TypeId,
         target: TypeId,
         priority: crate::types::InferencePriority,
@@ -488,8 +488,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Generic source function - instantiate with fresh inference variables
                     // This allows inferring the source function's type parameters from the target
                     let mut source_subst = TypeSubstitution::new();
-                    let mut source_var_map: FxHashMap<TypeId, crate::infer::InferenceVar> =
-                        FxHashMap::default();
+                    let mut source_var_map: FxHashMap<
+                        TypeId,
+                        crate::inference::infer::InferenceVar,
+                    > = FxHashMap::default();
                     let mut src_placeholder_visited = FxHashSet::default();
                     let mut src_placeholder_buf = String::with_capacity(28);
 
@@ -927,7 +929,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_properties(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target_props: &[PropertyInfo],
         priority: crate::types::InferencePriority,
@@ -1042,7 +1044,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_function_to_call_signature(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: &FunctionShape,
         target: &CallSignature,
         priority: crate::types::InferencePriority,
@@ -1088,7 +1090,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_call_signature_to_function(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: &CallSignature,
         target: &FunctionShape,
         priority: crate::types::InferencePriority,
@@ -1117,7 +1119,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_call_signature_to_call_signature(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: &CallSignature,
         target: &CallSignature,
         priority: crate::types::InferencePriority,
@@ -1158,7 +1160,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn erase_placeholders_for_inference(
         &self,
         ty: TypeId,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> TypeId {
         if var_map.is_empty() {
             return ty;
@@ -1184,7 +1186,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         signatures: &[CallSignature],
         target_fn: TypeId,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         is_constructor: bool,
     ) -> Option<usize> {
         let target_erased = self.erase_placeholders_for_inference(target_fn, var_map);
@@ -1203,7 +1205,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_matching_signatures(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source_signatures: &[CallSignature],
         target_signatures: &[CallSignature],
         is_constructor: bool,
@@ -1284,7 +1286,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_properties_against_index_signatures(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source_props: &[PropertyInfo],
         target: &ObjectShape,
         priority: crate::types::InferencePriority,
@@ -1335,7 +1337,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_index_signatures_to_properties(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: &ObjectShape,
         target_props: &[PropertyInfo],
         priority: crate::types::InferencePriority,
@@ -1403,7 +1405,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_elements_against_index_sigs(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         element_types: &[TypeId],
         target_shape_id: ObjectShapeId,
         priority: crate::types::InferencePriority,
@@ -1422,7 +1424,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn constrain_tuple_types(
         &mut self,
         ctx: &mut InferenceContext,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         source: &[TupleElement],
         target: &[TupleElement],
         priority: crate::types::InferencePriority,

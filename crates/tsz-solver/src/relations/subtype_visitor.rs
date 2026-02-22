@@ -6,7 +6,7 @@
 
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::subtype::{SubtypeChecker, SubtypeResult};
+use crate::relations::subtype::{SubtypeChecker, SubtypeResult};
 use crate::type_resolver::TypeResolver;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,

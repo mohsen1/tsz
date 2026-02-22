@@ -2,7 +2,7 @@
 //!
 //! Handles TypeScript template literal types like "hello ${T}".
 
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TemplateLiteralId, TemplateSpan, TypeData, TypeId};
 
 use super::super::evaluate::TypeEvaluator;

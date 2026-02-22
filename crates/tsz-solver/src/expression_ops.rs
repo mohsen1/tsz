@@ -8,7 +8,7 @@
 use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::is_subtype_of;
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.

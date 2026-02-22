@@ -1,8 +1,8 @@
 //! TypeScript compatibility layer for assignability rules.
 
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
+use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{TypeVisitor, intrinsic_kind, is_empty_object_type_db, lazy_def_id};
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};

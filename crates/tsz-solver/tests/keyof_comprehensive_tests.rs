@@ -6,7 +6,7 @@
 //! - keyof (A & B) = keyof A | keyof B (covariance)
 
 use super::*;
-use crate::evaluate::evaluate_type;
+use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::types::{IndexSignature, ObjectFlags, ObjectShape, TypeData};
 

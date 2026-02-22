@@ -486,7 +486,7 @@ use crate::operations::property::PropertyAccessEvaluator;
 /// // Objects with 'then' method are promise-like
 /// // { then: (fn: (value: T) => void) => void }
 /// ```
-pub fn is_promise_like(db: &dyn crate::db::QueryDatabase, type_id: TypeId) -> bool {
+pub fn is_promise_like(db: &dyn crate::caches::db::QueryDatabase, type_id: TypeId) -> bool {
     // The 'any' trap: any is always promise-like
     if type_id == TypeId::ANY {
         return true;

@@ -370,7 +370,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Try to get variance from query_db (if available)
                 // This enables O(1) variance-based generic assignability checking
                 // Use fully qualified syntax to disambiguate QueryDatabase vs TypeResolver
-                use crate::db::QueryDatabase;
+                use crate::caches::db::QueryDatabase;
                 let variances = self
                     .query_db
                     .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id));
@@ -775,7 +775,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
             if let Some(TypeData::Mapped(m_id)) = self.interner.lookup(new_mapped_id) {
                 let new_mapped = self.interner.mapped_type(m_id);
-                let res = crate::evaluate::evaluate_mapped(self.interner, &new_mapped);
+                let res = crate::evaluation::evaluate::evaluate_mapped(self.interner, &new_mapped);
                 if res != TypeId::ERROR && res != new_mapped_id {
                     return Some(res);
                 }

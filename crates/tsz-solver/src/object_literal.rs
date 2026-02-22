@@ -178,7 +178,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
         // FIX: Use CompatChecker (The Lawyer) instead of SubtypeChecker (The Judge)
         // to ensure TypeScript's assignability rules are applied during contextual typing.
         // This is critical for freshness checks (excess properties) and other TS rules.
-        use crate::compat::CompatChecker;
+        use crate::relations::compat::CompatChecker;
         let mut checker = CompatChecker::new(self.db);
 
         if checker.is_assignable(value_type, ctx_type) {

@@ -35,7 +35,7 @@
 use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::DefKind;
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;

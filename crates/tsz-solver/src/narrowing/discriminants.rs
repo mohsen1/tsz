@@ -11,7 +11,7 @@
 
 use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::subtype::is_subtype_of;
+use crate::relations::subtype::is_subtype_of;
 use crate::type_queries::{
     LiteralValueKind, UnionMembersKind, classify_for_literal_value, classify_for_union_members,
 };

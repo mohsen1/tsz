@@ -3,7 +3,7 @@
 //! This module implements overlap detection between types, used for TS2367
 //! ("This condition will always return 'false' since the types 'X' and 'Y' have no overlap").
 
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::type_resolver::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId};
 use crate::visitor::{intrinsic_kind, literal_value, template_literal_id};

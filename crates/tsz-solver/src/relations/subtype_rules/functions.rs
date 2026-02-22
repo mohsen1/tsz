@@ -10,8 +10,8 @@
 //! - Type predicate compatibility
 //! - `this` parameter handling
 
-use crate::infer::InferenceContext;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::inference::infer::InferenceContext;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
     InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypePredicate,
@@ -112,7 +112,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // compatibility unless both are ANY.
         // NOTE: North Star mandate #3.3 - any should not silence structural mismatches.
         if source_type.is_any() || target_type.is_any() {
-            use crate::subtype::AnyPropagationMode;
+            use crate::relations::subtype::AnyPropagationMode;
             if matches!(self.any_propagation, AnyPropagationMode::All) {
                 return true;
             }
@@ -254,7 +254,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &FunctionShape,
         target: &FunctionShape,
-    ) -> Result<TypeSubstitution, crate::infer::InferenceError> {
+    ) -> Result<TypeSubstitution, crate::inference::infer::InferenceError> {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
         let mut infer_ctx = InferenceContext::new(self.interner);
@@ -823,7 +823,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         t_fn: &crate::types::FunctionShape,
     ) -> SubtypeResult {
         use crate::TypeData;
-        use crate::instantiate::{TypeSubstitution, instantiate_type};
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
         // Create a substitution mapping type parameters to the target's parameter types
         // This is a simplified instantiation - we map each source type param to the corresponding target param type
@@ -1072,7 +1072,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(&cached) = self.eval_cache.get(&cache_key) {
             return cached;
         }
-        use crate::evaluate::TypeEvaluator;
+        use crate::evaluation::evaluate::TypeEvaluator;
         let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
         evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
         let result = evaluator.evaluate(type_id);

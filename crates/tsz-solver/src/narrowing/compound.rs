@@ -9,7 +9,7 @@
 
 use super::NarrowingContext;
 use super::utils::NarrowingVisitor;
-use crate::subtype::{SubtypeChecker, is_subtype_of};
+use crate::relations::subtype::{SubtypeChecker, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::{

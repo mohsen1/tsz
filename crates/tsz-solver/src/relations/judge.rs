@@ -49,9 +49,9 @@
 //! ```
 
 use crate::TypeDatabase;
-use crate::evaluate::TypeEvaluator;
+use crate::evaluation::evaluate::TypeEvaluator;
 use crate::index_signatures::IndexKind;
-use crate::subtype::{SubtypeChecker, TypeEnvironment};
+use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{
     CallSignature, IntrinsicKind, LiteralValue, ParamInfo, TypeData, TypeId, TypeParamInfo,
 };
@@ -445,7 +445,7 @@ impl<'a> Judge for DefaultJudge<'a> {
     }
 
     fn instantiate(&self, generic: TypeId, args: &[TypeId]) -> TypeId {
-        use crate::instantiate::instantiate_generic;
+        use crate::instantiation::instantiate::instantiate_generic;
 
         // Get type params from the generic type
         let key = match self.db.lookup(generic) {
@@ -1000,7 +1000,7 @@ impl<'a> Judge for DefaultJudge<'a> {
     }
 
     fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId {
-        crate::evaluate::evaluate_index_access_with_options(
+        crate::evaluation::evaluate::evaluate_index_access_with_options(
             self.db,
             object,
             key,
@@ -1031,7 +1031,7 @@ impl<'a> Judge for DefaultJudge<'a> {
     }
 
     fn get_keyof(&self, type_id: TypeId) -> TypeId {
-        crate::evaluate::evaluate_keyof(self.db, type_id)
+        crate::evaluation::evaluate::evaluate_keyof(self.db, type_id)
     }
 
     fn config(&self) -> &JudgeConfig {

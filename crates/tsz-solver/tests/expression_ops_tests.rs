@@ -1,7 +1,7 @@
 use super::*;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::subtype::{NoopResolver, TypeResolver};
+use crate::relations::subtype::{NoopResolver, TypeResolver};
 use rustc_hash::FxHashMap;
 
 struct EnumParentResolver {

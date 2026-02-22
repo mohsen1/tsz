@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::intern::TypeInterner;
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{FunctionShape, ParamInfo, PropertyInfo, TypeData};
 
 // =============================================================================

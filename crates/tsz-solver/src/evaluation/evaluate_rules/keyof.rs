@@ -3,7 +3,7 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::TypeDatabase;
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;

@@ -4,7 +4,7 @@
 //! across different type kinds (objects, index signatures, mapped types, etc.).
 
 use crate::TypeDatabase;
-use crate::evaluate::evaluate_type;
+use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{ObjectShapeId, PropertyInfo, TypeData, TypeId};
 use crate::utils;
 

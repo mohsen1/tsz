@@ -12,7 +12,7 @@
 
 use crate::AssignabilityChecker;
 use crate::TypeDatabase;
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 #[cfg(test)]

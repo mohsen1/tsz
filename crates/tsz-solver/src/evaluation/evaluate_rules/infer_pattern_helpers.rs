@@ -9,7 +9,7 @@
 //! - Union type patterns
 //! - Template literal patterns
 
-use crate::subtype::{SubtypeChecker, TypeResolver};
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, ObjectShapeId, ParamInfo, TemplateSpan,
     TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,

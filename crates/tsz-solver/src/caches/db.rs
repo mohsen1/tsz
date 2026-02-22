@@ -9,7 +9,7 @@ use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::intern::TypeInterner;
 use crate::narrowing;
 use crate::operations::property::PropertyAccessResult;
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::type_factory::TypeFactory;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
@@ -425,7 +425,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     fn register_boxed_type(&self, _kind: IntrinsicKind, _type_id: TypeId) {}
 
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
-        crate::evaluate::evaluate_conditional(self.as_type_database(), cond)
+        crate::evaluation::evaluate::evaluate_conditional(self.as_type_database(), cond)
     }
 
     fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
@@ -442,7 +442,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         index_type: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
-        crate::evaluate::evaluate_index_access_with_options(
+        crate::evaluation::evaluate::evaluate_index_access_with_options(
             self.as_type_database(),
             object_type,
             index_type,
@@ -451,7 +451,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        crate::evaluate::evaluate_type(self.as_type_database(), type_id)
+        crate::evaluation::evaluate::evaluate_type(self.as_type_database(), type_id)
     }
 
     fn evaluate_type_with_options(
@@ -463,13 +463,14 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
             return self.evaluate_type(type_id);
         }
 
-        let mut evaluator = crate::evaluate::TypeEvaluator::new(self.as_type_database());
+        let mut evaluator =
+            crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.evaluate(type_id)
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
-        crate::evaluate::evaluate_mapped(self.as_type_database(), mapped)
+        crate::evaluation::evaluate::evaluate_mapped(self.as_type_database(), mapped)
     }
 
     /// Look up a shared cache entry for evaluated generic applications.
@@ -493,7 +494,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     }
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
-        crate::evaluate::evaluate_keyof(self.as_type_database(), operand)
+        crate::evaluation::evaluate::evaluate_keyof(self.as_type_database(), operand)
     }
 
     fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId
@@ -637,7 +638,12 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         // Default implementation: use SubtypeChecker with default flags
         // (This will be overridden by QueryCache with proper caching)
-        crate::subtype::is_subtype_of_with_flags(self.as_type_database(), source, target, flags)
+        crate::relations::subtype::is_subtype_of_with_flags(
+            self.as_type_database(),
+            source,
+            target,
+            flags,
+        )
     }
 
     /// TypeScript assignability check with full compatibility rules (The Lawyer).
@@ -687,8 +693,8 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Default implementation is a no-op.
     fn insert_assignability_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
-    fn new_inference_context(&self) -> crate::infer::InferenceContext<'_> {
-        crate::infer::InferenceContext::new(self.as_type_database())
+    fn new_inference_context(&self) -> crate::inference::infer::InferenceContext<'_> {
+        crate::inference::infer::InferenceContext::new(self.as_type_database())
     }
 
     /// Task #41: Get the variance mask for a generic type definition.
@@ -834,7 +840,7 @@ impl QueryDatabase for TypeInterner {
     }
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        use crate::compat::CompatChecker;
+        use crate::relations::compat::CompatChecker;
         let mut checker = CompatChecker::new(self);
         if flags != 0 {
             checker.apply_flags(flags);
@@ -1478,10 +1484,10 @@ impl QueryDatabase for QueryCache<'_> {
         type_id: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
-        let trace_enabled = crate::query_trace::enabled();
+        let trace_enabled = crate::caches::query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
-            let query_id = crate::query_trace::next_query_id();
-            crate::query_trace::unary_start(
+            let query_id = crate::caches::query_trace::next_query_id();
+            crate::caches::query_trace::unary_start(
                 query_id,
                 "evaluate_type_with_options",
                 type_id,
@@ -1498,12 +1504,18 @@ impl QueryDatabase for QueryCache<'_> {
 
         if let Some(result) = cached {
             if let Some(query_id) = trace_query_id {
-                crate::query_trace::unary_end(query_id, "evaluate_type_with_options", result, true);
+                crate::caches::query_trace::unary_end(
+                    query_id,
+                    "evaluate_type_with_options",
+                    result,
+                    true,
+                );
             }
             return result;
         }
 
-        let mut evaluator = crate::evaluate::TypeEvaluator::new(self.as_type_database());
+        let mut evaluator =
+            crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
         let result = evaluator.evaluate(type_id);
@@ -1516,7 +1528,12 @@ impl QueryDatabase for QueryCache<'_> {
             }
         }
         if let Some(query_id) = trace_query_id {
-            crate::query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
+            crate::caches::query_trace::unary_end(
+                query_id,
+                "evaluate_type_with_options",
+                result,
+                false,
+            );
         }
         result
     }
@@ -1544,10 +1561,10 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        let trace_enabled = crate::query_trace::enabled();
+        let trace_enabled = crate::caches::query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
-            let query_id = crate::query_trace::next_query_id();
-            crate::query_trace::relation_start(
+            let query_id = crate::caches::query_trace::next_query_id();
+            crate::caches::query_trace::relation_start(
                 query_id,
                 "is_subtype_of_with_flags",
                 source,
@@ -1565,7 +1582,7 @@ impl QueryDatabase for QueryCache<'_> {
 
         if let Some(result) = cached {
             if let Some(query_id) = trace_query_id {
-                crate::query_trace::relation_end(
+                crate::caches::query_trace::relation_end(
                     query_id,
                     "is_subtype_of_with_flags",
                     result,
@@ -1575,7 +1592,7 @@ impl QueryDatabase for QueryCache<'_> {
             return result;
         }
 
-        let result = crate::subtype::is_subtype_of_with_flags(
+        let result = crate::relations::subtype::is_subtype_of_with_flags(
             self.as_type_database(),
             source,
             target,
@@ -1590,16 +1607,21 @@ impl QueryDatabase for QueryCache<'_> {
             }
         }
         if let Some(query_id) = trace_query_id {
-            crate::query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
+            crate::caches::query_trace::relation_end(
+                query_id,
+                "is_subtype_of_with_flags",
+                result,
+                false,
+            );
         }
         result
     }
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        let trace_enabled = crate::query_trace::enabled();
+        let trace_enabled = crate::caches::query_trace::enabled();
         let trace_query_id = trace_enabled.then(|| {
-            let query_id = crate::query_trace::next_query_id();
-            crate::query_trace::relation_start(
+            let query_id = crate::caches::query_trace::next_query_id();
+            crate::caches::query_trace::relation_start(
                 query_id,
                 "is_assignable_to_with_flags",
                 source,
@@ -1613,7 +1635,7 @@ impl QueryDatabase for QueryCache<'_> {
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             if let Some(query_id) = trace_query_id {
-                crate::query_trace::relation_end(
+                crate::caches::query_trace::relation_end(
                     query_id,
                     "is_assignable_to_with_flags",
                     result,
@@ -1624,7 +1646,7 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         // Use CompatChecker with all compatibility rules
-        use crate::compat::CompatChecker;
+        use crate::relations::compat::CompatChecker;
         let mut checker = CompatChecker::new(self.as_type_database());
 
         // FIX: Apply flags to ensure checker matches the cache key configuration
@@ -1636,7 +1658,7 @@ impl QueryDatabase for QueryCache<'_> {
 
         self.insert_cache(&self.assignability_cache, key, result);
         if let Some(query_id) = trace_query_id {
-            crate::query_trace::relation_end(
+            crate::caches::query_trace::relation_end(
                 query_id,
                 "is_assignable_to_with_flags",
                 result,
