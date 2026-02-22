@@ -138,12 +138,19 @@ The diagnostic message in `diagnosticMessages.json` (data.rs template) includes 
 allowed list, but actual tsc 6.0 output says "preserve' or to 'es2015' or later" without "commonjs".
 We use the exact tsc output string for fingerprint-level conformance.
 
-## TS5103 — Invalid value for '--ignoreDeprecations' (Not implemented)
+## TS5103 — Invalid value for '--ignoreDeprecations' (Implemented)
 
+**Status**: Implemented. +16 tests passing in first 6000 slice (3857→3873), +48 total.
 **Error code:** TS5103 ("Invalid value for '--ignoreDeprecations'.")
-**Tests**: 48 failing tests reference this code but few are single-code quick wins.
-**Reason**: Requires validating `ignoreDeprecations` option value is exactly "5.0" or "6.0".
-Simple validation in `parse_tsconfig_with_diagnostics`. Deferred for a future session.
+**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5103
+when `ignoreDeprecations` is set to any value other than `"5.0"`. Also added early return in
+`compile_inner` (driver.rs) when TS5103 is present, matching TSC's behavior of halting
+compilation on invalid `ignoreDeprecations` values.
+
+### Key finding
+TSC 6.0-dev only accepts `"5.0"` as a valid `ignoreDeprecations` value. Even though TS5107
+messages suggest `"6.0"` to suppress newer deprecations, `"6.0"` is not yet a valid value.
+All 48 conformance tests used `// @ignoreDeprecations: 6.0` which TSC rejects with TS5103.
 
 ## TS2454 — Variable used before assignment (Investigated, deferred)
 

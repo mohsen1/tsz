@@ -704,6 +704,20 @@ fn compile_inner(
     };
     let (config, config_diagnostics) = load_config_with_diagnostics(tsconfig_path.as_deref())?;
 
+    // TS5103 (invalid ignoreDeprecations value) is fatal in tsc: it stops compilation
+    // and reports only the config error. Match this behavior to avoid extra diagnostics.
+    if config_diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS)
+    {
+        return Ok(CompilationResult {
+            diagnostics: config_diagnostics,
+            emitted_files: Vec::new(),
+            files_read: Vec::new(),
+            file_infos: Vec::new(),
+        });
+    }
+
     let mut resolved = resolve_compiler_options(
         config
             .as_ref()

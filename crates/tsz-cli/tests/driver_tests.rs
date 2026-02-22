@@ -3408,8 +3408,7 @@ fn compile_ambient_external_module_without_internal_import_declaration_fixture()
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "module": "amd",
-            "ignoreDeprecations": "6.0"
+            "module": "commonjs"
           },
           "files": [
             "ambientExternalModuleWithoutInternalImportDeclaration_0.ts",
