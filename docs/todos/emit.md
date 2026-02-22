@@ -1,8 +1,19 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5033/7163 = 70.3% JS, 415/1036 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9571/13623 = 70.3% JS, 776/1990 = 39.0% DTS)
 
 ### Fixed This Session
+- **Hoisted `exports.default` for function declarations in CJS** (+14 JS):
+  tsc emits `exports.default = f;` BEFORE the function declaration for
+  `export default function f()` in CommonJS mode. JS function declarations are hoisted, so
+  the binding exists at the top of the scope. tsz was emitting the export assignment AFTER
+  the function body. Fix: add `emit_commonjs_export_with_hoisting()` with an
+  `is_hoisted_declaration` flag. Three code paths updated: ExportDeclaration wrapping in
+  `module_emission.rs`, transform directive dispatch, and chained directive dispatch.
+  Two unit tests added.
+  JS: 9557 → 9571, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Wrong AST accessors for method/constructor overload erasure** (+3 JS, +1 DTS):
   The `is_erased` check in the class member emission loop (line ~870 in `declarations.rs`) used
   `self.arena.get_function(member_node)` for `METHOD_DECLARATION` and `CONSTRUCTOR` kinds. But
@@ -399,7 +410,12 @@
 - **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
 - ~~**Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**~~ — **FIXED** (see "Fixed This Session").
 - **Remaining duplicate-export affected tests (~90)**: The overload dedup fix resolves the duplicate `exports.X = X;` issue, but ~90 tests that had this as one of multiple issues remain failing due to other causes (missing helpers, wrong comment placement, module transform gaps). No action needed on the dedup side; remaining failures need other fixes.
-- **`exports.default` ordering (~19 tests)**: tsc emits `exports.default = X;` in the preamble (before the function), but tsz emits it after the function body. Requires reordering default export assignment in the CommonJS preamble emission path.
+- **`exports.default` ordering (~19 remaining tests, was ~36)**: For named default function exports, tsc emits
+  `exports.default = f;` before the function — now fixed (+14 tests). Remaining cases involve: (1) anonymous
+  default functions where `default_1` naming isn't applied in the transform path, (2) `exports.default` emitted
+  in the preamble before non-hoisted variable statements (e.g., `var before = func();` appearing after
+  `exports.default = func;`), and (3) system module export ordering. These remaining cases need different
+  approaches (preamble-level default export for non-hoisted declarations, anonymous name synthesis fix).
 - **Missing `exports.X = X;` for scoped declarations (~42 tests)**: tsc emits `exports.X = X;` for class/function exports declared inside nested scopes (e.g., conditionals, namespaces). The export collector only scans top-level statements, missing these. Would need deeper AST traversal or a different approach.
 - `ambientModuleDeclarationWithReservedIdentifierInDottedPath` / `ambientModuleDeclarationWithReservedIdentifierInDottedPath2`: ambient dotted module declarations now still emit wrong declaration shapes when mixed with declaration emit filtering; requires namespace/ambient-module emitter refactor, so deferred for later session.
 - `abstractPropertyInitializer` / `abstractPropertyDeclaration`: DTS accessor parity still regresses on mixed abstract/private getter/setter edge cases; we fixed only private setter parameter naming and deferred broader declaration-transform compatibility work.
