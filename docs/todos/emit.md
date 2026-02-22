@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 2793/3948 = 70.7% JS, 213/557 = 38.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 9541/13623 = 70.0% JS, 776/1990 = 39.0% DTS)
 
 ### Fixed This Session
+- **`/// <reference>` directives emitted inside AMD/UMD/System wrapper body** (+10 JS tests):
+  tsc places `/// <reference path="..." />` directives at file top level, BEFORE the module
+  wrapper (`define()`, UMD IIFE, `System.register()`). tsz was emitting them inside the wrapper
+  body with indentation because `emit_source_file` deferred them as header comments within the
+  already-indented wrapper context. Fixed by: (1) adding `extract_reference_directives()` to
+  extract `/// <reference` lines from source headers, (2) emitting them before the wrapper in
+  `emit_amd_wrapper`, `emit_umd_wrapper`, and `emit_system_wrapper`, (3) filtering them from
+  the comment stream inside `emit_source_file` when `original_module_kind` is set to prevent
+  duplication. Three unit tests added.
+  Tests fixed: `tsxSfcReturnNull`, `tsxSfcReturnNullStrictNullChecks`,
+  `tsxStatelessFunctionComponentOverload1/2`,
+  `tsxStatelessFunctionComponentWithDefaultTypeParameter1/2`,
+  `tsxStatelessFunctionComponentsWithTypeArguments1/2/3/5`.
+  JS: 9531 → 9541, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Redundant `public` modifier in DTS class members** (+6 DTS tests):
   `emit_member_modifiers` in `declaration_emitter/exports.rs` was emitting `public ` for
   class properties, methods, and accessors. tsc omits `public` in `.d.ts` output because
