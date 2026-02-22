@@ -6,7 +6,7 @@
 //! - Template literal normalization (merging adjacent text spans)
 //! - Template literal introspection (interpolation positions, span access)
 
-use crate::intern::{TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeInterner};
+use super::{TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeInterner};
 use crate::types::{LiteralValue, TemplateSpan, TypeData, TypeId};
 
 impl TypeInterner {
@@ -463,7 +463,7 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
-                spans.iter().all(super::types::TemplateSpan::is_text)
+                spans.iter().all(TemplateSpan::is_text)
             }
             // String literals are the result of text-only template expansion
             Some(TypeData::Literal(LiteralValue::String(_))) => true,

@@ -8,7 +8,7 @@
 //! - Intersection-over-union distribution
 //! - Literal absorption into primitives
 
-use crate::intern::{TypeInterner, TypeListBuffer};
+use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TypeData, TypeId,
 };
