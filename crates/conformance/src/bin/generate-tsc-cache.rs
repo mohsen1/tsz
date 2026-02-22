@@ -1,8 +1,11 @@
 //! TSC Cache Generator using tsc directly
 //!
 //! Generates the conformance cache by running tsc on each test file.
-//! Slower than tsserver but more accurate and reliable.
-//! The cache can be stored in GitHub artifacts per TypeScript version.
+//! Uses the same `prepare_test_dir` and output parsing as the conformance runner
+//! to ensure cache-vs-runner consistency.
+//!
+//! Architecture: rayon threads handle Rust-side work (file I/O, parsing, setup)
+//! while a semaphore caps concurrent node subprocesses to avoid OOM.
 
 use anyhow::Result;
 use clap::Parser;
@@ -12,9 +15,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 use tsz_conformance::tsc_results::DiagnosticFingerprint;
+use tsz_conformance::tsz_wrapper;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -33,9 +37,14 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     max: usize,
 
-    /// Number of parallel workers
-    #[arg(long, default_value_t = 8)]
+    /// Number of parallel workers (rayon threads for file I/O and parsing)
+    #[arg(long, default_value_t = 0)]
     workers: usize,
+
+    /// Max concurrent node/tsc subprocesses (each uses ~200MB).
+    /// Defaults to min(workers, 8) to avoid OOM.
+    #[arg(long, default_value_t = 0)]
+    max_node_procs: usize,
 
     /// Show verbose output
     #[arg(short, long)]
@@ -66,42 +75,36 @@ struct FileMetadata {
     typescript_version: Option<String>,
 }
 
-/// Test harness-specific directives that should NOT be passed to tsconfig.json
-const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
-    "filename",
-    "allowNonTsExtensions",
-    "useCaseSensitiveFileNames",
-    "baselineFile",
-    "noErrorTruncation",
-    "suppressOutputPathCheck",
-    "noImplicitReferences",
-    "currentDirectory",
-    "traceResolution",
-    "symlink",
-    "link",
-    "noTypesAndSymbols",
-    "fullEmitPaths",
-    "noCheck",
-    "nocheck",
-    "reportDiagnostics",
-    "captureSuggestions",
-    "typeScriptVersion",
-    "skip",
-];
+/// Simple counting semaphore (std::sync::Semaphore was removed from std).
+struct CountingSemaphore {
+    state: Mutex<usize>,
+    cvar: Condvar,
+}
 
-/// List-type compiler options that accept comma-separated values
-const LIST_OPTIONS: &[&str] = &[
-    "lib",
-    "types",
-    "typeRoots",
-    "rootDirs",
-    "moduleSuffixes",
-    "customConditions",
-];
+impl CountingSemaphore {
+    fn new(permits: usize) -> Self {
+        Self {
+            state: Mutex::new(permits),
+            cvar: Condvar::new(),
+        }
+    }
+
+    fn acquire(&self) {
+        let mut count = self.state.lock().unwrap();
+        while *count == 0 {
+            count = self.cvar.wait(count).unwrap();
+        }
+        *count -= 1;
+    }
+
+    fn release(&self) {
+        let mut count = self.state.lock().unwrap();
+        *count += 1;
+        self.cvar.notify_one();
+    }
+}
 
 fn resolve_tsc_path() -> Result<String> {
-    // Try to find tsc without npx overhead
-    // 1. Check node_modules/.bin/tsc (local install)
     if let Ok(output) = Command::new("node")
         .args([
             "-e",
@@ -116,7 +119,6 @@ fn resolve_tsc_path() -> Result<String> {
             }
         }
     }
-    // 2. Try `which tsc`
     if let Ok(output) = Command::new("which").arg("tsc").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -125,22 +127,31 @@ fn resolve_tsc_path() -> Result<String> {
             }
         }
     }
-    // 3. Fall back to npx (slow)
     Ok("npx:tsc".to_string())
 }
-
-// filter logic lives in tsz_conformance::test_filter
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Set rayon thread pool size
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let workers = if args.workers == 0 {
+        num_cpus
+    } else {
+        args.workers
+    };
+    let max_node = if args.max_node_procs == 0 {
+        workers.min(8)
+    } else {
+        args.max_node_procs
+    };
+
     rayon::ThreadPoolBuilder::new()
-        .num_threads(args.workers)
+        .num_threads(workers)
         .build_global()
         .ok();
 
-    // Resolve tsc path once at startup (avoids npx overhead per file)
     let tsc_path = resolve_tsc_path()?;
     let tsc_version = resolve_tsc_version().unwrap_or_else(|_| "unknown".to_string());
     println!("📍 Using tsc: {}", tsc_path);
@@ -151,9 +162,10 @@ fn main() -> Result<()> {
     println!("✓ Found {} test files", test_files.len());
 
     println!(
-        "\n🔨 Processing {} tests with {} workers...",
+        "\n🔨 Processing {} tests ({} rayon threads, {} max node procs)...",
         test_files.len(),
-        args.workers
+        workers,
+        max_node,
     );
     let start = Instant::now();
 
@@ -163,20 +175,19 @@ fn main() -> Result<()> {
     let skipped = AtomicUsize::new(0);
     let total = test_files.len();
     let verbose = args.verbose;
-    let timeout = args.timeout;
     let tsc_path_ref = &tsc_path;
     let test_dir_path = Path::new(&args.test_dir)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
+    let node_semaphore = Arc::new(CountingSemaphore::new(max_node));
 
-    // Process tests in parallel
     test_files.par_iter().for_each(|path| {
         match process_test_file(
             path,
             &test_dir_path,
-            timeout,
             tsc_path_ref,
             tsc_version.as_str(),
+            &node_semaphore,
         ) {
             Ok(Some((key, entry))) => {
                 cache.lock().unwrap().insert(key, entry);
@@ -196,9 +207,12 @@ fn main() -> Result<()> {
         if count.is_multiple_of(100) {
             let err_count = errors.load(Ordering::SeqCst);
             let skip_count = skipped.load(Ordering::SeqCst);
+            let elapsed = start.elapsed().as_secs_f64();
+            let rate = count as f64 / elapsed;
+            let remaining = (total - count) as f64 / rate;
             eprint!(
-                "\r[{}/{}] processed ({} errors, {} skipped)    ",
-                count, total, err_count, skip_count
+                "\r[{}/{}] {:.0} tests/sec, ETA {:.0}s ({} errors, {} skipped)    ",
+                count, total, rate, remaining, err_count, skip_count
             );
         }
     });
@@ -206,7 +220,7 @@ fn main() -> Result<()> {
     let cache = cache.into_inner().unwrap();
 
     println!(
-        "\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ",
+        "\r✓ Completed in {:.1}s ({:.0} tests/sec)                              ",
         start.elapsed().as_secs_f64(),
         test_files.len() as f64 / start.elapsed().as_secs_f64()
     );
@@ -240,12 +254,10 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
 
         let path_str = path.to_string_lossy();
 
-        // Skip fourslash tests (language service tests with special format)
         if path_str.contains("/fourslash/") || path_str.contains("\\fourslash\\") {
             continue;
         }
 
-        // Skip .d.ts files
         if path_str.ends_with(".d.ts") {
             continue;
         }
@@ -270,29 +282,30 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
     Ok(files)
 }
 
+/// Process a single test file: prepare project dir (shared with runner), run tsc, parse output.
+///
+/// The `node_sem` semaphore limits concurrent node subprocesses to prevent OOM.
+/// Rayon threads do Rust-side work (file read, parse, temp dir setup) without the semaphore,
+/// then acquire it only for the subprocess call.
 fn process_test_file(
     path: &Path,
     test_dir: &Path,
-    _timeout_secs: u64,
     tsc_path: &str,
     tsc_version: &str,
+    node_sem: &CountingSemaphore,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
+    use tsz_conformance::text_decode::{decode_source_text, DecodedSourceText};
 
-    // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
     let bytes = fs::read(path)?;
-    let decoded = tsz_conformance::text_decode::decode_source_text(&bytes);
+    let decoded = decode_source_text(&bytes);
 
     let (content, filenames, options, binary_bytes) = match decoded {
-        tsz_conformance::text_decode::DecodedSourceText::Text(content) => {
-            // Parse directives
+        DecodedSourceText::Text(content) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-
-            // Check if should skip
             if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
                 return Ok(None);
             }
-
             (
                 Some(content),
                 parsed.directives.filenames,
@@ -300,11 +313,7 @@ fn process_test_file(
                 None,
             )
         }
-        tsz_conformance::text_decode::DecodedSourceText::TextWithOriginalBytes(
-            content,
-            original,
-        ) => {
-            // UTF-16 decoded text: parse directives from decoded text, preserve original bytes
+        DecodedSourceText::TextWithOriginalBytes(content, original) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
             if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
                 return Ok(None);
@@ -316,12 +325,9 @@ fn process_test_file(
                 Some(original),
             )
         }
-        tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => {
-            (None, Vec::new(), HashMap::new(), Some(bytes))
-        }
+        DecodedSourceText::Binary(bytes) => (None, Vec::new(), HashMap::new(), Some(bytes)),
     };
 
-    // Get file metadata
     let metadata = fs::metadata(path)?;
     let mtime_ms = metadata
         .modified()?
@@ -329,7 +335,6 @@ fn process_test_file(
         .as_millis() as u64;
     let size = metadata.len();
 
-    // Cache key is relative file path from test directory
     let key = tsz_conformance::cache::cache_key(path, test_dir).ok_or_else(|| {
         anyhow::anyhow!(
             "Path {} is not under test dir {}",
@@ -338,67 +343,23 @@ fn process_test_file(
         )
     })?;
 
-    // Create temporary directory for this test
-    let temp_dir = tempfile::TempDir::new()?;
-    let work_dir = temp_dir.path();
+    let original_extension = path.extension().and_then(|e| e.to_str());
 
-    // Create tsconfig.json with parsed @-directives unless test provides its own.
-    let has_tsconfig_file = filenames
-        .iter()
-        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    if !has_tsconfig_file {
-        let tsconfig_path = work_dir.join("tsconfig.json");
-        let mut compiler_options = convert_options_to_tsconfig(&options)
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        compiler_options.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
-        compiler_options.insert("strict".to_string(), serde_json::Value::Bool(true));
-
-        let tsconfig_content = serde_json::json!({
-            "compilerOptions": compiler_options,
-            "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
-            "exclude": ["node_modules"]
-        });
-        fs::write(
-            &tsconfig_path,
-            serde_json::to_string_pretty(&tsconfig_content)?,
-        )?;
-    }
-
-    // Write test files
-    if filenames.is_empty() {
-        // Single-file test
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
-        let main_file = work_dir.join(format!("test.{}", ext));
-        if let Some(content) = content {
-            fs::write(&main_file, strip_directive_comments(&content))?;
-        } else if let Some(bytes) = binary_bytes {
-            fs::write(&main_file, bytes)?;
-        }
+    // Prepare test dir (Rust-side work — no semaphore needed)
+    let prepared = if let Some(content) = &content {
+        tsz_wrapper::prepare_test_dir(content, &filenames, &options, original_extension, &[])?
+    } else if let Some(bytes) = &binary_bytes {
+        tsz_wrapper::prepare_binary_test_dir(bytes, original_extension.unwrap_or("ts"), &options)?
     } else {
-        // Multi-file test: write files from @filename directives
-        for (filename, file_content) in &filenames {
-            let sanitized = filename
-                .replace("..", "_")
-                .trim_start_matches('/')
-                .to_string();
-            let file_path = work_dir.join(&sanitized);
+        return Err(anyhow::anyhow!("No content or binary bytes for test file"));
+    };
 
-            if !file_path.starts_with(work_dir) {
-                continue;
-            }
+    let work_dir = prepared.temp_dir.path();
 
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&file_path, file_content)?;
-        }
-    }
+    // Acquire semaphore before spawning node subprocess to cap memory usage
+    node_sem.acquire();
 
-    // Run tsc (using pre-resolved path to avoid npx overhead)
     let output = if tsc_path.starts_with("npx:") {
-        // Fallback to npx
         Command::new("npx")
             .arg("tsc")
             .arg("--project")
@@ -409,7 +370,6 @@ fn process_test_file(
             .current_dir(work_dir)
             .output()
     } else if tsc_path.ends_with(".js") {
-        // Direct node invocation of tsc.js
         Command::new("node")
             .arg(tsc_path)
             .arg("--project")
@@ -420,7 +380,6 @@ fn process_test_file(
             .current_dir(work_dir)
             .output()
     } else {
-        // Direct tsc binary
         Command::new(tsc_path)
             .arg("--project")
             .arg(work_dir)
@@ -431,6 +390,9 @@ fn process_test_file(
             .output()
     };
 
+    // Release permit immediately after subprocess completes
+    node_sem.release();
+
     let output = match output {
         Ok(o) => o,
         Err(e) => {
@@ -438,16 +400,9 @@ fn process_test_file(
         }
     };
 
-    // Parse error codes from tsc output
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}\n{}", stdout, stderr);
+    let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options);
 
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints(&combined, work_dir);
-    let mut error_codes: Vec<u32> = diagnostic_fingerprints.iter().map(|d| d.code).collect();
-    if error_codes.is_empty() {
-        error_codes = parse_error_codes(&combined);
-    }
+    let mut error_codes = result.error_codes;
     error_codes.sort();
     error_codes.dedup();
 
@@ -460,452 +415,9 @@ fn process_test_file(
                 typescript_version: Some(tsc_version.to_string()),
             },
             error_codes,
-            diagnostic_fingerprints,
+            diagnostic_fingerprints: result.diagnostic_fingerprints,
         },
     )))
-}
-
-/// Convert test directive options to tsconfig compiler options JSON
-fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
-    // Delegate to the shared implementation in tsz_wrapper
-    // Keys are already lowercase from the parser
-    let mut opts = serde_json::Map::new();
-
-    for (key, value) in options {
-        let key_lower = key.to_lowercase();
-        if HARNESS_ONLY_DIRECTIVES
-            .iter()
-            .any(|&d| d.to_lowercase() == key_lower)
-        {
-            continue;
-        }
-
-        let canonical_key = canonical_option_name(&key_lower);
-        let json_value = if value == "true" {
-            serde_json::Value::Bool(true)
-        } else if value == "false" {
-            serde_json::Value::Bool(false)
-        } else if LIST_OPTIONS
-            .iter()
-            .any(|&opt| opt.to_lowercase() == key_lower)
-        {
-            let items: Vec<serde_json::Value> = value
-                .split(',')
-                .map(|s| serde_json::Value::String(s.trim().to_string()))
-                .collect();
-            serde_json::Value::Array(items)
-        } else {
-            // For non-list options, take only the first comma-separated value
-            let effective_value = value.split(',').next().unwrap_or(value).trim();
-            if let Ok(num) = effective_value.parse::<i64>() {
-                serde_json::Value::Number(num.into())
-            } else {
-                serde_json::Value::String(effective_value.to_string())
-            }
-        };
-
-        opts.insert(canonical_key.to_string(), json_value);
-    }
-
-    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
-        for key in [
-            "noImplicitAny",
-            "noImplicitThis",
-            "strictNullChecks",
-            "strictFunctionTypes",
-            "strictBindCallApply",
-            "strictPropertyInitialization",
-            "useUnknownInCatchVariables",
-            "alwaysStrict",
-        ] {
-            opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
-        }
-    }
-
-    // Sort properties alphabetically for deterministic tsconfig output.
-    // This ensures TS5025 line numbers are reproducible across runs.
-    opts.sort_keys();
-
-    serde_json::Value::Object(opts)
-}
-
-fn canonical_option_name(key_lower: &str) -> &str {
-    // Must stay in sync with known_compiler_option() in src/config.rs and the
-    // copies in tsz_wrapper.rs / generate-tsc-cache-tsserver.rs.
-    match key_lower {
-        "allowarbitraryextensions" => "allowArbitraryExtensions",
-        "allowimportingtsextensions" => "allowImportingTsExtensions",
-        "allowjs" => "allowJs",
-        "allowsyntheticdefaultimports" => "allowSyntheticDefaultImports",
-        "allowumdglobalaccess" => "allowUmdGlobalAccess",
-        "allowunreachablecode" => "allowUnreachableCode",
-        "allowunusedlabels" => "allowUnusedLabels",
-        "alwaysstrict" => "alwaysStrict",
-        "baseurl" => "baseUrl",
-        "charset" => "charset",
-        "checkjs" => "checkJs",
-        "composite" => "composite",
-        "customconditions" => "customConditions",
-        "declaration" => "declaration",
-        "declarationdir" => "declarationDir",
-        "declarationmap" => "declarationMap",
-        "diagnostics" => "diagnostics",
-        "disablereferencedprojectload" => "disableReferencedProjectLoad",
-        "disablesizelimt" => "disableSizeLimit",
-        "disablesolutioncaching" => "disableSolutionCaching",
-        "disablesolutiontypecheck" => "disableSolutionTypeCheck",
-        "disablesolutiontypechecking" => "disableSolutionTypeChecking",
-        "disablesourceofreferencedprojectload" => "disableSourceOfReferencedProjectLoad",
-        "downleveliteration" => "downlevelIteration",
-        "emitbom" => "emitBOM",
-        "emitdeclarationonly" => "emitDeclarationOnly",
-        "emitdecoratormetadata" => "emitDecoratorMetadata",
-        "erasablesyntaxonly" => "erasableSyntaxOnly",
-        "esmoduleinterop" => "esModuleInterop",
-        "exactoptionalpropertytypes" => "exactOptionalPropertyTypes",
-        "experimentaldecorators" => "experimentalDecorators",
-        "extendeddiagnostics" => "extendedDiagnostics",
-        "forceconsecinferfaces" | "forceconsistentcasinginfilenames" => {
-            "forceConsistentCasingInFileNames"
-        }
-        "generatecputrace" | "generatecpuprofile" => "generateCpuProfile",
-        "generatetrace" => "generateTrace",
-        "ignoredeprecations" => "ignoreDeprecations",
-        "importhelpers" => "importHelpers",
-        "importsnotusedasvalues" => "importsNotUsedAsValues",
-        "incremental" => "incremental",
-        "inlineconstants" => "inlineConstants",
-        "inlinesourcemap" => "inlineSourceMap",
-        "inlinesources" => "inlineSources",
-        "isolateddeclarations" => "isolatedDeclarations",
-        "isolatedmodules" => "isolatedModules",
-        "jsx" => "jsx",
-        "jsxfactory" => "jsxFactory",
-        "jsxfragmentfactory" => "jsxFragmentFactory",
-        "jsximportsource" => "jsxImportSource",
-        "keyofstringsonly" => "keyofStringsOnly",
-        "lib" => "lib",
-        "libreplacement" => "libReplacement",
-        "listemittedfiles" => "listEmittedFiles",
-        "listfiles" => "listFiles",
-        "listfilesonly" => "listFilesOnly",
-        "locale" => "locale",
-        "maproot" => "mapRoot",
-        "maxnodemodulejsdepth" => "maxNodeModuleJsDepth",
-        "module" => "module",
-        "moduledetection" => "moduleDetection",
-        "moduleresolution" => "moduleResolution",
-        "modulesuffixes" => "moduleSuffixes",
-        "newline" => "newLine",
-        "nocheck" => "noCheck",
-        "noemit" => "noEmit",
-        "noemithelpers" => "noEmitHelpers",
-        "noemitonerror" => "noEmitOnError",
-        "noerrortruncation" => "noErrorTruncation",
-        "nofallthrough" | "nofallthroughcasesinswitch" => "noFallthroughCasesInSwitch",
-        "noimplicitany" => "noImplicitAny",
-        "noimplicitoverride" => "noImplicitOverride",
-        "noimplicitreturns" => "noImplicitReturns",
-        "noimplicitthis" => "noImplicitThis",
-        "noimplicitusestrict" => "noImplicitUseStrict",
-        "nolib" => "noLib",
-        "nopropertyaccessfromindexsignature" => "noPropertyAccessFromIndexSignature",
-        "noresolve" => "noResolve",
-        "nostrictgenericchecks" => "noStrictGenericChecks",
-        "notypesandsymbols" => "noTypesAndSymbols",
-        "nouncheckedindexedaccess" => "noUncheckedIndexedAccess",
-        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
-        "nounusedlocals" => "noUnusedLocals",
-        "nounusedparameters" => "noUnusedParameters",
-        "outdir" => "outDir",
-        "outfile" => "outFile",
-        "paths" => "paths",
-        "plugins" => "plugins",
-        "preserveconstenums" => "preserveConstEnums",
-        "preservesymlinks" => "preserveSymlinks",
-        "preservevalueimports" => "preserveValueImports",
-        "preservewatchoutput" => "preserveWatchOutput",
-        "pretty" => "pretty",
-        "reactnamespace" => "reactNamespace",
-        "removecomments" => "removeComments",
-        "resolvejsonmodule" => "resolveJsonModule",
-        "resolvepackagejsonexports" => "resolvePackageJsonExports",
-        "resolvepackagejsonimports" => "resolvePackageJsonImports",
-        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
-        "rootdir" => "rootDir",
-        "rootdirs" => "rootDirs",
-        "skipdefaultlibcheck" => "skipDefaultLibCheck",
-        "skiplibcheck" => "skipLibCheck",
-        "sourcemap" => "sourceMap",
-        "sourceroot" => "sourceRoot",
-        "strict" => "strict",
-        "strictbindcallapply" => "strictBindCallApply",
-        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
-        "strictfunctiontypes" => "strictFunctionTypes",
-        "strictnullchecks" => "strictNullChecks",
-        "strictpropertyinitialization" => "strictPropertyInitialization",
-        "stripinternal" => "stripInternal",
-        "suppressexcesspropertyerrors" => "suppressExcessPropertyErrors",
-        "suppressimplicitanyindexerrors" => "suppressImplicitAnyIndexErrors",
-        "target" => "target",
-        "traceresolution" => "traceResolution",
-        "tsbuildinfofile" => "tsBuildInfoFile",
-        "typeroots" => "typeRoots",
-        "types" => "types",
-        "usedefineforclassfields" => "useDefineForClassFields",
-        "useunknownincatchvariables" => "useUnknownInCatchVariables",
-        "verbatimmodulesyntax" => "verbatimModuleSyntax",
-        _ => key_lower,
-    }
-}
-
-/// Parse error codes from tsc output
-fn parse_error_codes(text: &str) -> Vec<u32> {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static DIAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"error TS(\d+):").unwrap());
-
-    let mut codes = Vec::new();
-    for line in text.lines() {
-        if let Some(caps) = DIAG_RE.captures(line) {
-            if let Ok(code) = caps[1].parse::<u32>() {
-                codes.push(code);
-            }
-        }
-    }
-    codes
-}
-
-/// Parse detailed diagnostics and normalize paths relative to a per-test project root.
-fn parse_diagnostic_fingerprints(text: &str, project_root: &Path) -> Vec<DiagnosticFingerprint> {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
-            .expect("valid regex")
-    });
-    static DIAG_NO_POS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
-
-    let mut diagnostics = Vec::new();
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
-            if let Some(code) = caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-            {
-                let line_no = caps
-                    .name("line")
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-                let col_no = caps
-                    .name("col")
-                    .and_then(|m| m.as_str().parse::<u32>().ok())
-                    .unwrap_or(0);
-                let raw_file = caps.name("file").map(|m| m.as_str()).unwrap_or_default();
-                let file = normalize_diagnostic_path(raw_file, project_root);
-                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                let message = normalize_message_paths(raw_message, project_root);
-                diagnostics.push(DiagnosticFingerprint::new(
-                    code, file, line_no, col_no, &message,
-                ));
-            }
-            continue;
-        }
-
-        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
-            if let Some(code) = caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-            {
-                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                let message = normalize_message_paths(raw_message, project_root);
-                diagnostics.push(DiagnosticFingerprint::new(
-                    code,
-                    String::new(),
-                    0,
-                    0,
-                    &message,
-                ));
-            }
-        }
-    }
-
-    diagnostics.sort_by(|a, b| {
-        (
-            a.code,
-            a.file.as_str(),
-            a.line,
-            a.column,
-            a.message_key.as_str(),
-        )
-            .cmp(&(
-                b.code,
-                b.file.as_str(),
-                b.line,
-                b.column,
-                b.message_key.as_str(),
-            ))
-    });
-    diagnostics.dedup();
-    diagnostics
-}
-
-fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
-    let normalized = raw.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return normalized;
-    }
-
-    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
-    let mut roots = Vec::new();
-    roots.push(project_root.to_string_lossy().replace('\\', "/"));
-    if let Ok(canon_root) = project_root.canonicalize() {
-        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
-    }
-
-    let mut expanded_roots = Vec::new();
-    for root in roots {
-        if root.is_empty() {
-            continue;
-        }
-        expanded_roots.push(root.clone());
-        if let Some(stripped) = root.strip_prefix("/private") {
-            if stripped.starts_with("/var/") {
-                expanded_roots.push(stripped.to_string());
-            }
-        }
-        if root.starts_with("/var/") {
-            expanded_roots.push(format!("/private{}", root));
-        }
-    }
-
-    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
-    expanded_roots.dedup();
-
-    // Try stripping absolute prefix directly
-    for root in &expanded_roots {
-        if normalized.starts_with(root) {
-            return normalized[root.len()..].trim_start_matches('/').to_string();
-        }
-    }
-
-    // Handle relative paths with ../ that escape the project root (e.g.,
-    // "../../../var/folders/.../file.tsx"). Resolve against project_root.
-    if normalized.contains("../") {
-        let resolved = project_root.join(&normalized);
-        // Use a simple path component resolver instead of canonicalize (file may not exist)
-        let resolved_str = resolve_path_components(&resolved);
-        for root in &expanded_roots {
-            let root_slash = if root.ends_with('/') {
-                root.to_string()
-            } else {
-                format!("{}/", root)
-            };
-            if resolved_str.starts_with(&root_slash) {
-                return resolved_str[root_slash.len()..].to_string();
-            }
-            if resolved_str.starts_with(root) {
-                return resolved_str[root.len()..]
-                    .trim_start_matches('/')
-                    .to_string();
-            }
-        }
-        // If the resolved path doesn't match any root, return it as-is but resolved
-        return resolved_str;
-    }
-
-    normalized
-}
-
-/// Resolve `.` and `..` components in a path string without filesystem access.
-fn resolve_path_components(path: &Path) -> String {
-    let mut components = Vec::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                // Don't pop past the root component
-                if components.len() > 1 {
-                    components.pop();
-                }
-            }
-            std::path::Component::CurDir => {}
-            _ => components.push(component),
-        }
-    }
-    let resolved: std::path::PathBuf = components.iter().collect();
-    resolved.to_string_lossy().replace('\\', "/")
-}
-
-/// Strip the project root from any file paths embedded in diagnostic messages.
-///
-/// tsc resolves `/// <reference path="lib.ts" />` to an absolute path like
-/// `/tmp/xyz/lib.ts` in the error message. We strip the temp dir prefix so
-/// the cache stores portable relative paths (e.g., `File 'lib.ts' not found.`).
-fn normalize_message_paths(message: &str, project_root: &Path) -> String {
-    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
-    let mut roots = Vec::new();
-    roots.push(project_root.to_string_lossy().replace('\\', "/"));
-    if let Ok(canon_root) = project_root.canonicalize() {
-        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
-    }
-
-    let mut expanded_roots = Vec::new();
-    for root in roots {
-        if root.is_empty() {
-            continue;
-        }
-        expanded_roots.push(root.clone());
-        if let Some(stripped) = root.strip_prefix("/private") {
-            if stripped.starts_with("/var/") {
-                expanded_roots.push(stripped.to_string());
-            }
-        }
-        if root.starts_with("/var/") {
-            expanded_roots.push(format!("/private{}", root));
-        }
-    }
-
-    // Sort longest first so we strip the most specific prefix
-    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
-    expanded_roots.dedup();
-
-    let mut result = message.to_string();
-    for root in &expanded_roots {
-        let root_slash = if root.ends_with('/') {
-            root.to_string()
-        } else {
-            format!("{}/", root)
-        };
-        result = result.replace(&root_slash, "");
-        // Also strip root without trailing slash (e.g., paths at end of message)
-        result = result.replace(root.as_str(), "");
-    }
-    result
-}
-
-/// Strip @ directive comments from test file content
-fn strip_directive_comments(content: &str) -> String {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static DIRECTIVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*//\s*@\w+\s*:").unwrap());
-
-    content
-        .lines()
-        .filter(|line| !DIRECTIVE_RE.is_match(line))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()> {
@@ -919,11 +431,9 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 }
 
 fn resolve_tsc_version() -> Result<String> {
-    // First, try reading the pinned version from typescript-versions.json
     let script = r#"
         const fs = require('fs');
         const path = require('path');
-        // Try typescript-versions.json first (pinned version)
         const versionsPath = path.join(process.cwd(), 'scripts', 'typescript-versions.json');
         try {
             const cfg = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
@@ -933,7 +443,6 @@ fn resolve_tsc_version() -> Result<String> {
             const version = mapping || fallback;
             if (version) { console.log(version); process.exit(0); }
         } catch {}
-        // Fall back to installed TypeScript version
         try {
             const p = require.resolve('typescript/package.json');
             const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
