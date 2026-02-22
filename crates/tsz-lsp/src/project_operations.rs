@@ -2229,7 +2229,117 @@ impl Project {
             }
         }
 
+        if matches.is_empty()
+            && export_name != "default"
+            && Self::is_js_like_file(file_name)
+            && Self::has_commonjs_named_export(file, export_name)
+        {
+            matches.push(ExportMatch {
+                kind: ImportCandidateKind::Named {
+                    export_name: export_name.to_string(),
+                },
+                is_type_only: false,
+            });
+        }
+
         matches
+    }
+
+    fn has_commonjs_named_export(file: &ProjectFile, export_name: &str) -> bool {
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return false;
+        };
+
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                return false;
+            }
+            let Some(stmt_data) = arena.get_expression_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_node) = arena.get(stmt_data.expression) else {
+                return false;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return false;
+            }
+            let Some(binary) = arena.get_binary_expr(expr_node) else {
+                return false;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                return false;
+            }
+
+            Self::is_commonjs_export_assignment(arena, binary.left, export_name)
+        })
+    }
+
+    fn is_commonjs_export_assignment(
+        arena: &NodeArena,
+        left_idx: NodeIndex,
+        export_name: &str,
+    ) -> bool {
+        let Some(left_node) = arena.get(left_idx) else {
+            return false;
+        };
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(left_node) else {
+            return false;
+        };
+        let Some(member_name) = arena.get_identifier_text(access.name_or_argument) else {
+            return false;
+        };
+        member_name == export_name && Self::is_commonjs_exports_target(arena, access.expression)
+    }
+
+    fn is_commonjs_exports_target(arena: &NodeArena, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = arena.get(expr_idx) else {
+            return false;
+        };
+
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return arena.get_identifier_text(expr_idx) == Some("exports");
+        }
+
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        let Some(name) = arena.get_identifier_text(access.name_or_argument) else {
+            return false;
+        };
+
+        if name == "exports" {
+            let Some(base_node) = arena.get(access.expression) else {
+                return false;
+            };
+            if base_node.kind == SyntaxKind::Identifier as u16
+                && arena.get_identifier_text(access.expression) == Some("module")
+            {
+                return true;
+            }
+        }
+
+        Self::is_commonjs_exports_target(arena, access.expression)
+    }
+
+    fn is_js_like_file(file_name: &str) -> bool {
+        matches!(
+            Path::new(file_name)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase())
+                .as_deref(),
+            Some("js" | "jsx" | "mjs" | "cjs")
+        )
     }
 
     fn matching_exports_in_ambient_modules(
@@ -3955,6 +4065,39 @@ mod tests {
         assert_eq!(
             specs,
             vec!["ambient".to_string(), "ambient/utils".to_string()]
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_commonjs_exports_from_js_files() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "node18",
+    "allowJs": true,
+    "checkJs": true
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/matrix.js".to_string(),
+            "exports.variants = [];".to_string(),
+        );
+        project.set_file("/main.js".to_string(), "variants".to_string());
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/main.js", "variants")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "variants")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|spec| spec == "./matrix.js"),
+            "expected './matrix.js' auto-import candidate, got {specs:?}"
         );
     }
 
