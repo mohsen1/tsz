@@ -46,12 +46,12 @@ impl<'a> CheckerState<'a> {
         // reusing cached instance types is safe and avoids duplicate non-canonical
         // allocations (for example, parser fixtures like `Dataset | Dataset`).
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            return cached;
+        }
         let can_use_cache = current_sym
             .map(|sym_id| !self.ctx.class_instance_resolution_set.contains(&sym_id))
             .unwrap_or(true);
-        if can_use_cache && let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
-            return cached;
-        }
 
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();

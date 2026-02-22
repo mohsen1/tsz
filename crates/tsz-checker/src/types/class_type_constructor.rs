@@ -39,14 +39,12 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        if let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx) {
+            return cached;
+        }
         let can_use_cache = current_sym
             .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
             .unwrap_or(true);
-        if can_use_cache
-            && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
-        {
-            return cached;
-        }
 
         // Cycle detection: prevent infinite recursion on circular class hierarchies
         // (e.g. class C extends C {}, or A extends B extends A)
