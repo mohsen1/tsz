@@ -120,9 +120,18 @@ impl<'a> HoverProvider<'a> {
         // 2. Resolve symbol using ScopeWalker
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)
         } else {
-            walker.resolve_node(root, node_idx)?
+            walker.resolve_node(root, node_idx)
+        };
+        let symbol_id = match symbol_id {
+            Some(symbol_id) => symbol_id,
+            None => {
+                if let Some(class_hover) = self.hover_for_class_expression_keyword(node_idx) {
+                    return Some(class_hover);
+                }
+                return None;
+            }
         };
         let symbol = self.binder.symbols.get(symbol_id)?;
 
@@ -214,6 +223,41 @@ impl<'a> HoverProvider<'a> {
             kind,
             kind_modifiers,
             documentation: documentation_text,
+            tags: Vec::new(),
+        })
+    }
+
+    fn hover_for_class_expression_keyword(&self, node_idx: NodeIndex) -> Option<HoverInfo> {
+        let node = self.arena.get(node_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::ClassKeyword as u16 {
+            return None;
+        }
+        let parent_idx = self.arena.get_extended(node_idx)?.parent;
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != tsz_parser::syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class_data = self.arena.get_class(parent)?;
+        let name = if class_data.name.is_some() {
+            let name_node = self.arena.get(class_data.name)?;
+            self.arena
+                .get_identifier(name_node)
+                .map(|id| id.escaped_text.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "(Anonymous class)".to_string())
+        } else {
+            "(Anonymous class)".to_string()
+        };
+        let display_string = format!("(local class) {name}");
+        let start = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(Range::new(start, end)),
+            display_string,
+            kind: "class".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
             tags: Vec::new(),
         })
     }

@@ -640,6 +640,46 @@ fn test_quickinfo_fallback_has_valid_spans() {
 }
 
 #[test]
+fn test_quickinfo_class_keyword_returns_local_class_display() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "[1].forEach(class {});\n[1].forEach(class OK {});\n".to_string(),
+    );
+    let anonymous_req = make_request(
+        "quickinfo",
+        // Inside `class` keyword of anonymous class expression.
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 15}),
+    );
+    let anonymous_resp = server.handle_tsserver_request(anonymous_req);
+    assert!(anonymous_resp.success);
+    let anonymous_display = anonymous_resp
+        .body
+        .expect("quickinfo should return a body")
+        .get("displayString")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(anonymous_display, "(local class) (Anonymous class)");
+
+    let named_req = make_request(
+        "quickinfo",
+        // Inside `class` keyword of named class expression.
+        serde_json::json!({"file": "/test.ts", "line": 2, "offset": 15}),
+    );
+    let named_resp = server.handle_tsserver_request(named_req);
+    assert!(named_resp.success);
+    let named_display = named_resp
+        .body
+        .expect("quickinfo should return a body")
+        .get("displayString")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(named_display, "(local class) OK");
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";
