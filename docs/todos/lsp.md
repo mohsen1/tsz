@@ -17,3 +17,5 @@ Investigated but punted:
   Reason: likely requires deeper augmentation/merged-export symbol indexing behavior beyond module specifier generation.
 - `TypeScript/tests/cases/fourslash/arityErrorAfterStringCompletions.ts`: no completions offered inside string literal argument with contextual `keyof` generic constraint.
   Reason: needs a dedicated string-literal contextual completion pipeline (argument-context extraction + generic constraint/keyof evaluation) beyond current object/member completion paths.
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns{2,3}.ts` and `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: global completion list shape mismatch (`globalsPlus` parity, keyword/global lib surface ordering/content).
+  Reason: requires deeper tsserver-parity work on completion global tables and lib-sensitive keyword/global population beyond this targeted `getCombinedCodeFix` import-merge fix.
