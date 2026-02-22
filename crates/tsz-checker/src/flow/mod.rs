@@ -1,5 +1,6 @@
 pub mod control_flow;
 pub(crate) mod control_flow_assignment;
+pub(crate) mod control_flow_condition_narrowing;
 pub(crate) mod control_flow_narrowing;
 pub(crate) mod control_flow_references;
 pub(crate) mod control_flow_type_guards;
