@@ -102,9 +102,11 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
 2. **Monitor near-threshold files** in the 1,700-1,900 range for growth.
 3. **Solver top-level file sprawl**: Remaining file families to organize into subdirectories (following the pattern now established by `narrowing/`, `relations/`, `evaluation/`, `inference/`, `instantiation/`, `visitors/`, `caches/`, `operations/`):
    - ~~`operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory~~ ✅ Done (c3365ed0d)
+   - ~~`binary_ops.rs` (970 LOC) → `operations/binary_ops.rs`~~ ✅ Done (1a0a1f886) — was at top level but logically part of operations; `operations/mod.rs` was already re-exporting from it.
    - ~~`type_queries_*.rs` (5 files) → `type_queries/` subdirectory~~ ✅ Done
    - ~~`intern_*.rs` (4 files: `intern.rs`, `intern_normalize.rs`, `intern_intersection.rs`, `intern_template.rs`) → `intern/` subdirectory~~ ✅ Done
    - ~~Re-export shim files (7 files: `compat.rs`, `db.rs`, `evaluate.rs`, `infer.rs`, `instantiate.rs`, `query_trace.rs`, `subtype.rs`) removed~~ ✅ Done (a727b3b8b) — internal imports updated to direct module paths. Two externally-used shims (`judge.rs`, `visitor.rs`) retained.
+   - Remaining top-level candidates: `contextual.rs` (1,693 LOC), `diagnostics.rs` (1,690 LOC), `tracer.rs` (735 LOC), `unsoundness_audit.rs` (835 LOC — not runtime code, could move to docs).
 4. ~~**Checker `context*.rs` files**: organized into `context/` subdirectory~~ ✅ Done
 5. ~~**Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit~~ ✅ Done — extracted constructor/class/instance classifiers (~482 LOC) into `extended_constructors.rs`, reducing `extended.rs` to ~1,442 LOC.
 6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 LOC by extracting iterable classifications into `iterable.rs`. Still contains traversal, property lookup, evaluation, signature, and constraint sections that could be further split if growth continues.
