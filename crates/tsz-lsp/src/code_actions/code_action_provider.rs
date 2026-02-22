@@ -137,6 +137,7 @@ pub struct CodeActionProvider<'a> {
     line_map: &'a LineMap,
     file_name: String,
     source: &'a str,
+    organize_imports_ignore_case: bool,
 }
 
 impl<'a> CodeActionProvider<'a> {
@@ -154,7 +155,13 @@ impl<'a> CodeActionProvider<'a> {
             line_map,
             file_name,
             source,
+            organize_imports_ignore_case: true,
         }
+    }
+
+    pub const fn with_organize_imports_ignore_case(mut self, ignore_case: bool) -> Self {
+        self.organize_imports_ignore_case = ignore_case;
+        self
     }
 
     /// Provide code actions for a range in the source code.
@@ -1421,9 +1428,11 @@ impl<'a> CodeActionProvider<'a> {
         let elements = &named.elements.nodes;
 
         if is_single_line {
-            if let Some(insert_offset) =
-                self.single_line_named_import_sorted_insert_offset(elements, local_name)
-            {
+            if let Some(insert_offset) = self.single_line_named_import_sorted_insert_offset(
+                elements,
+                local_name,
+                self.organize_imports_ignore_case,
+            ) {
                 let insert_pos = self.line_map.offset_to_position(insert_offset, self.source);
                 return Some(vec![TextEdit {
                     range: Range::new(insert_pos, insert_pos),
@@ -1523,6 +1532,7 @@ impl<'a> CodeActionProvider<'a> {
         &self,
         elements: &[NodeIndex],
         local_name: &str,
+        ignore_case: bool,
     ) -> Option<u32> {
         for &spec_idx in elements {
             let spec_node = self.arena.get(spec_idx)?;
@@ -1536,7 +1546,9 @@ impl<'a> CodeActionProvider<'a> {
             let Some(existing_local_name) = self.arena.get_identifier_text(local_ident) else {
                 continue;
             };
-            if local_name < existing_local_name {
+            if compare_import_specifier_local_names(local_name, existing_local_name, ignore_case)
+                == std::cmp::Ordering::Less
+            {
                 return Some(spec_node.pos);
             }
         }
@@ -2784,6 +2796,30 @@ impl<'a> CodeActionProvider<'a> {
             .take_while(|ch| *ch == ' ' || *ch == '\t')
             .collect()
     }
+}
+
+fn compare_import_specifier_local_names(a: &str, b: &str, ignore_case: bool) -> std::cmp::Ordering {
+    if !ignore_case {
+        return a.cmp(b);
+    }
+
+    let a_folded = a.to_ascii_lowercase();
+    let b_folded = b.to_ascii_lowercase();
+    let a_case_rank = if a.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
+        0
+    } else {
+        1
+    };
+    let b_case_rank = if b.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
+        0
+    } else {
+        1
+    };
+
+    a_folded
+        .cmp(&b_folded)
+        .then_with(|| a_case_rank.cmp(&b_case_rank))
+        .then_with(|| a.cmp(b))
 }
 
 #[derive(Clone, Debug)]

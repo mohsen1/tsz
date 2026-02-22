@@ -3,7 +3,6 @@
 //! For overload compatibility, signature utilities, and implicit-any return checks,
 //! see [`super::overload_compatibility`].
 
-use crate::error_handler::ErrorHandler;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

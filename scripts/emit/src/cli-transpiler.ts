@@ -420,7 +420,10 @@ export class CliTranspiler {
       }
       js = dedupeUseStrictPreamble(js);
       const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
-      const commonJsLikeModule = module === 1 || module === 2 || module === 3 || module === 200;
+      // Only CJS (1) needs "use strict" compensation for JS input files.
+      // AMD (2) and UMD (3) add "use strict" inside their wrapper functions.
+      // Preserve (200) keeps ESM as ESM, which is implicitly strict.
+      const commonJsLikeModule = module === 1;
       if (hasJsInput && commonJsLikeModule && !hasUseStrictPreamble(js)) {
         js = `"use strict";\n${js}`;
       }

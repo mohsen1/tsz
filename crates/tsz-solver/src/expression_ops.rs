@@ -252,15 +252,8 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
     types
         .iter()
         .map(|&ty| {
-            if let Some(key) = interner.lookup(ty)
-                && let crate::types::TypeData::Literal(ref lit) = key
-            {
-                return match lit {
-                    crate::types::LiteralValue::String(_) => TypeId::STRING,
-                    crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
-                    crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-                    crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
-                };
+            if let Some(crate::types::TypeData::Literal(ref lit)) = interner.lookup(ty) {
+                return lit.primitive_type_id();
             }
             ty // Non-literal types are preserved
         })
@@ -291,15 +284,7 @@ fn find_common_base_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> Optio
 /// Get the base type of a type (for literals, this is the primitive type).
 fn get_base_type(interner: &dyn TypeDatabase, ty: TypeId) -> Option<TypeId> {
     match interner.lookup(ty) {
-        Some(crate::types::TypeData::Literal(ref lit)) => {
-            let base = match lit {
-                crate::types::LiteralValue::String(_) => TypeId::STRING,
-                crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
-                crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-                crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
-            };
-            Some(base)
-        }
+        Some(crate::types::TypeData::Literal(ref lit)) => Some(lit.primitive_type_id()),
         _ => Some(ty),
     }
 }

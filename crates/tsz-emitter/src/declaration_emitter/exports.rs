@@ -637,72 +637,15 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
                         self.emit_node(decl.name);
-
-                        // Determine if we should emit a literal initializer for const
-                        let use_literal_initializer = if keyword == "const"
-                            && decl.type_annotation.is_none()
-                            && decl.initializer.is_some()
-                        {
-                            // Check if initializer is a primitive literal
-                            if let Some(init_node) = self.arena.get(decl.initializer) {
-                                let k = init_node.kind;
-                                k == SyntaxKind::StringLiteral as u16
-                                    || k == SyntaxKind::NumericLiteral as u16
-                                    || k == SyntaxKind::TrueKeyword as u16
-                                    || k == SyntaxKind::FalseKeyword as u16
-                                    || k == SyntaxKind::NullKeyword as u16
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-
-                        // Emit literal initializer for const with primitive literals
-                        if use_literal_initializer {
-                            self.write(" = ");
-                            self.emit_expression(decl.initializer);
-                        } else {
-                            // Check for unique symbol case: const x = Symbol()
-                            let is_unique_symbol = keyword == "const"
-                                && decl.initializer.is_some()
-                                && self.is_symbol_call(decl.initializer);
-
-                            // Check if initializer is null/undefined (should emit `: any`)
-                            let is_null_or_undefined = if decl.initializer.is_some() {
-                                if let Some(init_node) = self.arena.get(decl.initializer) {
-                                    let k = init_node.kind;
-                                    k == SyntaxKind::NullKeyword as u16
-                                        || k == SyntaxKind::UndefinedKeyword as u16
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-
-                            if decl.type_annotation.is_some() {
-                                self.write(": ");
-                                self.emit_type(decl.type_annotation);
-                            } else if is_unique_symbol {
-                                // const x = Symbol() gets : unique symbol
-                                self.write(": unique symbol");
-                            } else if is_null_or_undefined {
-                                // null/undefined initializers get `any` type in .d.ts
-                                self.write(": any");
-                            } else if let Some(type_id) =
-                                self.get_node_type_or_names(&[decl_idx, decl.name])
-                            {
-                                // No explicit type, but we have inferred type from cache
-                                self.write(": ");
-                                self.write(&self.print_type_id(type_id));
-                            } else if let Some(type_text) =
-                                self.infer_fallback_type_text(decl.initializer)
-                            {
-                                self.write(": ");
-                                self.write(&type_text);
-                            }
-                        }
+                        self.emit_variable_decl_type_or_initializer(
+                            keyword,
+                            decl_idx,
+                            decl.name,
+                            decl.type_annotation,
+                            decl.initializer,
+                            decl.type_annotation.is_some(),
+                            decl.initializer.is_some(),
+                        );
                     }
 
                     self.write(";");

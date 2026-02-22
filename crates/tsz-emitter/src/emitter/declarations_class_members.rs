@@ -208,16 +208,24 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    /// Emit method modifiers for JavaScript (static, async only)
+    /// Emit method modifiers for JavaScript (static, async, and ES decorators)
     pub(super) fn emit_method_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
-                    match mod_node.kind {
-                        k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
-                        k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
-                        _ => {} // Skip private/protected/public/readonly/abstract
+                    if mod_node.kind == syntax_kind_ext::DECORATOR {
+                        // ES decorators are emitted verbatim when not using legacy
+                        // (experimental) decorator lowering via __decorate.
+                        if !self.ctx.options.legacy_decorators {
+                            self.emit(mod_idx);
+                            self.write_line();
+                        }
+                    } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
+                        self.write("static ");
+                    } else if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
+                        self.write("async ");
                     }
+                    // Skip private/protected/public/readonly/abstract
                 }
             }
         }
@@ -267,12 +275,17 @@ impl<'a> Printer<'a> {
         self.write_semicolon();
     }
 
-    /// Emit class member modifiers for JavaScript (static and accessor are valid)
+    /// Emit class member modifiers for JavaScript (static, accessor, and ES decorators)
     pub(super) fn emit_class_member_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
+                    if mod_node.kind == syntax_kind_ext::DECORATOR {
+                        if !self.ctx.options.legacy_decorators {
+                            self.emit(mod_idx);
+                            self.write_line();
+                        }
+                    } else if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
                         self.write("static ");
                     } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
                         self.write("accessor ");
@@ -842,5 +855,86 @@ impl<'a> Printer<'a> {
             // For JS emit, add empty body for accessors without body
             self.write(" { }");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    fn emit_ts(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        printer.finish().code
+    }
+
+    #[test]
+    fn es_decorator_on_method_emitted_at_esnext() {
+        let source = "class C {\n    @dec\n    method() {}\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("@dec"),
+            "ES decorator on method should be emitted at ESNext target.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("method()"),
+            "Decorated method should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es_decorator_on_static_method_emitted() {
+        let source = "class C {\n    @dec\n    static foo() {}\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("@dec"),
+            "ES decorator on static method should be emitted.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("static foo()"),
+            "Static modifier and method name should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es_decorator_on_getter_emitted() {
+        let source = "class C {\n    @dec\n    get value() { return 1; }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("@dec"),
+            "ES decorator on getter should be emitted.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("get value()"),
+            "Getter should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn multiple_es_decorators_on_method() {
+        let source = "class C {\n    @first\n    @second\n    method() {}\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("@first"),
+            "First decorator should be emitted.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("@second"),
+            "Second decorator should be emitted.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es_decorator_with_arguments_on_method() {
+        let source = "class C {\n    @dec(1, 2)\n    method() {}\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("@dec(1, 2)"),
+            "Decorator with arguments should be emitted verbatim.\nOutput: {output}"
+        );
     }
 }

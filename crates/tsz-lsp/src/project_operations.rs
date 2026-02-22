@@ -2425,7 +2425,7 @@ impl Project {
                 let Some(specifier) = apply_wildcard_capture(alias_pattern, &capture) else {
                     continue;
                 };
-                specifiers.push(specifier);
+                specifiers.push(normalize_path_mapping_specifier(&specifier));
             }
         }
 
@@ -3053,6 +3053,13 @@ fn normalize_node_modules_package_specifier(package_specifier: &str) -> String {
     normalized
 }
 
+fn normalize_path_mapping_specifier(specifier: &str) -> String {
+    specifier
+        .strip_suffix("/index")
+        .unwrap_or(specifier)
+        .to_string()
+}
+
 fn package_runtime_specifier_from_target_path(package_path: &str) -> String {
     let normalized = package_path.replace('\\', "/");
 
@@ -3576,6 +3583,69 @@ mod tests {
             project
                 .auto_import_module_specifiers_from_files("/index.ts", "/some/other/root/types.ts"),
             vec!["./types".to_string(), "./some/other/root/types".to_string()]
+        );
+    }
+
+    #[test]
+    fn path_mapping_collapses_index_suffix_for_barrel_target() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "paths": {
+      "~/*": ["src/*"]
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/src/dirA/thing1A.ts".to_string(), "Thing".to_string());
+        project.set_file(
+            "/src/dirB/index.ts".to_string(),
+            "export * from \"./thing1B\";".to_string(),
+        );
+
+        assert_eq!(
+            project
+                .path_mapping_specifiers_from_files("/src/dirA/thing1A.ts", "/src/dirB/index.ts"),
+            vec!["~/dirB".to_string()]
+        );
+    }
+
+    #[test]
+    fn jsconfig_paths_mapping_outranks_relative_for_shortest_preference() {
+        let mut project = Project::new();
+        project.set_file(
+            "/package1/jsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "checkJs": true,
+    "paths": {
+      "package1/*": ["./*"],
+      "package2/*": ["../package2/*"]
+    },
+    "baseUrl": "."
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/package1/file1.js".to_string(), "bar".to_string());
+        project.set_file(
+            "/package2/file1.js".to_string(),
+            "export const bar = 0;".to_string(),
+        );
+
+        assert_eq!(
+            project.auto_import_module_specifiers_from_files(
+                "/package1/file1.js",
+                "/package2/file1.js"
+            ),
+            vec![
+                "package2/file1".to_string(),
+                "../package2/file1.js".to_string()
+            ]
         );
     }
 
