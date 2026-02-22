@@ -4,6 +4,8 @@
 //! identifier *usages* to symbols as well. This module provides a lightweight
 //! scope walker that reconstructs scope chains on demand.
 
+mod children;
+
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 use tsz_binder::BinderState;
@@ -762,5 +764,5 @@ impl<'a> ScopeWalker<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/resolver_tests.rs"]
+#[path = "../../tests/resolver_tests.rs"]
 mod resolver_tests;
