@@ -40,7 +40,7 @@ pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>
 // Guard against pathological requeue loops in flow traversal.
 const FLOW_STEP_BUDGET_MIN: usize = 1_024;
 const FLOW_STEP_BUDGET_SCALE: usize = 16;
-const FLOW_STEP_BUDGET_MAX: usize = 100_000;
+const FLOW_STEP_BUDGET_MAX: usize = 60_000;
 
 const fn flow_step_budget(flow_node_count: usize) -> usize {
     let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
@@ -74,6 +74,12 @@ mod tests {
     #[test]
     fn flow_step_budget_has_upper_cap() {
         assert_eq!(flow_step_budget(usize::MAX), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_step_budget_caps_large_graphs() {
+        let nodes = FLOW_STEP_BUDGET_MAX;
+        assert_eq!(flow_step_budget(nodes), FLOW_STEP_BUDGET_MAX);
     }
 }
 
