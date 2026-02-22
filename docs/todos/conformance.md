@@ -119,9 +119,37 @@ tests passing (offset 6000 slice: 3665→3684).
 - **nonPrimitiveIndexingWithForInSupressError.ts**: Has additional TS2304 (lib type resolution gap).
 - **keyofDoesntContainSymbols.ts**: Expects TS5102 + TS2345. TS5102 now emitted but TS2345 requires `keyofStringsOnly` semantic behavior changes.
 
+## TS5095 — Option 'bundler' requires compatible module kind (Implemented)
+
+**Status**: Implemented. +15 tests passing (3843→3858 in first 6000 slice).
+**Error code:** TS5095 ("Option 'bundler' can only be used when 'module' is set to 'preserve' or to 'es2015' or later.")
+**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5095
+when `moduleResolution: "bundler"` is combined with an incompatible module kind (commonjs, amd,
+umd, system, none, node16, nodenext). Also handles implicit module default from target.
+
+### Remaining TS5095 failures
+- **requireOfJsonFileWithModuleNodeResolutionEmit{None,System,Umd}.ts** (3 tests): Expect both TS5095 AND TS5071 (`--resolveJsonModule` incompatible with none/system/umd). TS5071 not yet implemented.
+- **syntheticDefaultExportsWithDynamicImports.ts**, **noBundledEmitFromNodeModules.ts**: Also need TS5071.
+- **bundlerOptionsCompat.ts**: Needs TS5095 + TS5109.
+- **pathMappingBasedModuleResolution3_node.ts**: Needs TS5095 + TS18003.
+
+### Message text note
+The diagnostic message in `diagnosticMessages.json` (data.rs template) includes "commonjs" in the
+allowed list, but actual tsc 6.0 output says "preserve' or to 'es2015' or later" without "commonjs".
+We use the exact tsc output string for fingerprint-level conformance.
+
 ## TS5103 — Invalid value for '--ignoreDeprecations' (Not implemented)
 
 **Error code:** TS5103 ("Invalid value for '--ignoreDeprecations'.")
 **Tests**: 48 failing tests reference this code but few are single-code quick wins.
 **Reason**: Requires validating `ignoreDeprecations` option value is exactly "5.0" or "6.0".
 Simple validation in `parse_tsconfig_with_diagnostics`. Deferred for a future session.
+
+## TS2454 — Variable used before assignment (Investigated, deferred)
+
+**Error code:** TS2454 ("Variable 'x' is used before being assigned.")
+**Tests**: 16 quick-win tests (only missing TS2454).
+**Reason**: Infrastructure exists in `flow_analysis_usage.rs` but top-level uninitialized
+variables with type annotations aren't triggering the check. Root cause likely in flow graph
+construction or `is_definitely_assigned_at()` returning true incorrectly. Needs flow analysis
+debugging — deferred for a focused session.
