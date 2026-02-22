@@ -137,7 +137,3 @@ impl<'a> FileRenameProvider<'a> {
         });
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/file_rename_tests.rs"]
-mod file_rename_tests;

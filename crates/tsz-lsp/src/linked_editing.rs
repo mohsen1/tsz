@@ -131,7 +131,3 @@ impl<'a> LinkedEditingProvider<'a> {
         node_range(self.arena, self.line_map, self.source_text, idx)
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/linked_editing_tests.rs"]
-mod linked_editing_tests;

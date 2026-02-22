@@ -1405,11 +1405,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
-                if let Some(lit) = self.ctx.arena.get_type_literal(node) {
-                    for &_member in &lit.members.nodes {
-                        // self.check_type_element(member);
-                    }
-                }
+                // TODO: implement check_type_element for type literal members
             }
             _ => {}
         }
