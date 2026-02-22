@@ -12,8 +12,7 @@ use std::collections::HashMap;
 /// Matches: // @key: value (captures entire rest of line as value)
 static DIRECTIVE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*([^\r\n]*)").unwrap());
-static TS_DIRECTIVE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*//\s*@([\w-]+)\s*$").unwrap());
+static TS_DIRECTIVE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*//\s*@([\w-]+)\s*$").unwrap());
 
 /// Parsed test directives
 #[derive(Debug, Default, Clone)]
@@ -99,7 +98,9 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
             if !directives.options.contains_key(mapped_key) {
                 directives.option_order.push(mapped_key.to_string());
             }
-            directives.options.insert(mapped_key.to_string(), value.to_string());
+            directives
+                .options
+                .insert(mapped_key.to_string(), value.to_string());
             if current_filename.is_some() {
                 current_content.push(line.to_string());
             }
