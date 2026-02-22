@@ -741,6 +741,7 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                     && !self.is_token(SyntaxKind::SemicolonToken)
                     && !self.is_token(SyntaxKind::AtToken) // decorator
+                    && !self.is_token(SyntaxKind::AsteriskToken) // generator method
                     && !self.is_property_name()
                 {
                     self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);

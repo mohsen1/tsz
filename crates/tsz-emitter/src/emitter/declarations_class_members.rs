@@ -991,4 +991,16 @@ mod tests {
             "Single-line constructor body with return should stay on one line.\nOutput: {output}"
         );
     }
+
+    #[test]
+    fn generator_method_overloads_preserve_asterisk() {
+        // When overloaded generator methods are emitted, the implementation
+        // method should retain the * (generator asterisk).
+        let source = "class C {\n    *f(s: string): Iterable<any>;\n    *f(s: number): Iterable<any>;\n    *f(s: any): Iterable<any> { }\n}";
+        let output = emit_ts(source);
+        assert!(
+            output.contains("*f(s)"),
+            "Generator method implementation should retain * after overload erasure.\nOutput: {output}"
+        );
+    }
 }
