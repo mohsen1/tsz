@@ -19,3 +19,5 @@ Investigated but punted:
   Reason: needs a dedicated string-literal contextual completion pipeline (argument-context extraction + generic constraint/keyof evaluation) beyond current object/member completion paths.
 - `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns{2,3}.ts` and `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: global completion list shape mismatch (`globalsPlus` parity, keyword/global lib surface ordering/content).
   Reason: requires deeper tsserver-parity work on completion global tables and lib-sensitive keyword/global population beyond this targeted `getCombinedCodeFix` import-merge fix.
+- `TypeScript/tests/cases/fourslash/autoImportSpecifierExcludeRegexes3.ts`: import-fix module-specifier ordering remains reversed (`pkg/utils` before `pkg`).
+  Reason: ordering appears to be finalized in a different post-processing layer than `CodeActionProvider` merge ordering and needs deeper trace through tsserver bridge code-fix result shaping.
