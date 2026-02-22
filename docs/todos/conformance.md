@@ -1,8 +1,6 @@
 # Conformance Issues — Investigated but Deferred
 
-## TS5024 — Compiler option requires a value of type (Implemented)
-
-**Status**: Implemented basic validation. 10 new tests passing.
+**Status**: FOCUSING ON WHAT IS LEFT
 
 ### Remaining issues
 
@@ -119,38 +117,6 @@ tests passing (offset 6000 slice: 3665→3684).
 - **nonPrimitiveIndexingWithForInSupressError.ts**: Has additional TS2304 (lib type resolution gap).
 - **keyofDoesntContainSymbols.ts**: Expects TS5102 + TS2345. TS5102 now emitted but TS2345 requires `keyofStringsOnly` semantic behavior changes.
 
-## TS5095 — Option 'bundler' requires compatible module kind (Implemented)
-
-**Status**: Implemented. +15 tests passing (3843→3858 in first 6000 slice).
-**Error code:** TS5095 ("Option 'bundler' can only be used when 'module' is set to 'preserve' or to 'es2015' or later.")
-**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5095
-when `moduleResolution: "bundler"` is combined with an incompatible module kind (commonjs, amd,
-umd, system, none, node16, nodenext). Also handles implicit module default from target.
-
-### Remaining TS5095 failures
-- **requireOfJsonFileWithModuleNodeResolutionEmit{None,System,Umd}.ts** (3 tests): Expect both TS5095 AND TS5071 (`--resolveJsonModule` incompatible with none/system/umd). TS5071 not yet implemented.
-- **syntheticDefaultExportsWithDynamicImports.ts**, **noBundledEmitFromNodeModules.ts**: Also need TS5071.
-- **bundlerOptionsCompat.ts**: Needs TS5095 + TS5109.
-- **pathMappingBasedModuleResolution3_node.ts**: Needs TS5095 + TS18003.
-
-### Message text note
-The diagnostic message in `diagnosticMessages.json` (data.rs template) includes "commonjs" in the
-allowed list, but actual tsc 6.0 output says "preserve' or to 'es2015' or later" without "commonjs".
-We use the exact tsc output string for fingerprint-level conformance.
-
-## TS5103 — Invalid value for '--ignoreDeprecations' (Implemented)
-
-**Status**: Implemented. +16 tests passing in first 6000 slice (3857→3873), +48 total.
-**Error code:** TS5103 ("Invalid value for '--ignoreDeprecations'.")
-**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5103
-when `ignoreDeprecations` is set to any value other than `"5.0"`. Also added early return in
-`compile_inner` (driver.rs) when TS5103 is present, matching TSC's behavior of halting
-compilation on invalid `ignoreDeprecations` values.
-
-### Key finding
-TSC 6.0-dev only accepts `"5.0"` as a valid `ignoreDeprecations` value. Even though TS5107
-messages suggest `"6.0"` to suppress newer deprecations, `"6.0"` is not yet a valid value.
-All 48 conformance tests used `// @ignoreDeprecations: 6.0` which TSC rejects with TS5103.
 
 ## TS18003 — No inputs found in config file (Fixed, partial)
 
@@ -171,14 +137,6 @@ All 48 conformance tests used `// @ignoreDeprecations: 6.0` which TSC rejects wi
 - Tests with `node_modules/@types` structures — our compiler discovers @types
   files as source files instead of treating them as type-only references.
 
-## TS5110 — Module must match moduleResolution (Implemented, net-zero)
-
-**Status**: Implemented. Net-zero conformance impact (correct behavior but fingerprint
-positions don't match for affected tests).
-**Error code:** TS5110 ("Option 'module' must be set to '{0}' when option 'moduleResolution' is set to '{1}'.")
-**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5110
-when `moduleResolution` is node16/nodenext but `module` is not. Skips check when module
-is not explicitly set (tsc defaults it automatically).
 
 ### Why net-zero
 Tests that trigger TS5110 also have the diagnostic at a different line/column position
@@ -194,23 +152,6 @@ variables with type annotations aren't triggering the check. Root cause likely i
 construction or `is_definitely_assigned_at()` returning true incorrectly. Needs flow analysis
 debugging — deferred for a focused session.
 
-## TS7005 — False implicit-any for block-scoped declarations (Fixed)
-
-**Status**: Fixed. +8 tests passing (3874→3882 in first 6000 slice, 64.7%).
-**Error code:** TS7005 ("Variable 'x' implicitly has an 'any' type.")
-**Root cause**: `state_variable_checking.rs` added ALL non-ambient declarations without
-initializers to `pending_implicit_any_vars`, including `let`/`const`/`using`. tsc only emits
-TS7005/TS7034 for function-scoped (`var`) declarations — block-scoped declarations get their
-implicit `any` silently without a diagnostic.
-**Fix**: Check parent `VariableDeclarationList` flags for `LET`/`CONST`/`USING` before
-inserting into `pending_implicit_any_vars`. Only `var` declarations are now tracked.
-**Tests affected**: 9 `nestedBlockScopedBindings*` tests that all had `let x;` patterns.
-
-### Config.rs strict defaults (also fixed, same commit)
-When `strict` is not explicitly set in tsconfig, TypeScript defaults all strict-family options
-to `false`. Our `resolve_checker_options` was only defaulting `noImplicitAny = true` (inheriting
-from `CheckerOptions::default()`). Fixed to explicitly set all strict-family options to `false`
-when `strict` is not specified. Harmless for conformance (runner injects `strict: true`).
 
 ## Deferred issues from TS7005 investigation session
 
