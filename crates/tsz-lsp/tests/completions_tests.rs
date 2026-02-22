@@ -181,6 +181,49 @@ fn test_completions_member_string_literal() {
 }
 
 #[test]
+fn test_completions_contextual_string_literal_argument_keyof() {
+    let source = "interface Events {\n  click: any;\n  drag: any;\n}\n\ndeclare function addListener<K extends keyof Events>(type: K, listener: (ev: Events[K]) => any): void;\n\naddListener(\"\");\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let literal_offset = source.find("\"\"").expect("expected empty string literal") as u32;
+    let position = line_map.offset_to_position(literal_offset + 1, source);
+
+    let mut cache = None;
+    let items = completions.get_completions_with_cache(root, position, &mut cache);
+    assert!(
+        items.is_some(),
+        "Should have contextual string literal completions"
+    );
+    let items = items.unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+    assert!(
+        names.contains(&"click"),
+        "Should suggest key 'click', got {names:?}"
+    );
+    assert!(
+        names.contains(&"drag"),
+        "Should suggest key 'drag', got {names:?}"
+    );
+}
+
+#[test]
 fn test_completions_member_excludes_private_class_properties() {
     let source = "class N {\n  constructor(public x: number, public y: number, private z: string) {}\n}\nconst t = new N(0, 1, \"\");\nt.";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

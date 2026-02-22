@@ -940,6 +940,71 @@ fn test_open_external_project_module_none_es5_blocks_auto_import_completions() {
 }
 
 #[test]
+fn test_completion_info_contextual_string_literal_keyof_constraint() {
+    let mut server = make_server();
+    let source = "interface Events { click: any; drag: any; }\ndeclare function addListener<K extends keyof Events>(type: K, listener: (ev: Events[K]) => any): void;\naddListener(\"\")\n";
+    server
+        .open_files
+        .insert("/test.ts".to_string(), source.to_string());
+
+    let req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 3,
+            "offset": 14
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"click"),
+        "expected 'click' completion, got {names:?}"
+    );
+    assert!(
+        names.contains(&"drag"),
+        "expected 'drag' completion, got {names:?}"
+    );
+
+    let completions_req = make_request(
+        "completions",
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 3,
+            "offset": 14
+        }),
+    );
+    let completions_resp = server.handle_tsserver_request(completions_req);
+    assert!(completions_resp.success);
+    let completions_body = completions_resp
+        .body
+        .expect("completions should return a body");
+    let completion_entries = completions_body["entries"]
+        .as_array()
+        .expect("completions should include entries");
+    let completion_names: Vec<&str> = completion_entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        completion_names.contains(&"click"),
+        "expected 'click' in completions, got {completion_names:?}"
+    );
+    assert!(
+        completion_names.contains(&"drag"),
+        "expected 'drag' in completions, got {completion_names:?}"
+    );
+}
+
+#[test]
 fn test_quickinfo_uses_hover_info_structured_fields() {
     // When HoverInfo returns structured kind/kindModifiers/displayString/
     // documentation fields, they should be used in the response instead of
