@@ -39,3 +39,7 @@ Investigated but punted:
   Reason: quick tsserver-side flag override caused regressions in other auto-import completion tests (`isNewIdentifierLocation` expected true), so the robust fix needs context-sensitive parity logic in completion source selection.
 - `TypeScript/tests/cases/fourslash/alignmentAfterFormattingOnMultilineExpressionAndParametersList.ts`: still returns `Marker "1" has been invalidated by unrecoverable edits to the file`.
   Reason: requires a dedicated tsserver-parity range-format edit strategy for multiline alignment/marker stability; current session focused on paste-format normalization (`autoFormattingOnPasting`) with a minimal targeted fix.
+- `TypeScript/tests/cases/fourslash/autoImportPnpm.ts`: still returns `No codefixes returned`.
+  Reason: likely blocked on symlinked pnpm package topology resolution (`/node_modules/.pnpm/... -> /node_modules/...`) in missing-import candidate discovery; needs module-resolution parity work beyond this targeted CommonJS JS import-fix pass.
+- `TypeScript/tests/cases/fourslash/autoImportSymlinkCaseSensitive.ts`: still returns `No codefixes returned`.
+  Reason: appears to require case-sensitive symlink/node_modules symbol surfacing alignment for auto-import candidate collection; deferred due broader resolver/indexing impact.

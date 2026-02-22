@@ -844,6 +844,7 @@ impl Server {
                 });
                 response_actions.push(action);
             }
+            self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
 
             if !response_actions.is_empty() {
@@ -1376,7 +1377,10 @@ impl Server {
         self.open_files.iter().any(|(path, content)| {
             path != current_file_path
                 && content.contains(name)
-                && (content.contains("export ") || content.contains("declare module"))
+                && (content.contains("export ")
+                    || content.contains("declare module")
+                    || content.contains("module.exports")
+                    || content.contains("exports."))
         })
     }
 
@@ -2995,6 +2999,101 @@ impl Server {
         }
     }
 
+    fn rewrite_commonjs_import_fixes(
+        &self,
+        file_path: &str,
+        content: &str,
+        response_actions: &mut [serde_json::Value],
+    ) {
+        if !Self::is_js_like_file(file_path) || !Self::is_commonjs_source(content) {
+            return;
+        }
+
+        for action in response_actions {
+            if action.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = action
+                .get_mut("changes")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                continue;
+            };
+            for file_change in changes {
+                let Some(text_changes) = file_change
+                    .get_mut("textChanges")
+                    .and_then(serde_json::Value::as_array_mut)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    else {
+                        continue;
+                    };
+                    let Some(rewritten) = Self::rewrite_single_import_to_commonjs_require(new_text)
+                    else {
+                        continue;
+                    };
+                    text_change["newText"] = serde_json::json!(rewritten);
+                }
+            }
+        }
+    }
+
+    fn rewrite_single_import_to_commonjs_require(new_text: &str) -> Option<String> {
+        let trimmed = new_text.trim();
+        if trimmed.starts_with("import type ") || !trimmed.starts_with("import ") {
+            return None;
+        }
+
+        let require_stmt =
+            if let Some((specs, module_specifier, _quote)) = parse_named_import_line(trimmed) {
+                let rewritten_specs = specs
+                    .iter()
+                    .map(|spec| spec.raw.replace(" as ", ": "))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "const {{ {} }} = require(\"{}\")",
+                    rewritten_specs,
+                    Self::normalize_commonjs_module_specifier(&module_specifier)
+                )
+            } else if let Some(rest) = trimmed.strip_prefix("import * as ") {
+                let (local_name, module_specifier) = rest.split_once(" from ")?;
+                let module_specifier = extract_quoted_text(module_specifier)?;
+                format!(
+                    "const {} = require(\"{}\")",
+                    local_name.trim(),
+                    Self::normalize_commonjs_module_specifier(module_specifier)
+                )
+            } else if let Some(rest) = trimmed.strip_prefix("import ") {
+                let (local_name, module_specifier) = rest.split_once(" from ")?;
+                let module_specifier = extract_quoted_text(module_specifier)?;
+                if local_name.contains('{') || local_name.contains('*') {
+                    return None;
+                }
+                format!(
+                    "const {} = require(\"{}\")",
+                    local_name.trim(),
+                    Self::normalize_commonjs_module_specifier(module_specifier)
+                )
+            } else {
+                return None;
+            };
+
+        let leading_len = new_text.len().saturating_sub(new_text.trim_start().len());
+        let trailing_len = new_text.len().saturating_sub(new_text.trim_end().len());
+        Some(format!(
+            "{}{}{}",
+            &new_text[..leading_len],
+            require_stmt,
+            &new_text[new_text.len() - trailing_len..]
+        ))
+    }
+
     fn rewrite_single_import_fix_action(
         content: &str,
         action: &mut serde_json::Value,
@@ -3286,6 +3385,14 @@ impl Server {
         let mut updated = content.to_string();
         let mut changed = false;
         for candidate in import_candidates {
+            if let Some(next) =
+                Self::apply_commonjs_missing_import_candidate(file_path, &updated, candidate)
+            {
+                updated = next;
+                changed = true;
+                continue;
+            }
+
             let mut parser = ParserState::new(file_path.to_string(), updated.clone());
             let root = parser.parse_source_file();
             let arena = parser.into_arena();
@@ -3311,6 +3418,100 @@ impl Server {
         changed.then_some(updated)
     }
 
+    fn apply_commonjs_missing_import_candidate(
+        file_path: &str,
+        content: &str,
+        candidate: &ImportCandidate,
+    ) -> Option<String> {
+        if candidate.is_type_only
+            || !Self::is_js_like_file(file_path)
+            || !Self::is_commonjs_source(content)
+        {
+            return None;
+        }
+
+        let module_specifier =
+            Self::normalize_commonjs_module_specifier(&candidate.module_specifier);
+        let binding = match &candidate.kind {
+            tsz::lsp::code_actions::ImportCandidateKind::Named { export_name } => {
+                if export_name == &candidate.local_name {
+                    format!(
+                        "const {{ {} }} = require(\"{}\")",
+                        candidate.local_name, module_specifier
+                    )
+                } else {
+                    format!(
+                        "const {{ {}: {} }} = require(\"{}\")",
+                        export_name, candidate.local_name, module_specifier
+                    )
+                }
+            }
+            tsz::lsp::code_actions::ImportCandidateKind::Default
+            | tsz::lsp::code_actions::ImportCandidateKind::Namespace => {
+                format!(
+                    "const {} = require(\"{}\")",
+                    candidate.local_name, module_specifier
+                )
+            }
+        };
+
+        if content.contains(&binding) {
+            return None;
+        }
+
+        let insert_offset = if content.starts_with("#!") {
+            content.find('\n').map_or(content.len(), |idx| idx + 1)
+        } else {
+            0
+        };
+
+        let mut updated = String::with_capacity(content.len() + binding.len() + 2);
+        updated.push_str(&content[..insert_offset]);
+        updated.push_str(&binding);
+        if content[insert_offset..].starts_with('\n') {
+            updated.push('\n');
+        } else {
+            updated.push_str("\n\n");
+        }
+        updated.push_str(&content[insert_offset..]);
+        Some(updated)
+    }
+
+    fn is_commonjs_source(content: &str) -> bool {
+        content.contains("module.exports")
+            || content.contains("exports.")
+            || content.contains("require(")
+    }
+
+    fn is_js_like_file(file_path: &str) -> bool {
+        std::path::Path::new(file_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "js" | "jsx" | "mjs" | "cjs"
+                )
+            })
+    }
+
+    fn normalize_commonjs_module_specifier(specifier: &str) -> String {
+        if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+            return specifier.to_string();
+        }
+
+        for ext in [
+            ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
+            ".cjs",
+        ] {
+            if let Some(stripped) = specifier.strip_suffix(ext) {
+                return stripped.to_string();
+            }
+        }
+
+        specifier.to_string()
+    }
+
     fn collect_import_candidates(
         &self,
         current_file_path: &str,
@@ -3329,6 +3530,9 @@ impl Server {
         if files.is_empty() {
             return Vec::new();
         }
+        let is_commonjs_js_file = files.get(current_file_path).is_some_and(|content| {
+            Self::is_js_like_file(current_file_path) && Self::is_commonjs_source(content)
+        });
 
         let mut project = Project::new();
         project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
@@ -3363,7 +3567,20 @@ impl Server {
             rustc_hash::FxHashSet::default();
         let mut deduped = Vec::with_capacity(candidates.len() + fallback_candidates.len());
 
-        for candidate in candidates.drain(..).chain(fallback_candidates) {
+        for mut candidate in candidates.drain(..).chain(fallback_candidates) {
+            if is_commonjs_js_file
+                && !matches!(
+                    candidate.kind,
+                    tsz::lsp::code_actions::ImportCandidateKind::Named { .. }
+                )
+            {
+                continue;
+            }
+            if Self::is_js_like_file(current_file_path) {
+                candidate.module_specifier =
+                    Self::normalize_commonjs_module_specifier(&candidate.module_specifier);
+            }
+
             let kind_key = match &candidate.kind {
                 tsz::lsp::code_actions::ImportCandidateKind::Named { export_name } => {
                     format!("named:{export_name}")
@@ -4124,6 +4341,7 @@ mod tests {
     use rustc_hash::FxHashMap;
     use std::path::PathBuf;
     use tsz::lsp::code_actions::ImportCandidate;
+    use tsz::parser::ParserState;
 
     fn make_server() -> Server {
         Server {
@@ -4225,6 +4443,108 @@ mod tests {
         assert_eq!(
             updated,
             "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+        );
+    }
+
+    #[test]
+    fn fix_missing_imports_uses_require_for_commonjs_js_files() {
+        let src = "exports.dedupeLines = data => {\n  variants\n}\n";
+        let candidates = vec![ImportCandidate::named(
+            "./matrix.js".to_string(),
+            "variants".to_string(),
+            "variants".to_string(),
+        )];
+
+        let updated = Server::apply_missing_imports_fix_all("main.js", src, &candidates)
+            .expect("expected commonjs missing import to produce an edit");
+
+        assert_eq!(
+            updated,
+            "const { variants } = require(\"./matrix\")\n\nexports.dedupeLines = data => {\n  variants\n}\n"
+        );
+    }
+
+    #[test]
+    fn synthetic_missing_name_detects_commonjs_export_candidates() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/matrix.js".to_string(),
+            "exports.variants = [];".to_string(),
+        );
+        let main = "exports.dedupeLines = data => {\n  variants\n}\n".to_string();
+        server
+            .open_files
+            .insert("/main.js".to_string(), main.clone());
+
+        let mut parser = ParserState::new("/main.js".to_string(), main.clone());
+        let root = parser.parse_source_file();
+        let arena = parser.into_arena();
+        let mut binder = tsz::binder::BinderState::new();
+        binder.bind_source_file(&arena, root);
+
+        let diagnostics =
+            server.synthetic_missing_name_expression_diagnostics("/main.js", &main, &binder);
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                    && diag.message_text.contains("variants")
+            }),
+            "expected synthetic missing-name diagnostic for 'variants', got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn rewrite_single_import_to_commonjs_require_converts_named_import() {
+        let rewritten = Server::rewrite_single_import_to_commonjs_require(
+            "import { variants } from \"./matrix.js\";\n",
+        )
+        .expect("expected named import rewrite");
+        assert_eq!(rewritten, "const { variants } = require(\"./matrix\")\n");
+    }
+
+    #[test]
+    fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/matrix.js".to_string(),
+            "exports.variants = [];".to_string(),
+        );
+        server.open_files.insert(
+            "/totally-irrelevant-no-way-this-changes-things-right.js".to_string(),
+            "export default 0;".to_string(),
+        );
+        let main = "exports.dedupeLines = data => {\n  variants\n}\n".to_string();
+        server.open_files.insert("/main.js".to_string(), main);
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(1, 2),
+                tsz::lsp::position::Position::new(1, 10),
+            ),
+            message: "Cannot find name 'variants'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates = server.collect_import_candidates("/main.js", &diagnostics, &[], &[], None);
+        let module_specifiers: Vec<String> = candidates
+            .into_iter()
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            module_specifiers.iter().any(|spec| spec == "./matrix"),
+            "expected normalized './matrix' specifier, got {module_specifiers:?}"
+        );
+        assert!(
+            module_specifiers
+                .iter()
+                .all(|spec| spec != "./totally-irrelevant-no-way-this-changes-things-right"),
+            "did not expect unrelated default export candidate, got {module_specifiers:?}"
         );
     }
 
