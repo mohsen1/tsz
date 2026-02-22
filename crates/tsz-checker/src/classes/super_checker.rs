@@ -916,8 +916,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if is_super_call && self.is_in_constructor(idx) {
-            // Only count as a valid super call if it's a root-level statement
-            if self.is_super_call_root_level_statement_in_constructor(idx)
+            // Count any super() call in the constructor body (not in nested functions)
+            // as satisfying the TS2377 requirement. Unlike position-sensitive checks
+            // (TS2376/TS2855) which require root-level placement, TS2377 only needs
+            // to know that super() is called somewhere in the constructor scope.
+            if !self.is_super_in_nested_function(idx)
                 && let Some(ref mut class_info) = self.ctx.enclosing_class
             {
                 class_info.has_super_call_in_current_constructor = true;
