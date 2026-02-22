@@ -350,7 +350,7 @@ fn process_test_file(
         let tsconfig_path = work_dir.join("tsconfig.json");
         let mut compiler_options = convert_options_to_tsconfig(&options)
             .as_object()
-            .map(|m| m.clone())
+            .cloned()
             .unwrap_or_default();
         compiler_options.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
         compiler_options.insert("strict".to_string(), serde_json::Value::Bool(true));

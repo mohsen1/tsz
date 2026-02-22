@@ -214,7 +214,7 @@ fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     std::process::exit(EXIT_SUCCESS);
 }
 
-fn should_use_large_stack_thread(args: &CliArgs) -> bool {
+const fn should_use_large_stack_thread(args: &CliArgs) -> bool {
     args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
 }
 

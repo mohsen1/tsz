@@ -887,7 +887,7 @@ fn compile_inner(
             file_name,
             0,
             0,
-            format!("Cannot find type definition file for '{}'.", type_name),
+            format!("Cannot find type definition file for '{type_name}'."),
             diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR,
         ));
     }

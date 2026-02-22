@@ -5,7 +5,7 @@
 
 use super::{Server, TsServerRequest, TsServerResponse};
 
-/// A component/interface property: (name, type_string, is_required).
+/// A component/interface property: (name, `type_string`, `is_required`).
 type PropEntry = (String, String, bool);
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::lsp::Project;
@@ -3109,7 +3109,7 @@ impl Server {
     }
 
     fn inject_unknown_for_angle_assertions(content: &str) -> String {
-        fn is_boundary(ch: char) -> bool {
+        const fn is_boundary(ch: char) -> bool {
             ch.is_ascii_whitespace()
                 || matches!(
                     ch,
@@ -3117,7 +3117,7 @@ impl Server {
                 )
         }
 
-        fn is_assertion_expr_start(ch: char) -> bool {
+        const fn is_assertion_expr_start(ch: char) -> bool {
             ch.is_ascii_alphanumeric()
                 || matches!(
                     ch,
@@ -3969,11 +3969,11 @@ fn import_spec_sort_key(
     (group, folded, case_rank, original)
 }
 
-fn position_leq(a: tsz::lsp::position::Position, b: tsz::lsp::position::Position) -> bool {
+const fn position_leq(a: tsz::lsp::position::Position, b: tsz::lsp::position::Position) -> bool {
     a.line < b.line || (a.line == b.line && a.character <= b.character)
 }
 
-fn positions_overlap(
+const fn positions_overlap(
     a_start: tsz::lsp::position::Position,
     a_end: tsz::lsp::position::Position,
     b_start: tsz::lsp::position::Position,
