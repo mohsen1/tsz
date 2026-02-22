@@ -3,7 +3,6 @@
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
-use tsz::lsp::document_symbols::DocumentSymbolProvider;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
 use tsz::lsp::hover::{HoverInfo, HoverProvider};
 use tsz::lsp::implementation::GoToImplementationProvider;
@@ -12,6 +11,7 @@ use tsz::lsp::position::LineMap;
 use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
 use tsz::lsp::signature_help::SignatureHelpProvider;
+use tsz::lsp::symbols::document_symbols::DocumentSymbolProvider;
 use tsz::parser::node::NodeAccess;
 use tsz::parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
@@ -2671,25 +2671,27 @@ impl Server {
             let symbols = provider.get_document_symbols(root);
 
             fn symbol_to_navtree(
-                sym: &tsz::lsp::document_symbols::DocumentSymbol,
+                sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
             ) -> serde_json::Value {
                 let kind = match sym.kind {
-                    tsz::lsp::document_symbols::SymbolKind::File
-                    | tsz::lsp::document_symbols::SymbolKind::Module
-                    | tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property
-                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
-                    tsz::lsp::document_symbols::SymbolKind::Struct => "type",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::File
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
+                        "type parameter"
+                    }
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
                     _ => "unknown",
                 };
                 let children: Vec<serde_json::Value> =
@@ -2749,27 +2751,29 @@ impl Server {
             let symbols = provider.get_document_symbols(root);
 
             fn symbol_to_navbar_item(
-                sym: &tsz::lsp::document_symbols::DocumentSymbol,
+                sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
                 indent: usize,
                 items: &mut Vec<serde_json::Value>,
             ) {
                 let kind = match sym.kind {
-                    tsz::lsp::document_symbols::SymbolKind::File
-                    | tsz::lsp::document_symbols::SymbolKind::Module
-                    | tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property
-                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
-                    tsz::lsp::document_symbols::SymbolKind::Struct => "type",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::File
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
+                        "type parameter"
+                    }
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
                     _ => "unknown",
                 };
                 let child_items: Vec<serde_json::Value> = sym
@@ -2779,16 +2783,16 @@ impl Server {
                         serde_json::json!({
                             "text": c.name,
                             "kind": match c.kind {
-                                tsz::lsp::document_symbols::SymbolKind::Function => "function",
-                                tsz::lsp::document_symbols::SymbolKind::Class => "class",
-                                tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                                tsz::lsp::document_symbols::SymbolKind::Property => "property",
-                                tsz::lsp::document_symbols::SymbolKind::Variable => "var",
-                                tsz::lsp::document_symbols::SymbolKind::Constant => "const",
-                                tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
-                                tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
-                                tsz::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
-                                tsz::lsp::document_symbols::SymbolKind::Struct => "type",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
+                                tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
                                 _ => "unknown",
                             },
                         })
@@ -2825,15 +2829,15 @@ impl Server {
                     serde_json::json!({
                         "text": sym.name,
                         "kind": match sym.kind {
-                            tsz::lsp::document_symbols::SymbolKind::Function => "function",
-                            tsz::lsp::document_symbols::SymbolKind::Class => "class",
-                            tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                            tsz::lsp::document_symbols::SymbolKind::Property => "property",
-                            tsz::lsp::document_symbols::SymbolKind::Variable => "var",
-                            tsz::lsp::document_symbols::SymbolKind::Constant => "const",
-                            tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
-                            tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
-                            tsz::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
+                            tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
                             _ => "unknown",
                         },
                     })
@@ -2899,7 +2903,7 @@ impl Server {
     }
 
     pub(crate) fn collect_navto_items(
-        symbols: &[tsz::lsp::document_symbols::DocumentSymbol],
+        symbols: &[tsz::lsp::symbols::document_symbols::DocumentSymbol],
         search_value: &str,
         search_lower: &str,
         file_path: &str,
@@ -2910,19 +2914,21 @@ impl Server {
             if name_lower.contains(search_lower) {
                 let is_case_sensitive = sym.name.contains(search_value);
                 let kind = match sym.kind {
-                    tsz::lsp::document_symbols::SymbolKind::Module => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property
-                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::document_symbols::SymbolKind::TypeParameter => "type parameter",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Module => "module",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
+                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
+                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
+                        "type parameter"
+                    }
                     _ => "unknown",
                 };
                 let match_kind = if name_lower == *search_lower {

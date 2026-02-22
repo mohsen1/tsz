@@ -1,7 +1,9 @@
-//! Document Symbols API
+//! Symbol providers for LSP.
 //!
-//! Provides hierarchical symbol tree extraction from TypeScript AST.
-//! This is the main public interface for document symbol functionality.
+//! This module groups symbol-related LSP features:
+//! - Document symbols (outline/structure view of a single file)
+//! - Workspace symbols (project-wide symbol search)
+//! - Symbol index (O(1) cross-file reference lookups)
 //!
 //! # Example
 //! ```ignore
@@ -16,7 +18,13 @@
 //! let tree = symbols.get_symbol_tree(root);
 //! ```
 
-pub use super::document_symbols::{DocumentSymbol, DocumentSymbolProvider, SymbolKind};
+pub mod document_symbols;
+pub mod symbol_index;
+pub mod workspace_symbols;
+
+pub use document_symbols::{DocumentSymbol, DocumentSymbolProvider, SymbolKind};
+pub use symbol_index::SymbolIndex;
+pub use workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 
 /// Main API for extracting document symbols from AST.
 ///
@@ -56,5 +64,5 @@ impl<'a> DocumentSymbols<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/symbols_tests.rs"]
+#[path = "../../tests/symbols_tests.rs"]
 mod symbols_tests;

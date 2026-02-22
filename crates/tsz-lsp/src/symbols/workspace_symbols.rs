@@ -4,8 +4,8 @@
 //! searches all indexed symbol definitions across the workspace and returns
 //! matching results sorted by relevance (exact match > prefix > substring).
 
-use crate::document_symbols::SymbolKind;
-use crate::symbol_index::SymbolIndex;
+use super::document_symbols::SymbolKind;
+use super::symbol_index::SymbolIndex;
 use tsz_common::position::Location;
 
 /// Maximum number of results returned by a workspace symbol search.
@@ -168,5 +168,5 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/workspace_symbols_tests.rs"]
+#[path = "../../tests/workspace_symbols_tests.rs"]
 mod workspace_symbols_tests;

@@ -8,7 +8,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::document_symbols::SymbolKind;
+use crate::symbols::document_symbols::SymbolKind;
 use crate::utils::{find_node_at_offset, identifier_text, node_range};
 use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, syntax_kind_ext};

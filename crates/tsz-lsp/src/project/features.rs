@@ -17,8 +17,8 @@ use crate::hover::HoverInfo;
 use crate::navigation::definition::GoToDefinition;
 use crate::resolver::ScopeCacheStats;
 use crate::signature_help::SignatureHelp;
+use crate::symbols::workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 use crate::utils::find_node_at_offset;
-use crate::workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 use tsz_common::position::{Location, Position, Range};
 use tsz_scanner::SyntaxKind;
 

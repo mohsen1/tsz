@@ -6,7 +6,7 @@
 //! - `supertypes`: finds what the class/interface extends or implements
 //! - `subtypes`: finds what classes/interfaces extend or implement this type
 
-use crate::document_symbols::SymbolKind;
+use crate::symbols::document_symbols::SymbolKind;
 use crate::utils::{find_node_at_offset, identifier_text, node_range};
 use tsz_binder::BinderState;
 use tsz_common::position::{LineMap, Position, Range};
