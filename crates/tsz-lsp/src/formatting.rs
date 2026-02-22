@@ -327,20 +327,31 @@ impl DocumentFormattingProvider {
         // Track indent level for smart indentation
         let mut indent_level: i32 = 0;
         let indent_str = Self::make_indent_string(options, 1);
-
-        for line in &lines {
+        let mut line_index = 0usize;
+        while line_index < lines.len() {
+            let line = lines[line_index];
             let trimmed = line.trim();
 
             // Skip empty lines - preserve them as-is (just trim whitespace)
             if trimmed.is_empty() {
                 formatted_lines.push(String::new());
+                line_index += 1;
                 continue;
+            }
+
+            let mut structural_line = trimmed.to_string();
+            if line_index + 1 < lines.len()
+                && Self::looks_like_method_signature(trimmed)
+                && lines[line_index + 1].trim() == "{}"
+            {
+                // Match tsserver-style formatting for compact empty method bodies.
+                structural_line = format!("{} {{ }}", Self::normalize_member_spacing(trimmed));
             }
 
             // Adjust indent before processing the line
             // Closing braces/brackets/parens reduce indent before the line
-            let dedent_this_line = Self::line_starts_with_closing(trimmed);
-            let case_dedent = Self::is_case_or_default(trimmed) && indent_level > 0;
+            let dedent_this_line = Self::line_starts_with_closing(&structural_line);
+            let case_dedent = Self::is_case_or_default(&structural_line) && indent_level > 0;
 
             let effective_indent = if dedent_this_line {
                 (indent_level - 1).max(0)
@@ -352,7 +363,7 @@ impl DocumentFormattingProvider {
             };
 
             // Build the formatted line
-            let mut processed = trimmed.to_string();
+            let mut processed = structural_line.clone();
 
             // Trim trailing whitespace
             if options.trim_trailing_whitespace.unwrap_or(true) {
@@ -363,6 +374,7 @@ impl DocumentFormattingProvider {
             if options.semicolons.as_deref() != Some("remove") {
                 processed = Self::normalize_semicolons(&processed);
             }
+            processed = Self::normalize_member_spacing(&processed);
             processed = Self::normalize_as_operator_spacing(&processed);
 
             // Apply proper indentation
@@ -372,10 +384,16 @@ impl DocumentFormattingProvider {
             formatted_lines.push(formatted_line);
 
             // Adjust indent level for subsequent lines
-            let opens = Self::count_openers(trimmed);
-            let closes = Self::count_closers(trimmed);
+            let opens = Self::count_openers(&structural_line);
+            let closes = Self::count_closers(&structural_line);
             indent_level += opens - closes;
             indent_level = indent_level.max(0);
+
+            if structural_line.ends_with(" { }") && line_index + 1 < lines.len() {
+                line_index += 2;
+            } else {
+                line_index += 1;
+            }
         }
 
         // Trim final empty lines if requested
@@ -525,6 +543,7 @@ impl DocumentFormattingProvider {
             || trimmed.starts_with("export class ")
             || trimmed.starts_with("export interface ")
             || trimmed.starts_with("export enum ")
+            || Self::looks_like_method_signature(trimmed)
         {
             return trimmed.to_string();
         }
@@ -606,6 +625,31 @@ impl DocumentFormattingProvider {
             out.push_str(&line[ws_start..i]);
         }
 
+        out
+    }
+
+    fn looks_like_method_signature(trimmed: &str) -> bool {
+        if !trimmed.ends_with(')') || !trimmed.contains('(') {
+            return false;
+        }
+        trimmed.starts_with("public ")
+            || trimmed.starts_with("private ")
+            || trimmed.starts_with("protected ")
+            || trimmed.starts_with("readonly ")
+    }
+
+    fn normalize_member_spacing(line: &str) -> String {
+        let mut out = line.replace("( )", "()");
+        if let Some(prefix) = out.strip_suffix('{') {
+            out = format!("{} {{", prefix.trim_end());
+        }
+        if out.starts_with("public ")
+            || out.starts_with("private ")
+            || out.starts_with("protected ")
+            || out.starts_with("readonly ")
+        {
+            out = out.split_whitespace().collect::<Vec<_>>().join(" ");
+        }
         out
     }
 
