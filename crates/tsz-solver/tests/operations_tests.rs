@@ -3370,6 +3370,105 @@ fn test_infer_generic_required_property_from_optional_argument() {
 }
 
 #[test]
+fn test_infer_generic_object_literal_repeated_property_type_param() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("bag")),
+            type_id: interner.object(vec![
+                PropertyInfo::new(interner.intern_string("bar"), t_type),
+                PropertyInfo::new(interner.intern_string("baz"), t_type),
+            ]),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let arg = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("bar"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("baz"), TypeId::STRING),
+    ]);
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
+    // TS behavior: no common `T` for `bar`/`baz`, so call must fail with TS2322.
+    assert_eq!(result, TypeId::ERROR);
+}
+
+#[test]
+fn test_resolve_call_generic_object_literal_repeated_property_uses_first_property_for_inference() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let bar = interner.intern_string("bar");
+    let baz = interner.intern_string("baz");
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("bag")),
+            type_id: interner.object(vec![
+                PropertyInfo::new(bar, t_type),
+                PropertyInfo::new(baz, t_type),
+            ]),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let arg = interner.object(vec![
+        PropertyInfo::new(bar, TypeId::NUMBER),
+        PropertyInfo::new(baz, TypeId::STRING),
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+        } => {
+            assert_eq!(index, 0);
+            let expected_type = interner.object(vec![
+                PropertyInfo::new(bar, TypeId::NUMBER),
+                PropertyInfo::new(baz, TypeId::NUMBER),
+            ]);
+            assert_eq!(expected, expected_type);
+            assert_eq!(actual, arg);
+        }
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_infer_generic_required_property_missing_argument() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
