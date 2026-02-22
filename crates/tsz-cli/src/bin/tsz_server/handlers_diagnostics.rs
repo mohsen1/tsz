@@ -5006,45 +5006,46 @@ mod tests {
                 .get("code")
                 .and_then(serde_json::Value::as_u64)
                 .expect("diagnostic code") as u32;
-            let (start, end) = if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
-                diag.get("start")
-                    .and_then(|start| start.get("line"))
-                    .and_then(serde_json::Value::as_u64),
-                diag.get("start")
-                    .and_then(|start| start.get("offset"))
-                    .and_then(serde_json::Value::as_u64),
-                diag.get("end")
-                    .and_then(|end| end.get("line"))
-                    .and_then(serde_json::Value::as_u64),
-                diag.get("end")
-                    .and_then(|end| end.get("offset"))
-                    .and_then(serde_json::Value::as_u64),
-            ) {
-                (
-                    tsz::lsp::position::Position::new(
-                        (start_line as u32).saturating_sub(1),
-                        (start_offset as u32).saturating_sub(1),
-                    ),
-                    tsz::lsp::position::Position::new(
-                        (end_line as u32).saturating_sub(1),
-                        (end_offset as u32).saturating_sub(1),
-                    ),
-                )
-            } else {
-                let start_off = diag
-                    .get("start")
-                    .and_then(serde_json::Value::as_u64)
-                    .expect("diagnostic start offset") as u32;
-                let length = diag
-                    .get("length")
-                    .and_then(serde_json::Value::as_u64)
-                    .expect("diagnostic length") as u32;
-                let line_map = super::LineMap::build(test_js);
-                (
-                    line_map.offset_to_position(start_off, test_js),
-                    line_map.offset_to_position(start_off + length, test_js),
-                )
-            };
+            let (start, end) =
+                if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
+                    diag.get("start")
+                        .and_then(|start| start.get("line"))
+                        .and_then(serde_json::Value::as_u64),
+                    diag.get("start")
+                        .and_then(|start| start.get("offset"))
+                        .and_then(serde_json::Value::as_u64),
+                    diag.get("end")
+                        .and_then(|end| end.get("line"))
+                        .and_then(serde_json::Value::as_u64),
+                    diag.get("end")
+                        .and_then(|end| end.get("offset"))
+                        .and_then(serde_json::Value::as_u64),
+                ) {
+                    (
+                        tsz::lsp::position::Position::new(
+                            (start_line as u32).saturating_sub(1),
+                            (start_offset as u32).saturating_sub(1),
+                        ),
+                        tsz::lsp::position::Position::new(
+                            (end_line as u32).saturating_sub(1),
+                            (end_offset as u32).saturating_sub(1),
+                        ),
+                    )
+                } else {
+                    let start_off =
+                        diag.get("start")
+                            .and_then(serde_json::Value::as_u64)
+                            .expect("diagnostic start offset") as u32;
+                    let length = diag
+                        .get("length")
+                        .and_then(serde_json::Value::as_u64)
+                        .expect("diagnostic length") as u32;
+                    let line_map = super::LineMap::build(test_js);
+                    (
+                        line_map.offset_to_position(start_off, test_js),
+                        line_map.offset_to_position(start_off + length, test_js),
+                    )
+                };
             let req = TsServerRequest {
                 seq: 1,
                 _msg_type: "request".to_string(),
