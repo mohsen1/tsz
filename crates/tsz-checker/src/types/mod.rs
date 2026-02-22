@@ -1,4 +1,5 @@
 pub mod class_type;
+pub mod class_type_constructor;
 pub mod function_type;
 pub mod interface_type;
 pub mod literal_type;

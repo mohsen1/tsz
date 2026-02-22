@@ -108,7 +108,7 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
    - ~~`type_checking_queries_lib.rs` (1,901 lines)~~ ✅ Split — extracted type-only detection methods (~590 LOC) into `type_checking_queries_type_only.rs`, reducing to 1,313 LOC
    - ~~`control_flow_narrowing.rs` (1,883 lines)~~ ✅ Split — extracted reference matching, literal parsing, and symbol resolution (~680 LOC) into `control_flow_references.rs`, reducing to 1,204 LOC
    - ~~`control_flow_assignment.rs` (1,837 lines)~~ ✅ Split — extracted condition-based narrowing (switch, binary, logical, typeof/instanceof) (~970 LOC) into `control_flow_condition_narrowing.rs`, reducing to 878 LOC
-   - `class_type.rs` (1,818 lines)
+   - ~~`class_type.rs` (1,818 lines)~~ ✅ Split — extracted constructor type resolution (~811 LOC) into `class_type_constructor.rs`, reducing to 1,025 LOC
    - `type_checking_utilities.rs` (1,778 lines)
    - ~~`assignability_checker.rs` (1,447 lines)~~ ✅ Split — extracted subtype/identity/compat methods (~273 LOC) into `subtype_identity_checker.rs`, reducing to 1,176 LOC
 2. **Monitor near-threshold files** in the 1,700-1,900 range for growth.
