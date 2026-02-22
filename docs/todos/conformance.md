@@ -185,14 +185,21 @@ Tests that trigger TS5110 also have the diagnostic at a different line/column po
 than the cache expects. `find_value_offset_in_source` returns 0 for the "module" key in
 the generated tsconfig because the pretty-printed JSON has different offsets.
 
-## TS2454 — Variable used before assignment (Investigated, deferred)
+## TS2454 — Variable used before assignment (Fixed)
 
+**Status**: Fixed. +14 tests passing (3882→3896 in first 6000 slice, 65.0%).
 **Error code:** TS2454 ("Variable 'x' is used before being assigned.")
-**Tests**: 16 quick-win tests (only missing TS2454).
-**Reason**: Infrastructure exists in `flow_analysis_usage.rs` but top-level uninitialized
-variables with type annotations aren't triggering the check. Root cause likely in flow graph
-construction or `is_definitely_assigned_at()` returning true incorrectly. Needs flow analysis
-debugging — deferred for a focused session.
+**Root cause**: `is_definitely_assigned_at()` in `flow_analysis_usage.rs` returned `true`
+(assumes assigned) when `get_node_flow(idx)` found no flow node for the identifier reference.
+The binder only records flow nodes for statements and declarations, NOT for individual
+identifier references within expressions. So `var a: Bar; a()` — the `a` identifier node
+had no flow node, and the function assumed it was definitely assigned.
+**Fix**: Added parent-walk fallback (same pattern used by `apply_flow_narrowing()`) to find
+the nearest ancestor node with a flow node. Falls through to `true` only when no ancestor
+has flow info either (rare edge case for ambient/external contexts).
+**Tests affected**: 128 tests in first-6000 slice have ONLY TS2454 as expected error.
+286 total tests across full suite expect only TS2454. Net +14 in first 6000 (some tests
+also have other missing/extra error codes that prevent them from fully passing).
 
 ## TS7005 — False implicit-any for block-scoped declarations (Fixed)
 
