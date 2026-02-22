@@ -642,7 +642,9 @@ impl<'a> RenameProvider<'a> {
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && (parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT)
+                    || parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    || parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER)
             {
                 return Some(node_idx);
             }

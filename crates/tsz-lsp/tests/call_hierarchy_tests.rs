@@ -213,6 +213,34 @@ fn test_incoming_calls_no_callers() {
 }
 
 #[test]
+fn test_class_property_arrow_function_prepare_and_incoming_calls() {
+    let source = "class C {\n    caller = () => {\n        this.callee();\n    };\n\n    callee = () => {\n    };\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let callee_pos = Position::new(5, 8);
+    let item = provider
+        .prepare(root, callee_pos)
+        .expect("Should prepare class property arrow function");
+    assert_eq!(item.name, "callee");
+    assert_eq!(item.kind, SymbolKind::Function);
+
+    let incoming = provider.incoming_calls(root, callee_pos);
+    assert!(
+        incoming.iter().any(|call| call.from.name == "caller"),
+        "Expected incoming call from class property arrow function 'caller', got: {incoming:?}"
+    );
+}
+
+#[test]
 fn test_call_hierarchy_item_serialization() {
     let item = CallHierarchyItem {
         name: "test".to_string(),
@@ -220,6 +248,7 @@ fn test_call_hierarchy_item_serialization() {
         uri: "file:///test.ts".to_string(),
         range: Range::new(Position::new(0, 0), Position::new(1, 0)),
         selection_range: Range::new(Position::new(0, 9), Position::new(0, 13)),
+        container_name: None,
     };
 
     let json = serde_json::to_string(&item).unwrap();

@@ -300,6 +300,16 @@ impl DocumentFormattingProvider {
             ));
         }
 
+        // Emit edits from bottom-to-top so consumers that apply them
+        // sequentially do not invalidate later ranges.
+        edits.sort_by(|a, b| {
+            b.range
+                .start
+                .line
+                .cmp(&a.range.start.line)
+                .then_with(|| b.range.start.character.cmp(&a.range.start.character))
+        });
+
         Ok(edits)
     }
 

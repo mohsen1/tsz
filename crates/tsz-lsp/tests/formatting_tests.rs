@@ -426,3 +426,52 @@ fn test_format_multiline_import() {
         "got: {formatted}"
     );
 }
+
+#[test]
+fn test_compute_line_edits_descending_order_preserves_markers_on_sequential_apply() {
+    fn position_to_offset(text: &str, position: Position) -> usize {
+        let mut line = 0u32;
+        let mut character = 0u32;
+        for (idx, ch) in text.char_indices() {
+            if line == position.line && character == position.character {
+                return idx;
+            }
+            if ch == '\n' {
+                line += 1;
+                character = 0;
+            } else {
+                character += 1;
+            }
+        }
+        if line == position.line && character == position.character {
+            return text.len();
+        }
+        panic!("invalid position: {position:?}");
+    }
+
+    let source = "class TestClass {\n    private testMethod1(param1: boolean,\n                        param2/*1*/: boolean) {\n    }\n\n    public testMethod2(a: number, b: number, c: number) {\n        if (a === b) {\n        }\n        else if (a != c &&\n                 a/*2*/ > b &&\n                 b/*3*/ < c) {\n        }\n\n    }\n}\n";
+    let options = FormattingOptions::default();
+    let edits = DocumentFormattingProvider::apply_basic_formatting(source, &options).unwrap();
+
+    assert!(!edits.is_empty());
+    for window in edits.windows(2) {
+        let current = &window[0].range.start;
+        let next = &window[1].range.start;
+        assert!(
+            current.line > next.line
+                || (current.line == next.line && current.character >= next.character),
+            "edits must be sorted descending: {edits:#?}"
+        );
+    }
+
+    let mut text = source.to_string();
+    for edit in edits {
+        let start = position_to_offset(&text, edit.range.start);
+        let end = position_to_offset(&text, edit.range.end);
+        text.replace_range(start..end, &edit.new_text);
+    }
+
+    assert!(text.contains("/*1*/"), "marker 1 was removed: {text}");
+    assert!(text.contains("/*2*/"), "marker 2 was removed: {text}");
+    assert!(text.contains("/*3*/"), "marker 3 was removed: {text}");
+}

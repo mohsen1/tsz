@@ -128,26 +128,37 @@ pub fn identifier_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String>
 /// Check whether a node is a valid symbol-query target for LSP symbol-resolution flows.
 /// This includes identifiers and keyword tokens (used for declaration keyword fallbacks).
 pub fn is_symbol_query_node(arena: &NodeArena, node: NodeIndex) -> bool {
-    let Some(node) = arena.get(node) else {
+    let Some(node_data) = arena.get(node) else {
         return false;
     };
 
-    if node.kind == SyntaxKind::Identifier as u16
-        || node.kind == SyntaxKind::PrivateIdentifier as u16
+    if node_data.kind == SyntaxKind::Identifier as u16
+        || node_data.kind == SyntaxKind::PrivateIdentifier as u16
+    {
+        return true;
+    }
+
+    if node_data.kind == SyntaxKind::StringLiteral as u16
+        && let Some(ext) = arena.get_extended(node)
+        && ext.parent.is_some()
+        && let Some(parent_node) = arena.get(ext.parent)
+        && (parent_node.kind == tsz_parser::syntax_kind_ext::IMPORT_SPECIFIER
+            || parent_node.kind == tsz_parser::syntax_kind_ext::EXPORT_SPECIFIER)
     {
         return true;
     }
 
     // Include tagged template span nodes so references can fall back to the tag symbol.
-    if node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        || node.kind == SyntaxKind::TemplateHead as u16
-        || node.kind == SyntaxKind::TemplateMiddle as u16
-        || node.kind == SyntaxKind::TemplateTail as u16
+    if node_data.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        || node_data.kind == SyntaxKind::TemplateHead as u16
+        || node_data.kind == SyntaxKind::TemplateMiddle as u16
+        || node_data.kind == SyntaxKind::TemplateTail as u16
     {
         return true;
     }
 
-    node.kind >= SyntaxKind::BreakKeyword as u16 && node.kind <= SyntaxKind::DeferKeyword as u16
+    node_data.kind >= SyntaxKind::BreakKeyword as u16
+        && node_data.kind <= SyntaxKind::DeferKeyword as u16
 }
 
 /// Search backward from `offset` (up to 256 chars or newline) for the nearest
