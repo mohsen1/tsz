@@ -14,7 +14,11 @@ PHASE 1 — ESTABLISH BASELINES (before any changes)
    (known issues, skipped items, prior investigations). Use it to avoid
    re-investigating already-known issues and to pick up where the last session
    left off.
-4) Record baselines — you MUST capture these numbers before changing anything:
+4) Verify pre-commit hooks are installed: ls -la .git/hooks/pre-commit
+   If missing, run: ./scripts/setup.sh
+   NEVER use --no-verify on git commit. The pre-commit hook runs tests and
+   lint to catch regressions BEFORE they reach CI. Skipping it is forbidden.
+5) Record baselines — you MUST capture these numbers before changing anything:
 
    a) Run: cargo nextest run --no-fail-fast 2>&1 | tail -5
       Record the total tests passed/failed/skipped.
@@ -34,7 +38,7 @@ PHASE 1 — ESTABLISH BASELINES (before any changes)
 PHASE 2 — IDENTIFY WORK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-5) Analyze the benchmark output carefully:
+6) Analyze the benchmark output carefully:
 
    PRIORITY 1 — Fix type-check failures first:
    If any benchmark file shows "tsz error" (tsz fails to type-check a file
@@ -62,14 +66,14 @@ PHASE 2 — IDENTIFY WORK
 PHASE 3 — IMPLEMENT (with maintainability constraints)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-6) For type-check failures: diagnose the error, implement the minimal fix
+7) For type-check failures: diagnose the error, implement the minimal fix
    in checker/solver, verify the file now type-checks correctly.
 
-7) For timeout fixes: reproduce the hang with a minimal input, profile to find
+8) For timeout fixes: reproduce the hang with a minimal input, profile to find
    the runaway loop or unbounded recursion, and apply a targeted fix (cache,
    cycle breaker, depth limit). Verify the test completes in <30s after the fix.
 
-8) For perf work: profile the slow benchmark using flamegraph or sampling
+9) For perf work: profile the slow benchmark using flamegraph or sampling
    profiler, identify the hottest function, implement a targeted optimization.
 
    MAINTAINABILITY RULES — Every optimization MUST follow these:
@@ -87,7 +91,7 @@ PHASE 3 — IMPLEMENT (with maintainability constraints)
    - Respect the architecture: solver owns type computation, checker is
      thin orchestration. Do NOT move logic across boundaries for speed.
 
-9) Write a unit test:
+10) Write a unit test:
    - For type-check fixes: test the specific Rust logic you changed
    - For perf fixes: test correctness of the optimized path
    - Run: cargo nextest run -p <crate> to verify
@@ -99,17 +103,17 @@ PHASE 4 — VERIFY (mandatory, non-negotiable)
 Before committing, you MUST pass ALL of these checks. If any check fails,
 fix the regression before proceeding. Do NOT commit with regressions.
 
-10) Run: cargo nextest run --no-fail-fast
+11) Run: cargo nextest run --no-fail-fast
    ✓ REQUIRED: Same or more tests passing compared to baseline from step 3a.
    ✗ BLOCKER: If any previously-passing test now fails, fix it before continuing.
 
-11) Run: ./scripts/conformance.sh run 2>&1 | tail -20
+12) Run: ./scripts/conformance.sh run 2>&1 | tail -20
    ✓ REQUIRED: Conformance pass rate must be >= baseline from step 3b.
    ✓ REQUIRED: No new timeouts introduced (grep for "timeout" in output).
    ✗ BLOCKER: If conformance % dropped or new timeouts appeared, your change
      broke type-checking correctness or introduced a perf regression. Fix first.
 
-12) Re-run: ./scripts/bench-vs-tsgo.sh --quick
+13) Re-run: ./scripts/bench-vs-tsgo.sh --quick
     ✓ REQUIRED: No new "tsz error" entries appeared.
     ✓ REQUIRED: The targeted ratio improved (or at minimum didn't regress).
     ✓ DESIRED: No other benchmark ratio regressed by more than 5%.
@@ -118,7 +122,9 @@ fix the regression before proceeding. Do NOT commit with regressions.
 PHASE 5 — COMMIT & REPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-13) Only after ALL checks in Phase 4 pass:
+14) Only after ALL checks in Phase 4 pass:
+    NEVER use --no-verify. Let the pre-commit hook run all tests and lint.
+    If the hook fails, fix the issue and try again — do NOT bypass the hook.
     Create ONE small commit. Include in the commit message:
     - What was optimized/fixed and why
     - Before/after benchmark numbers for the targeted benchmark
@@ -126,12 +132,12 @@ PHASE 5 — COMMIT & REPORT
     - Tests: <before> → <after> (should be same or better)
     Then push: git push origin main
 
-14) Append any issues you investigated but punted on (too complex, needs
+15) Append any issues you investigated but punted on (too complex, needs
     architecture work, blocked by another issue, etc.) to
     docs/todos/perf.md — include function/module, current ratio, and a
     one-line reason why you skipped it.
 
-15) git add docs/todos/perf.md (if changed) and amend or create a
+16) git add docs/todos/perf.md (if changed) and amend or create a
     second commit, then push: git push origin main
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
