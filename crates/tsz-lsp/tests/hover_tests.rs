@@ -165,6 +165,17 @@ fn test_hover_namespace_exported_var_includes_namespace_container() {
 }
 
 #[test]
+fn test_hover_contextual_object_literal_property_name() {
+    let source = "interface IFoo { n: number; }\ninterface IBar { foo: IFoo; }\nvar c3t12: IBar = {\n    foo: <IFoo>({})\n};";
+    let info = get_hover_at(source, 3, 4)
+        .expect("Should find hover info for object-literal property name");
+    assert_eq!(
+        info.display_string, "(property) IBar.foo: IFoo",
+        "Property-name hover in contextually typed object literal should use interface property type"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
