@@ -463,7 +463,11 @@ impl<'a> CallHierarchyProvider<'a> {
         let body = self.get_function_body(func_idx)?;
         let body_node = self.arena.get(body)?;
         let func_node = self.arena.get(func_idx)?;
-        Some((func_node.pos, body_node.end))
+        let start = func_node.pos;
+        let end = self
+            .find_function_body_end_offset_from_source(start)
+            .unwrap_or(body_node.end);
+        Some((start, end))
     }
 
     fn container_name_for_callable(&self, callable_idx: NodeIndex) -> Option<String> {
@@ -619,10 +623,10 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Recursively collect all `CallExpression` nodes within a subtree.
+    /// Recursively collect all call-like expression nodes within a subtree.
     ///
     /// Uses a simple offset-range scan: any node in the arena whose kind is
-    /// `CALL_EXPRESSION` and whose [pos, end) is within the body range is
+    /// `CALL_EXPRESSION`/`NEW_EXPRESSION` and whose [pos, end) is within the body range is
     /// collected. This avoids the need for a full recursive visitor.
     fn collect_call_expressions(&self, body_idx: NodeIndex, out: &mut Vec<NodeIndex>) {
         let body_node = match self.arena.get(body_idx) {
@@ -633,7 +637,8 @@ impl<'a> CallHierarchyProvider<'a> {
         let body_end = body_node.end;
 
         for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            if (node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || node.kind == syntax_kind_ext::NEW_EXPRESSION)
                 && node.pos >= body_start
                 && node.end <= body_end
             {
@@ -644,7 +649,10 @@ impl<'a> CallHierarchyProvider<'a> {
 
     fn collect_call_expressions_in_bounds(&self, start: u32, end: u32, out: &mut Vec<NodeIndex>) {
         for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION && node.pos >= start && node.end <= end
+            if (node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                && node.pos >= start
+                && node.end <= end
             {
                 out.push(NodeIndex(i as u32));
             }
@@ -815,14 +823,26 @@ impl<'a> CallHierarchyProvider<'a> {
             return self.make_call_hierarchy_item(decl_idx);
         }
 
-        // Otherwise (e.g. variable declaration), build an item from the symbol info
+        // Otherwise (e.g. class/variable declaration), build an item from declaration info.
+        let mut kind = SymbolKind::Function;
+        let mut selection_range = self.get_range(decl_idx);
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            kind = SymbolKind::Class;
+            if let Some(class_decl) = self.arena.get_class(node)
+                && class_decl.name.is_some()
+            {
+                selection_range = self.get_range(class_decl.name);
+            }
+        }
         let range = self.get_range(decl_idx);
         Some(CallHierarchyItem {
             name: symbol_name.to_string(),
-            kind: SymbolKind::Function,
+            kind,
             uri: self.file_name.clone(),
             range,
-            selection_range: range,
+            selection_range,
             container_name: self.container_name_for_callable(decl_idx),
         })
     }

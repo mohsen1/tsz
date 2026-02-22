@@ -766,9 +766,18 @@ impl Server {
                     .collect();
                 Some(serde_json::json!(body))
             } else {
-                // Keep outgoing calls pinned to the exact requested position:
-                // probing nearby offsets can spuriously jump to neighboring call sites.
-                let calls = provider.outgoing_calls(root, position);
+                // Prefer exact-position outgoing calls; if the cursor sits on a
+                // token boundary where prepare fails, probe adjacent offsets to
+                // recover the same behavior used by prepare/incoming handlers.
+                let mut calls = provider.outgoing_calls(root, position);
+                if calls.is_empty() && provider.prepare(root, position).is_none() {
+                    for probe in positions.iter().skip(1) {
+                        if provider.prepare(root, *probe).is_some() {
+                            calls = provider.outgoing_calls(root, *probe);
+                            break;
+                        }
+                    }
+                }
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {

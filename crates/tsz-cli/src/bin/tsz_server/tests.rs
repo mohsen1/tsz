@@ -803,6 +803,35 @@ fn test_prepare_call_hierarchy_class_property_arrow_function() {
 }
 
 #[test]
+fn test_call_hierarchy_outgoing_includes_constructor_call_target() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "function foo() {\n    bar();\n}\n\nfunction bar() {\n    new Baz();\n}\n\nclass Baz {\n}\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyOutgoingCalls",
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 5,
+            "offset": 10
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("outgoing calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyOutgoingCalls body should be an array");
+    assert!(
+        calls.iter().any(|call| call["to"]["name"] == "Baz"),
+        "Expected outgoing constructor call target 'Baz', got: {calls:?}"
+    );
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";
