@@ -530,7 +530,9 @@ impl<'a> LoweringPass<'a> {
                         );
                         let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
                         self.mark_class_helpers(idx, heritage);
-                    } else if self.class_has_auto_accessor_members(class_data) {
+                    } else if self.ctx.needs_es2022_lowering
+                        && self.class_has_auto_accessor_members(class_data)
+                    {
                         let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
                         self.mark_class_helpers(idx, heritage);
                     }
@@ -1162,7 +1164,9 @@ impl<'a> LoweringPass<'a> {
         }
 
         let heritage = self.get_extends_heritage(&class.heritage_clauses);
-        if self.ctx.target_es5 || self.class_has_auto_accessor_members(class) {
+        if self.ctx.target_es5
+            || (self.ctx.needs_es2022_lowering && self.class_has_auto_accessor_members(class))
+        {
             self.mark_class_helpers(idx, heritage);
         }
 
