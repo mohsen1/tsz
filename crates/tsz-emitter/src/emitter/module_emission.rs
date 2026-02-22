@@ -23,6 +23,7 @@ impl<'a> Printer<'a> {
         format!("{base}_{next}")
     }
 
+    #[allow(dead_code)]
     pub(super) fn emit_commonjs_export<F>(
         &mut self,
         names: &[IdentifierId],
@@ -31,9 +32,36 @@ impl<'a> Printer<'a> {
     ) where
         F: FnMut(&mut Self),
     {
+        self.emit_commonjs_export_with_hoisting(names, is_default, false, &mut emit_inner);
+    }
+
+    /// Emit a CommonJS export with optional hoisting of the export assignment.
+    ///
+    /// When `is_hoisted_declaration` is true (for function declarations), the
+    /// `exports.default = name;` assignment is emitted BEFORE the declaration.
+    /// tsc does this because JS function declarations are hoisted — the binding
+    /// exists at the top of the scope regardless of textual position.
+    pub(super) fn emit_commonjs_export_with_hoisting<F>(
+        &mut self,
+        names: &[IdentifierId],
+        is_default: bool,
+        is_hoisted_declaration: bool,
+        emit_inner: &mut F,
+    ) where
+        F: FnMut(&mut Self),
+    {
         if names.is_empty() {
             emit_inner(self);
             return;
+        }
+
+        // For default exports of hoisted declarations (functions), emit
+        // the export assignment before the declaration body, matching tsc.
+        if is_default && is_hoisted_declaration {
+            self.write("exports.default = ");
+            self.write_identifier_by_id(names[0]);
+            self.write(";");
+            self.write_line();
         }
 
         let prev_module = self.ctx.options.module;
@@ -50,6 +78,14 @@ impl<'a> Printer<'a> {
         // the export assignment. The preamble `exports.X = void 0;` already
         // handles the forward declaration.
         if !inner_emitted {
+            return;
+        }
+
+        // For hoisted default exports, the assignment was already emitted above.
+        if is_default && is_hoisted_declaration {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
             return;
         }
 
@@ -542,13 +578,10 @@ impl<'a> Printer<'a> {
                 }
                 // export function f() {} or export default function f() {}
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    // Emit the function declaration
-                    self.emit_function_declaration(clause_node, export.export_clause);
-                    self.write_line();
-
-                    // For default exports, emit exports.default = name; after the function.
-                    // For named exports, the preamble already emitted exports.f = f;
-                    // (since function declarations are hoisted).
+                    // For default exports of named functions, tsc emits the
+                    // `exports.default = name;` assignment BEFORE the function
+                    // declaration. This works because JS function declarations
+                    // are hoisted, so the binding exists at the top of the scope.
                     if !self.ctx.module_state.has_export_assignment
                         && export.is_default_export
                         && let Some(func) = self.arena.get_function(clause_node)
@@ -559,6 +592,10 @@ impl<'a> Printer<'a> {
                         self.write(";");
                         self.write_line();
                     }
+
+                    // Emit the function declaration
+                    self.emit_function_declaration(clause_node, export.export_clause);
+                    self.write_line();
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -1618,6 +1655,70 @@ mod tests {
         assert!(
             output.contains("\"use strict\""),
             "moduleDetection=force with CJS should emit \"use strict\".\nOutput:\n{output}"
+        );
+    }
+
+    /// `export default function f()` in CJS should emit `exports.default = f;`
+    /// BEFORE the function declaration, because JS function declarations are
+    /// hoisted. This matches tsc's output ordering.
+    #[test]
+    fn default_export_function_hoists_export_assignment() {
+        let source = "export default function f() { return 1; }\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // exports.default = f; must appear before `function f()`
+        let export_pos = output.find("exports.default = f;");
+        let func_pos = output.find("function f()");
+        assert!(
+            export_pos.is_some() && func_pos.is_some(),
+            "Should emit both exports.default = f; and function f().\nOutput:\n{output}"
+        );
+        assert!(
+            export_pos.unwrap() < func_pos.unwrap(),
+            "exports.default = f; should appear before function f() (hoisting).\nOutput:\n{output}"
+        );
+    }
+
+    /// Non-default function exports should NOT have the export hoisted before
+    /// the function — they are handled in the preamble instead.
+    #[test]
+    fn named_export_function_not_hoisted() {
+        let source = "export function g() { return 2; }\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // For named exports, the preamble emits `exports.g = g;` before the
+        // function, and there's no second assignment after.
+        let preamble_pos = output.find("exports.g = g;");
+        let func_pos = output.find("function g()");
+        assert!(
+            preamble_pos.is_some() && func_pos.is_some(),
+            "Should emit both exports.g = g; and function g().\nOutput:\n{output}"
+        );
+        assert!(
+            preamble_pos.unwrap() < func_pos.unwrap(),
+            "Preamble exports.g = g; should appear before function g().\nOutput:\n{output}"
         );
     }
 }
