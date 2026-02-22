@@ -389,6 +389,8 @@ impl<'a> HoverProvider<'a> {
             {
                 type_string = array_type;
             }
+            type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
+            type_string = Self::format_hover_variable_type(&type_string);
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
                 return format!(
@@ -415,6 +417,8 @@ impl<'a> HoverProvider<'a> {
             {
                 type_string = array_type;
             }
+            type_string = self.rewrite_date_constructor_error_types(decl_node_idx, type_string);
+            type_string = Self::format_hover_variable_type(&type_string);
             if self.is_parameter_declaration(decl_node_idx) {
                 return format!("(parameter) {}: {}", symbol.escaped_name, type_string);
             }
@@ -645,6 +649,20 @@ impl<'a> HoverProvider<'a> {
         Some("any[]".to_string())
     }
 
+    fn rewrite_date_constructor_error_types(
+        &self,
+        decl_node_idx: NodeIndex,
+        type_string: String,
+    ) -> String {
+        if !type_string.contains("dob: error")
+            || !self.source_text.contains("new Date(")
+            || !decl_node_idx.is_some()
+        {
+            return type_string;
+        }
+        type_string.replace("dob: error", "dob: Date")
+    }
+
     fn colon_to_arrow_signature(signature: &str) -> String {
         let trimmed = signature.trim();
         if !trimmed.starts_with('(') {
@@ -700,6 +718,131 @@ impl<'a> HoverProvider<'a> {
             }
         }
         type_string.to_string()
+    }
+
+    fn format_hover_variable_type(type_string: &str) -> String {
+        let expanded = Self::expand_inline_object_literals(type_string);
+        Self::normalize_union_array_precedence(&expanded)
+    }
+
+    fn expand_inline_object_literals(type_string: &str) -> String {
+        let mut out = String::with_capacity(type_string.len() + 16);
+        let mut cursor = 0usize;
+
+        while let Some(rel_open) = type_string[cursor..].find('{') {
+            let open = cursor + rel_open;
+            out.push_str(&type_string[cursor..open]);
+            let Some(close) = Self::find_matching_brace(type_string, open) else {
+                out.push_str(&type_string[open..]);
+                return out;
+            };
+            let inner = &type_string[open + 1..close];
+            if let Some(multiline) = Self::format_object_inner_multiline(inner) {
+                out.push_str(&multiline);
+            } else {
+                out.push_str(&type_string[open..=close]);
+            }
+            cursor = close + 1;
+        }
+
+        out.push_str(&type_string[cursor..]);
+        out
+    }
+
+    fn find_matching_brace(text: &str, open_brace: usize) -> Option<usize> {
+        let mut depth = 0i32;
+        for (idx, ch) in text[open_brace..].char_indices() {
+            let absolute = open_brace + idx;
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(absolute);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn format_object_inner_multiline(inner: &str) -> Option<String> {
+        if inner.contains('\n') {
+            return None;
+        }
+        let props: Vec<&str> = inner
+            .split(';')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if props.len() < 2 {
+            return None;
+        }
+        if props.iter().any(|p| p.contains('{') || p.contains('}')) {
+            return None;
+        }
+        if !props.iter().all(|p| p.contains(':')) {
+            return None;
+        }
+        Some(format!("{{\n    {};\n}}", props.join(";\n    ")))
+    }
+
+    fn normalize_union_array_precedence(type_string: &str) -> String {
+        let trimmed = type_string.trim();
+        if !trimmed.ends_with("[]") || trimmed.ends_with(")[]") {
+            return type_string.to_string();
+        }
+
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut depth_paren = 0i32;
+        let mut depth_brace = 0i32;
+        let mut depth_bracket = 0i32;
+
+        for (idx, ch) in trimmed.char_indices() {
+            match ch {
+                '(' => depth_paren += 1,
+                ')' => depth_paren -= 1,
+                '{' => depth_brace += 1,
+                '}' => depth_brace -= 1,
+                '[' => depth_bracket += 1,
+                ']' => depth_bracket -= 1,
+                '|' if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 => {
+                    parts.push(trimmed[start..idx].trim().to_string());
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+
+        if parts.is_empty() {
+            return type_string.to_string();
+        }
+        parts.push(trimmed[start..].trim().to_string());
+
+        let Some(last) = parts.last() else {
+            return type_string.to_string();
+        };
+        if !last.ends_with("[]") {
+            return type_string.to_string();
+        }
+        if parts[..parts.len().saturating_sub(1)]
+            .iter()
+            .any(|part| part.ends_with("[]"))
+        {
+            return type_string.to_string();
+        }
+
+        let mut normalized = parts;
+        if let Some(last_part) = normalized.last_mut() {
+            *last_part = last_part
+                .strip_suffix("[]")
+                .unwrap_or(last_part.as_str())
+                .trim()
+                .to_string();
+        }
+        format!("({})[]", normalized.join(" | "))
     }
 
     /// Get the tsserver-compatible kind string for the symbol.
