@@ -512,6 +512,10 @@ fn convert_options_to_tsconfig(
         }
     }
 
+    // Keep compilerOptions ordering deterministic so TS5023/TS5025 line/column
+    // locations are stable across cache generation runs.
+    opts.sort_keys();
+
     serde_json::Value::Object(opts)
 }
 
