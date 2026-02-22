@@ -2156,10 +2156,11 @@ func(x);
     );
 }
 
-/// TS7034 should fire for variables captured by arrow functions.
+/// TS7034 should NOT fire for block-scoped `let` variables, even when captured by arrow functions.
+/// tsc only emits TS7034 for function-scoped `var` declarations.
 /// From: controlFlowNoImplicitAny.ts (f10)
 #[test]
-fn test_ts7034_captured_by_arrow_function() {
+fn test_ts7034_not_emitted_for_let_captured_by_arrow_function() {
     let opts = CheckerOptions {
         no_implicit_any: true,
         ..CheckerOptions::default()
@@ -2175,8 +2176,31 @@ function f10() {
         opts,
     );
     assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 for block-scoped `let` variable.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7034 SHOULD fire for function-scoped `var` variables captured by arrow functions.
+#[test]
+fn test_ts7034_emitted_for_var_captured_by_arrow_function() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f10() {
+    var x;
+    x = 'hello';
+    const f = () => { x; };
+}
+        ",
+        opts,
+    );
+    assert!(
         has_error(&diagnostics, 7034),
-        "Should emit TS7034 for variable captured by arrow function.\nActual errors: {diagnostics:#?}"
+        "Should emit TS7034 for function-scoped `var` variable captured by arrow function.\nActual errors: {diagnostics:#?}"
     );
 }
 
