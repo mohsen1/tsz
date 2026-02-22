@@ -388,3 +388,18 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-22 (quickinfo contextual array property follow-up)
+
+Completed in this pass:
+- Fixed quickinfo/hover contextual property typing fallback for object-literal members with non-function initializers by reading member annotations from contextual type declarations when solver property lookup is unavailable (`crates/tsz-lsp/src/hover.rs`).
+- Added focused unit tests:
+  - `crates/tsz-lsp/tests/hover_tests.rs` (`test_hover_contextual_object_literal_array_property_name`)
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_quickinfo_contextual_object_literal_array_property_name`)
+- Verified targeted progress with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `34` (`(property) IFoo.a: any[]`) to marker `36`.
+- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: remained `189/200` passing (no sampled regressions in this run).
+- Broader safety check: `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1114` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `36` (`(parameter) i: any` vs expected `number`).
+  Reason: requires additional contextual parameter typing parity for function expressions assigned through class property declarations in tsserver quickinfo recovery beyond this targeted property-type fallback.
