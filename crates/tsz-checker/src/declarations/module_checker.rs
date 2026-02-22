@@ -618,23 +618,26 @@ impl<'a> CheckerState<'a> {
                 is_local_or_imported = true;
             }
 
+            // Also check scope resolution — symbols declared inside `declare module`
+            // scopes won't be in file_locals but ARE local to the module.
+            if !is_local_or_imported && self.resolve_identifier_symbol(name_idx).is_some() {
+                is_local_or_imported = true;
+            }
+
             if !is_local_or_imported {
-                // If it resolves to something globally but is not local, emit TS2661
-                if self.resolve_identifier_symbol(name_idx).is_some()
-                    || matches!(
-                        name_str.as_str(),
-                        "undefined"
-                            | "any"
-                            | "unknown"
-                            | "never"
-                            | "string"
-                            | "number"
-                            | "boolean"
-                            | "symbol"
-                            | "object"
-                            | "bigint"
-                    )
-                {
+                if matches!(
+                    name_str.as_str(),
+                    "undefined"
+                        | "any"
+                        | "unknown"
+                        | "never"
+                        | "string"
+                        | "number"
+                        | "boolean"
+                        | "symbol"
+                        | "object"
+                        | "bigint"
+                ) {
                     self.error_at_node_msg(
                         name_idx,
                         crate::diagnostics::diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE,
