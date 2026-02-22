@@ -67,3 +67,19 @@ if (options?.nested?.transport?.backoff?.base) {
         "Expected no diagnostics for deep optional-chain access, got: {diags:?}"
     );
 }
+
+#[test]
+fn optional_element_chain_flow_skip_preserves_nullish_coalesce_typing() {
+    let source = r#"
+declare const arr: Array<{ value?: number }> | undefined;
+
+const first: number = arr?.[0]?.value ?? 42;
+const second: number = arr?.[1]?.value ?? 7;
+"#;
+
+    let diags = diagnostics_for_source(source);
+    assert!(
+        diags.is_empty(),
+        "Expected no diagnostics for optional element-chain access, got: {diags:?}"
+    );
+}

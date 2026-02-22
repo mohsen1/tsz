@@ -1534,6 +1534,30 @@ fn test_property_access_object_methods_on_primitives() {
 }
 
 #[test]
+fn test_property_access_reuses_context_across_name_lengths() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let long_name = "hasOwnProperty";
+    let short_name = "length";
+
+    let long_result = evaluator.resolve_property_access(TypeId::STRING, long_name);
+    match long_result {
+        PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
+            Some(TypeData::Function(_)) => {}
+            other => panic!("Expected function for long name, got {other:?}"),
+        },
+        _ => panic!("Expected success for long name, got {long_result:?}"),
+    }
+
+    let short_result = evaluator.resolve_property_access(TypeId::STRING, short_name);
+    match short_result {
+        PropertyAccessResult::Success { type_id, .. } => assert_eq!(type_id, TypeId::NUMBER),
+        _ => panic!("Expected success for short name, got {short_result:?}"),
+    }
+}
+
+#[test]
 fn test_property_access_primitive_constructor_value() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);

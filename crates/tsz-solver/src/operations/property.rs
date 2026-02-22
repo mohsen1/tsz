@@ -233,7 +233,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         // Milestone 2: Visitor Bridge Pattern
         // Set context for visitor methods
-        *self.current_prop_name.borrow_mut() = Some(prop_name.to_string());
+        {
+            let mut current_name = self.current_prop_name.borrow_mut();
+            if let Some(name) = current_name.as_mut() {
+                name.clear();
+                name.push_str(prop_name);
+            } else {
+                *current_name = Some(prop_name.to_owned());
+            }
+        }
         *self.current_prop_atom.borrow_mut() = prop_atom;
 
         // Use visitor for types we've migrated (Intrinsic, Object, ObjectWithIndex, Array, Tuple)
