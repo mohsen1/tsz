@@ -97,7 +97,7 @@ fn collect_export_name_from_declaration(
                 if arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
-                if !is_instantiated_module_for_exports(arena, module.body) {
+                if !super::emit_utils::is_instantiated_module(arena, module.body) {
                     return;
                 }
                 if let Some(name) = get_identifier_text(arena, module.name) {
@@ -218,7 +218,7 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                 if let Some(module) = arena.get_module(node)
                     && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
                     && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                    && is_instantiated_module_for_exports(arena, module.body)
+                    && super::emit_utils::is_instantiated_module(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     exports.push(name);
@@ -447,85 +447,6 @@ pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: 
     format!(
         "Object.defineProperty(exports, \"{export_name}\", {{ enumerable: true, get: function () {{ return {module_var}.{import_name}; }} }});"
     )
-}
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-fn is_instantiated_module_for_exports(arena: &NodeArena, module_body: NodeIndex) -> bool {
-    let Some(body_node) = arena.get(module_body) else {
-        return false;
-    };
-
-    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION
-        && let Some(inner_module) = arena.get_module(body_node)
-    {
-        return is_instantiated_module_for_exports(arena, inner_module.body);
-    }
-    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-        return false;
-    }
-
-    if let Some(block) = arena.get_module_block(body_node)
-        && let Some(stmts) = &block.statements
-    {
-        for &stmt_idx in &stmts.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if !is_type_only_module_statement(arena, stmt_node) {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
-    match node.kind {
-        k if k == syntax_kind_ext::INTERFACE_DECLARATION
-            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
-        {
-            true
-        }
-        k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-            if let Some(import_decl) = arena.get_import_decl(node)
-                && let Some(clause_node) = arena.get(import_decl.import_clause)
-                && let Some(clause) = arena.get_import_clause(clause_node)
-            {
-                return clause.is_type_only;
-            }
-            false
-        }
-        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-            if let Some(export_decl) = arena.get_export_decl(node) {
-                if export_decl.is_type_only {
-                    return true;
-                }
-                if let Some(inner_node) = arena.get(export_decl.export_clause) {
-                    return is_type_only_module_statement(arena, inner_node);
-                }
-            }
-            false
-        }
-        k if k == syntax_kind_ext::ENUM_DECLARATION => {
-            if let Some(enum_decl) = arena.get_enum(node) {
-                return arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
-            }
-            false
-        }
-        k if k == syntax_kind_ext::MODULE_DECLARATION => {
-            if let Some(module_decl) = arena.get_module(node) {
-                return arena.has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || !is_instantiated_module_for_exports(arena, module_decl.body);
-            }
-            true
-        }
-        _ => false,
-    }
 }
 
 /// Collect exported names from a variable declaration (identifier or binding pattern).
