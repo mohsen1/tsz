@@ -32,6 +32,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        let pair = (source, target);
+        match self.guard.enter(pair) {
+            crate::recursion::RecursionResult::Entered => {}
+            crate::recursion::RecursionResult::Cycle
+            | crate::recursion::RecursionResult::DepthExceeded
+            | crate::recursion::RecursionResult::IterationExceeded => {
+                return Some(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+        let result = self.explain_failure_guarded(source, target);
+        self.guard.leave(pair);
+        result
+    }
+
+    fn explain_failure_guarded(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
         // Fast path: if types are equal, no failure
         if source == target {
             return None;
