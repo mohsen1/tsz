@@ -1393,14 +1393,29 @@ impl<'a> Printer<'a> {
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output — tsc keeps them in JS emit for most cases.
         // Only AMD-specific directives (/// <amd ...) are stripped.
+        // When inside a module wrapper (AMD/UMD/System), `/// <reference` directives
+        // are also stripped because they were already emitted before the wrapper.
         // Store on self so nested blocks can also distribute comments.
+        let inside_module_wrapper = self.ctx.original_module_kind.is_some();
         self.all_comments = if !self.ctx.options.remove_comments {
             if let Some(text) = self.source_text {
                 tsz_common::comments::get_comment_ranges(text)
                     .into_iter()
                     .filter(|c| {
                         let content = c.get_text(text);
-                        !content.starts_with("/// <amd")
+                        if content.starts_with("/// <amd") {
+                            return false;
+                        }
+                        // When inside a module wrapper, reference directives were
+                        // already emitted before define()/wrapper — skip them here.
+                        if inside_module_wrapper {
+                            let trimmed = content.trim_start_matches('/');
+                            let trimmed = trimmed.trim_start();
+                            if trimmed.starts_with("<reference") {
+                                return false;
+                            }
+                        }
+                        true
                     })
                     .collect()
             } else {
