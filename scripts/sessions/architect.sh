@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
-cat <<'PROMPT'
+
+ARCH_TODOS=$(
+  find docs/todos -maxdepth 1 -type f \( -iname "*arch*.md" -o -iname "*architecture*.md" \) \
+    | sort
+)
+if [[ -z "$ARCH_TODOS" ]]; then
+  ARCH_TODOS="docs/todos/arch-violations.md"
+fi
+ARCH_TODO_LINES=$(printf '%s\n' "$ARCH_TODOS" | sed 's/^/   - /')
+
+cat <<PROMPT
 You are working in /Users/mohsenazimi/code/tsz.
 Goal: incrementally improve repo layout, code organization, and code quality.
 
@@ -9,10 +19,11 @@ find it and fix it. Do not declare "all clear" and stop — dig deeper.
 Steps:
 1) git pull origin main
 2) Read CLAUDE.md (architecture rules and responsibility split)
-3) Read docs/todos/arch-violations.md — this contains notes from previous
-   sessions (known issues, skipped items, prior investigations). Use it to
-   avoid re-investigating already-known issues and to pick up where the last
-   session left off.
+3) Read architecture-related todo files in docs/todos:
+$ARCH_TODO_LINES
+   These contain notes from previous sessions (known issues, skipped items,
+   prior investigations). Use them to avoid re-investigating known issues and
+   to pick up where the last session left off.
 4) Verify pre-commit hooks are installed: ls -la .git/hooks/pre-commit
    If missing, run: ./scripts/setup.sh
    NEVER use --no-verify on git commit. The pre-commit hook runs tests and
@@ -75,10 +86,11 @@ Steps:
    If any test fails, fix it before committing.
 10) Create ONE small, focused commit and push: git push origin main
     NEVER use --no-verify. Let the pre-commit hook run.
-11) If you found other issues while investigating, append them to
-   docs/todos/arch-violations.md — include file path, line range, and a
-   one-line description. Only update this file if you have NEW issues to
-   report (not previously listed ones).
+11) If you found other issues while investigating, append them to the most
+    relevant architecture todo file in docs/todos (prefer the matching file by
+    topic; fallback: docs/todos/arch-violations.md) — include file path, line
+    range, and a one-line description. Only update todo files with NEW issues
+    (not previously listed ones).
 
 IMPORTANT: Every session should produce exactly one code-improving commit.
 If you genuinely cannot find anything to improve after thorough searching
