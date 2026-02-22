@@ -635,6 +635,43 @@ fn test_class_property_arrow_function_prepare_and_incoming_calls() {
 }
 
 #[test]
+fn test_interface_method_signature_prepare_and_incoming_calls() {
+    let source =
+        "interface I {\n    foo(): void;\n}\n\nconst obj: I = { foo() {} };\n\nobj.foo();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let method_pos = Position::new(1, 4);
+    let item = provider
+        .prepare(root, method_pos)
+        .expect("Should prepare call hierarchy item for interface method signature");
+    assert_eq!(item.name, "foo");
+    assert_eq!(item.kind, SymbolKind::Method);
+
+    let incoming = provider.incoming_calls(root, method_pos);
+    assert!(
+        incoming
+            .iter()
+            .any(|call| call.from.kind == SymbolKind::File && !call.from_ranges.is_empty()),
+        "Expected script-level incoming call for interface method signature, got: {incoming:?}"
+    );
+
+    let outgoing = provider.outgoing_calls(root, method_pos);
+    assert!(
+        outgoing.is_empty(),
+        "Interface method signatures have no body and should not report outgoing calls"
+    );
+}
+
+#[test]
 fn test_call_hierarchy_item_serialization() {
     let item = CallHierarchyItem {
         name: "test".to_string(),

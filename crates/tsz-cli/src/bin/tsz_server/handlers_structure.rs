@@ -28,6 +28,53 @@ impl Server {
         (name.to_string(), kind.to_string())
     }
 
+    fn call_hierarchy_probe_positions(
+        line_map: &LineMap,
+        source_text: &str,
+        position: Position,
+    ) -> Vec<Position> {
+        let Some(base_offset) = line_map.position_to_offset(position, source_text) else {
+            return vec![position];
+        };
+
+        let len = source_text.len() as u32;
+        let bytes = source_text.as_bytes();
+        let mut positions = vec![position];
+
+        // Fourslash call-hierarchy markers are often comment-based (`/**/foo`).
+        // Probe just after the comment terminator to resolve the intended token.
+        if base_offset + 1 < len
+            && bytes[base_offset as usize] == b'/'
+            && bytes[(base_offset + 1) as usize] == b'*'
+        {
+            let mut probe = base_offset + 2;
+            while probe + 1 < len {
+                if bytes[probe as usize] == b'*' && bytes[(probe + 1) as usize] == b'/' {
+                    probe += 2;
+                    break;
+                }
+                probe += 1;
+            }
+            while probe < len && bytes[probe as usize].is_ascii_whitespace() {
+                probe += 1;
+            }
+            if probe < len {
+                positions.push(line_map.offset_to_position(probe, source_text));
+            }
+        }
+
+        if base_offset < len {
+            positions.push(
+                line_map.offset_to_position(base_offset.saturating_add(1).min(len), source_text),
+            );
+        }
+        if base_offset > 0 {
+            positions.push(line_map.offset_to_position(base_offset - 1, source_text));
+        }
+
+        positions
+    }
+
     fn apply_inferred_project_options(&mut self, options: Option<&serde_json::Value>) {
         if let Some(options) = options {
             self.allow_importing_ts_extensions = options
@@ -661,27 +708,11 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
-            let mut item = provider.prepare(root, position);
-            if item.is_none()
-                && let Some(base_offset) = line_map.position_to_offset(position, &source_text)
-            {
-                let len = source_text.len() as u32;
-                let mut probes = [base_offset; 2];
-                let mut probe_count = 0usize;
-                if base_offset < len {
-                    probes[probe_count] = base_offset.saturating_add(1).min(len);
-                    probe_count += 1;
-                }
-                if base_offset > 0 {
-                    probes[probe_count] = base_offset - 1;
-                    probe_count += 1;
-                }
-                for probe_offset in probes.into_iter().take(probe_count) {
-                    let probe = line_map.offset_to_position(probe_offset, &source_text);
-                    item = provider.prepare(root, probe);
-                    if item.is_some() {
-                        break;
-                    }
+            let mut item = None;
+            for probe in Self::call_hierarchy_probe_positions(&line_map, &source_text, position) {
+                item = provider.prepare(root, probe);
+                if item.is_some() {
+                    break;
                 }
             }
             let item = item?;
@@ -726,23 +757,11 @@ impl Server {
             // In tsserver protocol this is line:1/offset:1, and should not probe into
             // adjacent offsets to resolve the first identifier token.
             let is_file_start_query = line == 1 && offset == 1;
-            let mut positions = vec![position];
-            if !is_file_start_query
-                && let Some(base_offset) = line_map.position_to_offset(position, &source_text)
-            {
-                let len = source_text.len() as u32;
-                if base_offset < len {
-                    positions.push(
-                        line_map.offset_to_position(
-                            base_offset.saturating_add(1).min(len),
-                            &source_text,
-                        ),
-                    );
-                }
-                if base_offset > 0 {
-                    positions.push(line_map.offset_to_position(base_offset - 1, &source_text));
-                }
-            }
+            let positions = if is_file_start_query {
+                vec![position]
+            } else {
+                Self::call_hierarchy_probe_positions(&line_map, &source_text, position)
+            };
 
             if is_incoming {
                 if is_file_start_query {
