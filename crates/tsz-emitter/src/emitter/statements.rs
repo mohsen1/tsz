@@ -1,5 +1,5 @@
 use super::{Printer, get_trailing_comment_ranges};
-use crate::printer::safe_slice;
+use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -145,11 +145,8 @@ impl<'a> Printer<'a> {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
                             let c_trailing =
                                 self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                            let comment_text = crate::printer::safe_slice::slice(
-                                text,
-                                c_pos as usize,
-                                c_end as usize,
-                            );
+                            let comment_text =
+                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                             self.write(comment_text);
                             if c_trailing {
                                 self.write_line();

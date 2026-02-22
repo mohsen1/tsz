@@ -585,7 +585,7 @@ impl<'a> Printer<'a> {
                     if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                         && let Some(text) = self.source_text
                     {
-                        let name_text = crate::printer::safe_slice::slice(
+                        let name_text = crate::safe_slice::slice(
                             text,
                             name_node.pos as usize,
                             name_node.end as usize,
@@ -666,12 +666,9 @@ impl<'a> Printer<'a> {
         // Recovery path: malformed parameter names like `yield`/`await`
         // can be parsed as expressions. Preserve original text for JS parity.
         if let Some(source) = self.source_text {
-            let text = crate::printer::safe_slice::slice(
-                source,
-                name_node.pos as usize,
-                name_node.end as usize,
-            )
-            .trim();
+            let text =
+                crate::safe_slice::slice(source, name_node.pos as usize, name_node.end as usize)
+                    .trim();
             if !text.is_empty() {
                 self.write(text);
                 return;

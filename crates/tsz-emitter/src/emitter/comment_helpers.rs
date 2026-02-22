@@ -77,8 +77,7 @@ impl<'a> Printer<'a> {
 
             // This is a trailing comment on the same line — emit it
             self.write_space();
-            let comment_text =
-                crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+            let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
             if !comment_text.is_empty() {
                 self.write_comment(comment_text);
             }
@@ -228,7 +227,7 @@ impl<'a> Printer<'a> {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
-                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     self.write_comment(comment_text);
                     if c_trailing {
                         self.write_line();
@@ -275,8 +274,7 @@ impl<'a> Printer<'a> {
         while idx < self.all_comments.len() {
             let c = &self.all_comments[idx];
             if c.end <= actual_start {
-                let comment_text =
-                    crate::printer::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                let comment_text = crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
                 result.push(comment_text.to_string());
                 idx += 1;
             } else {

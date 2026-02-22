@@ -629,11 +629,8 @@ impl<'a> Printer<'a> {
                         while idx < self.all_comments.len() {
                             let c = &self.all_comments[idx];
                             if c.pos >= actual_end && c.end <= line_end {
-                                let comment_text = crate::printer::safe_slice::slice(
-                                    text,
-                                    c.pos as usize,
-                                    c.end as usize,
-                                );
+                                let comment_text =
+                                    crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
                                 trailing.push(comment_text.to_string());
                             }
                             if c.end > line_end {

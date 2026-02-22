@@ -22,7 +22,7 @@ impl<'a> Printer<'a> {
                     if c_pos > bracket_pos && c_end < node.end {
                         self.write_space();
                         let comment_text =
-                            crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                         self.write_comment(comment_text);
                         self.comment_emit_idx += 1;
                     } else {
@@ -116,7 +116,7 @@ impl<'a> Printer<'a> {
                     if c_end < node.end {
                         self.write_space();
                         let comment_text =
-                            crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                         self.write_comment(comment_text);
                         self.comment_emit_idx += 1;
                     } else {
@@ -178,7 +178,7 @@ impl<'a> Printer<'a> {
                                 let c_end = self.all_comments[self.comment_emit_idx].end;
                                 if c_end <= actual_start {
                                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                                    let comment_text = crate::printer::safe_slice::slice(
+                                    let comment_text = crate::safe_slice::slice(
                                         text,
                                         c_pos as usize,
                                         c_end as usize,
@@ -257,7 +257,7 @@ impl<'a> Printer<'a> {
                                             } else {
                                                 self.write_space();
                                             }
-                                            let comment_text = crate::printer::safe_slice::slice(
+                                            let comment_text = crate::safe_slice::slice(
                                                 text,
                                                 c_pos as usize,
                                                 c_end as usize,
@@ -301,11 +301,8 @@ impl<'a> Printer<'a> {
                             } else {
                                 self.write_space();
                             }
-                            let comment_text = crate::printer::safe_slice::slice(
-                                text,
-                                c_pos as usize,
-                                c_end as usize,
-                            );
+                            let comment_text =
+                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                             self.write_comment(comment_text);
                             self.comment_emit_idx += 1;
                         } else {
