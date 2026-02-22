@@ -822,6 +822,14 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         for &clause_idx in &case_block.statements.nodes {
+            // Emit leading comments before each case/default clause.
+            // Without this, comments between clauses get attached to the
+            // first statement INSIDE the clause body instead of appearing
+            // before the case/default label.
+            if let Some(clause_node) = self.arena.get(clause_idx) {
+                let actual_start = self.skip_trivia_forward(clause_node.pos, clause_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
             self.emit(clause_idx);
         }
 
@@ -1188,6 +1196,73 @@ mod tests {
         assert!(
             output.contains("// @ts-expect-error"),
             "// @ts-expect-error directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comments before case/default clauses should appear before the label,
+    /// not inside the clause body. tsc emits:
+    ///   // comment
+    ///   case X:
+    /// not:
+    ///   case X:
+    ///       // comment
+    #[test]
+    fn case_clause_leading_comment_before_label() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        // First case
+        case 0:
+            return "zero";
+        // Second case
+        case 1:
+            return "one";
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Comment must appear BEFORE the case keyword, not after.
+        // The case clause is indented 2 levels (8 spaces) inside function + switch.
+        assert!(
+            output.contains("// First case\n        case 0:"),
+            "Leading comment should appear before 'case 0:', not inside the body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// Second case\n        case 1:"),
+            "Leading comment should appear before 'case 1:', not inside the body.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comment before default clause should appear before 'default:', not inside the body.
+    #[test]
+    fn default_clause_leading_comment_before_label() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        case 0:
+            return "zero";
+        // Fallback
+        default:
+            return "other";
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// Fallback\n        default:"),
+            "Leading comment should appear before 'default:', not inside the body.\nOutput:\n{output}"
         );
     }
 }
