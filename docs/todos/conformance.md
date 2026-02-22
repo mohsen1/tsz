@@ -152,6 +152,39 @@ TSC 6.0-dev only accepts `"5.0"` as a valid `ignoreDeprecations` value. Even tho
 messages suggest `"6.0"` to suppress newer deprecations, `"6.0"` is not yet a valid value.
 All 48 conformance tests used `// @ignoreDeprecations: 6.0` which TSC rejects with TS5103.
 
+## TS18003 — No inputs found in config file (Fixed, partial)
+
+**Status**: Fixed fingerprint alignment. +36 tests passing (7602→7638).
+**Error code:** TS18003 ("No inputs were found in config file 'tsconfig.json'...")
+**Fix**: Two changes:
+1. Driver: emit TS18003 with empty file and position 0,0 (matching tsc's format)
+2. Conformance runner: unified include patterns to always use
+   `["*.ts","*.tsx","*.js","*.jsx","**/*.ts","**/*.tsx","**/*.js","**/*.jsx"]`
+   matching the cache generator exactly. File discovery still respects `allowJs`
+   via extension filtering in `discover_ts_files`.
+
+### Remaining TS18003 failures (34 tests)
+- Tests with `@Filename: A:/foo/bar.ts` (Windows-style absolute paths) — our
+  temp directory writes these as subdirectories, which the include patterns match.
+  tsc's virtual filesystem treats them as a separate drive root where include
+  patterns don't match, so tsc emits TS18003 but we find and compile the files.
+- Tests with `node_modules/@types` structures — our compiler discovers @types
+  files as source files instead of treating them as type-only references.
+
+## TS5110 — Module must match moduleResolution (Implemented, net-zero)
+
+**Status**: Implemented. Net-zero conformance impact (correct behavior but fingerprint
+positions don't match for affected tests).
+**Error code:** TS5110 ("Option 'module' must be set to '{0}' when option 'moduleResolution' is set to '{1}'.")
+**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5110
+when `moduleResolution` is node16/nodenext but `module` is not. Skips check when module
+is not explicitly set (tsc defaults it automatically).
+
+### Why net-zero
+Tests that trigger TS5110 also have the diagnostic at a different line/column position
+than the cache expects. `find_value_offset_in_source` returns 0 for the "module" key in
+the generated tsconfig because the pretty-printed JSON has different offsets.
+
 ## TS2454 — Variable used before assignment (Investigated, deferred)
 
 **Error code:** TS2454 ("Variable 'x' is used before being assigned.")
