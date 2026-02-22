@@ -1757,11 +1757,19 @@ impl<'a> Printer<'a> {
                     self.emit(stmt_idx);
                 } else {
                     // Regular statement - emit trailing comments on same line,
-                    // but don't consume comments past the body's closing brace
+                    // but don't consume comments past the body's closing brace.
+                    // Guard with before_len: some statements (e.g., type-only
+                    // import-equals aliases like `import T = M1.I;`) produce no
+                    // output but aren't caught by is_erased_statement(). Without
+                    // this check, write_line() would emit a phantom blank line.
+                    let before_len = self.writer.len();
                     self.emit(stmt_idx);
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
-                    self.emit_trailing_comments_before(token_end, body_close_pos);
-                    self.write_line();
+                    if self.writer.len() > before_len {
+                        let token_end =
+                            self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
+                        self.emit_trailing_comments_before(token_end, body_close_pos);
+                        self.write_line();
+                    }
                 }
             }
             // Restore previous exported names
@@ -2133,5 +2141,41 @@ impl<'a> Printer<'a> {
             _ => {}
         }
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    /// Regression test: type-only import-equals inside a namespace must not
+    /// leave a phantom blank line. The import `import T = M1.I;` produces no
+    /// JS output (type-only alias), but `emit_namespace_body_statements` used
+    /// to call `write_line()` unconditionally, inserting an empty line between
+    /// the IIFE opening brace and the first real statement.
+    #[test]
+    fn no_blank_line_for_type_only_import_alias_in_namespace() {
+        let source = "namespace M1 {\n    export interface I {\n        foo();\n    }\n}\n\nnamespace M2 {\n    import T = M1.I;\n    class C implements T {\n        foo() {}\n    }\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // The IIFE body should NOT have a blank line after the opening brace.
+        assert!(
+            !output.contains("(function (M2) {\n\n"),
+            "Should not have blank line after IIFE opening brace.\nOutput:\n{output}"
+        );
+
+        // The class should still be emitted correctly inside M2's IIFE
+        assert!(
+            output.contains("class C {"),
+            "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
     }
 }
