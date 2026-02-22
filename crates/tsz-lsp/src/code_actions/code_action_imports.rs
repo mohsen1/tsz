@@ -7,6 +7,7 @@ use crate::diagnostics::LspDiagnostic;
 use crate::rename::TextEdit;
 use crate::utils::find_node_at_offset;
 use rustc_hash::FxHashMap;
+use std::path::Path;
 use tsz_common::comments::get_leading_comments_from_cache;
 use tsz_common::position::{Position, Range};
 use tsz_parser::NodeIndex;
@@ -88,6 +89,37 @@ fn compare_import_specifier_local_names(a: &str, b: &str, ignore_case: bool) -> 
         .cmp(&b_folded)
         .then_with(|| a_case_rank.cmp(&b_case_rank))
         .then_with(|| a.cmp(b))
+}
+
+fn module_specifier_match_for_merge(existing: &str, candidate: &str) -> bool {
+    if existing == candidate {
+        return true;
+    }
+    if !existing.starts_with('.') || !candidate.starts_with('.') {
+        return false;
+    }
+
+    let extension_candidates = [".js", ".jsx", ".mjs", ".cjs"];
+    let existing_has_ext = Path::new(existing).extension().is_some();
+    let candidate_has_ext = Path::new(candidate).extension().is_some();
+
+    if !existing_has_ext {
+        for ext in extension_candidates {
+            if format!("{existing}{ext}") == candidate {
+                return true;
+            }
+        }
+    }
+
+    if !candidate_has_ext {
+        for ext in extension_candidates {
+            if format!("{candidate}{ext}") == existing {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 // =============================================================================
@@ -626,7 +658,7 @@ impl<'a> CodeActionProvider<'a> {
             else {
                 continue;
             };
-            if module_text != candidate.module_specifier {
+            if !module_specifier_match_for_merge(module_text, &candidate.module_specifier) {
                 continue;
             }
 
@@ -682,6 +714,7 @@ impl<'a> CodeActionProvider<'a> {
         let mut default_target_type_only = None;
         let mut default_target_value = None;
         let mut fallback_value_named_edits: Option<Vec<TextEdit>> = None;
+        let mut fallback_upgrade_type_only_named_edits: Option<Vec<TextEdit>> = None;
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -702,7 +735,7 @@ impl<'a> CodeActionProvider<'a> {
             else {
                 continue;
             };
-            if module_text != candidate.module_specifier {
+            if !module_specifier_match_for_merge(module_text, &candidate.module_specifier) {
                 continue;
             }
 
@@ -713,6 +746,16 @@ impl<'a> CodeActionProvider<'a> {
                 continue;
             };
             if clause.is_type_only && !candidate.is_type_only {
+                if fallback_upgrade_type_only_named_edits.is_none()
+                    && clause.named_bindings.is_some()
+                    && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                    && bindings_node.kind != SyntaxKind::Identifier as u16
+                    && let Some(named) = self.arena.get_named_imports(bindings_node)
+                    && let Some(edit) =
+                        self.build_type_only_named_import_upgrade_edit(stmt_idx, named, candidate)
+                {
+                    fallback_upgrade_type_only_named_edits = Some(vec![edit]);
+                }
                 continue;
             }
 
@@ -766,6 +809,9 @@ impl<'a> CodeActionProvider<'a> {
             && let Some(edit) = self.build_default_import_named_edit(import_idx, candidate)
         {
             return MergeNamedImport::Edits(vec![edit]);
+        }
+        if let Some(edits) = fallback_upgrade_type_only_named_edits {
+            return MergeNamedImport::Edits(edits);
         }
         if let Some(edits) = fallback_value_named_edits {
             return MergeNamedImport::Edits(edits);
@@ -1009,6 +1055,93 @@ impl<'a> CodeActionProvider<'a> {
         new_text.push_str(&default_name);
         new_text.push_str(", { ");
         new_text.push_str(&spec_text);
+        new_text.push_str(" } from ");
+        new_text.push_str(&module_text);
+        new_text.push(';');
+        new_text.push_str(&trailing);
+
+        Some(TextEdit { range, new_text })
+    }
+
+    fn build_type_only_named_import_upgrade_edit(
+        &self,
+        import_idx: NodeIndex,
+        named: &tsz_parser::parser::node::NamedImportsData,
+        candidate: &ImportCandidate,
+    ) -> Option<TextEdit> {
+        let ImportCandidateKind::Named { export_name } = &candidate.kind else {
+            return None;
+        };
+
+        let import_node = self.arena.get(import_idx)?;
+        let import_data = self.arena.get_import_decl(import_node)?;
+        let clause_node = self.arena.get(import_data.import_clause)?;
+        let clause = self.arena.get_import_clause(clause_node)?;
+        if !clause.is_type_only || clause.name.is_some() {
+            return None;
+        }
+
+        let mut entries: Vec<(String, String)> = Vec::new();
+        let mut found_existing = false;
+        for &spec_idx in &named.elements.nodes {
+            let spec_node = self.arena.get(spec_idx)?;
+            let spec = self.arena.get_specifier(spec_node)?;
+            let import_ident = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            let local_ident = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            let import_name = self.arena.get_identifier_text(import_ident)?;
+            let local_name = self.arena.get_identifier_text(local_ident)?;
+
+            let mut rendered = String::new();
+            if local_name == candidate.local_name {
+                found_existing = true;
+            } else {
+                rendered.push_str("type ");
+            }
+            if import_name == local_name {
+                rendered.push_str(import_name);
+            } else {
+                rendered.push_str(&format!("{import_name} as {local_name}"));
+            }
+            entries.push((local_name.to_string(), rendered));
+        }
+
+        if !found_existing {
+            let mut rendered = String::new();
+            if export_name == &candidate.local_name {
+                rendered.push_str(export_name);
+            } else {
+                rendered.push_str(&format!("{export_name} as {}", candidate.local_name));
+            }
+            entries.push((candidate.local_name.clone(), rendered));
+        }
+
+        entries.sort_by(|(left, _), (right, _)| {
+            compare_import_specifier_local_names(left, right, self.organize_imports_ignore_case)
+        });
+
+        let module_node = self.arena.get(import_data.module_specifier)?;
+        let module_text = self
+            .source
+            .get(module_node.pos as usize..module_node.end as usize)?
+            .to_string();
+        let (range, trailing) = self.import_decl_range(import_node);
+
+        let mut new_text = String::new();
+        new_text.push_str("import { ");
+        for (idx, (_, rendered)) in entries.iter().enumerate() {
+            if idx > 0 {
+                new_text.push_str(", ");
+            }
+            new_text.push_str(rendered);
+        }
         new_text.push_str(" } from ");
         new_text.push_str(&module_text);
         new_text.push(';');

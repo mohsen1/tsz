@@ -2302,6 +2302,243 @@ fn test_completion_info_auto_import_export_equals_type_only_preferred() {
 }
 
 #[test]
+fn test_completion_entry_details_upgrades_type_only_named_import_for_value_usage() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "node18",
+    "verbatimModuleSyntax": true
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/mod.ts".to_string(),
+        "export const value = 0;\nexport class C { constructor(v: any) {} }\nexport interface I {}\n"
+            .to_string(),
+    );
+    let source_text = "import type { I } from \"./mod.js\";\n\nconst x: I = new /**/\n";
+    server
+        .open_files
+        .insert("/a.mts".to_string(), source_text.to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/a.mts",
+            "line": 3,
+            "offset": 18,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let c_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("C")
+                && entry.get("hasAction").and_then(serde_json::Value::as_bool) == Some(true)
+        })
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("C"))
+        })
+        .expect("expected completionInfo to include `C` entry");
+    let source = c_entry
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .expect("expected `C` completion entry to include source")
+        .to_string();
+    assert_eq!(
+        source, "./mod",
+        "expected tsserver completion source to remain extensionless for .mts auto-import entries"
+    );
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/a.mts",
+            "line": 3,
+            "offset": 18,
+            "entryNames": [{ "name": "C", "source": source }],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let code_actions = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .expect("completion details should include auto-import code actions");
+    let text_changes = code_actions
+        .first()
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("auto-import code action should include text changes");
+    let import_text = text_changes
+        .first()
+        .and_then(|change| change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("auto-import text change should include newText");
+    assert!(
+        import_text.contains("import { C, type I } from \"./mod.js\";"),
+        "expected value auto-import to upgrade existing type-only named import, got: {import_text}"
+    );
+    let mut updated_text = source_text.to_string();
+    let mut spans: Vec<(usize, usize, String)> = text_changes
+        .iter()
+        .filter_map(|change| {
+            let span = change.get("span")?;
+            let start = span.get("start")?.as_u64()? as usize;
+            let length = span.get("length")?.as_u64()? as usize;
+            let new_text = change.get("newText")?.as_str()?.to_string();
+            Some((start, start + length, new_text))
+        })
+        .collect();
+    spans.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    for (start, end, new_text) in spans {
+        if start <= end && end <= updated_text.len() {
+            updated_text.replace_range(start..end, &new_text);
+        }
+    }
+    assert!(
+        updated_text.contains("import { C, type I } from \"./mod.js\";"),
+        "expected applied edits to contain merged value+type import, got: {updated_text}"
+    );
+    assert!(
+        !updated_text.contains("import type { I } from \"./mod.js\";"),
+        "expected applied edits to remove prior type-only import line, got: {updated_text}"
+    );
+}
+
+#[test]
+fn test_completion_entry_details_mts_type_position_adds_import_type_named_clause() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "node18",
+    "verbatimModuleSyntax": true
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/mod.ts".to_string(),
+        "export const value = 0;\nexport class C { constructor(v: any) {} }\nexport interface I {}\n"
+            .to_string(),
+    );
+    server
+        .open_files
+        .insert("/a.mts".to_string(), "const x: /**/\n".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/a.mts",
+            "line": 1,
+            "offset": 10,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let i_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("I")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("./mod")
+        })
+        .expect("expected completionInfo to include `I` auto-import from ./mod");
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/a.mts",
+            "line": 1,
+            "offset": 10,
+            "entryNames": [{
+                "name": "I",
+                "source": i_entry.get("source").and_then(serde_json::Value::as_str).expect("source")
+            }],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let code_actions = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .expect("completion details should include auto-import code actions");
+    let text_changes = code_actions
+        .first()
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("auto-import code action should include text changes");
+    let import_text = text_changes
+        .first()
+        .and_then(|change| change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("auto-import text change should include newText");
+    assert!(
+        import_text.starts_with("import type { I } from \"./mod.js\";"),
+        "expected type-position auto-import to emit `import type` named clause with .js extension, got: {import_text}"
+    );
+}
+
+#[test]
 fn test_completion_info_auto_import_file_exclude_patterns_exclude_node_modules_package_tree() {
     let mut server = make_server();
     server.open_files.insert(

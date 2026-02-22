@@ -178,21 +178,31 @@ impl Server {
             let type_only_names =
                 Self::type_only_named_imports_for_module(source_text, module_specifier);
             if !type_only_names.is_empty() {
-                let updated_imports: Vec<String> = imports
+                let mut updated_imports = Vec::new();
+                let mut seen_imports = std::collections::BTreeSet::new();
+                for part in imports
                     .split(',')
                     .map(str::trim)
                     .filter(|part| !part.is_empty())
-                    .map(|part| {
-                        if part.starts_with("type ") {
-                            return part.to_string();
-                        }
-                        if type_only_names.contains(part) {
-                            format!("type {part}")
-                        } else {
-                            part.to_string()
-                        }
-                    })
-                    .collect();
+                {
+                    let bare = part.trim_start_matches("type ").trim();
+                    if bare.is_empty() {
+                        continue;
+                    }
+                    seen_imports.insert(bare.to_string());
+                    if part.starts_with("type ") {
+                        updated_imports.push(part.to_string());
+                    } else if type_only_names.contains(bare) {
+                        updated_imports.push(format!("type {bare}"));
+                    } else {
+                        updated_imports.push(part.to_string());
+                    }
+                }
+                for type_only_name in type_only_names {
+                    if !seen_imports.contains(&type_only_name) {
+                        updated_imports.push(format!("type {type_only_name}"));
+                    }
+                }
                 if !updated_imports.is_empty() {
                     normalized = normalized.replacen(
                         &format!("{{ {imports} }}"),
@@ -255,6 +265,23 @@ impl Server {
             }
         }
         names
+    }
+
+    fn find_type_only_named_import_span(
+        source_text: &str,
+        module_specifier: &str,
+    ) -> Option<(u32, u32)> {
+        let mut offset = 0u32;
+        for line in source_text.split_inclusive('\n') {
+            if line.contains("import type {")
+                && (line.contains(&format!("from \"{module_specifier}\""))
+                    || line.contains(&format!("from '{module_specifier}'")))
+            {
+                return Some((offset, line.len() as u32));
+            }
+            offset += line.len() as u32;
+        }
+        None
     }
 
     pub(crate) fn auto_import_code_action_description(
@@ -701,7 +728,7 @@ impl Server {
                         && let Some(edits) = item.additional_text_edits.as_ref()
                         && !edits.is_empty()
                     {
-                        let text_changes: Vec<serde_json::Value> = edits
+                        let mut text_changes: Vec<serde_json::Value> = edits
                             .iter()
                             .map(|edit| {
                                 let start = line_map
@@ -725,6 +752,64 @@ impl Server {
                                 })
                             })
                             .collect();
+                        if file.ends_with(".mts") {
+                            for idx in 0..text_changes.len() {
+                                let Some(new_text) = text_changes[idx]
+                                    .get("newText")
+                                    .and_then(serde_json::Value::as_str)
+                                else {
+                                    continue;
+                                };
+                                let Some((module_specifier, _)) = Self::parse_named_import_clause(
+                                    new_text, "import {", "} from ",
+                                ) else {
+                                    continue;
+                                };
+                                if Self::type_only_named_imports_for_module(
+                                    &source_text,
+                                    module_specifier,
+                                )
+                                .is_empty()
+                                {
+                                    continue;
+                                }
+                                let Some((existing_start, existing_length)) =
+                                    Self::find_type_only_named_import_span(
+                                        &source_text,
+                                        module_specifier,
+                                    )
+                                else {
+                                    continue;
+                                };
+
+                                let start = text_changes[idx]
+                                    .get("span")
+                                    .and_then(|span| span.get("start"))
+                                    .and_then(serde_json::Value::as_u64)
+                                    .map(|n| n as u32)
+                                    .unwrap_or(0);
+                                let length = text_changes[idx]
+                                    .get("span")
+                                    .and_then(|span| span.get("length"))
+                                    .and_then(serde_json::Value::as_u64)
+                                    .map(|n| n as u32)
+                                    .unwrap_or(0);
+                                if length != 0 || start != existing_start {
+                                    continue;
+                                }
+
+                                if let Some(change_obj) = text_changes[idx].as_object_mut() {
+                                    change_obj.insert(
+                                        "span".to_string(),
+                                        serde_json::json!({
+                                            "start": existing_start,
+                                            "length": existing_length,
+                                        }),
+                                    );
+                                }
+                                break;
+                            }
+                        }
 
                         let description = Self::auto_import_code_action_description(
                             &source_text,
@@ -1536,5 +1621,21 @@ mod tests {
 
         assert_eq!(button_sources, vec!["./lib/main"]);
         assert_eq!(foo_sources, vec!["./a", "./b"]);
+    }
+
+    #[test]
+    fn normalize_mts_auto_import_edit_text_appends_existing_type_only_members() {
+        let source_text = "import type { I } from \"./mod.js\";\n\nconst x: I = new ";
+        let normalized = Server::normalize_mts_auto_import_edit_text(
+            "/a.mts",
+            CompletionItemKind::Class,
+            source_text,
+            "import { C } from \"./mod.js\";\n",
+        );
+
+        assert!(
+            normalized.contains("import { C, type I } from \"./mod.js\";"),
+            "expected normalize_mts_auto_import_edit_text to keep existing type-only imports, got: {normalized}"
+        );
     }
 }
