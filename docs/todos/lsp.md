@@ -68,3 +68,5 @@ Investigated but punted:
   Reason: diagnostics path still diverges from tsserver/harness expectations for module:none test-state protocol handling (shape/content/source of diagnostics), requiring deeper TestState/SessionClient bridge tracing beyond this targeted LSP server fix.
 - `TypeScript/tests/cases/fourslash/quickInfoCallProperty.ts`: still returns empty quick info at `x./**/m()` instead of property signature.
   Reason: requires deeper hover/member symbol resolution for property access nodes (current small boundary probing in tsserver quickinfo handler cannot recover `(property) I.m: () => void` without resolver-level member lookup parity).
+- `TypeScript/tests/cases/fourslash/quickInfoCallProperty.ts` (related gap): declaration-site quick info on interface property signature (`m` in `interface I { m: ... }`) still returns empty via `HoverProvider`.
+  Reason: this pass patched tsserver quickinfo parity for call-site marker behavior; declaration-node property hover needs a resolver/hover-layer symbol-resolution fix beyond this targeted handler fallback.
