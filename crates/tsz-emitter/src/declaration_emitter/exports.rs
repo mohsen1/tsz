@@ -1105,9 +1105,9 @@ impl<'a> DeclarationEmitter<'a> {
                     match mod_node.kind {
                         // In constructor parameters, strip accessibility and readonly modifiers
                         k if k == SyntaxKind::PublicKeyword as u16 => {
-                            if !self.in_constructor_params {
-                                self.write("public ");
-                            }
+                            // In .d.ts files, `public` is the default and is omitted by tsc.
+                            // Only emit it for constructor parameter properties
+                            // (which is handled separately and already skips it).
                         }
                         k if k == SyntaxKind::PrivateKeyword as u16 => {
                             if !self.in_constructor_params {
