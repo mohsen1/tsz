@@ -976,7 +976,7 @@ impl<'a> CheckerState<'a> {
     /// const plain: { a: number } = { a: 1 };
     /// plain["b"];  // Error: No index signature
     /// ```
-    fn is_element_indexable(
+    pub(crate) fn is_element_indexable(
         &self,
         object_type: TypeId,
         wants_string: bool,

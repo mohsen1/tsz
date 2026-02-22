@@ -1406,11 +1406,99 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let keyof_object = self.ctx.types.evaluate_keyof(object_type);
-        let index_type_for_check =
-            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type)
-                .unwrap_or(index_type);
+        let mut object_type_for_check = self.evaluate_type_with_env(object_type);
+        object_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
+            self.ctx.types,
+            object_type_for_check,
+        )
+        .unwrap_or(object_type_for_check);
+        if let Some((base_object_type, access_index_type)) =
+            tsz_solver::type_queries::get_index_access_types(self.ctx.types, object_type_for_check)
+            && let Some(base_constraint) = tsz_solver::type_queries::get_type_parameter_constraint(
+                self.ctx.types,
+                base_object_type,
+            )
+        {
+            let constrained_access = self
+                .ctx
+                .types
+                .factory()
+                .index_access(base_constraint, access_index_type);
+            let evaluated_constrained_access =
+                self.evaluate_type_for_assignability(constrained_access);
+            if evaluated_constrained_access != TypeId::ERROR {
+                object_type_for_check = evaluated_constrained_access;
+            }
+        }
+        let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
+
+        let index_type_for_check = self.evaluate_type_with_env(index_type);
+        let index_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
+            self.ctx.types,
+            index_type_for_check,
+        )
+        .unwrap_or(index_type_for_check);
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
+            if let Some((wants_string, wants_number)) =
+                self.get_index_key_kind(index_type_for_check)
+                && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
+            {
+                return;
+            }
+            if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
+                && let Some(nested_indexed_access) =
+                    self.ctx.arena.get_indexed_access_type(object_type_node)
+            {
+                let mut constrained_base_type =
+                    self.get_type_from_type_node(nested_indexed_access.object_type);
+                constrained_base_type = tsz_solver::type_queries::get_type_parameter_constraint(
+                    self.ctx.types,
+                    constrained_base_type,
+                )
+                .unwrap_or(constrained_base_type);
+
+                let nested_index_type =
+                    self.get_type_from_type_node(nested_indexed_access.index_type);
+                let constrained_object_type = if let Some(prop_atom) =
+                    tsz_solver::type_queries::get_string_literal_value(
+                        self.ctx.types,
+                        nested_index_type,
+                    ) {
+                    let property_name = self.ctx.types.resolve_atom(prop_atom);
+                    match self
+                        .resolve_property_access_with_env(constrained_base_type, &property_name)
+                    {
+                        tsz_solver::operations::property::PropertyAccessResult::Success {
+                            type_id,
+                            ..
+                        } => type_id,
+                        _ => self.evaluate_type_with_env(
+                            self.ctx
+                                .types
+                                .factory()
+                                .index_access(constrained_base_type, nested_index_type),
+                        ),
+                    }
+                } else {
+                    self.evaluate_type_with_env(
+                        self.ctx
+                            .types
+                            .factory()
+                            .index_access(constrained_base_type, nested_index_type),
+                    )
+                };
+                if constrained_object_type != TypeId::ERROR
+                    && let Some((wants_string, wants_number)) =
+                        self.get_index_key_kind(index_type_for_check)
+                    && self.is_element_indexable(
+                        constrained_object_type,
+                        wants_string,
+                        wants_number,
+                    )
+                {
+                    return;
+                }
+            }
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
 

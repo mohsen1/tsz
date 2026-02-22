@@ -357,6 +357,9 @@ impl<'a> CheckerState<'a> {
                         if decl_idx == stmt_idx {
                             return false;
                         }
+                        if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
+                            return false;
+                        }
                         let in_same_scope = if let Some(import_scope_id) = import_scope {
                             self.ctx
                                 .binder
@@ -440,7 +443,6 @@ impl<'a> CheckerState<'a> {
                     // Check if this symbol has any declaration in the CURRENT file
                     // A declaration is in the current file if it's in node_symbols
                     let has_local_declaration = sym.declarations.iter().any(|&decl_idx| {
-                        // The declaration is local if its node_symbols entry points to this symbol
                         self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
                     });
 
@@ -1409,6 +1411,20 @@ impl<'a> CheckerState<'a> {
                                 || decl_idx == clause_idx
                                 || decl_idx == stmt_idx
                             {
+                                return false;
+                            }
+                            let is_current_file_decl = self
+                                .ctx
+                                .arena
+                                .get(decl_idx)
+                                .and_then(|decl_node| self.ctx.arena.get_source_file(decl_node))
+                                .is_some_and(|source_file| {
+                                    let file_name = source_file.file_name.as_str();
+                                    file_name == self.ctx.file_name
+                                        || file_name.ends_with(self.ctx.file_name.as_str())
+                                        || self.ctx.file_name.ends_with(file_name)
+                                });
+                            if !is_current_file_decl {
                                 return false;
                             }
 

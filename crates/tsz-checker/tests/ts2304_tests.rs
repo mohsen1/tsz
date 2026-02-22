@@ -326,8 +326,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for var in bare block, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for var in bare block, got: {ts2304_errors:?}",
     );
 }
 
@@ -348,8 +347,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for vars in try/catch, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for vars in try/catch, got: {ts2304_errors:?}",
     );
 }
 
@@ -373,8 +371,7 @@ function A(): (public B) => C {
     let has_c_error = ts2304_errors.iter().any(|d| d.message_text.contains("'C'"));
     assert!(
         has_c_error,
-        "Should report 'C' as undefined, errors: {:?}",
-        ts2304_errors
+        "Should report 'C' as undefined, errors: {ts2304_errors:?}",
     );
 }
 
