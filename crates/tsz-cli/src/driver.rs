@@ -702,7 +702,9 @@ fn compile_inner(
             }
         }
     };
-    let (config, config_diagnostics) = load_config_with_diagnostics(tsconfig_path.as_deref())?;
+    let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
+    let config = loaded.config;
+    let config_diagnostics = loaded.diagnostics;
 
     // TS5103 (invalid ignoreDeprecations value) is fatal in tsc: it stops compilation
     // and reports only the config error. Match this behavior to avoid extra diagnostics.
@@ -724,6 +726,14 @@ fn compile_inner(
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
     apply_cli_overrides(&mut resolved, args)?;
+
+    // Wire removed-but-honored suppress flags from config
+    if loaded.suppress_excess_property_errors {
+        resolved.checker.suppress_excess_property_errors = true;
+    }
+    if loaded.suppress_implicit_any_index_errors {
+        resolved.checker.suppress_implicit_any_index_errors = true;
+    }
     if config.is_none()
         && args.module.is_none()
         && matches!(resolved.printer.module, ModuleKind::None)
@@ -1702,6 +1712,14 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
+    }
+
+    // Wire removed-but-honored suppress flags from CLI
+    if args.suppress_excess_property_errors {
+        options.checker.suppress_excess_property_errors = true;
+    }
+    if args.suppress_implicit_any_index_errors {
+        options.checker.suppress_implicit_any_index_errors = true;
     }
 
     Ok(())

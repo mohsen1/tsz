@@ -113,6 +113,10 @@ impl<'a> CheckerState<'a> {
 
     /// Report an excess property error using solver diagnostics with source tracking.
     pub fn error_excess_property_at(&mut self, prop_name: &str, target: TypeId, idx: NodeIndex) {
+        // Honor removed-but-still-effective suppressExcessPropertyErrors flag
+        if self.ctx.compiler_options.suppress_excess_property_errors {
+            return;
+        }
         // Suppress cascade errors from unresolved types
         if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
             return;
@@ -196,6 +200,10 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         idx: NodeIndex,
     ) {
+        // Honor removed-but-still-effective suppressImplicitAnyIndexErrors flag
+        if self.ctx.compiler_options.suppress_implicit_any_index_errors {
+            return;
+        }
         // TS7053 is a noImplicitAny error - suppress without it
         if !self.ctx.no_implicit_any() {
             return;
