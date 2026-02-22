@@ -105,6 +105,21 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Fast path: stable primitive/literal types do not benefit from flow
+        // re-analysis at identifier reads.
+        if matches!(
+            declared_type,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::UNDEFINED
+                | TypeId::NULL
+                | TypeId::VOID
+        ) {
+            return declared_type;
+        }
+
         // Hot-path optimization: for property/element access expressions with an already
         // concrete primitive/literal result type, flow re-analysis at the access node is
         // typically redundant. The object expression has already been flow-narrowed before

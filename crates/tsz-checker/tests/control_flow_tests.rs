@@ -3568,6 +3568,40 @@ fn test_recursive_flow_analysis_no_panic() {
     state.check_source_file(root);
 }
 
+/// Regression: class static blocks with labeled loop control flow must not
+/// trigger non-terminating flow analysis.
+#[test]
+fn test_class_static_block_labeled_flow_terminates() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    let source = r#"
+function foo(v: number) {
+    label: while (v) {
+        class C {
+            static {
+                if (v === 1) break label;
+                if (v === 2) continue label;
+                if (v === 3) break;
+                if (v === 4) continue;
+            }
+        }
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions::default();
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+}
+
 // ============================================================================
 
 // ============================================================================

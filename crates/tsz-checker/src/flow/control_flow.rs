@@ -543,6 +543,11 @@ impl<'a> FlowAnalyzer<'a> {
         // See: https://github.com/microsoft/TypeScript/issues/9998
         let initial_has_type_params = query::contains_type_parameters(self.interner, initial_type);
 
+        // Use a synthetic cache symbol for references that don't resolve to a symbol
+        // (for example complex/property references). This enables cache reuse while
+        // keeping symbol-backed keys disjoint.
+        let cache_symbol = symbol_id.unwrap_or(SymbolId(reference.0.wrapping_add(1) | 0x8000_0000));
+
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));
         in_worklist.insert(flow_id);
@@ -571,10 +576,9 @@ impl<'a> FlowAnalyzer<'a> {
             // stack overflow when types contain type parameters.
             if !is_switch_clause
                 && (!initial_has_type_params || is_loop_label_node)
-                && let Some(sym_id) = symbol_id
                 && let Some(cache) = self.flow_cache
             {
-                let key = (current_flow, sym_id, initial_type);
+                let key = (current_flow, cache_symbol, initial_type);
                 if let Some(&cached_type) = cache.borrow().get(&key) {
                     // Use cached result and skip processing this node
                     results.insert(current_flow, cached_type);
@@ -623,13 +627,19 @@ impl<'a> FlowAnalyzer<'a> {
                     flow.antecedent.clone()
                 };
 
-                let all_ready = antecedents_to_check
-                    .iter()
-                    .all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
+                // Some flow graphs can contain self-antecedent edges on merge nodes.
+                // Treat self-edges as already satisfied to avoid requeueing the same
+                // node forever before it can be finalized.
+                let all_ready = antecedents_to_check.iter().all(|&ant| {
+                    ant == current_flow || visited.contains(&ant) || results.contains_key(&ant)
+                });
 
                 if !all_ready {
                     // Schedule unprocessed antecedents to be processed FIRST (push_front)
                     for &ant in &antecedents_to_check {
+                        if ant == current_flow {
+                            continue;
+                        }
                         if !visited.contains(&ant)
                             && !results.contains_key(&ant)
                             && !in_worklist.contains(&ant)
@@ -1072,15 +1082,13 @@ impl<'a> FlowAnalyzer<'a> {
             // Store result in global cache for future calls
             // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
-            if let Some(sym_id) = symbol_id
-                && let Some(cache) = self.flow_cache
-            {
+            if let Some(cache) = self.flow_cache {
                 let final_has_type_params =
                     query::contains_type_parameters(self.interner, final_type);
 
                 // Only cache if neither initial nor final types contain type parameters
                 if !initial_has_type_params && !final_has_type_params {
-                    let key = (current_flow, sym_id, initial_type);
+                    let key = (current_flow, cache_symbol, initial_type);
                     cache.borrow_mut().insert(key, final_type);
                 }
             }
