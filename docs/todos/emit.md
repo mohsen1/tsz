@@ -1,8 +1,17 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS-only mode, baseline 9223/13623 = 67.7%)
+## Pattern Analysis (JS-only mode, current 4883/7163 = 68.2%)
 
 ### Fixed This Session
+- **Trailing comments on lowered static class fields** (+2 tests):
+  When static class fields are lowered to `ClassName.field = value;` for targets < ES2022,
+  trailing comments (e.g. `static intance = new C3(); // ok`) were consumed by
+  `comment_emit_idx` advancement but never saved for re-emission. Fixed by collecting
+  trailing comments alongside leading comments during class body member processing and
+  emitting them after the lowered `ClassName.field = value;` statement.
+  Tests fixed: `classDeclarationCheckUsedBeforeDefinitionInItself`, `classMemberInitializerScoping`.
+
+### Previously Fixed
 - **Namespace body phantom blank line for zero-output statements** (+4 tests):
   `emit_namespace_body_statements()` in `declarations.rs` unconditionally called
   `write_line()` in the `else` branch for non-erased statements, even when `emit()`
@@ -126,3 +135,14 @@
     the callback. See `amdDeclarationEmitNoExtraDeclare`. The `emit_source_file()` prologue
     emits `"use strict"` before the AMD wrapper gets a chance to suppress it. Needs the
     `"use strict"` emission to be aware of the wrapping module format.
+
+20. **Trailing comments in ES5-lowered method bodies** (~5 tests): When class methods
+    are lowered to ES5 `Object.defineProperty` patterns, trailing comments on statements
+    inside the method body (e.g. `return A._a; // is possibly null`) are dropped.
+    See `classStaticPropertyTypeGuard(target=es5)`. The ES5 class transform IR pipeline
+    doesn't carry trailing comment information through the IR → output path.
+
+21. **Comment misplacement between closing brace and else/next-construct** (~3 tests):
+    Comments before closing `}` can be misplaced to after the `else` keyword instead.
+    See `commentLeadingCloseBrace`. The block emission's trailing comment scanner
+    attaches the comment to the wrong boundary when `}` is followed by `else`.
