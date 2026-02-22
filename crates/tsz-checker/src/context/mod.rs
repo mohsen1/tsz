@@ -120,6 +120,10 @@ pub struct TypeCache {
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
 
+    /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
+    /// Avoids recomputing constructor shape/inheritance on repeated class queries.
+    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
+
     /// Set of import specifier nodes that should be elided from JavaScript output.
     /// These are imports that reference type-only declarations (interfaces, type aliases).
     pub type_only_nodes: FxHashSet<NodeIndex>,
@@ -164,6 +168,9 @@ impl TypeCache {
             self.symbol_dependencies.remove(sym_id);
         }
         self.node_types.clear();
+        self.class_instance_type_cache.clear();
+        self.class_constructor_type_cache.clear();
+        self.class_instance_type_to_decl.clear();
         affected.len()
     }
 
@@ -174,6 +181,13 @@ impl TypeCache {
         self.symbol_instance_types
             .extend(other.symbol_instance_types);
         self.node_types.extend(other.node_types);
+        self.class_instance_type_to_decl
+            .extend(other.class_instance_type_to_decl);
+        self.class_instance_type_cache
+            .extend(other.class_instance_type_cache);
+        self.class_constructor_type_cache
+            .extend(other.class_constructor_type_cache);
+        self.type_only_nodes.extend(other.type_only_nodes);
 
         // Merge symbol dependencies sets
         for (sym, deps) in other.symbol_dependencies {
@@ -185,6 +199,71 @@ impl TypeCache {
 
         // Merge def_to_symbol mapping
         self.def_to_symbol.extend(other.def_to_symbol);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeCache;
+    use rustc_hash::{FxHashMap, FxHashSet};
+    use tsz_binder::SymbolId;
+    use tsz_parser::parser::NodeIndex;
+    use tsz_solver::TypeId;
+
+    fn empty_cache() -> TypeCache {
+        TypeCache {
+            symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
+            node_types: FxHashMap::default(),
+            symbol_dependencies: FxHashMap::default(),
+            def_to_symbol: FxHashMap::default(),
+            flow_analysis_cache: FxHashMap::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
+            class_constructor_type_cache: FxHashMap::default(),
+            type_only_nodes: FxHashSet::default(),
+        }
+    }
+
+    #[test]
+    fn type_cache_merge_keeps_constructor_type_cache() {
+        let mut lhs = empty_cache();
+        let mut rhs = empty_cache();
+
+        rhs.class_constructor_type_cache
+            .insert(NodeIndex(42), TypeId::STRING);
+
+        lhs.merge(rhs);
+
+        assert_eq!(
+            lhs.class_constructor_type_cache.get(&NodeIndex(42)),
+            Some(&TypeId::STRING)
+        );
+    }
+
+    #[test]
+    fn invalidate_symbols_clears_class_type_caches() {
+        let mut cache = empty_cache();
+        let sym = SymbolId(7);
+        cache
+            .symbol_dependencies
+            .insert(sym, FxHashSet::<SymbolId>::default());
+        cache
+            .class_instance_type_cache
+            .insert(NodeIndex(1), TypeId::NUMBER);
+        cache
+            .class_constructor_type_cache
+            .insert(NodeIndex(2), TypeId::STRING);
+        cache
+            .class_instance_type_to_decl
+            .insert(TypeId::BOOLEAN, NodeIndex(3));
+
+        let affected = cache.invalidate_symbols(&[sym]);
+
+        assert_eq!(affected, 1);
+        assert!(cache.class_instance_type_cache.is_empty());
+        assert!(cache.class_constructor_type_cache.is_empty());
+        assert!(cache.class_instance_type_to_decl.is_empty());
     }
 }
 
@@ -318,6 +397,10 @@ pub struct CheckerContext<'a> {
     /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
+
+    /// Forward cache: class declaration `NodeIndex` -> computed constructor `TypeId`.
+    /// Avoids recomputing constructor inheritance checks in class-heavy programs.
+    pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
 
     /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
     /// Avoids repeating private-brand scans on hot miss paths.
@@ -1263,6 +1346,7 @@ impl<'a> CheckerContext<'a> {
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
+            class_constructor_type_cache: self.class_constructor_type_cache,
             type_only_nodes: self.type_only_nodes,
         }
     }
