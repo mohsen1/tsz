@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 2510/3586 = 70.0% JS, 184/495 = 37.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 9455/13623 = 69.4% JS, 762/1990 = 38.3% DTS)
 
 ### Fixed This Session
+- **ImportKeyword emission in emit_node_by_kind dispatch** (+13 JS tests):
+  `SyntaxKind::ImportKeyword` was missing from the emitter's `emit_node_by_kind` match table.
+  Dynamic `import('path')` calls have a `CallExpression` with an `ImportKeyword` token node as
+  the callee (not an `Identifier`). Similarly, `import.meta` is a `PropertyAccessExpression` with
+  `ImportKeyword` as the base expression. Without the dispatch entry, the keyword fell through to
+  the `_ => {}` default arm and was silently dropped, producing `('path')` instead of
+  `import('path')` and `.meta.url` instead of `import.meta.url`. Fixed by adding
+  `k if k == SyntaxKind::ImportKeyword as u16 => self.write("import")` alongside the existing
+  `ThisKeyword` and `SuperKeyword` handlers. Tests fixed (sole-fix): `importCallExpressionAsyncES2020`,
+  `importCallExpressionShouldNotGetParen`, `moduleNoneDynamicImport(target=es2020)`,
+  `nodeModulesDynamicImport(module=node16/node18/node20/nodenext)` (4 tests),
+  `nodeModulesImportMeta(module=node16/node18/node20/nodenext)` (4 tests),
+  plus 2 additional multi-issue tests partially fixed.
+
+### Previously Fixed
 - **moduleDetection=force support** (+31 JS, +1 DTS tests):
   `moduleDetection=force` was parsed by the CLI (`args.rs`) but never threaded to the emitter.
   Files without import/export syntax were not treated as modules, so the CJS `__esModule` marker,
