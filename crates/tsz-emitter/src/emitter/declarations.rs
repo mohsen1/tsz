@@ -870,10 +870,10 @@ impl<'a> Printer<'a> {
                 let is_erased = match member_node.kind {
                     // Abstract methods and bodyless overloads are erased
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        self.arena.get_function(member_node).is_some_and(|f| {
+                        self.arena.get_method_decl(member_node).is_some_and(|m| {
                             self.arena
-                                .has_modifier(&f.modifiers, SyntaxKind::AbstractKeyword)
-                                || f.body.is_none()
+                                .has_modifier(&m.modifiers, SyntaxKind::AbstractKeyword)
+                                || m.body.is_none()
                         })
                     }
                     k if k == syntax_kind_ext::GET_ACCESSOR
@@ -915,8 +915,8 @@ impl<'a> Printer<'a> {
                     // Bodyless constructor overloads are erased
                     k if k == syntax_kind_ext::CONSTRUCTOR => self
                         .arena
-                        .get_function(member_node)
-                        .is_some_and(|f| f.body.is_none()),
+                        .get_constructor(member_node)
+                        .is_some_and(|c| c.body.is_none()),
                     // Index signatures are TypeScript-only
                     k if k == syntax_kind_ext::INDEX_SIGNATURE => true,
                     // Semicolon class elements are preserved in JS output (valid JS syntax)
@@ -1874,6 +1874,94 @@ mod tests {
         assert!(
             !output.contains("#instance = 1;"),
             "Instance private field should NOT be emitted verbatim at ES2015.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: bodyless method overload signatures are erased,
+    /// so their leading comments (JSDoc blocks) must not appear in the output.
+    /// Previously, `get_function()` was used instead of `get_method_decl()`,
+    /// so `is_erased` was always false for methods.
+    #[test]
+    fn overload_method_comments_erased() {
+        let source = r#"class C {
+    /** overload 1 */
+    foo(x: number): number;
+    /** overload 2 */
+    foo(x: string): string;
+    /** implementation */
+    foo(x: any): any {
+        return x;
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Overload JSDoc comments should NOT appear in the output
+        assert!(
+            !output.contains("overload 1"),
+            "JSDoc for overload signature 1 should be erased.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("overload 2"),
+            "JSDoc for overload signature 2 should be erased.\nOutput:\n{output}"
+        );
+        // Implementation JSDoc SHOULD appear
+        assert!(
+            output.contains("/** implementation */"),
+            "JSDoc for implementation should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: bodyless constructor overload signatures are erased,
+    /// so their leading comments must not appear in the output.
+    /// Previously, `get_function()` was used instead of `get_constructor()`,
+    /// so `is_erased` was always false for constructors.
+    #[test]
+    fn overload_constructor_comments_erased() {
+        let source = r#"class C {
+    /** ctor overload 1 */
+    constructor(x: number);
+    /** ctor overload 2 */
+    constructor(x: string);
+    /** ctor implementation */
+    constructor(x: any) {}
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Overload JSDoc comments should NOT appear
+        assert!(
+            !output.contains("ctor overload 1"),
+            "JSDoc for ctor overload 1 should be erased.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("ctor overload 2"),
+            "JSDoc for ctor overload 2 should be erased.\nOutput:\n{output}"
+        );
+        // Implementation JSDoc SHOULD appear
+        assert!(
+            output.contains("/** ctor implementation */"),
+            "JSDoc for ctor implementation should be preserved.\nOutput:\n{output}"
         );
     }
 }
