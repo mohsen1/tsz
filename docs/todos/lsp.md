@@ -177,3 +177,20 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`: still creates a new local baseline (missing CJS-style auto-import completions/codefixes like `path.normalize` and `coolName.explode`).
   Reason: requires import-candidate/model support for `export =`/CommonJS member-expression completions and codefix rewrite (`import x = require(...)` + identifier replacement), which is broader than this targeted module-specifier ordering fix.
+
+## 2026-02-22 (completion globals surface follow-up)
+
+Completed in this pass:
+- Removed tsserver completion post-sort kind bias that incorrectly prioritized keyword entries over same-sort-text globals (`Array` vs `as`) in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`.
+- Added focused unit test coverage for completion ordering across kinds with identical `sortText` in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`.
+- Aligned LSP completion global keyword/global symbol tables closer to fourslash `globalsPlus` expectations in `crates/tsz-lsp/src/completions/symbols.rs`.
+- Added explicit `globalThis`/`undefined` completion entries in `crates/tsz-lsp/src/completions.rs` to match fourslash global completion shape.
+- Added focused unit coverage in `crates/tsz-lsp/tests/completions_tests.rs` for the global completion surface.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts`: still fails exact global completion list equality by one entry in this run.
+  Reason: residual completion-list parity gap appears tied to lib-sensitive global surface/content selection in the adapter+provider path (beyond static symbol-table alignment), requiring deeper end-to-end completion candidate tracing.
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns3.ts`: still fails exact global completion list equality by one entry in this run.
+  Reason: same remaining lib/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion pipeline parity work.
+- `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion list equality despite ordering/surface improvements.
+  Reason: remaining mismatch appears in the same global completion table/content parity layer and likely requires broader completion source harmonization rather than another small local sort/symbol-list tweak.

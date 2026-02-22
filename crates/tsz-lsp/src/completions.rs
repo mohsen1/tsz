@@ -553,9 +553,17 @@ impl<'a> Completions<'a> {
             }
         }
 
-        // 9. Add global variables (globalThis, undefined, Array, etc.)
-        //    These are always available and match tsserver's globalsVars.
+        // 9. Add global variables (globalThis, Array, etc.)
+        //    These are always available and match fourslash globalsVars order.
         let inside_func = self.is_inside_function(offset);
+        if !seen_names.contains("globalThis") {
+            seen_names.insert("globalThis".to_string());
+            let mut item =
+                CompletionItem::new("globalThis".to_string(), CompletionItemKind::Variable);
+            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(item);
+        }
+
         for &(name, kind) in GLOBAL_VARS {
             if !seen_names.contains(name) {
                 seen_names.insert(name.to_string());
@@ -568,10 +576,7 @@ impl<'a> Completions<'a> {
                     item.kind_modifiers = Some("deprecated,declare".to_string());
                 } else {
                     item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
-                    // globalThis and undefined don't get "declare" modifier
-                    if name != "globalThis" && name != "undefined" {
-                        item.kind_modifiers = Some("declare".to_string());
-                    }
+                    item.kind_modifiers = Some("declare".to_string());
                 }
                 if kind == CompletionItemKind::Function {
                     item.insert_text = Some(format!("{name}($1)"));
@@ -579,6 +584,14 @@ impl<'a> Completions<'a> {
                 }
                 completions.push(item);
             }
+        }
+
+        if !seen_names.contains("undefined") {
+            seen_names.insert("undefined".to_string());
+            let mut item =
+                CompletionItem::new("undefined".to_string(), CompletionItemKind::Variable);
+            item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
+            completions.push(item);
         }
 
         // 10. If inside a function, also add "arguments" as a local variable

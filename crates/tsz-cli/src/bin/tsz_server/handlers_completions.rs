@@ -308,12 +308,6 @@ impl Server {
     }
 
     fn sort_tsserver_completion_items(items: &mut [CompletionItem]) {
-        fn kind_rank(kind: tsz::lsp::completions::CompletionItemKind) -> u8 {
-            match kind {
-                tsz::lsp::completions::CompletionItemKind::Keyword => 0,
-                _ => 1,
-            }
-        }
         fn compare_completion_sources(a: Option<&str>, b: Option<&str>) -> Ordering {
             match (a, b) {
                 (Some(a), Some(b)) => {
@@ -353,7 +347,6 @@ impl Server {
         items.sort_by(|a, b| {
             a.effective_sort_text()
                 .cmp(b.effective_sort_text())
-                .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
                 .then_with(|| {
                     a.label
                         .to_ascii_lowercase()
@@ -1358,5 +1351,20 @@ mod tests {
 
         assert_eq!(items[0].source.as_deref(), Some("./thing2A"));
         assert_eq!(items[1].source.as_deref(), Some("./index"));
+    }
+
+    #[test]
+    fn sort_tsserver_completion_items_matches_ui_name_sort_across_kinds() {
+        let mut items = vec![
+            CompletionItem::new("as".to_string(), CompletionItemKind::Keyword),
+            CompletionItem::new("Array".to_string(), CompletionItemKind::Class),
+        ];
+        items[0].sort_text = Some("15".to_string());
+        items[1].sort_text = Some("15".to_string());
+
+        Server::sort_tsserver_completion_items(&mut items);
+
+        assert_eq!(items[0].label, "Array");
+        assert_eq!(items[1].label, "as");
     }
 }
