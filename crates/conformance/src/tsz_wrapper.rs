@@ -149,17 +149,11 @@ pub fn prepare_test_dir(
         .or_else(|| options.get("checkjs"))
         .is_some_and(|v| v == "true");
     let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
-    // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
-    let include = if allow_js {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
-            "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-        ])
-    } else {
-        serde_json::json!([
-            "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
-        ])
-    };
+    // Match the cache generator's include patterns exactly.
+    // The tsc cache always uses .ts/.tsx/.js/.jsx (no .cts/.mts/.mjs/.cjs).
+    let include = serde_json::json!([
+        "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+    ]);
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
@@ -242,16 +236,10 @@ pub fn prepare_binary_test_dir(
             .is_some_and(|v| v == "true");
         let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
 
-        let include = if allow_js {
-            serde_json::json!([
-                "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
-                "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-            ])
-        } else {
-            serde_json::json!([
-                "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
-            ])
-        };
+        // Match the cache generator's include patterns exactly.
+        let include = serde_json::json!([
+            "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
+        ]);
 
         let mut compiler_options = convert_options_to_tsconfig(options, &[]);
         if let serde_json::Value::Object(ref mut map) = compiler_options {

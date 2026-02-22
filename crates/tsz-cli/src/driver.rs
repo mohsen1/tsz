@@ -824,9 +824,8 @@ fn compile_inner(
     }
     if file_paths.is_empty() {
         // Emit TS18003: No inputs were found in config file.
-        let config_name = tsconfig_path
-            .as_deref()
-            .map_or_else(|| "tsconfig.json".to_string(), |p| p.display().to_string());
+        // tsc always uses "tsconfig.json" in the message, not the full path.
+        let config_name = "tsconfig.json".to_string();
         let include_str = discovery
             .include
             .as_ref()
@@ -853,7 +852,8 @@ fn compile_inner(
             "No inputs were found in config file '{config_name}'. Specified 'include' paths were '[{include_str}]' and 'exclude' paths were '[{exclude_str}]'."
         );
         return Ok(CompilationResult {
-            diagnostics: vec![Diagnostic::error(config_name, 0, 0, message, 18003)],
+            // tsc emits TS18003 without file position (file="", pos=0).
+            diagnostics: vec![Diagnostic::error(String::new(), 0, 0, message, 18003)],
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
