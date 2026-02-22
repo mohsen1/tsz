@@ -1383,8 +1383,8 @@ impl Project {
         let call_data = arena.get_call_expr_at(call_idx)?;
 
         // Check if this is import() or require()
-        let is_import = self.is_import_keyword(call_data.expression, arena);
-        let is_require = self.is_require_identifier(call_data.expression, arena);
+        let is_import = crate::utils::is_import_keyword(arena, call_data.expression);
+        let is_require = crate::utils::is_require_identifier(arena, call_data.expression);
 
         if !is_import && !is_require {
             return None;
@@ -1393,41 +1393,6 @@ impl Project {
         // Get the first argument (the module specifier)
         let args = call_data.arguments.as_ref()?;
         args.nodes.first().copied()
-    }
-
-    /// Check if a node is the `import` keyword (for dynamic import expressions).
-    fn is_import_keyword(&self, node_idx: NodeIndex, arena: &NodeArena) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        if node_idx.is_none() {
-            return false;
-        }
-        if let Some(node) = arena.get(node_idx) {
-            node.kind == SyntaxKind::ImportKeyword as u16
-        } else {
-            false
-        }
-    }
-
-    /// Check if a node is a `require` identifier.
-    fn is_require_identifier(&self, node_idx: NodeIndex, arena: &NodeArena) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        if node_idx.is_none() {
-            return false;
-        }
-        if let Some(node) = arena.get(node_idx) {
-            if node.kind != SyntaxKind::Identifier as u16 {
-                return false;
-            }
-            if let Some(ident_data) = arena.get_identifier(node) {
-                ident_data.escaped_text == "require"
-            } else {
-                false
-            }
-        } else {
-            false
-        }
     }
 
     /// Update the dependency graph for a file.

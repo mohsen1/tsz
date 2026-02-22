@@ -237,6 +237,34 @@ pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bo
     !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
 }
 
+/// Check if a node is the `import` keyword (for dynamic import expressions).
+pub fn is_import_keyword(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    if node_idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    node.kind == SyntaxKind::ImportKeyword as u16
+}
+
+/// Check if a node is a `require` identifier.
+pub fn is_require_identifier(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    if node_idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    if node.kind != SyntaxKind::Identifier as u16 {
+        return false;
+    }
+    let Some(ident_data) = arena.get_identifier(node) else {
+        return false;
+    };
+    ident_data.escaped_text == "require"
+}
+
 /// Calculate the new relative path for an import statement after a file rename.
 ///
 /// # Arguments
