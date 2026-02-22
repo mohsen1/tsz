@@ -851,16 +851,17 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_case_clause_body(&mut self, statements: &NodeList, label_end: u32) {
-        // If single block statement and the block is on the same line as the
-        // case/default label in source, emit it on the same line (e.g., `case 0: {`)
+        // If single statement on the same line as the case/default label in source,
+        // emit it on the same line (e.g., `case 0: { ... }` or `case true: return x;`)
         if statements.nodes.len() == 1
             && let Some(stmt_node) = self.arena.get(statements.nodes[0])
-            && stmt_node.kind == syntax_kind_ext::BLOCK
             && self.is_on_same_source_line(label_end, stmt_node.pos)
         {
             self.write(" ");
             self.emit(statements.nodes[0]);
-            self.write_line();
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
             return;
         }
 
@@ -976,5 +977,119 @@ impl<'a> Printer<'a> {
         }
         self.write(") ");
         self.emit(with_stmt.then_statement);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    /// Case clause with a single non-block statement on the same source line
+    /// should be emitted on one line: `case true: return "true";`
+    #[test]
+    fn case_clause_same_line_non_block_statement() {
+        let source = r#"function f(x: boolean) {
+    switch (x) {
+        case true: return "true";
+        case false: return "false";
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(r#"case true: return "true";"#),
+            "Case clause with single statement on same line should stay on one line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(r#"case false: return "false";"#),
+            "Case clause with single statement on same line should stay on one line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Case clause with a statement on a different line should be indented normally.
+    #[test]
+    fn case_clause_multiline_stays_indented() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        case 1:
+            return "one";
+        case 2:
+            return "two";
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should NOT be on same line
+        assert!(
+            !output.contains("case 1: return"),
+            "Case clause with statement on next line should remain multi-line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("case 1:\n"),
+            "Case clause should have newline after colon.\nOutput:\n{output}"
+        );
+    }
+
+    /// Default clause with same-line statement should also be emitted on one line.
+    #[test]
+    fn default_clause_same_line_statement() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        case 1: return "one";
+        default: return "other";
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(r#"default: return "other";"#),
+            "Default clause with single statement on same line should stay on one line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Case clause with a block on the same line should still work (existing behavior).
+    #[test]
+    fn case_clause_same_line_block_statement() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        case 0: { break; }
+        default: break;
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("case 0: {"),
+            "Case clause with block on same line should stay on one line.\nOutput:\n{output}"
+        );
     }
 }
