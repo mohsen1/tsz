@@ -1,4 +1,5 @@
 use super::*;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
 
@@ -31,6 +32,41 @@ fn test_lowering_pass_es5_class() {
     // The actual class node index depends on parser implementation
     // This test validates the architecture, not specific indices
     assert!(!transforms.is_empty(), "Expected ES5 class transform");
+}
+
+#[test]
+fn test_lowering_pass_es2015_accessor_class_marks_auto_accessor_helpers() {
+    let (arena, root) = parse("class RegularClass { accessor shouldError: string; }");
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let root_node = arena.get(root).expect("expected source file node");
+    let source_file = arena
+        .get_source_file(root_node)
+        .expect("expected source file data");
+    let stmt_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected class declaration statement");
+
+    assert!(
+        transforms.get(stmt_idx).is_none(),
+        "ES2015 target should not emit ES5 class transform for auto-accessor class"
+    );
+
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.class_private_field_get,
+        "expected accessor helper to be recorded"
+    );
+    assert!(
+        helpers.class_private_field_set,
+        "expected accessor helper to be recorded"
+    );
 }
 
 #[test]

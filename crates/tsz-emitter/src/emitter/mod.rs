@@ -272,6 +272,12 @@ pub struct Printer<'a> {
     /// Each entry is (`field_name`, `initializer_node_index`).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
 
+    /// Pending auto-accessor field initializers to emit in constructor body.
+    /// Each tuple is (`weakmap_storage_name`, `initializer_expression`).
+    /// `initializer_expression` is `None` when the accessor field has no
+    /// initializer and should default to `void 0`.
+    pub(super) pending_auto_accessor_inits: Vec<(String, Option<NodeIndex>)>,
+
     /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
     /// These are emitted on a separate declaration list before reference temps.
     pub(super) hoisted_assignment_value_temps: Vec<String>,
@@ -412,6 +418,7 @@ impl<'a> Printer<'a> {
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
+            pending_auto_accessor_inits: Vec::new(),
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
@@ -1891,7 +1898,16 @@ impl<'a> Printer<'a> {
                 // the statement's first token, so they won't be emitted here.
                 let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                     && self.should_defer_for_of_comments(stmt_node);
-                if !defer_for_of_comments && let Some(text) = self.source_text {
+                let skip_auto_accessor_leading_comments = stmt_node.kind
+                    == syntax_kind_ext::CLASS_DECLARATION
+                    && self
+                        .arena
+                        .get_class(stmt_node)
+                        .is_some_and(|class| self.class_has_auto_accessor_members(class));
+                if !defer_for_of_comments
+                    && !skip_auto_accessor_leading_comments
+                    && let Some(text) = self.source_text
+                {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_pos = self.all_comments[self.comment_emit_idx].pos;
                         let c_end = self.all_comments[self.comment_emit_idx].end;

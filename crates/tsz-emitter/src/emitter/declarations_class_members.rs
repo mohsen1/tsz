@@ -332,7 +332,13 @@ impl<'a> Printer<'a> {
             }
         }
         self.prepare_logical_assignment_value_temps(ctor.body);
-        self.emit_constructor_body_with_prologue(ctor.body, &param_props, &field_inits);
+        let auto_accessor_inits = std::mem::take(&mut self.pending_auto_accessor_inits);
+        self.emit_constructor_body_with_prologue(
+            ctor.body,
+            &param_props,
+            &field_inits,
+            &auto_accessor_inits,
+        );
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
         self.emitting_function_body_block = prev_emitting_function_body_block;
@@ -381,6 +387,7 @@ impl<'a> Printer<'a> {
         block_idx: NodeIndex,
         param_props: &[String],
         field_inits: &[(String, NodeIndex)],
+        auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         let Some(block_node) = self.arena.get(block_idx) else {
             return;
@@ -397,6 +404,7 @@ impl<'a> Printer<'a> {
         if block.statements.nodes.is_empty()
             && param_props.is_empty()
             && field_inits.is_empty()
+            && auto_accessor_inits.is_empty()
             && !has_function_temps
         {
             // TypeScript preserves the source formatting: if the body was
@@ -420,7 +428,8 @@ impl<'a> Printer<'a> {
             self.emit_function_body_hoisted_temps();
         }
 
-        let has_prologue = !param_props.is_empty() || !field_inits.is_empty();
+        let has_prologue =
+            !param_props.is_empty() || !field_inits.is_empty() || !auto_accessor_inits.is_empty();
 
         // Find the super() call index so we can emit prologue after it.
         // In derived class constructors, super() must be called before
@@ -466,7 +475,7 @@ impl<'a> Printer<'a> {
 
             // If no super() call exists, emit prologue before first body statement
             if !prologue_emitted && super_call_idx.is_none() && stmt_i == 0 {
-                self.emit_constructor_prologue(param_props, field_inits);
+                self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
                 prologue_emitted = true;
             }
 
@@ -482,14 +491,14 @@ impl<'a> Printer<'a> {
 
             // Emit prologue after super() call
             if !prologue_emitted && super_call_idx == Some(stmt_i) {
-                self.emit_constructor_prologue(param_props, field_inits);
+                self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
                 prologue_emitted = true;
             }
         }
 
         // If we never emitted the prologue (empty body or no super), emit it now
         if !prologue_emitted {
-            self.emit_constructor_prologue(param_props, field_inits);
+            self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
         }
 
         self.decrease_indent();
@@ -501,6 +510,7 @@ impl<'a> Printer<'a> {
         &mut self,
         param_props: &[String],
         field_inits: &[(String, NodeIndex)],
+        auto_accessor_inits: &[(String, Option<NodeIndex>)],
     ) {
         for name in param_props {
             self.write("this.");
@@ -535,6 +545,16 @@ impl<'a> Printer<'a> {
                 self.emit_expression(*init_idx);
                 self.write(";");
             }
+            self.write_line();
+        }
+        for (name, init_idx) in auto_accessor_inits {
+            self.write(name);
+            self.write(".set(this, ");
+            match init_idx {
+                Some(init) => self.emit_expression(*init),
+                None => self.write("void 0"),
+            }
+            self.write(");");
             self.write_line();
         }
     }

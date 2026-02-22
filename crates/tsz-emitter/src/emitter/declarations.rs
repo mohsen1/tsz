@@ -447,12 +447,9 @@ impl<'a> Printer<'a> {
             }
             // Skip comments within the class body range since the ES5 class emitter
             // handles them separately. Without this, they'd appear at end of file.
-            let class_end = node.end;
-            while self.comment_emit_idx < self.all_comments.len()
-                && self.all_comments[self.comment_emit_idx].end <= class_end
-            {
-                self.comment_emit_idx += 1;
-            }
+            // Skip comments that were part of this class declaration since the
+            // ES5 class emitter handles class comments internally.
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -475,6 +472,14 @@ impl<'a> Printer<'a> {
     ) {
         let Some(class) = self.arena.get_class(node) else {
             return;
+        };
+        let class_name = if class.name.is_none() {
+            assignment_prefix
+                .as_ref()
+                .map(|(_, binding_name)| binding_name.clone())
+                .unwrap_or_default()
+        } else {
+            self.get_identifier_text_idx(class.name)
         };
 
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
@@ -515,13 +520,77 @@ impl<'a> Printer<'a> {
             self.write(" = ");
         }
 
+        // Collect instance `accessor` fields to lower using WeakMap-backed
+        // getter/setter pairs on ES2015+ output targets.
+        let mut auto_accessor_members: Vec<(NodeIndex, String, Option<NodeIndex>)> = Vec::new();
+        let mut auto_accessor_inits: Vec<(String, Option<NodeIndex>)> = Vec::new();
+        if !class_name.is_empty() {
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(prop) = self.arena.get_property_decl(member_node).filter(|prop| {
+                    self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16)
+                }) else {
+                    continue;
+                };
+                if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
+                    || self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                {
+                    continue;
+                }
+                if self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+                {
+                    continue;
+                }
+                let Some(name_node) = self.arena.get(prop.name) else {
+                    continue;
+                };
+                if name_node.kind != SyntaxKind::Identifier as u16 {
+                    continue;
+                }
+                let name = self.get_identifier_text_idx(prop.name);
+                if name.is_empty() {
+                    continue;
+                }
+                let storage_name = format!("_{class_name}_{name}_accessor_storage");
+                auto_accessor_members.push((
+                    member_idx,
+                    storage_name.clone(),
+                    Some(prop.initializer),
+                ));
+                auto_accessor_inits.push((storage_name, Some(prop.initializer)));
+            }
+        }
+
+        if !auto_accessor_members.is_empty() {
+            self.write("var ");
+            for (i, (_, storage_name, _)) in auto_accessor_members.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(storage_name);
+            }
+            self.write(";");
+            self.write_line();
+            self.emit_comments_before_pos(node.pos);
+        }
+
         self.write("class");
 
         let override_name = self.anonymous_default_export_name.clone();
+        let class_name = if class.name.is_none() {
+            override_name.unwrap_or_default()
+        } else {
+            self.get_identifier_text_idx(class.name)
+        };
         if class.name.is_none() {
-            if let Some(name) = override_name {
+            if !class_name.is_empty() {
                 self.write_space();
-                self.write(&name);
+                self.write(&class_name);
             }
         } else {
             self.write_space();
@@ -551,6 +620,12 @@ impl<'a> Printer<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        // Store auto-accessor inits for constructor emission.
+        let prev_auto_accessor_inits = std::mem::take(&mut self.pending_auto_accessor_inits);
+        if !auto_accessor_inits.is_empty() {
+            self.pending_auto_accessor_inits = auto_accessor_inits.clone();
+        }
 
         // Check if we need to lower class fields to constructor.
         // This is needed when target < ES2022 OR when useDefineForClassFields is false
@@ -621,7 +696,8 @@ impl<'a> Printer<'a> {
         }
 
         // If no constructor but we have field inits, synthesize one
-        let synthesize_constructor = !has_constructor && !field_inits.is_empty();
+        let synthesize_constructor =
+            !has_constructor && (!field_inits.is_empty() || !auto_accessor_inits.is_empty());
 
         if synthesize_constructor {
             if has_extends {
@@ -662,6 +738,16 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
+            for (storage_name, init_idx) in &auto_accessor_inits {
+                self.write(storage_name);
+                self.write(".set(this, ");
+                match init_idx {
+                    Some(init) => self.emit_expression(*init),
+                    None => self.write("void 0"),
+                }
+                self.write(");");
+                self.write_line();
+            }
             self.decrease_indent();
             self.write("}");
             self.write_line();
@@ -696,6 +782,9 @@ impl<'a> Printer<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
                 && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 && let Some(prop) = self.arena.get_property_decl(member_node)
+                && !auto_accessor_members
+                    .iter()
+                    .any(|(accessor_idx, _, _)| *accessor_idx == member_idx)
                 && prop.initializer.is_some()
                 && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
             {
@@ -852,7 +941,34 @@ impl<'a> Printer<'a> {
             }
 
             let before_len = self.writer.len();
-            self.emit(member_idx);
+            let auto_accessor = auto_accessor_members
+                .iter()
+                .find(|(idx, _, _)| *idx == member_idx)
+                .map(|(_, storage_name, _)| storage_name.clone());
+            if let Some(member_node) = self.arena.get(member_idx) {
+                let property_end = if auto_accessor.is_some() {
+                    let upper = class
+                        .members
+                        .nodes
+                        .get(member_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map(|n| n.pos)
+                        .unwrap_or(member_node.end);
+                    Some(self.find_token_end_before_trivia(member_node.pos, upper))
+                } else {
+                    None
+                };
+
+                if let Some(storage_name) = auto_accessor {
+                    self.emit_auto_accessor_methods(
+                        member_node,
+                        &storage_name,
+                        property_end.unwrap_or(member_node.end),
+                    );
+                } else {
+                    self.emit(member_idx);
+                }
+            }
             let mut emit_standalone_class_semicolon = false;
             if let Some(member_node) = self.arena.get(member_idx)
                 && (member_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1017,6 +1133,7 @@ impl<'a> Printer<'a> {
 
         // Restore field inits
         self.pending_class_field_inits = prev_field_inits;
+        self.pending_auto_accessor_inits = prev_auto_accessor_inits;
 
         self.decrease_indent();
         self.write("}");
@@ -1093,6 +1210,18 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Emit auto-accessor WeakMap initializations after class body:
+        // var _Class_prop_accessor_storage;
+        // ...
+        // _Class_prop_accessor_storage = new WeakMap();
+        if !auto_accessor_inits.is_empty() {
+            for (storage_name, _init_idx) in &auto_accessor_inits {
+                self.write_line();
+                self.write(storage_name);
+                self.write(" = new WeakMap();");
+            }
+        }
+
         // Emit deferred static blocks as IIFEs after the class body
         for static_block_idx in deferred_static_blocks {
             self.write_line();
@@ -1115,6 +1244,51 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    pub(super) fn class_has_auto_accessor_members(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(prop_data) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if self.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword as u16)
+                && !self.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword as u16)
+                && !self.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword as u16)
+            {
+                let Some(name_node) = self.arena.get(prop_data.name) else {
+                    continue;
+                };
+                if name_node.kind == SyntaxKind::Identifier as u16 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn emit_auto_accessor_methods(&mut self, node: &Node, storage_name: &str, property_end: u32) {
+        let Some(prop) = self.arena.get_property_decl(node) else {
+            return;
+        };
+
+        self.write("get ");
+        self.emit(prop.name);
+        self.write("() { return __classPrivateFieldGet(this, ");
+        self.write(storage_name);
+        self.write(", \"f\"); }");
+        self.emit_trailing_comments(property_end);
+        self.write_line();
+        self.write("set ");
+        self.emit(prop.name);
+        self.write("(value) { __classPrivateFieldSet(this, ");
+        self.write(storage_name);
+        self.write(", value, \"f\"); }");
     }
 
     /// Parser recovery parity for malformed class members like:
@@ -2301,6 +2475,57 @@ mod tests {
         assert!(
             !output.contains("Bar.x = 42; //"),
             "Should not have spurious trailing comment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn auto_accessor_instance_fields_emit_getter_setter_with_weakmap() {
+        let source =
+            "class RegularClass {\n    accessor shouldError: string; // Should still error\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _RegularClass_shouldError_accessor_storage;"),
+            "Auto-accessor storage declaration should be emitted.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("constructor() {",),
+            "Constructor should be synthesized for auto-accessor initialization.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_RegularClass_shouldError_accessor_storage.set(this, void 0);"),
+            "Auto-accessor storage should initialize to void 0 in constructor.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_RegularClass_shouldError_accessor_storage = new WeakMap();"),
+            "Auto-accessor storage should be initialized with WeakMap after class body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "get shouldError() { return __classPrivateFieldGet(this, _RegularClass_shouldError_accessor_storage, \"f\"); } // Should still error",
+            ),
+            "Auto accessor getter should be lowered.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "set shouldError(value) { __classPrivateFieldSet(this, _RegularClass_shouldError_accessor_storage, value, \"f\"); }",
+            ),
+            "Auto accessor setter should be lowered.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__classPrivateFieldGet"),
+            "Private field helpers should be emitted.\nOutput:\n{output}"
         );
     }
 }

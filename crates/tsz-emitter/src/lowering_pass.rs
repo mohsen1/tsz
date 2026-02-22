@@ -522,11 +522,15 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class_data) = self.arena.get_class(node) {
-                    if self.ctx.target_es5 {
+                    let needs_es5_transform = self.ctx.target_es5;
+                    if needs_es5_transform {
                         self.transforms.insert(
                             idx,
                             TransformDirective::ES5ClassExpression { class_node: idx },
                         );
+                        let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
+                        self.mark_class_helpers(idx, heritage);
+                    } else if self.class_has_auto_accessor_members(class_data) {
                         let heritage = self.get_extends_heritage(&class_data.heritage_clauses);
                         self.mark_class_helpers(idx, heritage);
                     }
@@ -1158,12 +1162,13 @@ impl<'a> LoweringPass<'a> {
         }
 
         let heritage = self.get_extends_heritage(&class.heritage_clauses);
-        if self.ctx.target_es5 {
+        if self.ctx.target_es5 || self.class_has_auto_accessor_members(class) {
             self.mark_class_helpers(idx, heritage);
         }
 
         // Determine the base transform
-        let base_directive = if self.ctx.target_es5 {
+        let needs_es5_transform = self.ctx.target_es5;
+        let base_directive = if needs_es5_transform {
             // ES5 class transform
             TransformDirective::ES5Class {
                 class_node: idx,
