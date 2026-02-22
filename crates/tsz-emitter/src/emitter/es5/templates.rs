@@ -1,11 +1,15 @@
-use super::{Printer, TemplateParts};
+use super::super::{Printer, TemplateParts};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, TaggedTemplateData, TemplateExprData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_template_literal_es5(&mut self, node: &Node, idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn emit_template_literal_es5(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) -> bool {
         match node.kind {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if self.arena.get_literal(node).is_none() && self.source_text.is_none() {

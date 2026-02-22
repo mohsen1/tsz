@@ -1,4 +1,4 @@
-use super::Printer;
+use super::super::Printer;
 use crate::transforms::emit_utils;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
@@ -7,7 +7,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 /// Segment of an array literal for ES5 spread transformation
-pub(super) enum ArraySegment<'a> {
+pub(in crate::emitter) enum ArraySegment<'a> {
     /// Non-spread elements: [1, 2, 3]
     Elements(&'a [NodeIndex]),
     /// Spread element: ...arr
@@ -29,7 +29,7 @@ impl<'a> Printer<'a> {
     /// Pattern: [...a, 1] -> __spreadArray(a, [1], false)
     /// Pattern: [1, ...a] -> __spreadArray([1], a, false)
     /// Pattern: [1, ...a, 2] -> __spreadArray([1], a, false).concat([2])
-    pub(super) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_array_literal_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("[]");
             return;
@@ -158,14 +158,18 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_spread_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_spread_expression(&mut self, node: &Node) {
         // Get the expression inside the spread element
         if let Some(spread) = self.arena.get_spread(node) {
             self.emit(spread.expression);
         }
     }
 
-    pub(super) fn emit_spread_expression_with_read(&mut self, node: &Node, wrap_with_read: bool) {
+    pub(in crate::emitter) fn emit_spread_expression_with_read(
+        &mut self,
+        node: &Node,
+        wrap_with_read: bool,
+    ) {
         if let Some(spread) = self.arena.get_spread(node) {
             if wrap_with_read {
                 self.write("__read(");
@@ -192,7 +196,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;
@@ -218,7 +222,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_object_literal_member_es5(&mut self, prop_idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_object_literal_member_es5(&mut self, prop_idx: NodeIndex) {
         let Some(node) = self.arena.get(prop_idx) else {
             return;
         };
@@ -242,7 +246,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_object_literal_method_value_es5(&mut self, method: &MethodDeclData) {
+    pub(in crate::emitter) fn emit_object_literal_method_value_es5(
+        &mut self,
+        method: &MethodDeclData,
+    ) {
         if method.body.is_none() {
             self.write("function () { }");
             return;
@@ -286,7 +293,7 @@ impl<'a> Printer<'a> {
     ///
     /// Mixed computed and spread:
     /// - { [k]: v, ...a } → __assign((_a = {}, _a[k] = v, _a), a)
-    pub(super) fn emit_object_literal_es5(
+    pub(in crate::emitter) fn emit_object_literal_es5(
         &mut self,
         elements: &[NodeIndex],
         source_range: Option<(u32, u32)>,
@@ -574,7 +581,11 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a property assignment in ES5 computed property transform
-    pub(super) fn emit_property_assignment_es5(&mut self, prop_idx: NodeIndex, temp_var: &str) {
+    pub(in crate::emitter) fn emit_property_assignment_es5(
+        &mut self,
+        prop_idx: NodeIndex,
+        temp_var: &str,
+    ) {
         let Some(node) = self.arena.get(prop_idx) else {
             return;
         };
@@ -654,14 +665,18 @@ impl<'a> Printer<'a> {
     /// Emit assignment target for ES5 computed property transform
     /// For computed: _a[expr]
     /// For regular: _a.name
-    pub(super) fn emit_assignment_target_es5(&mut self, name_idx: NodeIndex, temp_var: &str) {
+    pub(in crate::emitter) fn emit_assignment_target_es5(
+        &mut self,
+        name_idx: NodeIndex,
+        temp_var: &str,
+    ) {
         self.emit_assignment_target_es5_with_computed(name_idx, temp_var, None);
     }
 
     /// Emit assignment target for ES5 computed property transform with optional computed temp
     /// For computed: _a[_temp] (if `computed_temp` is Some)
     /// For regular: _a.name
-    pub(super) fn emit_assignment_target_es5_with_computed(
+    pub(in crate::emitter) fn emit_assignment_target_es5_with_computed(
         &mut self,
         name_idx: NodeIndex,
         temp_var: &str,
@@ -706,7 +721,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit property key as a string for Object.defineProperty
-    pub(super) fn emit_property_key_string(&mut self, name_idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_property_key_string(&mut self, name_idx: NodeIndex) {
         let Some(name_node) = self.arena.get(name_idx) else {
             return;
         };
@@ -741,7 +756,7 @@ impl<'a> Printer<'a> {
     ///
     /// Otherwise use IIFE capture:
     /// (function (_this) { return _this.x; })(this)
-    pub(super) fn emit_arrow_function_es5(
+    pub(in crate::emitter) fn emit_arrow_function_es5(
         &mut self,
         _node: &Node,
         func: &tsz_parser::parser::node::FunctionData,
@@ -842,7 +857,7 @@ impl<'a> Printer<'a> {
     /// Check if a concise arrow body resolves to an object literal expression
     /// and needs wrapping in parens. Returns false if already parenthesized
     /// (to avoid double-parens). Unwraps through type assertions and as-expressions.
-    pub(super) fn concise_body_needs_parens(&self, body_idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn concise_body_needs_parens(&self, body_idx: NodeIndex) -> bool {
         let mut idx = body_idx;
         loop {
             let Some(node) = self.arena.get(idx) else {
@@ -866,7 +881,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_function_expression_es5_params(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_function_expression_es5_params(&mut self, node: &Node) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -915,7 +930,7 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
-    pub(super) fn emit_function_declaration_es5_params(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_function_declaration_es5_params(&mut self, node: &Node) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };

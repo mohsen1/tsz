@@ -882,8 +882,7 @@ fn test_quickinfo_marker_comment_before_parameter_uses_contextual_type() {
 #[test]
 fn test_quickinfo_contextual_object_literal_function_parameter() {
     let mut server = make_server();
-    let source =
-        "interface IFoo { f(i: number, s: string): string; }\nvar c = <IFoo>({ f: function(/*31*/i, s) { return s; } });\n";
+    let source = "interface IFoo { f(i: number, s: string): string; }\nvar c = <IFoo>({ f: function(/*31*/i, s) { return s; } });\n";
     server
         .open_files
         .insert("/test.ts".to_string(), source.to_string());
@@ -894,7 +893,8 @@ fn test_quickinfo_contextual_object_literal_function_parameter() {
         .expect("source should contain second line");
     let identifier_offset = second_line
         .find("/*31*/i")
-        .expect("marker+identifier should exist in source second line") as u32
+        .expect("marker+identifier should exist in source second line")
+        as u32
         + "/*31*/".len() as u32
         + 1;
 
