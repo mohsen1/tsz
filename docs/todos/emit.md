@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5065/7163 = 70.7% JS, 416/1036 = 40.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 5077/7163 = 70.9% JS, 415/1035 = 40.1% DTS)
 
 ### Fixed This Session
+- **Trailing comments on opening braces moved inside block body** (+10 JS):
+  When a block's opening `{` has a trailing comment on the same line (e.g.,
+  `if (cond) { // comment`), tsz was moving the comment to the next line inside the
+  block body (`if (cond) {\n    // comment`) instead of keeping it on the brace line.
+  Root cause: `emit_block()` in `statements.rs` called `write_line()` immediately after
+  writing `{`, without first emitting trailing comments. Fix: after writing `{`, find the
+  source position of the brace and call `emit_trailing_comments(brace_end)` before the
+  `write_line()`. The trailing comment handler emits same-line comments and advances
+  `comment_emit_idx` so the comment isn't re-emitted as a leading comment of the first
+  statement. Two unit tests added.
+  Tests fixed: `forInStrictNullChecksNoError`, `narrowExceptionVariableInCatchClause`,
+  `typeGuardOfFormTypeOfOther`, `withStatementNestedScope`, and 6 others.
+  JS: 5067→5077, DTS unchanged at 415, zero regressions.
+
+### Previously Fixed
 - **Switch-case leading comment placement** (+3 JS, +1 DTS):
   Comments between case/default clauses were being emitted inside the clause body
   instead of before the case/default label. tsc emits `// comment\ncase X:` but tsz

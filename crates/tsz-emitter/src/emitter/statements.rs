@@ -96,6 +96,18 @@ impl<'a> Printer<'a> {
         // Map opening `{` to its source position
         self.map_opening_brace(node);
         self.write_with_end_marker("{");
+        // Emit trailing comments on the same line as `{` before moving to the next line.
+        // For example: `if (cond) { // comment` should keep `// comment` on the brace line.
+        if !self.ctx.options.remove_comments
+            && let Some(text) = self.source_text {
+                let bytes = text.as_bytes();
+                let start = node.pos as usize;
+                let end = (node.end as usize).min(bytes.len());
+                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                    let brace_end = (start + offset + 1) as u32;
+                    self.emit_trailing_comments(brace_end);
+                }
+            }
         self.write_line();
         self.increase_indent();
 
@@ -1263,6 +1275,53 @@ mod tests {
         assert!(
             output.contains("// Fallback\n        default:"),
             "Leading comment should appear before 'default:', not inside the body.\nOutput:\n{output}"
+        );
+    }
+
+    /// Trailing comment on opening `{` of a block should stay on the same line.
+    /// e.g. `if (cond) { // comment` should NOT become `if (cond) {\n    // comment`.
+    #[test]
+    fn trailing_comment_on_opening_brace_if_statement() {
+        let source = r#"function f(x: string) {
+    if (typeof x === "Object") { // comparison is OK
+        console.log(x);
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("{ // comparison is OK"),
+            "Trailing comment should stay on the same line as opening brace.\nOutput:\n{output}"
+        );
+    }
+
+    /// Trailing comment on opening `{` of a for-in loop body block.
+    #[test]
+    fn trailing_comment_on_opening_brace_for_in() {
+        let source = r#"function f(x: object) {
+    for (const key in x) { // iterate
+        console.log(key);
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("{ // iterate"),
+            "Trailing comment should stay on the same line as opening brace.\nOutput:\n{output}"
         );
     }
 }
