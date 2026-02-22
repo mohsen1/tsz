@@ -105,8 +105,8 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
 ## Recommendations
 
 1. **Monitor near-limit checker files** for growth. Top files by line count:
-   - `type_checking_queries_lib.rs` (1,901 lines)
-   - `control_flow_narrowing.rs` (1,883 lines)
+   - ~~`type_checking_queries_lib.rs` (1,901 lines)~~ ✅ Split — extracted type-only detection methods (~590 LOC) into `type_checking_queries_type_only.rs`, reducing to 1,313 LOC
+   - ~~`control_flow_narrowing.rs` (1,883 lines)~~ ✅ Split — extracted reference matching, literal parsing, and symbol resolution (~680 LOC) into `control_flow_references.rs`, reducing to 1,204 LOC
    - `control_flow_assignment.rs` (1,837 lines)
    - `class_type.rs` (1,818 lines)
    - `type_checking_utilities.rs` (1,778 lines)
