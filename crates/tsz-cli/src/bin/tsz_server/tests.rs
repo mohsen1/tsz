@@ -160,6 +160,55 @@ fn test_inferred_auto_imports_allowed_for_numeric_string_target_es2015() {
 }
 
 #[test]
+fn test_compiler_options_for_inferred_projects_accepts_direct_options_shape() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/dep/index.d.ts".to_string(),
+        "export const x: number;\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "x".to_string());
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "module": "none",
+            "target": "es5"
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+    assert_eq!(options_resp.body, Some(serde_json::json!(true)));
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 2,
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let has_auto_import_x = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+            && entry.get("source").is_some()
+    });
+    assert!(
+        !has_auto_import_x,
+        "auto-import completion should be gated when inferred options are sent directly"
+    );
+}
+
+#[test]
 fn test_new_commands_are_recognized() {
     let mut server = make_server();
     let commands = vec![

@@ -321,8 +321,13 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.apply_inferred_project_options(request.arguments.get("options"));
-        self.stub_response(seq, request, None)
+        let options = request
+            .arguments
+            .get("options")
+            .filter(|value| value.is_object())
+            .or_else(|| request.arguments.is_object().then_some(&request.arguments));
+        self.apply_inferred_project_options(options);
+        self.stub_response(seq, request, Some(serde_json::json!(true)))
     }
 
     pub(crate) fn handle_external_project(
