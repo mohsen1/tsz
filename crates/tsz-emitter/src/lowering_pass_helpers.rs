@@ -4,6 +4,7 @@
 //! binding pattern analysis, and this-capture computation.
 
 use super::*;
+use crate::transforms::emit_utils;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -250,7 +251,9 @@ impl<'a> LoweringPass<'a> {
 
     pub(super) fn needs_es5_object_literal_transform(&self, elements: &[NodeIndex]) -> bool {
         elements.iter().any(|&idx| {
-            if self.is_computed_property_member(idx) || self.is_spread_element(idx) {
+            if emit_utils::is_computed_property_member(self.arena, idx)
+                || emit_utils::is_spread_element(self.arena, idx)
+            {
                 return true;
             }
 
@@ -266,7 +269,9 @@ impl<'a> LoweringPass<'a> {
 
     /// Check if an array literal needs ES5 transformation (has spread elements)
     pub(super) fn needs_es5_array_literal_transform(&self, elements: &[NodeIndex]) -> bool {
-        elements.iter().any(|&idx| self.is_spread_element(idx))
+        elements
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
     }
 
     pub(super) fn function_parameters_need_es5_transform(&self, params: &NodeList) -> bool {
@@ -350,42 +355,6 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
-    pub(super) fn is_computed_property_member(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        let name_idx = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                self.arena.get_property_assignment(node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.arena.get_method_decl(node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.arena.get_accessor(node).map(|a| a.name)
-            }
-            _ => None,
-        };
-
-        if let Some(name_idx) = name_idx
-            && let Some(name_node) = self.arena.get(name_idx)
-        {
-            return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
-        }
-
-        false
-    }
-
-    pub(super) fn is_spread_element(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-            || node.kind == syntax_kind_ext::SPREAD_ELEMENT
-    }
-
     pub(super) fn call_spread_needs_spread_array(&self, args: &[NodeIndex]) -> bool {
         let mut spread_count = 0usize;
         let mut real_arg_count = 0usize;
@@ -395,7 +364,7 @@ impl<'a> LoweringPass<'a> {
                 continue;
             }
             real_arg_count += 1;
-            if self.is_spread_element(idx) {
+            if emit_utils::is_spread_element(self.arena, idx) {
                 spread_count += 1;
             }
         }
@@ -753,7 +722,8 @@ impl<'a> LoweringPass<'a> {
                     if !self.import_has_runtime_dependency(import_decl) {
                         continue;
                     }
-                    if let Some(text) = self.get_module_specifier_text(import_decl.module_specifier)
+                    if let Some(text) =
+                        emit_utils::module_specifier_text(self.arena, import_decl.module_specifier)
                         && !deps.contains(&text)
                     {
                         deps.push(text);
@@ -768,7 +738,8 @@ impl<'a> LoweringPass<'a> {
                 if !self.export_has_runtime_dependency(export_decl) {
                     continue;
                 }
-                if let Some(text) = self.get_module_specifier_text(export_decl.module_specifier)
+                if let Some(text) =
+                    emit_utils::module_specifier_text(self.arena, export_decl.module_specifier)
                     && !deps.contains(&text)
                 {
                     deps.push(text);
@@ -904,17 +875,6 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
-    }
-
-    pub(super) fn get_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
-        if specifier.is_none() {
-            return None;
-        }
-
-        let node = self.arena.get(specifier)?;
-        let literal = self.arena.get_literal(node)?;
-
-        Some(literal.text.clone())
     }
 
     /// Compute the capture variable name for `_this` in a given scope.

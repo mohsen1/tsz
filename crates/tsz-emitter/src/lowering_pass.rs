@@ -52,6 +52,8 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
+use crate::transforms::emit_utils;
+
 /// Maximum recursion depth for AST traversal to prevent stack overflow
 const MAX_AST_DEPTH: u32 = 500;
 
@@ -690,7 +692,7 @@ impl<'a> LoweringPass<'a> {
                             .elements
                             .nodes
                             .iter()
-                            .any(|&idx| self.is_spread_element(idx))
+                            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
                         {
                             self.transforms.helpers_mut().assign = true;
                         }
@@ -1763,7 +1765,7 @@ impl<'a> LoweringPass<'a> {
             let has_spread = args
                 .nodes
                 .iter()
-                .any(|&arg_idx| self.is_spread_element(arg_idx));
+                .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
             if has_spread {
                 self.transforms
                     .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
