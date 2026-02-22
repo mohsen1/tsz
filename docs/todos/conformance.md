@@ -109,3 +109,4 @@ tests passing (offset 6000 slice: 3665→3684).
 - **TS2322/TS2339 (broad regression slice)**: `TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts` still needs solver/checker assignability and narrowing alignment before this cycle; fixing in this pass would be a broad refactor.
 - **TS2304 (57 extra)**: Over-emission of "cannot find name" — requires broader lib resolution and module resolution improvements.
 - **TS1202 (fixed)**: False TS1202/TS1203 when module was a computed default (not explicitly set). Fixed by adding `module_explicitly_set` flag. +29 tests passing.
+- **TS2322 (focused, unchecked)**: `TypeScript/tests/cases/compiler/checkJsObjectLiteralHasCheckedKeyof.ts` — currently reports `Type 'string'` instead of literal union mismatch for checked JS `@ts-check` with `keyof typeof obj`. Needs deeper JSDoc/`keyof` context handling in checker/solver assignability flow.
