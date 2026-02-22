@@ -264,16 +264,60 @@ Tests where tsz produces `[]` but tsc expects TS6133:
   `infer` positions, JSDoc `@template` tags, self-references, dynamic property names,
   type parameter merging. Each has a distinct root cause.
 
-## Deferred from TS6133 investigation (not fixed)
+## TS2305/TS2459/TS2460/TS2614 — Module name quoting in diagnostics (Fixed)
 
-- **TS6133 underscore suppression**: 5 tests over-report TS6133 for underscore-prefixed
-  local variables (e.g., `_`, `_a`). TSC exempts these. Needs a check in the unused
-  locals section (not just the parameter section which already handles this).
+**Status**: Fixed. +11 tests passing in first 6000 slice (3900→3911, 65.2%).
+**Error codes:** TS2305 ("Module '...' has no exported member '...'"), TS2459, TS2460, TS2614.
+**Root cause**: TSC includes source-level double quotes in the module specifier parameter:
+`Module '"./foo"' has no exported member 'X'`. Our diagnostics omitted the inner quotes,
+producing `Module './foo' has no exported member 'X'`.
+**Fix**: Added `format!("\"{module_name}\"")` wrapping in all `format_message` calls for
+MODULE_HAS_NO_EXPORTED_MEMBER and related diagnostics across:
+- `import_checker.rs` (8 call sites: TS2305, TS2459, TS2460, TS2614)
+- `module_checker.rs` (2 call sites: TS2305, TS2614)
+- `state_type_resolution_module.rs` (2 call sites: TS2305, TS2614)
+Note: TS2307 ("Cannot find module") does NOT use double quotes — only single quotes
+from the message template. No change needed there.
+
+## TS6133 — Underscore suppression for destructuring binding elements (Fixed)
+
+**Status**: Fixed. +1 test passing in full suite (7710→7711).
+**Error code:** TS6133 ("'X' is declared but its value is never read.")
+**Root cause**: TSC suppresses TS6133 for underscore-prefixed names (`_a`, `_b`) when
+they appear in destructuring patterns (`const [_a, b] = arr` or `const { x: _x } = obj`).
+Regular declarations like `let _a = 1` are NOT suppressed. Our checker lacked this check
+in the local variables section of `type_checking_unused.rs`.
+**Fix**: Added condition `is_variable && name.starts_with('_') && find_parent_binding_pattern(decl_idx).is_some()`
+to skip TS6133 emission for underscore-prefixed destructuring binding elements.
+**Key distinction**: Parameters already had underscore suppression (line ~445). This fix
+covers local variables in destructuring patterns only, matching TSC's nuanced behavior.
+
+### Remaining TS6133 underscore issues (not fixed)
+- TSC also suppresses `import * as _` and for-of/for-in loop `const _` (not destructuring).
+  These require additional checks for import symbols and for-of/for-in variable contexts.
+- `unusedLocalsStartingWithUnderscore.ts` still fails due to extra TS2307 and missing
+  import/for-of/for-in underscore suppression.
+
+## Deferred from this session (not fixed)
+
+- **TS2440 (19 tests)**: Import conflicts with local declaration. Code exists in
+  `import_declaration_checker.rs` but never reached. Root cause is likely symbol merging
+  in the binder — when import + local declaration create a single merged symbol, the
+  conflict detection logic's filtering skips the relevant declarations. MEDIUM difficulty.
+- **TS2875 (14 tests)**: JSX runtime module not found. Requires JSX pragma parsing
+  (`@jsxImportSource`), module resolution validation, and error emission in JSX checking
+  paths. MEDIUM difficulty.
+- **TS2497 (13 tests)**: Module can only be referenced with ECMAScript imports. Requires
+  detecting `export =` modules imported via ESM syntax and checking `esModuleInterop`/
+  `allowSyntheticDefaultImports` flags. MEDIUM difficulty.
+- **TS2589 (9 tests)**: Excessive instantiation depth. Infrastructure 80% complete (solver
+  has depth tracking + guards). Missing: wiring `depth_exceeded` flag from evaluator/
+  instantiator to checker diagnostic emission for type nodes/aliases. MEDIUM difficulty.
+- **TS2580 (9 tests)**: Cannot find name (Node.js types). Code emits TS2591 instead of
+  TS2580 because tsz always runs with tsconfig. Cache may expect TS2580 for non-tsconfig
+  contexts. MEDIUM difficulty.
 - **TS2454 (16 quick-win tests)**: 9 "pure" tests (tsz emits zero errors) and 7 multi-file
   tests. Root causes: try/catch destructuring, ES5 Symbol var, for-of pre-loop usage,
   computed property names, JSDoc type annotations. Each requires targeted flow analysis work.
 - **TS18046 (10 tests, not implemented)**: "'x' is of type 'unknown'". Needs checks at
   property access, function calls, and binary operations on `unknown` type. Medium complexity.
-- **TS2440 (19 tests)**: Import conflicts with local declaration. Analysis shows code exists
-  in `import_declaration_checker.rs` but "never emitted" per conformance analysis. Needs
-  investigation of why the code path isn't reached.
