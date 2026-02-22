@@ -2595,6 +2595,7 @@ impl Project {
         from_file: &str,
         target_file: &str,
     ) -> Vec<String> {
+        let target_in_node_modules = target_file.replace('\\', "/").contains("/node_modules/");
         if let Some(package_specifier) = self.package_specifier_from_node_modules(target_file) {
             return vec![package_specifier];
         }
@@ -2629,6 +2630,9 @@ impl Project {
 
         let mut seen = FxHashSet::default();
         candidates.retain(|spec| seen.insert(spec.clone()));
+        if target_in_node_modules {
+            candidates.retain(|spec| !spec.replace('\\', "/").contains("node_modules/"));
+        }
 
         if pref.is_none() || pref == Some("shortest") {
             candidates.sort_by(compare_module_specifier_candidates);
@@ -3120,16 +3124,17 @@ impl Project {
             .or_else(|| std::fs::read_to_string(&package_json_path).ok())
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
-        if let Some(specifier) = self.package_specifier_from_package_exports(
-            &normalized,
-            &package_root,
-            package_prefix,
-            &package_json_path,
-        ) {
-            return Some(specifier);
-        }
-        if self.package_has_root_only_exports(&package_json_path) {
-            return Some(package_root);
+        if package_json
+            .as_ref()
+            .and_then(|json| json.get("exports"))
+            .is_some()
+        {
+            return self.package_specifier_from_package_exports(
+                &normalized,
+                &package_root,
+                package_prefix,
+                &package_json_path,
+            );
         }
 
         let runtime_spec = package_runtime_specifier_from_target_path(package_path);
@@ -3163,6 +3168,21 @@ impl Project {
 
         let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
         let exports_value = package_json.get("exports")?;
+        if let Some(exports_target) = exports_value.as_str() {
+            let package_dir = format!("{package_prefix}{package_root}");
+            let package_dir_prefix = format!("{package_dir}/");
+            let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
+            let target_relative =
+                path_to_string(&strip_js_ts_extension(Path::new(target_relative)))
+                    .replace('\\', "/");
+            let target_pattern = path_to_string(&strip_js_ts_extension(Path::new(exports_target)))
+                .replace('\\', "/");
+            let target_pattern = target_pattern.strip_prefix("./").unwrap_or(&target_pattern);
+            if wildcard_capture_case_insensitive(target_pattern, &target_relative).is_some() {
+                return Some(package_root.to_string());
+            }
+            return None;
+        }
         let exports_object = exports_value.as_object()?;
 
         let package_dir = format!("{package_prefix}{package_root}");
@@ -3216,32 +3236,6 @@ impl Project {
         }
 
         None
-    }
-
-    fn package_has_root_only_exports(&self, package_json_path: &str) -> bool {
-        let package_json_text = if let Some(file) = self.files.get(package_json_path) {
-            Some(file.source_text().to_string())
-        } else {
-            std::fs::read_to_string(package_json_path).ok()
-        };
-
-        let Some(package_json_text) = package_json_text else {
-            return false;
-        };
-        let Some(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()
-        else {
-            return false;
-        };
-
-        let Some(exports_value) = package_json.get("exports") else {
-            return false;
-        };
-
-        match exports_value {
-            serde_json::Value::String(_) => true,
-            serde_json::Value::Object(map) => map.len() == 1 && map.contains_key("."),
-            _ => false,
-        }
     }
 }
 
