@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9286/13623 = 68.2% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9305/13623 = 68.3% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **Case clause same-line non-block statement formatting** (+20 JS, +1 DTS tests):
+  When a case/default clause has a single statement on the same source line as the label
+  (e.g., `case true: return "true";`), tsc emits it on one line. tsz was splitting it
+  across two lines because `emit_case_clause_body()` only allowed same-line formatting
+  for BLOCK statements (`{ ... }`), not for other statements like `return`, `break`, etc.
+  Fixed by removing the `stmt_node.kind == syntax_kind_ext::BLOCK` restriction in
+  `statements.rs`, allowing any single statement on the same source line to stay on one line.
+  Added `!self.writer.is_at_line_start()` guard to prevent double newlines for blocks.
+  Tests fixed (sole-fix): `booleanLiteralTypes1`, `booleanLiteralTypes2`,
+  `discriminatedUnionTypes1`, `enumLiteralTypes1`, `enumLiteralTypes2`,
+  `numericLiteralTypes1`, `numericLiteralTypes2`, and 13 others.
+
+### Previously Fixed
 - **Extra blank line after lowered static class properties** (~70 affected tests, 6+ sole-fix):
   When class declarations have static fields lowered to `ClassName.field = value;` (for
   targets < ES2022), the `write_line()` at the end of each static field init left the
@@ -108,8 +121,11 @@
   consecutive semicolons appeared. Fixed in both emitter (stop erasing) and parser
   (skip trailing-semicolon consumption when member is itself a `SEMICOLON_CLASS_ELEMENT`).
 
-### Investigated but Deferred (this session)
+### Investigated but Deferred
 
+- **Extra `"use strict"` emission (~175 tests, ~59 sole-fix)**: tsz emits `"use strict"` in contexts where tsc does not — AMD/UMD wrapper files (before `define()`), `module=preserve` ESM files, and bundle/outFile mode. Requires untangling the interplay between `alwaysStrict`, `original_module_kind`, and AMD/UMD wrapper paths in `emitter/mod.rs`. Affects `amdDeclarationEmitNoExtraDeclare`, `impliedNodeFormatEmit1(module=amd)`, `emitBundleWithPrologueDirectives1`.
+- **Triple-slash reference directives in JS output (~21 tests)**: `/// <reference path="..." />` comments are emitted in JS output where tsc strips them. Affects `augmentExportEquals3_1`, `doNotemitTripleSlashComments`, `jsxEmptyExpressionNotCountedAsChild`.
+- **Const enum value folding (~33 tests)**: Const enum member property accesses (`E.A`) are not replaced with their literal values (`0 /* E.A */`). Requires solver integration. Affects `constEnumPropertyAccess*`.
 - **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
 - **Extra source comments on transformed constructs (~37 tests)**: tsz emits source-level comments (like `// error`, `// no error`, `// should not error`) that tsc strips during transformation. Broader than item #13 which only covers erased constructs — these comments are attached to parameter lists, expressions, and statement-level constructs that tsc transforms.
 - **Numeric literal not downleveled for ES5 (~13 tests)**: Octal literals (`01`, `0o00`) and hex literals (`0xA0B0C0`) are emitted verbatim instead of being converted to decimal equivalents for ES3/ES5 targets. Affects `scannerES3NumericLiteral*`, `scannerNumericLiteral*`, `octalLiteralInStrictModeES3`.
