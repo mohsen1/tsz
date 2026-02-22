@@ -636,6 +636,45 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_generic_multi_level_extends_resolves_base_instance_member_without_cycle_noise() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Box<T> {
+    value!: T;
+}
+
+class Mid<U> extends Box<U> {}
+
+class Final extends Mid<string> {
+    read(): string {
+        return this.value;
+    }
+}
+
+const ok: string = new Final().value;
+const bad: number = new Final().value;
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning inherited string member to number.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339 for inherited base member lookup.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 in non-cyclic generic inheritance.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2449),
+        "Did not expect TS2449 for this linear declaration order.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_used_before_declaration_does_not_also_report_cycle_error() {
     let diagnostics = compile_and_get_diagnostics(
         r"

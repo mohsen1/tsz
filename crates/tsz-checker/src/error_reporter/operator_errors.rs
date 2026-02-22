@@ -37,13 +37,12 @@ impl<'a> CheckerState<'a> {
             &[&name],
         );
 
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
+        self.ctx.error(
             loc.start,
             loc.length(),
             message,
             diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-        ));
+        );
     }
 
     /// Report TS2507: "Type 'X' is not a constructor function type"
