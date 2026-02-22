@@ -4,6 +4,9 @@
 //! plus code fix related handlers.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+
+/// A component/interface property: (name, type_string, is_required).
+type PropEntry = (String, String, bool);
 use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz::lsp::Project;
 use tsz::lsp::code_actions::{
@@ -2333,16 +2336,14 @@ impl Server {
                 "[]"
             } else if t == "any" {
                 "undefined"
-            } else if t.starts_with('\'') && t.ends_with('\'') {
-                "__STRING_LITERAL__"
-            } else if t == key {
+            } else if (t.starts_with('\'') && t.ends_with('\'')) || t == key {
                 "__STRING_LITERAL__"
             } else {
                 "undefined"
             }
         }
 
-        let mut interface_props: std::collections::HashMap<String, Vec<(String, String, bool)>> =
+        let mut interface_props: std::collections::HashMap<String, Vec<PropEntry>> =
             std::collections::HashMap::new();
         let mut const_obj_keys: std::collections::HashMap<
             String,
@@ -2460,7 +2461,7 @@ impl Server {
             }
         }
 
-        let mut component_props: std::collections::HashMap<String, Vec<(String, String, bool)>> =
+        let mut component_props: std::collections::HashMap<String, Vec<PropEntry>> =
             std::collections::HashMap::new();
         for line in &lines {
             let t = line.trim();
@@ -2495,7 +2496,7 @@ impl Server {
                         if keys.len() > 32 {
                             return None;
                         }
-                        let props: Vec<(String, String, bool)> = keys
+                        let props: Vec<PropEntry> = keys
                             .iter()
                             .map(|k| (k.clone(), format!("'{k}'"), false))
                             .collect();
@@ -2527,7 +2528,7 @@ impl Server {
                 continue;
             }
 
-            let mut matched_component: Option<(&str, &Vec<(String, String, bool)>)> = None;
+            let mut matched_component: Option<(&str, &[PropEntry])> = None;
             for (name, props) in &component_props {
                 if content[lt + 1..].starts_with(name) {
                     matched_component = Some((name.as_str(), props));
@@ -2787,11 +2788,11 @@ impl Server {
                 auto_import_file_exclude_patterns,
                 auto_import_specifier_exclude_regexes,
                 import_module_specifier_preference,
-            ) {
-                if !class_imports.contains_key(&ident) {
-                    import_lines.push(format!("import {{ {ident} }} from '{module_specifier}';"));
-                    class_imports.insert(ident, module_specifier);
-                }
+            ) && let std::collections::hash_map::Entry::Vacant(entry) =
+                class_imports.entry(ident.clone())
+            {
+                import_lines.push(format!("import {{ {ident} }} from '{module_specifier}';"));
+                entry.insert(module_specifier);
             }
         }
 
@@ -3706,9 +3707,7 @@ fn read_identifier(text: &str) -> Option<&str> {
     let trimmed = text.trim_start();
     let start_offset = text.len() - trimmed.len();
     let mut chars = trimmed.char_indices();
-    let Some((_, first)) = chars.next() else {
-        return None;
-    };
+    let (_, first) = chars.next()?;
     if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
         return None;
     }
