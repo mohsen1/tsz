@@ -20,7 +20,7 @@
 //!
 //! ## Module Organization
 //!
-//! Some components have been extracted to separate modules:
+//! Components are organized into separate modules:
 //! - `binary_ops`: Binary operation evaluation (+, -, *, /, etc.)
 //! - `constraints`: Type constraint collection for generic inference
 //! - `constructors`: Constructor (new) expression resolution
@@ -31,6 +31,7 @@
 //! - `property_readonly`: Readonly property checks
 //! - `property_visitor`: `TypeVisitor` impl for `PropertyAccessEvaluator`
 
+pub mod binary_ops;
 mod constraints;
 mod constructors;
 mod generic_call;
@@ -40,9 +41,8 @@ pub mod property;
 mod property_readonly;
 mod property_visitor;
 
-// Re-exports from extracted modules
-// Note: These are intentionally pub re-exported for external API use
-pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
+// Re-exports from submodules
+pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};

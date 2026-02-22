@@ -174,7 +174,7 @@ fn is_numeric_index_name(name: &str) -> bool {
 // Binary Operations - Extracted to binary_ops.rs
 // =============================================================================
 //
-// Binary operation evaluation has been extracted to `solver/binary_ops.rs`.
+// Binary operation evaluation has been extracted to `operations/binary_ops.rs`.
 // The following are re-exported from that module:
 // - BinaryOpEvaluator
 // - BinaryOpResult

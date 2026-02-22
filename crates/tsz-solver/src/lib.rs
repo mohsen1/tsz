@@ -13,7 +13,6 @@
 //! - Lazy evaluation - only compute types that are queried
 mod apparent;
 mod application;
-pub mod binary_ops;
 mod caches;
 pub mod canonicalize;
 mod class_hierarchy;
@@ -79,7 +78,6 @@ pub use apparent::{
     apparent_primitive_members,
 };
 pub use application::*;
-pub use binary_ops::*;
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
@@ -108,8 +106,8 @@ pub use narrowing::*;
 pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
 pub use operations::{
-    AssignabilityChecker, CallEvaluator, CallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
-    get_contextual_signature_with_compat_checker,
+    AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
+    MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass, get_contextual_signature_with_compat_checker,
 };
 pub use relations::compat::*;
 pub use relations::judge::*;
