@@ -280,3 +280,98 @@ export var basePrototype = {
         "Expected fallback object literal accessor inference: {output}"
     );
 }
+
+#[test]
+fn test_constructor_type_no_double_semicolon() {
+    let source = "export type Ctor = new (...args: any[]) => void;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("new (...args: any[]) => void;"),
+        "Expected constructor type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in constructor type alias: {output}"
+    );
+}
+
+#[test]
+fn test_template_literal_type_no_double_semicolon() {
+    let source = r#"export type Outcome = `${string}_${string}`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("`${string}_${string}`"),
+        "Expected template literal type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in template literal type alias: {output}"
+    );
+}
+
+#[test]
+fn test_infer_type_no_double_semicolon() {
+    let source = "export type Unpack<T> = T extends (infer U)[] ? U : T;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("infer U"),
+        "Expected infer type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in type alias with infer: {output}"
+    );
+}
+
+#[test]
+fn test_abstract_constructor_type() {
+    let source = "export type AbstractCtor = abstract new () => object;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("abstract new () => object;"),
+        "Expected abstract constructor type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in abstract constructor type: {output}"
+    );
+}
+
+#[test]
+fn test_simple_template_literal_type() {
+    let source = r#"export type Greeting = `hello`;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("`hello`"),
+        "Expected simple template literal type in output: {output}"
+    );
+    assert!(
+        !output.contains(";;"),
+        "Must not have double semicolon in simple template literal type: {output}"
+    );
+}
