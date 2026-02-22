@@ -97,15 +97,12 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
 
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
-        if can_cache
-            && let Some(&cached) = self
-                .ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow()
-                .get(&type_id)
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&type_id)
         {
             return cached;
         }
@@ -117,15 +114,11 @@ impl<'a> CheckerState<'a> {
             query::PropertyAccessResolutionKind::Resolved
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
-            if can_cache {
-                self.ctx
-                    .narrowing_cache
-                    .resolve_cache
-                    .borrow_mut()
-                    .insert(type_id, type_id);
-            }
             return type_id;
         }
+
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
 
         self.ensure_relation_input_ready(type_id);
 

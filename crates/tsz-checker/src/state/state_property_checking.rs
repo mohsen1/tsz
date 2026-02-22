@@ -598,19 +598,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let can_cache = !query::contains_type_parameters(self.ctx.types, mapped_type);
         let cache_key = (mapped_type, prop_atom);
 
-        if can_cache
-            && let Some(cached) = self
-                .ctx
-                .narrowing_cache
-                .property_cache
-                .borrow()
-                .get(&cache_key)
-                .copied()
+        if let Some(cached) = self
+            .ctx
+            .narrowing_cache
+            .property_cache
+            .borrow()
+            .get(&cache_key)
+            .copied()
         {
             return Some(match cached {
                 Some(type_id) => tsz_solver::operations::property::PropertyAccessResult::Success {
@@ -624,6 +621,9 @@ impl<'a> CheckerState<'a> {
                 },
             });
         }
+
+        let can_cache = !query::contains_type_parameters(self.ctx.types, mapped_type);
+        let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
         // If the constraint is an explicit literal key set, reject unknown keys early.
         // For non-literal/complex constraints, fall back to full expansion.

@@ -175,20 +175,20 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&type_id)
+        {
+            return cached;
+        }
+
         // Memoize monomorphic application evaluation. This is a hot path for
         // repeated accesses on aliases like DeepPartial<{...}>.
         let can_cache =
             !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
-        if can_cache
-            && let Some(&cached) = self
-                .ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow()
-                .get(&type_id)
-        {
-            return cached;
-        }
 
         // Canonicalize application keys by evaluating type arguments first. This
         // allows structurally equivalent applications from different declaration
@@ -319,28 +319,28 @@ impl<'a> CheckerState<'a> {
     /// This handles cases like `{ [K in keyof Ref(sym)]: Template }` where the Ref
     /// needs to be resolved to get concrete keys.
     pub(crate) fn evaluate_mapped_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
-        // Memoize mapped-type expansion for monomorphic inputs.
-        // This is a hot path for repeated property access on mapped aliases
-        // (e.g., DeepPartial<...>).
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
-        if can_cache
-            && let Some(&cached) = self
-                .ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow()
-                .get(&type_id)
-        {
-            return cached;
-        }
-
         // NOTE: Manual lookup preferred here - we need the mapped_id directly
         // to call mapped_type(mapped_id) below. Using get_mapped_type would
         // return the full Arc<MappedType>, which is more than needed.
         let Some(mapped_id) = query::mapped_type_id(self.ctx.types, type_id) else {
             return type_id;
         };
+
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&type_id)
+        {
+            return cached;
+        }
+
+        // Memoize mapped-type expansion for monomorphic inputs.
+        // This is a hot path for repeated property access on mapped aliases
+        // (e.g., DeepPartial<...>).
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
 
         if !self.ctx.mapped_eval_set.insert(type_id) {
             return type_id;
