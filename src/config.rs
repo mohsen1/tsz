@@ -1016,6 +1016,57 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
         }
+
+        // Check moduleResolution/module compatibility (TS5110)
+        // When moduleResolution is node16/nodenext, module must also be node16/nodenext.
+        if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
+            let mr_normalized =
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+            let is_node_mr = matches!(
+                mr_normalized.as_str(),
+                "node16" | "node18" | "node20" | "nodenext"
+            );
+            if is_node_mr {
+                let module_ok = if let Some(serde_json::Value::String(mod_value)) =
+                    compiler_opts.get("module")
+                {
+                    let mod_normalized =
+                        normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    matches!(
+                        mod_normalized.as_str(),
+                        "node16" | "node18" | "node20" | "nodenext"
+                    )
+                } else {
+                    true // module not explicitly set → tsc defaults it based on moduleResolution
+                };
+                if !module_ok {
+                    let start = find_value_offset_in_source(&stripped, "module");
+                    let value_len = compiler_opts
+                        .get("module")
+                        .and_then(|v| v.as_str())
+                        .map_or(0, |s| s.len() as u32 + 2);
+                    // tsc uses PascalCase for the option values in the message
+                    let mr_display = match mr_normalized.as_str() {
+                        "node16" => "Node16",
+                        "node18" => "Node18",
+                        "node20" => "Node20",
+                        "nodenext" => "NodeNext",
+                        _ => &mr_normalized,
+                    };
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,
+                        &[mr_display, mr_display],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,
+                    ));
+                }
+            }
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -2416,6 +2467,54 @@ mod tests {
         assert!(
             !codes.contains(&5103),
             "Should NOT emit TS5103 when ignoreDeprecations is absent, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5110_node16_resolution_with_commonjs_module() {
+        let source = r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"node16"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5110),
+            "Should emit TS5110 for node16 resolution with commonjs module, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5110_nodenext_resolution_with_es2022_module() {
+        let source = r#"{"compilerOptions":{"module":"es2022","moduleResolution":"nodenext"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5110),
+            "Should emit TS5110 for nodenext resolution with es2022 module, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5110_not_emitted_for_matching_node16() {
+        let source = r#"{"compilerOptions":{"module":"node16","moduleResolution":"node16"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5110),
+            "Should NOT emit TS5110 when module matches moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5110_not_emitted_for_matching_nodenext() {
+        let source = r#"{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5110),
+            "Should NOT emit TS5110 when module matches moduleResolution, got: {:?}",
             codes
         );
     }
