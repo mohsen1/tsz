@@ -4249,7 +4249,11 @@ mod tests {
             .get("textChanges")
             .and_then(serde_json::Value::as_array)
             .expect("missing textChanges");
-        assert_eq!(text_changes.len(), 1, "expected one consolidated text change");
+        assert_eq!(
+            text_changes.len(),
+            1,
+            "expected one consolidated text change"
+        );
 
         let change = &text_changes[0];
         let start_line = change["start"]["line"].as_u64().expect("start line") as u32;
