@@ -27,6 +27,26 @@ struct ParsedFileContext<'a> {
 }
 
 impl Server {
+    fn checker_options_for_source(source_text: &str) -> tsz::checker::context::CheckerOptions {
+        let strict = source_text
+            .lines()
+            .take(64)
+            .map(str::trim)
+            .any(|line| line.contains("@strict:true") || line.contains("@strict: true"));
+        tsz::checker::context::CheckerOptions {
+            strict,
+            no_implicit_any: strict,
+            no_implicit_returns: false,
+            no_implicit_this: strict,
+            strict_null_checks: strict,
+            strict_function_types: strict,
+            strict_property_initialization: strict,
+            use_unknown_in_catch_variables: strict,
+            isolated_modules: false,
+            ..Default::default()
+        }
+    }
+
     fn is_js_identifier_char(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
@@ -458,7 +478,7 @@ impl Server {
             return Some(hover);
         }
 
-        let compiler_options = tsz::checker::context::CheckerOptions::default();
+        let compiler_options = Self::checker_options_for_source(source_text);
         let mut checker = if let Some(cache) = type_cache.take() {
             tsz::checker::state::CheckerState::with_cache(
                 arena,
@@ -713,6 +733,424 @@ impl Server {
             documentation: String::new(),
             tags: Vec::new(),
         })
+    }
+
+    fn split_top_level_arrow_signature(sig: &str) -> Option<(&str, &str)> {
+        let bytes = sig.as_bytes();
+        let mut depth = 0i32;
+        let mut i = 0usize;
+        let mut arrow_pos = None;
+        while i + 1 < bytes.len() {
+            match bytes[i] {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                b'=' if bytes[i + 1] == b'>' && depth == 0 => {
+                    arrow_pos = Some(i);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let i = arrow_pos?;
+        let params = sig[..i].trim();
+        let ret = sig[i + 2..].trim();
+        Some((params, ret))
+    }
+
+    fn arrow_function_display_string(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        let (params, ret) = Self::split_top_level_arrow_signature(trimmed)?;
+        if !(params.starts_with('(') && params.ends_with(')')) || ret.is_empty() {
+            return None;
+        }
+        Some(format!("function{params}: {ret}"))
+    }
+
+    fn quickinfo_from_arrow_token(
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        line_map: &LineMap,
+        source_text: &str,
+        root: tsz::parser::NodeIndex,
+        provider: &HoverProvider<'_>,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+        interner: &TypeInterner,
+        file: &str,
+        probe_offset: u32,
+    ) -> Option<HoverInfo> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len < 2 || probe_offset >= len {
+            return None;
+        }
+
+        let search_start = probe_offset.saturating_sub(2);
+        let search_end = (probe_offset + 2).min(len.saturating_sub(1));
+        let mut arrow_start = None;
+        let mut cursor = search_start;
+        while cursor < search_end {
+            if bytes[cursor as usize] == b'=' && bytes[(cursor + 1) as usize] == b'>' {
+                arrow_start = Some(cursor);
+                break;
+            }
+            cursor += 1;
+        }
+        let Some(arrow_start) = arrow_start else {
+            return None;
+        };
+
+        let mut current =
+            tsz::lsp::utils::find_node_at_or_before_offset(arena, arrow_start + 1, source_text);
+        if !current.is_some() {
+            return None;
+        }
+
+        let arrow_fn = loop {
+            let node = arena.get(current)?;
+            if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+                break current;
+            }
+            let parent = arena.get_extended(current)?.parent;
+            if !parent.is_some() {
+                return None;
+            }
+            current = parent;
+        };
+        let arrow_fn_node = arena.get(arrow_fn)?;
+        if arrow_start < arrow_fn_node.pos || arrow_start + 1 > arrow_fn_node.end {
+            return None;
+        }
+
+        let compiler_options = tsz::checker::context::CheckerOptions::default();
+        let mut checker = if let Some(cache) = type_cache.take() {
+            tsz::checker::state::CheckerState::with_cache(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            tsz::checker::state::CheckerState::new(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                compiler_options,
+            )
+        };
+        let arrow_type = checker.get_type_of_node(arrow_fn);
+        let type_text = checker.format_type(arrow_type);
+        *type_cache = Some(checker.extract_cache());
+
+        let return_type = Self::arrow_return_type_from_type_text(&type_text)?;
+        let display_string = Self::contextual_arrow_display_string(
+            arena,
+            line_map,
+            source_text,
+            root,
+            provider,
+            type_cache,
+            arrow_fn,
+            arrow_start,
+            &return_type,
+        )
+        .or_else(|| Self::arrow_function_display_string(&type_text))?;
+        let start = line_map.offset_to_position(arrow_start, source_text);
+        let end = line_map.offset_to_position((arrow_start + 2).min(len), source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(tsz::lsp::position::Range::new(start, end)),
+            display_string,
+            kind: "function".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
+    fn parse_hover_parameter_type(display: &str, param_name: &str) -> Option<String> {
+        let prefix = format!("(parameter) {param_name}: ");
+        display
+            .strip_prefix(&prefix)
+            .map(str::trim)
+            .filter(|ty| !ty.is_empty())
+            .map(str::to_string)
+    }
+
+    fn normalize_union_type_text(ty: &str) -> String {
+        let mut parts: Vec<String> = ty
+            .split('|')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_string)
+            .collect();
+        if parts.len() <= 1 {
+            return ty.trim().to_string();
+        }
+        parts.sort_by_key(|part| match part.as_str() {
+            "string" => 0u8,
+            "number" => 1u8,
+            "boolean" => 2u8,
+            "bigint" => 3u8,
+            "symbol" => 4u8,
+            "undefined" => 5u8,
+            "null" => 6u8,
+            _ => 7u8,
+        });
+        parts.dedup();
+        parts.join(" | ")
+    }
+
+    fn normalize_parameter_type_text(ty: &str) -> String {
+        let head = ty.split(") =>").next().unwrap_or(ty).trim();
+        Self::normalize_union_type_text(head)
+    }
+
+    fn normalize_quickinfo_display_string(display: &str) -> String {
+        let trimmed = display.trim();
+        if !trimmed.starts_with("function(") {
+            return trimmed.to_string();
+        }
+        let Some(ret_sep) = trimmed.rfind("): ") else {
+            return trimmed.to_string();
+        };
+        let ret = trimmed[ret_sep + 3..].trim();
+        let params_with_name = &trimmed["function(".len()..ret_sep];
+        let params_clean = params_with_name
+            .split(") =>")
+            .next()
+            .unwrap_or(params_with_name)
+            .trim();
+        let Some((name, ty)) = params_clean.split_once(':') else {
+            return trimmed.to_string();
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return trimmed.to_string();
+        }
+        let ty = Self::normalize_parameter_type_text(ty);
+        format!("function({name}: {ty}): {ret}")
+    }
+
+    fn strip_outer_parens(mut text: &str) -> &str {
+        loop {
+            let trimmed = text.trim();
+            if !(trimmed.starts_with('(') && trimmed.ends_with(')')) {
+                return trimmed;
+            }
+            let bytes = trimmed.as_bytes();
+            let mut depth = 0i32;
+            let mut balanced = true;
+            for (i, b) in bytes.iter().enumerate() {
+                match *b {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 && i + 1 < bytes.len() {
+                            balanced = false;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !balanced || depth != 0 {
+                return trimmed;
+            }
+            text = &trimmed[1..trimmed.len() - 1];
+        }
+    }
+
+    fn split_top_level_bytes(text: &str, sep: u8) -> Vec<String> {
+        let mut parts = Vec::new();
+        let bytes = text.as_bytes();
+        let mut start = 0usize;
+        let mut depth = 0i32;
+        for (i, b) in bytes.iter().enumerate() {
+            match *b {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                c if c == sep && depth == 0 => {
+                    parts.push(text[start..i].trim().to_string());
+                    start = i + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(text[start..].trim().to_string());
+        parts
+    }
+
+    fn extract_first_param_type_from_fn_type(type_text: &str) -> Option<(String, bool)> {
+        let trimmed = Self::strip_outer_parens(type_text);
+        let open = trimmed.find('(')?;
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, ch) in trimmed[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        let params = trimmed[open + 1..close].trim();
+        if params.is_empty() {
+            return None;
+        }
+        let first_param = Self::split_top_level_bytes(params, b',')
+            .into_iter()
+            .next()?;
+        let (name_part, type_part) = first_param.split_once(':')?;
+        let is_optional = name_part.trim().ends_with('?');
+        let ty = type_part.trim();
+        (!ty.is_empty()).then(|| (ty.to_string(), is_optional))
+    }
+
+    fn contextual_first_parameter_type_from_text(type_text: &str) -> Option<String> {
+        let type_text = type_text.trim();
+        if type_text.is_empty() {
+            return None;
+        }
+        let mut union_parts = Vec::new();
+        for part in Self::split_top_level_bytes(type_text, b'&') {
+            let Some((ty, optional)) = Self::extract_first_param_type_from_fn_type(&part) else {
+                continue;
+            };
+            if !union_parts.iter().any(|existing| existing == &ty) {
+                union_parts.push(ty);
+            }
+            if optional && !union_parts.iter().any(|existing| existing == "undefined") {
+                union_parts.push("undefined".to_string());
+            }
+        }
+        if union_parts.is_empty() {
+            return None;
+        }
+        Some(Self::normalize_union_type_text(&union_parts.join(" | ")))
+    }
+
+    fn contextual_first_parameter_type_from_assignment(
+        source_text: &str,
+        arrow_start: u32,
+    ) -> Option<String> {
+        let before = source_text.get(..arrow_start as usize)?;
+        let bytes = before.as_bytes();
+        let mut depth = 0i32;
+        let mut top_level_eq = None;
+        let mut top_level_colon = None;
+        for (i, b) in bytes.iter().enumerate() {
+            match *b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b'=' if depth == 0 => {
+                    let next = bytes.get(i + 1).copied();
+                    if next != Some(b'>') {
+                        top_level_eq = Some(i);
+                    }
+                }
+                b':' if depth == 0 => top_level_colon = Some(i),
+                _ => {}
+            }
+        }
+        let eq = top_level_eq?;
+        let before_eq = &before[..eq];
+        let colon = top_level_colon?;
+        let type_text = before_eq.get(colon + 1..)?.trim();
+        Self::contextual_first_parameter_type_from_text(type_text)
+    }
+
+    fn contextual_first_parameter_type_from_var_annotation(
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        mut node_idx: tsz::parser::NodeIndex,
+    ) -> Option<String> {
+        let var_decl_idx = loop {
+            let parent = arena.get_extended(node_idx)?.parent;
+            if !parent.is_some() {
+                return None;
+            }
+            let parent_node = arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                break parent;
+            }
+            node_idx = parent;
+        };
+        let var_decl_node = arena.get(var_decl_idx)?;
+        let var_decl = arena.get_variable_declaration(var_decl_node)?;
+        if !var_decl.type_annotation.is_some() {
+            return None;
+        }
+        let type_node = arena.get(var_decl.type_annotation)?;
+        let type_text = source_text.get(type_node.pos as usize..type_node.end as usize)?;
+        Self::contextual_first_parameter_type_from_text(type_text)
+    }
+
+    fn arrow_return_type_from_type_text(type_text: &str) -> Option<String> {
+        let ret = type_text.rsplit("=>").next()?.trim();
+        let ret = ret.trim_end_matches(')').trim();
+        (!ret.is_empty()).then(|| ret.to_string())
+    }
+
+    fn contextual_arrow_display_string(
+        arena: &tsz::parser::node::NodeArena,
+        line_map: &LineMap,
+        source_text: &str,
+        root: tsz::parser::NodeIndex,
+        provider: &HoverProvider<'_>,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+        arrow_fn: tsz::parser::NodeIndex,
+        arrow_start: u32,
+        return_type: &str,
+    ) -> Option<String> {
+        let arrow_node = arena.get(arrow_fn)?;
+        let arrow = arena.get_function(arrow_node)?;
+        let mut params = Vec::new();
+        let contextual_first_param =
+            Self::contextual_first_parameter_type_from_var_annotation(arena, source_text, arrow_fn)
+                .or_else(|| {
+                    Self::contextual_first_parameter_type_from_assignment(source_text, arrow_start)
+                });
+
+        if arrow.parameters.nodes.len() == 1
+            && let Some(contextual) = contextual_first_param.as_ref()
+            && let Some(param_idx) = arrow.parameters.nodes.first()
+            && let Some(param_node) = arena.get(*param_idx)
+            && let Some(param) = arena.get_parameter(param_node)
+            && let Some(name) = arena.get_identifier_text(param.name)
+        {
+            return Some(format!("function({name}: {contextual}): {return_type}"));
+        }
+
+        for (param_position, param_idx) in arrow.parameters.nodes.iter().enumerate() {
+            let param_node = arena.get(*param_idx)?;
+            let param = arena.get_parameter(param_node)?;
+            let name_node = arena.get(param.name)?;
+            let name = arena.get_identifier_text(param.name)?.to_string();
+            let pos = line_map.offset_to_position(name_node.pos, source_text);
+            let hover = provider.get_hover(root, pos, type_cache)?;
+            let mut ty =
+                Self::normalize_parameter_type_text(&Self::parse_hover_parameter_type(
+                    &hover.display_string,
+                    &name,
+                )?);
+            if ty == "any" && param_position == 0
+                && let Some(contextual) = contextual_first_param.as_ref()
+            {
+                ty = contextual.clone();
+            }
+            params.push(format!("{name}: {ty}"));
+        }
+
+        Some(format!("function({}): {}", params.join(", "), return_type))
     }
 
     fn extract_alias_module_name(display_string: &str) -> Option<String> {
@@ -1188,6 +1626,37 @@ impl Server {
                     }
                 }
 
+                let mut arrow_probes = [base_offset; 7];
+                let mut probe_count = 0usize;
+                for delta in [0i32, -1, 1, -2, 2, -3, 3] {
+                    let candidate = if delta < 0 {
+                        base_offset.saturating_sub((-delta) as u32)
+                    } else {
+                        base_offset.saturating_add(delta as u32)
+                    };
+                    if candidate < len {
+                        arrow_probes[probe_count] = candidate;
+                        probe_count += 1;
+                    }
+                }
+                for probe in arrow_probes.into_iter().take(probe_count) {
+                    if let Some(arrow_hover) = Self::quickinfo_from_arrow_token(
+                        &arena,
+                        &binder,
+                        &line_map,
+                        &source_text,
+                        root,
+                        &provider,
+                        &mut type_cache,
+                        &interner,
+                        &file,
+                        probe,
+                    ) {
+                        info = Some(arrow_hover);
+                        break;
+                    }
+                }
+
                 if info.is_none()
                     && let Some(member_hover) = Self::quickinfo_member_access_declaration_hover(
                         &arena,
@@ -1245,7 +1714,7 @@ impl Server {
 
             // Use structured fields from HoverInfo when available,
             // falling back to parsing from markdown contents
-            let display_string = if !info.display_string.is_empty() {
+            let mut display_string = if !info.display_string.is_empty() {
                 info.display_string.clone()
             } else {
                 info.contents
@@ -1259,6 +1728,7 @@ impl Server {
                     })
                     .unwrap_or_default()
             };
+            display_string = Self::normalize_quickinfo_display_string(&display_string);
 
             let documentation = if !info.documentation.is_empty() {
                 info.documentation.clone()
