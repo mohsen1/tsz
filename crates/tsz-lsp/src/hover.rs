@@ -127,6 +127,11 @@ impl<'a> HoverProvider<'a> {
         let symbol_id = match symbol_id {
             Some(symbol_id) => symbol_id,
             None => {
+                if let Some(contextual_property_hover) =
+                    self.hover_for_contextual_object_property(node_idx, type_cache)
+                {
+                    return Some(contextual_property_hover);
+                }
                 if let Some(class_hover) = self.hover_for_class_expression_keyword(node_idx) {
                     return Some(class_hover);
                 }
@@ -260,6 +265,137 @@ impl<'a> HoverProvider<'a> {
             documentation: String::new(),
             tags: Vec::new(),
         })
+    }
+
+    fn hover_for_contextual_object_property(
+        &self,
+        node_idx: NodeIndex,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<HoverInfo> {
+        use tsz_parser::syntax_kind_ext;
+
+        let node = self.arena.get(node_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let prop_assign_idx = self.arena.get_extended(node_idx)?.parent;
+        let prop_assign_node = self.arena.get(prop_assign_idx)?;
+        if prop_assign_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+            return None;
+        }
+        let prop_assign = self.arena.get_property_assignment(prop_assign_node)?;
+        if prop_assign.name != node_idx || !prop_assign.initializer.is_some() {
+            return None;
+        }
+
+        let object_literal_idx = self.arena.get_extended(prop_assign_idx)?.parent;
+        let object_literal = self.arena.get(object_literal_idx)?;
+        if object_literal.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let contextual_type_idx =
+            self.contextual_type_for_object_literal(object_literal_idx, prop_assign_idx)?;
+        let prop_name = self
+            .arena
+            .get_identifier_text(prop_assign.name)
+            .map(std::string::ToString::to_string)?;
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = if let Some(cache) = type_cache.take() {
+            CheckerState::with_cache(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            )
+        };
+
+        let container_type_id = checker.get_type_of_node(contextual_type_idx);
+        let value_type_id = checker.get_type_of_node(prop_assign.initializer);
+        let container_type = checker.format_type(container_type_id);
+        let value_type = checker.format_type(value_type_id);
+        *type_cache = Some(checker.extract_cache());
+
+        if container_type.is_empty() || value_type.is_empty() {
+            return None;
+        }
+
+        let display_string = format!("(property) {container_type}.{prop_name}: {value_type}");
+        let start = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(Range::new(start, end)),
+            display_string,
+            kind: "property".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
+    fn contextual_type_for_object_literal(
+        &self,
+        object_literal_idx: NodeIndex,
+        property_assignment_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        let parent_idx = self.arena.get_extended(object_literal_idx)?.parent;
+        let parent = self.arena.get(parent_idx)?;
+
+        if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.arena.get_variable_declaration(parent)?;
+            if decl.initializer == object_literal_idx && decl.type_annotation.is_some() {
+                return Some(decl.type_annotation);
+            }
+        }
+
+        if parent.kind == syntax_kind_ext::TYPE_ASSERTION
+            || parent.kind == syntax_kind_ext::AS_EXPRESSION
+            || parent.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.arena.get_type_assertion(parent)?;
+            if assertion.expression == object_literal_idx {
+                return Some(assertion.type_node);
+            }
+        }
+
+        if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && parent_idx == property_assignment_idx
+            && let Some(grand_parent_idx) = self.arena.get_extended(parent_idx).map(|e| e.parent)
+            && grand_parent_idx.is_some()
+        {
+            let grand_parent = self.arena.get(grand_parent_idx)?;
+            if grand_parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return self.contextual_type_for_object_literal(grand_parent_idx, parent_idx);
+            }
+        }
+
+        None
     }
 
     fn remap_import_equals_rhs_to_alias(&self, node_idx: NodeIndex) -> Option<NodeIndex> {

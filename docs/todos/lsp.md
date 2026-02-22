@@ -194,3 +194,17 @@ Investigated but punted:
   Reason: same remaining lib/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion pipeline parity work.
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion list equality despite ordering/surface improvements.
   Reason: remaining mismatch appears in the same global completion table/content parity layer and likely requires broader completion source harmonization rather than another small local sort/symbol-list tweak.
+
+## 2026-02-22 (quick info contextual property-name follow-up)
+
+Completed in this pass:
+- Fixed quick-info fallback for unresolved object-literal property names under contextual typing so marker `28` in `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` now resolves `(property) IBar.foo: IFoo` instead of empty quick info.
+- Added focused hover regression unit test in `crates/tsz-lsp/tests/hover_tests.rs` for contextual object-literal property-name hover synthesis.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure moved to marker `30`: expected `(method) IFoo.f(i: number, s: string): string`, got empty quick info).
+  Reason: requires declaration-site method/member quick-info resolution for contextually typed object-literal members beyond this targeted property-name fallback path.
+- `TypeScript/tests/cases/fourslash/callHierarchyExportDefaultClass.ts`: still creates a local baseline with empty call hierarchy output at `export default class` marker.
+  Reason: needs dedicated anonymous default-class call-hierarchy prepare/incoming/outgoing modeling (constructor/class alias handling) beyond this hover-focused patch.
+- `TypeScript/tests/cases/fourslash/callHierarchyInterfaceMethod.ts`: still creates a local baseline with empty call hierarchy output at interface method declaration marker.
+  Reason: requires interface method-signature call-hierarchy declaration modeling, which is broader than this quick-info fix.
