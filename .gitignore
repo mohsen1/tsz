@@ -122,3 +122,7 @@ session.sh
 # npm packages and editor extensions (assembled by scripts/build-npm-packages.sh)
 npm/
 editors/
+
+# Website build output
+website/dist/
+website/data/

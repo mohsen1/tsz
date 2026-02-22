@@ -1,0 +1,13 @@
+{
+  "name": "tsz-website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs && node serve.mjs"
+  },
+  "dependencies": {
+    "marked": "^15.0.0"
+  }
+}

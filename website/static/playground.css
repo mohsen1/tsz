@@ -1,0 +1,264 @@
+/* ── Playground: full-height IDE layout ── */
+
+/* The playground-page class is on <main class="page-content playground-page"> */
+.page-content.playground-page {
+  max-width: 100%;
+  padding: 0;
+  height: calc(100vh - 3rem); /* viewport minus nav */
+  overflow: hidden;
+}
+
+/* Hide footer on playground */
+.page-content.playground-page + .site-footer { display: none; }
+
+#playground-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── Toolbar ── */
+.playground-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.75rem;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+}
+
+.toolbar-left, .toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.toolbar-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--text);
+  margin-right: 0.25rem;
+}
+
+.playground-toolbar select {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.toolbar-check {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.toolbar-check input {
+  cursor: pointer;
+  accent-color: var(--link);
+}
+
+#playground-status {
+  font-size: 0.8rem;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.status-loading { color: var(--text-tertiary); }
+.status-ready { color: var(--success); }
+.status-checking { color: var(--scanner-color); }
+.status-error { color: var(--solver-color); }
+.status-count {
+  color: var(--text-secondary);
+}
+.status-count .err-count { color: var(--solver-color); font-weight: 600; }
+.status-count .time { color: var(--text-tertiary); }
+
+/* ── Panels ── */
+.playground-panels {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#editor-container {
+  flex: 3;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.playground-divider {
+  width: 1px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.playground-output {
+  flex: 2;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* ── Output Tabs ── */
+.output-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-subtle);
+  min-height: 2rem;
+}
+
+.output-tab {
+  padding: 0 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2rem;
+  transition: color 0.1s;
+}
+
+.output-tab:hover { color: var(--text-secondary); }
+.output-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--link);
+}
+
+.tab-badge {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 8px;
+  background: var(--solver-color);
+  color: #fff;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.tab-badge.zero {
+  background: var(--success);
+}
+
+/* ── Output Panels ── */
+.output-panel {
+  display: none;
+  flex: 1;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+
+.output-panel.active { display: block; }
+
+.diagnostics-empty {
+  color: var(--text-tertiary);
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.diagnostics-ok {
+  color: var(--success);
+  padding: 2rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* ── Diagnostic Items ── */
+.diag-item {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.diag-item:hover { background: var(--bg-subtle); }
+
+.diag-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.diag-code {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.diag-code.error { background: var(--solver-color); color: #fff; }
+.diag-code.warning { background: var(--scanner-color); color: #fff; }
+.diag-code.suggestion { background: var(--link); color: #fff; }
+
+.diag-message {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.diag-location {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  margin-top: 0.15rem;
+}
+
+#js-output-editor {
+  width: 100%;
+  height: 100%;
+}
+
+#js-output-editor .monaco-editor,
+#js-output-editor .monaco-editor .margin,
+#js-output-editor .monaco-editor-background,
+#js-output-editor .monaco-editor .inputarea.ime-input {
+  background-color: var(--bg-code) !important;
+}
+
+.output-panel.active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Fallback ── */
+.fallback-box {
+  padding: 3rem 2rem;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  .playground-panels { flex-direction: column; }
+  #editor-container { flex: 1; min-height: 250px; }
+  .playground-divider { width: 100%; height: 1px; }
+  .playground-output {
+    flex: 1;
+    min-width: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+}
