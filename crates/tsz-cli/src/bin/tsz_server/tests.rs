@@ -746,6 +746,29 @@ fn test_quickinfo_new_expression_uses_constructor_signature() {
 }
 
 #[test]
+fn test_quickinfo_arrow_token_uses_contextual_signature() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "// @strict: true\nconst optionals: ((a?: number) => unknown) & ((b?: string) => unknown) = (\n  arg,\n) => {};\n"
+            .to_string(),
+    );
+    let req = make_request(
+        "quickinfo",
+        // Cursor on `=>` token of the arrow function.
+        serde_json::json!({"file": "/test.ts", "line": 4, "offset": 4}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body["displayString"].as_str().unwrap_or(""),
+        "function(arg: string | number | undefined): void"
+    );
+    assert_eq!(body["kind"].as_str().unwrap_or(""), "function");
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";
