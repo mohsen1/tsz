@@ -258,6 +258,9 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub no_implicit_override: Option<bool>,
+    /// Control what method is used to detect module-format JS files.
+    #[serde(default)]
+    pub module_detection: Option<String>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -787,6 +790,12 @@ pub fn resolve_compiler_options(
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
         resolved.checker.check_js = check_js;
+    }
+
+    if let Some(ref module_detection) = options.module_detection
+        && module_detection.eq_ignore_ascii_case("force")
+    {
+        resolved.printer.module_detection_force = true;
     }
 
     Ok(resolved)
@@ -1728,6 +1737,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_resolve,
             no_unchecked_side_effect_imports,
             no_implicit_override,
+            module_detection,
         }
     )
 }

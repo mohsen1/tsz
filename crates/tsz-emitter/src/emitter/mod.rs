@@ -101,6 +101,8 @@ pub struct PrinterOptions {
     pub legacy_decorators: bool,
     /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
     pub es_module_interop: bool,
+    /// When true, treat all non-declaration files as modules (moduleDetection=force)
+    pub module_detection_force: bool,
 }
 
 impl Default for PrinterOptions {
@@ -119,6 +121,7 @@ impl Default for PrinterOptions {
             use_define_for_class_fields: false,
             legacy_decorators: false,
             es_module_interop: false,
+            module_detection_force: false,
         }
     }
 }
