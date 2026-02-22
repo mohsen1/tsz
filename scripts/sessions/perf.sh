@@ -10,7 +10,11 @@ PHASE 1 — ESTABLISH BASELINES (before any changes)
 
 1) git pull origin main
 2) Read CLAUDE.md
-3) Record baselines — you MUST capture these numbers before changing anything:
+3) Read docs/todos/perf.md — this contains notes from previous sessions
+   (known issues, skipped items, prior investigations). Use it to avoid
+   re-investigating already-known issues and to pick up where the last session
+   left off.
+4) Record baselines — you MUST capture these numbers before changing anything:
 
    a) Run: cargo nextest run --no-fail-fast 2>&1 | tail -5
       Record the total tests passed/failed/skipped.
@@ -21,20 +25,33 @@ PHASE 1 — ESTABLISH BASELINES (before any changes)
    c) Run: ./scripts/bench-vs-tsgo.sh --quick
       Record benchmark ratios.
 
-   Write down these three baselines — you will compare against them later.
+   d) Run: ./scripts/conformance.sh run 2>&1 | grep -ci "timeout"
+      Record the number of timed-out conformance tests.
+
+   Write down these four baselines — you will compare against them later.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 2 — IDENTIFY WORK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-4) Analyze the benchmark output carefully:
+5) Analyze the benchmark output carefully:
 
    PRIORITY 1 — Fix type-check failures first:
    If any benchmark file shows "tsz error" (tsz fails to type-check a file
    that tsgo handles), fix the type-checking bug BEFORE doing any perf work.
    A benchmark we can't even run is worse than a slow benchmark.
 
-   PRIORITY 2 — Optimize slowest benchmarks:
+   PRIORITY 2 — Fix conformance/emit test timeouts:
+   Run: ./scripts/conformance.sh run 2>&1 | grep -i "timeout\|timed out"
+   Run: cargo nextest run -p tsz-emitter --no-fail-fast 2>&1 | grep -i "timeout\|SIGTERM\|time limit"
+   If any conformance or emit tests are timing out, they indicate infinite loops
+   or exponential blowups in the checker/solver/emitter. These are perf bugs:
+   - Profile the specific test input to find the hot loop or recursive blowup
+   - Fix the algorithmic issue (add memoization, limit recursion, break cycles)
+   - Verify the test passes within normal time after the fix
+   A test that hangs forever is as bad as a test that fails.
+
+   PRIORITY 3 — Optimize slowest benchmarks:
    Look at the ratio column. Our target is 2x faster than tsgo on every
    benchmark. Focus on:
    - Any benchmark where tsgo wins (ratio < 1.0) — these are regressions
@@ -45,10 +62,14 @@ PHASE 2 — IDENTIFY WORK
 PHASE 3 — IMPLEMENT (with maintainability constraints)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-5) For type-check failures: diagnose the error, implement the minimal fix
+6) For type-check failures: diagnose the error, implement the minimal fix
    in checker/solver, verify the file now type-checks correctly.
 
-6) For perf work: profile the slow benchmark using flamegraph or sampling
+7) For timeout fixes: reproduce the hang with a minimal input, profile to find
+   the runaway loop or unbounded recursion, and apply a targeted fix (cache,
+   cycle breaker, depth limit). Verify the test completes in <30s after the fix.
+
+8) For perf work: profile the slow benchmark using flamegraph or sampling
    profiler, identify the hottest function, implement a targeted optimization.
 
    MAINTAINABILITY RULES — Every optimization MUST follow these:
@@ -66,7 +87,7 @@ PHASE 3 — IMPLEMENT (with maintainability constraints)
    - Respect the architecture: solver owns type computation, checker is
      thin orchestration. Do NOT move logic across boundaries for speed.
 
-7) Write a unit test:
+9) Write a unit test:
    - For type-check fixes: test the specific Rust logic you changed
    - For perf fixes: test correctness of the optimized path
    - Run: cargo nextest run -p <crate> to verify
@@ -78,16 +99,17 @@ PHASE 4 — VERIFY (mandatory, non-negotiable)
 Before committing, you MUST pass ALL of these checks. If any check fails,
 fix the regression before proceeding. Do NOT commit with regressions.
 
-8) Run: cargo nextest run --no-fail-fast
+10) Run: cargo nextest run --no-fail-fast
    ✓ REQUIRED: Same or more tests passing compared to baseline from step 3a.
    ✗ BLOCKER: If any previously-passing test now fails, fix it before continuing.
 
-9) Run: ./scripts/conformance.sh run 2>&1 | tail -20
+11) Run: ./scripts/conformance.sh run 2>&1 | tail -20
    ✓ REQUIRED: Conformance pass rate must be >= baseline from step 3b.
-   ✗ BLOCKER: If conformance % dropped, your change broke type-checking
-     correctness. Revert or fix before continuing.
+   ✓ REQUIRED: No new timeouts introduced (grep for "timeout" in output).
+   ✗ BLOCKER: If conformance % dropped or new timeouts appeared, your change
+     broke type-checking correctness or introduced a perf regression. Fix first.
 
-10) Re-run: ./scripts/bench-vs-tsgo.sh --quick
+12) Re-run: ./scripts/bench-vs-tsgo.sh --quick
     ✓ REQUIRED: No new "tsz error" entries appeared.
     ✓ REQUIRED: The targeted ratio improved (or at minimum didn't regress).
     ✓ DESIRED: No other benchmark ratio regressed by more than 5%.
@@ -96,7 +118,7 @@ fix the regression before proceeding. Do NOT commit with regressions.
 PHASE 5 — COMMIT & REPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-11) Only after ALL checks in Phase 4 pass:
+13) Only after ALL checks in Phase 4 pass:
     Create ONE small commit. Include in the commit message:
     - What was optimized/fixed and why
     - Before/after benchmark numbers for the targeted benchmark
@@ -104,12 +126,12 @@ PHASE 5 — COMMIT & REPORT
     - Tests: <before> → <after> (should be same or better)
     Then push: git push origin main
 
-12) Append any issues you investigated but punted on (too complex, needs
+14) Append any issues you investigated but punted on (too complex, needs
     architecture work, blocked by another issue, etc.) to
     docs/todos/perf.md — include function/module, current ratio, and a
     one-line reason why you skipped it.
 
-13) git add docs/todos/perf.md (if changed) and amend or create a
+15) git add docs/todos/perf.md (if changed) and amend or create a
     second commit, then push: git push origin main
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -122,6 +144,7 @@ Print a table like this before every commit:
   -------------------|--------------|--------------|--------
   Unit tests         | XXX passed   | XXX passed   | ✓ / ✗
   Conformance        | XX.X%        | XX.X%        | ✓ / ✗
+  Timeouts           | N tests      | N tests      | ✓ / ✗
   Target benchmark   | X.XXx ratio  | X.XXx ratio  | ✓ / ✗
   Other benchmarks   | (no regress) | (no regress) | ✓ / ✗
 

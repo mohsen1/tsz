@@ -9,9 +9,13 @@ find it and fix it. Do not declare "all clear" and stop — dig deeper.
 Steps:
 1) git pull origin main
 2) Read CLAUDE.md (architecture rules and responsibility split)
-3) Check CI via: gh run list --workflow ci.yml --limit 5
+3) Read docs/todos/arch-violations.md — this contains notes from previous
+   sessions (known issues, skipped items, prior investigations). Use it to
+   avoid re-investigating already-known issues and to pick up where the last
+   session left off.
+4) Check CI via: gh run list --workflow ci.yml --limit 5
    - If the latest run is red, fix it first — that's your top priority
-4) Find something to improve. Check these in order and fix the FIRST issue
+5) Find something to improve. Check these in order and fix the FIRST issue
    you find (one fix per session — keep commits small and focused):
 
    a) HARD VIOLATIONS (fix immediately):
@@ -60,12 +64,12 @@ Steps:
       - Fix inconsistent naming patterns within a module
       - Break up functions longer than ~100 lines
 
-5) Implement the fix
-6) Write a unit test if the change alters behavior (not needed for pure
+6) Implement the fix
+7) Write a unit test if the change alters behavior (not needed for pure
    refactors like moving files or removing dead code)
-7) Run cargo nextest run to verify no regressions
-8) Create ONE small, focused commit and push: git push origin main
-9) If you found other issues while investigating, append them to
+8) Run cargo nextest run to verify no regressions
+9) Create ONE small, focused commit and push: git push origin main
+10) If you found other issues while investigating, append them to
    docs/todos/arch-violations.md — include file path, line range, and a
    one-line description. Only update this file if you have NEW issues to
    report (not previously listed ones).
