@@ -779,10 +779,14 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     }
 
     let tslib_file = program.files.iter().find(|file| {
-        Path::new(&file.file_name)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
+        let path = file.file_name.replace('\\', "/");
+        // Match tslib by directory or filename: the package's main declaration
+        // file may be `tslib.d.ts` or `index.d.ts` inside a `tslib/` directory.
+        path.contains("/tslib/")
+            || Path::new(&file.file_name)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
     });
 
     let mut result = Vec::new();

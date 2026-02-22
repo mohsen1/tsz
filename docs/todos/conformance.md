@@ -119,13 +119,19 @@ tests passing (offset 6000 slice: 3665→3684).
 - **nonPrimitiveIndexingWithForInSupressError.ts**: Has additional TS2304 (lib type resolution gap).
 - **keyofDoesntContainSymbols.ts**: Expects TS5102 + TS2345. TS5102 now emitted but TS2345 requires `keyofStringsOnly` semantic behavior changes.
 
-## TS5095 — Option 'bundler' requires compatible module kind (Implemented)
+## TS5095 — Option 'bundler' requires compatible module kind (Implemented, updated)
 
-**Status**: Implemented. +15 tests passing (3843→3858 in first 6000 slice).
+**Status**: Implemented. +15 tests initially (3843→3858), then +4 more from node module fix.
 **Error code:** TS5095 ("Option 'bundler' can only be used when 'module' is set to 'preserve' or to 'es2015' or later.")
 **Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that emits TS5095
 when `moduleResolution: "bundler"` is combined with an incompatible module kind (commonjs, amd,
-umd, system, none, node16, nodenext). Also handles implicit module default from target.
+umd, system, none). Also handles implicit module default from target.
+
+**Update**: Added `node16`, `node18`, `node20`, `nodenext` as valid module kinds for bundler
+resolution (they are ES2015+ compatible). Also added bundler compatibility filtering to
+`filter_incompatible_module_resolution_variants` in the conformance runner to prevent false
+TS5095 from multi-module variant expansion (e.g., `@module: esnext, commonjs, amd` where the
+cache only tests the first value). +4 tests (3935→3939).
 
 ### Remaining TS5095 failures
 - **requireOfJsonFileWithModuleNodeResolutionEmit{None,System,Umd}.ts** (3 tests): Expect both TS5095 AND TS5071 (`--resolveJsonModule` incompatible with none/system/umd). TS5071 not yet implemented.
