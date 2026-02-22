@@ -116,41 +116,42 @@ To ensure absolute `tsc` compatibility and performance regressions aren't introd
 
 ## 8. Gradual Implementation Strategy (The Strangler Fig)
 
-A "big bang" rewrite of the checker and binder would stall feature development and destabilize the project. Instead, we will transition to the Global Query Graph through a sequence of non-breaking, incremental phases. The test suite must remain green at every step.
+A "big bang" rewrite of the checker and binder would stall feature development and destabilize the project. Instead, we will transition to the Global Query Graph through a sequence of non-breaking, incremental phases. 
+
+**Critical Insight:** We *cannot* implement AST Eviction until the Checker is fully demand-driven (pull-model). A traditional push-model checker walks the entire AST at once; if we evict ASTs underneath it, it will thrash the disk continuously. 
 
 ### Phase A: Symbol Location Decoupling (Non-Breaking)
-**Goal:** Break the strict `Symbol` -> `NodeIndex` memory dependency without dropping ASTs yet.
-1. Add `file_id` and `span` (start/end bytes) to the `Symbol` struct alongside the existing `declarations: Vec<NodeIndex>`.
-2. Update the `Binder` to populate these new fields during `parse_and_bind_parallel`.
-3. Introduce a `NodeLocator` utility in the `Checker`. Update the checker's resolution logic to look up nodes via `(FileId, Span) -> NodeIndex` instead of reading `Symbol.declarations` directly.
-4. Once all code paths use the `NodeLocator`, safely remove `declarations: Vec<NodeIndex>` from `Symbol`.
-*Result: Symbols are now memory-independent. No performance change, but structural readiness is achieved.*
+**Goal:** Break the strict `Symbol` -> `NodeIndex` memory dependency.
+1. Add `file_id` and `span` (start/end bytes) to the `Symbol` struct alongside `declarations`.
+2. Update the `Binder` to populate these fields.
+3. Introduce a `NodeLocator` utility. *Note: Since re-parsing means `NodeIndex`es shift, `NodeLocator` must use a fast binary-search over AST node spans to map `(FileId, Span) -> NodeIndex` in `O(log N)` time.*
+4. Safely remove `declarations: Vec<NodeIndex>` from `Symbol`.
 
-### Phase B: Concurrent Global Indexing (CPU Optimization)
-**Goal:** Eliminate the Amdahl's Law bottleneck in `MergedProgram`.
-1. Replace `merge_bind_results` with a concurrent merging strategy.
-2. Instead of sequential merging, worker threads write directly to a global `DashMap<Atom, SymbolId>` (or `DefId`) during the bind phase.
-3. Keep the `Arc<NodeArena>`s alive for now (do not evict yet).
-*Result: Immediate reduction in wall-clock time for large monorepos due to concurrent merging. Memory usage remains high.*
-
-### Phase C: The AST Eviction Pool (Memory Optimization)
-**Goal:** Implement the Two-Tier Memory Model.
-1. Wrap the `Vec<Arc<NodeArena>>` (currently in `MergedProgram`) in an LRU Cache managed by the `QueryDatabase`.
-2. Hook the cache up to an RSS monitor (or set a hard limit like `max_arenas = Num_Cores * 2`).
-3. Implement the `Hydrate` logic: if the `NodeLocator` requests a file that was evicted, the Virtual File System re-reads the file, re-parses it, and returns the new `NodeArena`.
-*Result: Peak RSS drops massively. The compiler can now theoretically compile infinitely large monorepos without OOM crashes.*
-
-### Phase D: Demand-Driven Cycle Resolution (Correctness)
-**Goal:** Allow `tsz` to handle circular dependencies without static topological sorting.
-1. Shift the `Checker` from a push-model to a pull-model. When evaluating an imported symbol, use `QueryDatabase::evaluate_type(DefId)`.
+### Phase B: Demand-Driven Cycle Resolution (The Pull Model)
+**Goal:** Shift the Checker from walking ASTs to querying types, allowing cycle tolerance.
+1. Shift the `Checker` to a strict pull-model. When evaluating an imported symbol, use `QueryDatabase::evaluate_type(DefId)`.
 2. Implement the active-query stack in the `QueryDatabase`.
-3. Add the Fixpoint Iteration fallback: when a thread detects it is querying a `DefId` already in its active stack, it traps the cycle, isolates the SCC, and resolves it sequentially.
-*Result: Cross-package cycles no longer crash the compiler. Synthetic cycle tests turn green.*
+3. Add the Fixpoint Iteration fallback: when a thread detects a re-entrant query in its active stack, it traps the cycle, isolates the SCC, and resolves it sequentially.
+*Result: The checker is now lazy. It only reads AST nodes when a specific type is requested.*
+
+### Phase C: Map-Reduce Global Indexing (Deterministic Concurrency)
+**Goal:** Eliminate the Amdahl's Law bottleneck in `MergedProgram` without breaking TypeScript's declaration merging rules.
+1. Replace `merge_bind_results` with a concurrent Map-Reduce strategy.
+2. **Map:** Worker threads concurrently build file-local "Skeletons" (ambient declarations and exports).
+3. **Reduce:** A fast sequential pass merges these Skeletons globally. *Note: We cannot use a naive concurrent `DashMap` here because TS declaration merging (like function overloads) is strictly dependent on file inclusion order. The sequential reduce guarantees determinism.*
+*Result: Massive wall-clock reduction for large monorepos. Memory remains high.*
+
+### Phase D: The AST Eviction Pool & Pinned Libs (Memory Optimization)
+**Goal:** Implement the Two-Tier Memory Model.
+1. Wrap the `Vec<Arc<NodeArena>>` in an LRU Cache managed by the `QueryDatabase`.
+2. **Crucial:** Pin `lib.d.ts` (e.g., `Array`, `Promise`) arenas so they are *never* evicted. Evicting standard libraries would tank performance.
+3. Set an RSS high-water mark. When crossed, evict the oldest user-code `NodeArena`s.
+4. Implement the VFS `Hydrate` logic: if the `NodeLocator` requests a file that was evicted, re-read and re-parse it on-demand.
+*Result: Peak RSS drops massively. The compiler avoids OOM crashes on massive monorepos.*
 
 ### Phase E: CLI Control Flow Inversion (The Final Cutover)
 **Goal:** Delete the old `tsc --build` emulation loop.
-1. Add the `--global-graph` flag to the CLI.
-2. When active, bypass `tsconfig.json` reference sorting. Pass all files directly to the `QueryDatabase`.
-3. Implement the Deterministic Diagnostics Buffer.
-4. Once validated against large real-world repos (e.g., Azure SDK), make `--global-graph` the default behavior and deprecate sequential project builds.
-*Result: Zero-config monorepo parallelism is achieved.*
+1. Introduce a hidden `--global-graph` flag to the CLI for parallel testing in CI.
+2. Bypass `tsconfig.json` reference sorting. Pass all files directly to the `QueryDatabase`.
+3. Implement the Deterministic Diagnostics Buffer (sort by file/line before printing).
+4. Deprecate sequential project builds once telemetry proves stability on large repositories.
