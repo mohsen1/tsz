@@ -50,7 +50,7 @@
 
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
-use crate::index_signatures::IndexKind;
+use crate::objects::index_signatures::IndexKind;
 use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{
     CallSignature, IntrinsicKind, LiteralValue, ParamInfo, TypeData, TypeId, TypeParamInfo,

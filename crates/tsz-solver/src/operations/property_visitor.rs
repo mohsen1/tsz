@@ -117,7 +117,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
-        use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
@@ -189,7 +189,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
-        use crate::index_signatures::IndexSignatureResolver;
+        use crate::objects::index_signatures::IndexSignatureResolver;
 
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
@@ -344,7 +344,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
-        use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
@@ -417,7 +417,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
-        use crate::index_signatures::IndexSignatureResolver;
+        use crate::objects::index_signatures::IndexSignatureResolver;
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
@@ -492,7 +492,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
-        use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
         let members = self.interner().type_list(crate::types::TypeListId(list_id));
 

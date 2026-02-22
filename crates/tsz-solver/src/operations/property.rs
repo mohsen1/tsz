@@ -351,7 +351,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Check for index signatures using IndexSignatureResolver
                 // Some Object types may have index signatures that aren't in ObjectWithIndex
-                use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+                use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
                 let resolver = IndexSignatureResolver::new(self.interner());
 
                 // Try string index signature first (most common)
@@ -410,7 +410,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
 
                 // Check numeric index signature if property name looks numeric
-                use crate::index_signatures::IndexSignatureResolver;
+                use crate::objects::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(ref idx) = shape.number_index
@@ -515,7 +515,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     // Before giving up, check if any member has an index signature
                     // For intersections, if ANY member has an index signature, the property access should succeed
-                    use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+                    use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
                     let resolver = IndexSignatureResolver::new(self.interner());
 
                     // Check string index signature on all members

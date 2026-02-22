@@ -128,7 +128,7 @@ pub fn is_readonly_index_signature(
     wants_string: bool,
     wants_number: bool,
 ) -> bool {
-    use crate::index_signatures::{IndexKind, IndexSignatureResolver};
+    use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
     // Handle Union types - index signature is readonly if ANY member has it readonly
     if let Some(TypeData::Union(types)) = interner.lookup(type_id) {
