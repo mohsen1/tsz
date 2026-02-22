@@ -3580,12 +3580,14 @@ fn package_import_specifiers_for_target(
             let resolved_stripped =
                 path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
 
-            let capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized)
-                .or_else(|| {
-                    additional_targets.iter().find_map(|candidate| {
-                        wildcard_capture_case_insensitive(&resolved_stripped, candidate)
-                    })
-                });
+            let direct_capture =
+                wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized);
+            let additional_capture = additional_targets.iter().find_map(|candidate| {
+                wildcard_capture_case_insensitive(&resolved_stripped, candidate)
+            });
+            let matched_via_additional_target =
+                direct_capture.is_none() && additional_capture.is_some();
+            let capture = direct_capture.or(additional_capture);
             let Some(capture) = capture else {
                 continue;
             };
@@ -3600,6 +3602,7 @@ fn package_import_specifiers_for_target(
                 && !has_source_extension(&target_pattern)
             {
                 let prefer_ts_extension = allow_importing_ts_extensions
+                    && !matched_via_additional_target
                     || specifier_pattern.contains('/')
                     || (package_type_module && resolved_stripped.contains("/src/"));
                 if prefer_ts_extension {
@@ -3913,6 +3916,27 @@ mod tests {
                 .path_mapping_specifiers_from_files("/src/dirA/thing1A.ts", "/src/dirB/index.ts"),
             vec!["~/dirB".to_string()]
         );
+    }
+
+    #[test]
+    fn package_imports_from_outdir_mapping_prefer_js_even_with_allow_ts_extensions() {
+        let specs = package_import_specifiers_for_target(
+            r##"{
+  "type": "module",
+  "imports": {
+    "#*": {
+      "types": "./types/*",
+      "default": "./dist/*"
+    }
+  }
+}"##,
+            "/",
+            "/src/add.ts",
+            true,
+            &["/dist/add".to_string(), "/types/add".to_string()],
+        );
+
+        assert_eq!(specs, vec!["#add.js".to_string()]);
     }
 
     #[test]
