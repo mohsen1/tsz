@@ -209,6 +209,45 @@ fn test_compiler_options_for_inferred_projects_accepts_direct_options_shape() {
 }
 
 #[test]
+fn test_apply_code_action_command_returns_single_result_shape() {
+    let mut server = make_server();
+    let req = make_request(
+        "applyCodeActionCommand",
+        serde_json::json!({
+            "command": {
+                "type": "noop"
+            }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    assert_eq!(
+        resp.body,
+        Some(serde_json::json!({
+            "successMessage": ""
+        }))
+    );
+}
+
+#[test]
+fn test_apply_code_action_command_returns_array_result_shape() {
+    let mut server = make_server();
+    let req = make_request(
+        "applyCodeActionCommand",
+        serde_json::json!({
+            "command": [
+                {
+                    "type": "noop"
+                }
+            ]
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    assert_eq!(resp.body, Some(serde_json::json!([])));
+}
+
+#[test]
 fn test_new_commands_are_recognized() {
     let mut server = make_server();
     let commands = vec![
@@ -219,6 +258,7 @@ fn test_new_commands_are_recognized() {
         "signatureHelp",
         "completionEntryDetails",
         "getSupportedCodeFixes",
+        "applyCodeActionCommand",
         "getApplicableRefactors",
         "getEditsForRefactor",
         "encodedSemanticClassifications-full",

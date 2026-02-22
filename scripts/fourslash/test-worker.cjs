@@ -574,6 +574,17 @@ function patchSessionClient(SessionClient, ts) {
         };
     };
 
+    // applyCodeActionCommand - route to server protocol
+    proto.applyCodeActionCommand = function(action) {
+        const args = { command: action };
+        const request = this.processRequest("applyCodeActionCommand", args);
+        const response = this.processResponse(request);
+        if (Array.isArray(action)) {
+            return Promise.resolve(Array.isArray(response.body) ? response.body : []);
+        }
+        return Promise.resolve(response.body || { successMessage: "" });
+    };
+
     // mapCode - route to server protocol
     proto.mapCode = function(fileName, contents, focusLocations, formatOptions, preferences) {
         const args = {

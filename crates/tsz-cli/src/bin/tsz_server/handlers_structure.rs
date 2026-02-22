@@ -80,6 +80,25 @@ impl Server {
         self.stub_response(seq, request, Some(serde_json::json!(codes)))
     }
 
+    pub(crate) fn handle_apply_code_action_command(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let body = if request
+            .arguments
+            .get("command")
+            .is_some_and(serde_json::Value::is_array)
+        {
+            serde_json::json!([])
+        } else {
+            serde_json::json!({
+                "successMessage": ""
+            })
+        };
+        self.stub_response(seq, request, Some(body))
+    }
+
     pub(crate) fn handle_encoded_semantic_classifications_full(
         &mut self,
         seq: u64,
