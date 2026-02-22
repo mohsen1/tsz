@@ -33,6 +33,7 @@
 //! - `property_visitor`: `TypeVisitor` impl for `PropertyAccessEvaluator`
 //! - `compound_assignment`: Compound assignment operator classification and fallback types
 //! - `expression_ops`: Expression type computation (conditional, template, best common type)
+//! - `widening`: Type widening (literal → primitive) and `as const` assertion
 
 pub mod binary_ops;
 mod call_args;
@@ -46,11 +47,13 @@ pub mod iterators;
 pub mod property;
 mod property_readonly;
 mod property_visitor;
+pub mod widening;
 
 // Re-exports from submodules
 pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 pub use compound_assignment::*;
 pub use expression_ops::*;
+pub use widening::*;
 
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};

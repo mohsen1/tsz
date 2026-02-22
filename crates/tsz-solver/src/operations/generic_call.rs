@@ -698,7 +698,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let inferred_ty = if tp.is_const {
             arg_ty
         } else {
-            crate::widening::widen_type(self.interner.as_type_database(), arg_ty)
+            crate::operations::widening::widen_type(self.interner.as_type_database(), arg_ty)
         };
         if let Some(constraint) = tp.constraint
             && !self.checker.is_assignable_to(inferred_ty, constraint)

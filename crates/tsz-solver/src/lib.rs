@@ -41,9 +41,10 @@ pub mod unsoundness_audit;
 pub mod utils;
 pub mod visitor;
 mod visitors;
-pub mod widening;
+// widening: moved into operations/widening.rs
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
+pub use operations::widening;
 pub use visitors::visitor::{
     ConstAssertionVisitor, ObjectTypeKind, RecursiveTypeCollector, TypeCollectorVisitor, TypeKind,
     TypeKindVisitor, TypePredicateVisitor, TypeVisitor, application_id, array_element_type,
