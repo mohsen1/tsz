@@ -243,21 +243,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let s_members = self.interner.type_list(s_members);
                 let t_members_list = self.interner.type_list(t_members);
 
-                // Collect fixed target members (those without placeholders)
-                let mut member_visited = FxHashSet::default();
-                let fixed_targets: Vec<TypeId> = t_members_list
-                    .iter()
-                    .filter(|&&m| {
+                // Collect fixed target members (those without placeholders) once per
+                // target union for this inference pass.
+                let fixed_targets = if let Some(cached) = self
+                    .constraint_fixed_union_members
+                    .borrow()
+                    .get(&target)
+                    .cloned()
+                {
+                    cached
+                } else {
+                    let mut member_visited = FxHashSet::default();
+                    let mut computed = FxHashSet::default();
+                    for &member in t_members_list.iter() {
                         member_visited.clear();
-                        !self.type_contains_placeholder(m, var_map, &mut member_visited)
-                    })
-                    .copied()
-                    .collect();
+                        if !self.type_contains_placeholder(member, var_map, &mut member_visited) {
+                            computed.insert(member);
+                        }
+                    }
+                    self.constraint_fixed_union_members
+                        .borrow_mut()
+                        .insert(target, computed.clone());
+                    computed
+                };
 
                 for &member in s_members.iter() {
                     // Skip source members that directly match a fixed target member
-                    let matches_fixed = fixed_targets.contains(&member);
-                    if !matches_fixed {
+                    if !fixed_targets.contains(&member) {
                         self.constrain_types(ctx, var_map, member, target, priority);
                     }
                 }
