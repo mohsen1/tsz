@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
     pub fn is_class_constructor_type(&self, type_id: TypeId) -> bool {
         // A class constructor is a Callable with construct signatures but no call signatures
         self.has_construct_sig(type_id)
-            && !crate::query_boundaries::callable_type::has_call_signatures(self.ctx.types, type_id)
+            && !crate::query_boundaries::class_type::has_call_signatures(self.ctx.types, type_id)
     }
 
     /// Check if two constructor types have compatible accessibility.
