@@ -299,7 +299,11 @@ impl Server {
                         serde_json::json!(kind_modifiers),
                     );
                     detail.insert("displayParts".to_string(), display_parts);
-                    if let Some(documentation) = documentation {
+                    let is_auto_import_item =
+                        item.is_some_and(|i| i.has_action && i.source.as_ref().is_some());
+                    if let Some(documentation) = documentation
+                        && !is_auto_import_item
+                    {
                         detail.insert("documentation".to_string(), documentation);
                     }
                     if let Some(source) = item.and_then(|i| i.source.as_ref()) {
@@ -335,7 +339,16 @@ impl Server {
                         let description = item
                             .source
                             .as_deref()
-                            .map(|source| format!("Add import from \"{source}\""))
+                            .map(|source| {
+                                let has_existing_import = source_text
+                                    .contains(&format!("from \"{source}\""))
+                                    || source_text.contains(&format!("from '{source}'"));
+                                if has_existing_import {
+                                    format!("Update import from \"{source}\"")
+                                } else {
+                                    format!("Add import from \"{source}\"")
+                                }
+                            })
                             .unwrap_or_else(|| format!("Apply completion for '{}'", item.label));
 
                         detail.insert(

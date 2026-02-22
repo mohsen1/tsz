@@ -938,6 +938,18 @@ fn test_is_new_identifier_location_not_in_normal_expression() {
 }
 
 #[test]
+fn test_is_new_identifier_location_false_for_identifier_prefix_after_statement_boundary() {
+    let source = "import { x } from \"./a\";\nf";
+    let (root, arena, binder, line_map, src) = make_completions_provider(source);
+    let completions = Completions::new(&arena, &binder, &line_map, &src);
+    let offset = source.len() as u32;
+    assert!(
+        !completions.compute_is_new_identifier_location(root, offset),
+        "Typing an identifier prefix at the start of a new statement should not be treated as a new identifier declaration location"
+    );
+}
+
+#[test]
 fn test_completion_result_struct_member_completion() {
     // Member completions should have is_member_completion = true and is_new_identifier_location = false
     let source = "const obj = { foo: 1 };

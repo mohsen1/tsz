@@ -1080,6 +1080,33 @@ fn test_project_completions_auto_import_named() {
 }
 
 #[test]
+fn test_project_completions_auto_import_function_kind() {
+    let mut project = Project::new();
+
+    project.set_file("a.ts".to_string(), "export function foo() {}\n".to_string());
+    project.set_file("b.ts".to_string(), "fo\n".to_string());
+
+    let items = project
+        .get_completions("b.ts", Position::new(0, 2))
+        .expect("Expected completions");
+
+    let foo = items
+        .iter()
+        .find(|item| item.label == "foo" && item.source.as_deref() == Some("./a"))
+        .expect("Expected auto-import completion for foo from ./a");
+    assert_eq!(
+        foo.kind,
+        crate::completions::CompletionItemKind::Function,
+        "Auto-import completion should preserve function kind"
+    );
+    assert_eq!(
+        foo.kind_modifiers.as_deref(),
+        Some("export"),
+        "Auto-import completion should mark entries as exported"
+    );
+}
+
+#[test]
 fn test_project_completions_prefix_matching() {
     let mut project = Project::new();
 

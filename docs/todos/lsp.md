@@ -29,3 +29,5 @@ Investigated but punted:
   Reason: needs deeper re-export-aware completion candidate ranking that preserves existing re-export behavior (naive shortest-path dedupe caused regressions in existing re-export tests).
 - `TypeScript/tests/cases/fourslash/autoImportPathsNodeModules.ts`: import-fix module specifier mismatch persists for `@woltlab/wcf` path-mapped node_modules target.
   Reason: likely requires tracing interaction between node_modules package-specifier logic and `paths` wildcard resolution in this mixed config shape.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: missing `parent` class-member snippet completion in export-equals/default-merged class hierarchy.
+  Reason: requires ClassMemberSnippet parity work (inheritance-aware snippet generation + completion details/code-action shaping) beyond this targeted auto-import metadata fix.

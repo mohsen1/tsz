@@ -10,6 +10,7 @@ use rustc_hash::FxHashSet;
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
 use crate::completions::{CompletionItem, CompletionItemKind, sort_priority};
 use crate::diagnostics::LspDiagnostic;
+use crate::document_symbols::SymbolKind;
 use crate::implementation::{GoToImplementationProvider, TargetKind};
 use crate::references::FindReferences;
 use crate::rename::{RenameProvider, TextEdit, WorkspaceEdit};
@@ -1908,18 +1909,41 @@ impl Project {
     ) -> CompletionItem {
         let detail = self.auto_import_detail(candidate);
         let documentation = self.auto_import_documentation(candidate);
+        let completion_kind = self.auto_import_completion_kind(candidate);
 
-        let mut item =
-            CompletionItem::new(candidate.local_name.clone(), CompletionItemKind::Variable)
-                .with_detail(detail)
-                .with_sort_text(sort_priority::AUTO_IMPORT)
-                .with_has_action()
-                .with_source(candidate.module_specifier.clone())
-                .with_source_display(candidate.module_specifier.clone());
+        let mut item = CompletionItem::new(candidate.local_name.clone(), completion_kind)
+            .with_detail(detail)
+            .with_sort_text(sort_priority::AUTO_IMPORT)
+            .with_has_action()
+            .with_source(candidate.module_specifier.clone())
+            .with_source_display(candidate.module_specifier.clone())
+            .with_kind_modifiers("export".to_string());
         if let Some(doc) = documentation {
             item = item.with_documentation(doc);
         }
         item
+    }
+
+    fn auto_import_completion_kind(&self, candidate: &ImportCandidate) -> CompletionItemKind {
+        match self.symbol_index.get_definition_kind(&candidate.local_name) {
+            Some(SymbolKind::Class) => CompletionItemKind::Class,
+            Some(SymbolKind::Method) => CompletionItemKind::Method,
+            Some(SymbolKind::Property) | Some(SymbolKind::Field) | Some(SymbolKind::Key) => {
+                CompletionItemKind::Property
+            }
+            Some(SymbolKind::Constructor) => CompletionItemKind::Constructor,
+            Some(SymbolKind::Enum) => CompletionItemKind::Enum,
+            Some(SymbolKind::Interface) => CompletionItemKind::Interface,
+            Some(SymbolKind::Function) | Some(SymbolKind::Event) | Some(SymbolKind::Operator) => {
+                CompletionItemKind::Function
+            }
+            Some(SymbolKind::Module) | Some(SymbolKind::Namespace) | Some(SymbolKind::Package) => {
+                CompletionItemKind::Module
+            }
+            Some(SymbolKind::TypeParameter) => CompletionItemKind::TypeParameter,
+            Some(SymbolKind::Struct) => CompletionItemKind::TypeAlias,
+            _ => CompletionItemKind::Variable,
+        }
     }
 
     fn auto_import_detail(&self, candidate: &ImportCandidate) -> String {
