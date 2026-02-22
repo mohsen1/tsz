@@ -157,8 +157,9 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
-            // Mirror cache generation ordering: inject strict/alwaysStrict after
-            // option conversion so insertion order matches cached tsconfig output.
+            // Mirror cache generation: inject strict/alwaysStrict to match the
+            // Rust cache generator's behavior. Both generators inject these so the
+            // tsconfig options match what tsc sees during cache generation.
             map.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
             map.insert("strict".to_string(), serde_json::Value::Bool(true));
 

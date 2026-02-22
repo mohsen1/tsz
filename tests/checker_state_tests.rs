@@ -9293,6 +9293,74 @@ function implicitAnyParam(x) {
     );
 }
 
+/// Test that block-scoped (let/const) declarations do NOT trigger TS7005/TS7034
+/// even with noImplicitAny enabled. Only function-scoped (var) declarations
+/// should trigger these diagnostics when captured by closures.
+#[test]
+fn test_ts7005_not_emitted_for_let_declarations() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+function f() {
+    // let without initializer, captured by closure — should NOT trigger TS7005/TS7034
+    let x;
+    () => x;
+
+    // var without initializer, captured by closure — SHOULD trigger TS7034 + TS7005
+    var y;
+    () => y;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should have TS7005 for the var declaration (implicit any)
+    assert!(
+        codes.contains(&7005),
+        "Expected TS7005 for var declaration, got: {:?}",
+        codes
+    );
+
+    // The TS7005 should only fire once — for `var y`, NOT for `let x`
+    let ts7005_count = codes.iter().filter(|&&c| c == 7005).count();
+    assert_eq!(
+        ts7005_count, 1,
+        "Expected exactly 1 TS7005 (var only, not let), got {}: {:?}",
+        ts7005_count, codes
+    );
+
+    // No TS7034 should appear for this simple case (TS7034 is for captured-in-closure scenarios)
+    let ts7034_count = codes.iter().filter(|&&c| c == 7034).count();
+    assert_eq!(
+        ts7034_count, 0,
+        "Expected 0 TS7034 in this test, got {}: {:?}",
+        ts7034_count, codes
+    );
+}
+
 #[test]
 fn test_strict_false_suppresses_implicit_any() {
     use crate::parser::ParserState;
