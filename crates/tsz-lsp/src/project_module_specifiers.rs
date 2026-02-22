@@ -43,13 +43,11 @@ impl Project {
         target_file: &str,
     ) -> Vec<String> {
         let target_in_node_modules = target_file.replace('\\', "/").contains("/node_modules/");
-        if let Some(package_specifier) = self.package_specifier_from_node_modules(target_file) {
-            return vec![package_specifier];
-        }
+        let package_specifier = self.package_specifier_from_node_modules(target_file);
 
         let Some(relative) = self.relative_module_specifier_from_files(from_file, target_file)
         else {
-            return Vec::new();
+            return package_specifier.into_iter().collect();
         };
 
         let root_dirs_relative =
@@ -62,6 +60,9 @@ impl Project {
         if pref == Some("non-relative") {
             candidates.extend(path_mappings);
             candidates.extend(package_imports);
+            if let Some(package_specifier) = package_specifier.as_ref() {
+                candidates.push(package_specifier.clone());
+            }
             candidates.push(relative);
             if let Some(root_dirs_relative) = root_dirs_relative {
                 candidates.push(root_dirs_relative);
@@ -73,6 +74,9 @@ impl Project {
             }
             candidates.extend(path_mappings);
             candidates.extend(package_imports);
+            if let Some(package_specifier) = package_specifier.as_ref() {
+                candidates.push(package_specifier.clone());
+            }
         }
 
         let mut seen = FxHashSet::default();
@@ -1499,6 +1503,42 @@ mod tests {
         assert_eq!(
             project.auto_import_module_specifiers_from_files("/src/foo/two.ts", "/src/one.ts"),
             vec!["@root/one".to_string(), "../one".to_string()]
+        );
+    }
+
+    #[test]
+    fn node_modules_paths_mapping_beats_package_specifier_for_shortest() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "amd",
+    "moduleResolution": "node",
+    "rootDir": "ts",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/@woltlab/wcf/ts/*"]
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string(),
+            "export class Dialog {}".to_string(),
+        );
+        project.set_file("/ts/main.ts".to_string(), "Dialog".to_string());
+
+        assert_eq!(
+            project.auto_import_module_specifiers_from_files(
+                "/ts/main.ts",
+                "/node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts"
+            ),
+            vec![
+                "WoltLabSuite/Core/Component/Dialog".to_string(),
+                "@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string()
+            ]
         );
     }
 

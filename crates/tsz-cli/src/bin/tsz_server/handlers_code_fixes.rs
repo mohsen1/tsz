@@ -4819,6 +4819,163 @@ mod tests {
     }
 
     #[test]
+    fn collect_import_candidates_prefers_paths_mapping_over_node_modules_package_specifier() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "amd",
+    "moduleResolution": "node",
+    "rootDir": "ts",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/@woltlab/wcf/ts/*"]
+    }
+  },
+  "include": ["ts", "node_modules/@woltlab/wcf/ts"]
+}"#
+            .to_string(),
+        );
+        server.open_files.insert(
+            "node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string(),
+            "export class Dialog {}".to_string(),
+        );
+        server
+            .open_files
+            .insert("ts/main.ts".to_string(), "Dialog".to_string());
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 6),
+            ),
+            message: "Cannot find name 'Dialog'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates =
+            server.collect_import_candidates("ts/main.ts", &diagnostics, &[], &[], None);
+        let module_specifiers: Vec<String> = candidates
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "Dialog")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert_eq!(
+            module_specifiers,
+            vec!["WoltLabSuite/Core/Component/Dialog".to_string()]
+        );
+    }
+
+    #[test]
+    fn get_code_fixes_prefers_paths_mapping_module_specifier_for_node_modules_target() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "amd",
+    "moduleResolution": "node",
+    "rootDir": "ts",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/@woltlab/wcf/ts/*"]
+    }
+  },
+  "include": ["ts", "node_modules/@woltlab/wcf/ts"]
+}"#
+            .to_string(),
+        );
+        server.open_files.insert(
+            "node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string(),
+            "export class Dialog {}".to_string(),
+        );
+        server
+            .open_files
+            .insert("ts/main.ts".to_string(), "Dialog".to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "ts/main.ts",
+                "startLine": 1,
+                "startOffset": 1,
+                "endLine": 1,
+                "endOffset": 7,
+                "errorCodes": [2304],
+                "preferences": {
+                    "includeCompletionsForModuleExports": true,
+                    "includeCompletionsWithInsertText": true
+                }
+            }),
+        };
+
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let body = resp.body.expect("expected getCodeFixes body");
+        let fixes = body.as_array().expect("expected array response");
+        let module_specifiers: Vec<String> = fixes
+            .iter()
+            .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+            .flat_map(|fix| {
+                fix.get("changes")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .flat_map(|change| {
+                change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(|text_change| {
+                text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .filter_map(extract_module_specifier_from_import_change)
+            .collect();
+
+        assert_eq!(
+            module_specifiers,
+            vec!["WoltLabSuite/Core/Component/Dialog".to_string()]
+        );
+    }
+
+    fn extract_module_specifier_from_import_change(new_text: &str) -> Option<String> {
+        let (prefix_len, open_char) = if let Some(idx) = new_text.find("from \"") {
+            (idx + "from ".len(), '"')
+        } else if let Some(idx) = new_text.find("from '") {
+            (idx + "from ".len(), '\'')
+        } else if let Some(idx) = new_text.find("require(\"") {
+            (idx + "require(".len(), '"')
+        } else if let Some(idx) = new_text.find("require('") {
+            (idx + "require(".len(), '\'')
+        } else {
+            return None;
+        };
+
+        let rest = &new_text[prefix_len..];
+        if !rest.starts_with(open_char) {
+            return None;
+        }
+
+        let value = &rest[1..];
+        let end = value.find(open_char)?;
+        Some(value[..end].to_string())
+    }
+
+    #[test]
     fn handle_get_combined_code_fix_fix_missing_import_merges_all_missing_names() {
         let mut server = make_server();
         let file1 = "/tests/cases/fourslash/file1.ts".to_string();

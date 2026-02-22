@@ -165,3 +165,15 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-22 (auto-import paths node_modules follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportPathsNodeModules.ts` module-specifier parity by allowing `paths` mappings to participate in auto-import module-specifier selection even when the target lives under `node_modules`, instead of short-circuiting to package-specifier only.
+- Added focused unit coverage:
+  - `crates/tsz-lsp/src/project_module_specifiers.rs`
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`: still creates a new local baseline (missing CJS-style auto-import completions/codefixes like `path.normalize` and `coolName.explode`).
+  Reason: requires import-candidate/model support for `export =`/CommonJS member-expression completions and codefix rewrite (`import x = require(...)` + identifier replacement), which is broader than this targeted module-specifier ordering fix.
