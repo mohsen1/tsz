@@ -914,6 +914,38 @@ fn test_quickinfo_contextual_object_literal_function_parameter() {
 }
 
 #[test]
+fn test_quickinfo_contextual_object_literal_array_property_name() {
+    let mut server = make_server();
+    let source = "interface IFoo { a: number[]; }\nvar c = <IFoo>({\n    /*34*/a: []\n});\n";
+    server
+        .open_files
+        .insert("/test.ts".to_string(), source.to_string());
+
+    let third_line = source
+        .lines()
+        .nth(2)
+        .expect("source should contain third line");
+    let property_offset = third_line
+        .find("/*34*/a")
+        .expect("marker+property should exist in source third line")
+        as u32
+        + "/*34*/".len() as u32
+        + 1;
+
+    let req = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 3, "offset": property_offset}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body["displayString"].as_str().unwrap_or(""),
+        "(property) IFoo.a: number[]"
+    );
+}
+
+#[test]
 fn test_prepare_call_hierarchy_class_property_arrow_function() {
     let mut server = make_server();
     server.open_files.insert(

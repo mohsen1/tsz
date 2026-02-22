@@ -347,14 +347,19 @@ impl<'a> HoverProvider<'a> {
         let mut value_type_id = self
             .contextual_property_type_from_type(container_type_id, &prop_name)
             .unwrap_or(tsz_solver::TypeId::ERROR);
-        if value_type_id == tsz_solver::TypeId::ERROR {
+        let value_type_text = if value_type_id == tsz_solver::TypeId::ERROR {
+            self.contextual_property_annotation_text(contextual_type_idx, &prop_name)
+        } else {
+            None
+        };
+        if value_type_id == tsz_solver::TypeId::ERROR && value_type_text.is_none() {
             value_type_id = checker.get_type_of_node(prop_assign.initializer);
             if value_type_id == tsz_solver::TypeId::ERROR {
                 value_type_id = checker.get_type_of_node(prop_assign_idx);
             }
         }
         let container_type = checker.format_type(container_type_id);
-        let value_type = checker.format_type(value_type_id);
+        let value_type = value_type_text.unwrap_or_else(|| checker.format_type(value_type_id));
         *type_cache = Some(checker.extract_cache());
 
         if container_type.is_empty() || value_type.is_empty() {
@@ -492,6 +497,115 @@ impl<'a> HoverProvider<'a> {
         }
 
         None
+    }
+
+    fn contextual_property_annotation_text(
+        &self,
+        contextual_type_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        let contextual_type_idx = self.unwrap_parenthesized_type_node(contextual_type_idx)?;
+        let contextual_node = self.arena.get(contextual_type_idx)?;
+
+        if contextual_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let literal = self.arena.get_type_literal(contextual_node)?;
+            for &member_idx in &literal.members.nodes {
+                if let Some(type_text) =
+                    self.property_type_text_if_matching_member(member_idx, prop_name)
+                {
+                    return Some(type_text);
+                }
+            }
+            return None;
+        }
+
+        if contextual_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+
+        let type_ref = self.arena.get_type_ref(contextual_node)?;
+        let target = type_ref.type_name;
+        let sym_id = self
+            .binder
+            .node_symbols
+            .get(&target.0)
+            .copied()
+            .or_else(|| self.binder.resolve_identifier(self.arena, target))?;
+        let symbol = self.binder.symbols.get(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                let iface = self.arena.get_interface(decl_node)?;
+                for &member_idx in &iface.members.nodes {
+                    if let Some(type_text) =
+                        self.property_type_text_if_matching_member(member_idx, prop_name)
+                    {
+                        return Some(type_text);
+                    }
+                }
+            } else if decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                let alias = self.arena.get_type_alias(decl_node)?;
+                if let Some(type_text) =
+                    self.property_type_text_if_matching_type_literal(alias.type_node, prop_name)
+                {
+                    return Some(type_text);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn property_type_text_if_matching_type_literal(
+        &self,
+        type_node_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        let type_node_idx = self.unwrap_parenthesized_type_node(type_node_idx)?;
+        let type_node = self.arena.get(type_node_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let literal = self.arena.get_type_literal(type_node)?;
+        for &member_idx in &literal.members.nodes {
+            if let Some(type_text) =
+                self.property_type_text_if_matching_member(member_idx, prop_name)
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn property_type_text_if_matching_member(
+        &self,
+        member_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+        let signature = self.arena.get_signature(member_node)?;
+        let name = self
+            .arena
+            .get_identifier_text(signature.name)
+            .or_else(|| self.arena.get_literal_text(signature.name))?;
+        if name != prop_name
+            || !signature
+                .parameters
+                .as_ref()
+                .is_none_or(|p| p.nodes.is_empty())
+        {
+            return None;
+        }
+        if !signature.type_annotation.is_some() {
+            return None;
+        }
+        self.type_node_text(signature.type_annotation)
+            .map(Self::normalize_annotation_text)
     }
 
     fn signature_text_if_matching_type_literal(
