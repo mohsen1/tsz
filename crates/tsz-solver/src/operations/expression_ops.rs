@@ -328,5 +328,5 @@ fn common_parent_enum_type<R: TypeResolver>(
 }
 
 #[cfg(test)]
-#[path = "../tests/expression_ops_tests.rs"]
+#[path = "../../tests/expression_ops_tests.rs"]
 mod tests;

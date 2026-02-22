@@ -73,3 +73,7 @@ pub fn fallback_compound_assignment_result(
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/compound_assignment_tests.rs"]
+mod tests;
