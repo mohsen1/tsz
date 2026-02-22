@@ -25,6 +25,25 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn test_non_exported_function_declaration_emits_declare_function() {
+    let source = "function helper(x: string): string { return x; }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function helper"),
+        "Expected non-exported function to be emitted as declare function: {output}"
+    );
+    assert!(
+        !output.contains("export declare function helper"),
+        "Expected no export keyword for non-exported top-level function in global scope: {output}"
+    );
+}
+
+#[test]
 fn test_class_declaration() {
     let source = r#"
     export class Calculator {
