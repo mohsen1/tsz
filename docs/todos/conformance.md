@@ -237,3 +237,43 @@ when `strict` is not specified. Harmless for conformance (runner injects `strict
 - **TS2882 (stale cache)**: Our `noUncheckedSideEffectImports` implementation matches TSC 6.0
   behavior (defaults to `true`). The cache was generated with TSC 5.9.3 where the default was
   `false`. Not a compiler bug — cache staleness issue. Deferred.
+
+## TS6133 — Write-only parameters incorrectly suppressed (Fixed)
+
+**Status**: Fixed. +4 tests passing (3896→3900 in first 6000 slice, 65.0%).
+**Error code:** TS6133 ("'X' is declared but its value is never read.")
+**Root cause**: `get_const_variable_name()` in `assignment_checker.rs` used the tracking
+`resolve_identifier_symbol()` to check if an assignment target was const. This added
+the target to `referenced_symbols`, which suppressed TS6133 for write-only parameters
+(e.g., `person2 = "dummy value"` — `person2` was marked as "read" when it was only written).
+**Fix**: Changed to use `self.ctx.binder.resolve_identifier()` (no tracking side-effect),
+matching the pattern used by `check_function_assignment`.
+
+### Remaining TS6133 fingerprint-level failures (29 tests)
+These tests match at error-code level but fail fingerprint comparison:
+- **15 over-reporting**: underscore-prefixed variables (`_`, `_a`) falsely flagged,
+  object spread/rest destructuring, private class members, type guard variables.
+- **13 under-reporting**: 12 tests have a last unused parameter not flagged (separate
+  issue from the write-only fix — may be about destructuring or method-specific contexts),
+  1 test has unflagged type parameter.
+- **1 mixed**: write-only variable detection for locals (TS6198 vs TS6133 boundary).
+
+### Missing TS6133 entirely (9 tests, deferred)
+Tests where tsz produces `[]` but tsc expects TS6133:
+- CommonJS `.js` files, ES private fields (`#unused`), destructured parameters,
+  `infer` positions, JSDoc `@template` tags, self-references, dynamic property names,
+  type parameter merging. Each has a distinct root cause.
+
+## Deferred from TS6133 investigation (not fixed)
+
+- **TS6133 underscore suppression**: 5 tests over-report TS6133 for underscore-prefixed
+  local variables (e.g., `_`, `_a`). TSC exempts these. Needs a check in the unused
+  locals section (not just the parameter section which already handles this).
+- **TS2454 (16 quick-win tests)**: 9 "pure" tests (tsz emits zero errors) and 7 multi-file
+  tests. Root causes: try/catch destructuring, ES5 Symbol var, for-of pre-loop usage,
+  computed property names, JSDoc type annotations. Each requires targeted flow analysis work.
+- **TS18046 (10 tests, not implemented)**: "'x' is of type 'unknown'". Needs checks at
+  property access, function calls, and binary operations on `unknown` type. Medium complexity.
+- **TS2440 (19 tests)**: Import conflicts with local declaration. Analysis shows code exists
+  in `import_declaration_checker.rs` but "never emitted" per conformance analysis. Needs
+  investigation of why the code path isn't reached.
