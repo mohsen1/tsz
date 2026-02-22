@@ -475,10 +475,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
-        // Check if module kind is explicitly ESM (CommonJS modules support import = require)
+        // Only emit when module was explicitly set to an ESM kind. When module is a
+        // computed default (derived from target), tsc does not emit TS1202.
         let is_ambient_context =
             self.ctx.file_name.ends_with(".d.ts") || self.is_ambient_declaration(stmt_idx);
-        if self.ctx.compiler_options.module.is_es_module() && !is_ambient_context {
+        if self.ctx.compiler_options.module.is_es_module()
+            && self.ctx.compiler_options.module_explicitly_set
+            && !is_ambient_context
+        {
             self.error_at_node(
                 stmt_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",

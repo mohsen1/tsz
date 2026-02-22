@@ -1043,7 +1043,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.module,
             tsz_common::common::ModuleKind::System
         );
-        let is_es_module = self.ctx.compiler_options.module.is_es_module();
+        let is_es_module = self.ctx.compiler_options.module.is_es_module()
+            && self.ctx.compiler_options.module_explicitly_set;
 
         if (is_es_module || is_system_module)
             && !is_declaration_file

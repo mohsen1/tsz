@@ -1492,6 +1492,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(module) = args.module {
         options.printer.module = module.to_module_kind();
         options.checker.module = module.to_module_kind();
+        options.checker.module_explicitly_set = true;
     }
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());

@@ -426,6 +426,7 @@ pub fn resolve_compiler_options(
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;
     }
+    resolved.checker.module_explicitly_set = module_explicitly_set;
 
     if let Some(module_resolution) = options.module_resolution.as_deref() {
         let value = module_resolution.trim();
@@ -2030,5 +2031,42 @@ mod tests {
             resolved.module_resolution,
             Some(ModuleResolutionKind::Node16)
         );
+    }
+
+    #[test]
+    fn test_module_explicitly_set_when_specified() {
+        let json = r#"{"compilerOptions":{"module":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.checker.module_explicitly_set);
+        assert!(resolved.checker.module.is_es_module());
+    }
+
+    #[test]
+    fn test_module_explicitly_set_commonjs() {
+        let json = r#"{"compilerOptions":{"module":"commonjs"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.checker.module_explicitly_set);
+        assert!(!resolved.checker.module.is_es_module());
+    }
+
+    #[test]
+    fn test_module_not_explicitly_set_defaults_from_target() {
+        // When module is not specified, it's computed from target.
+        // module_explicitly_set should be false so TS1202 is suppressed.
+        let json = r#"{"compilerOptions":{"target":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(!resolved.checker.module_explicitly_set);
+        // Module defaults to ES2015 for es2015+ targets
+        assert!(resolved.checker.module.is_es_module());
+    }
+
+    #[test]
+    fn test_module_not_explicitly_set_no_options() {
+        // When no options at all, module_explicitly_set should be false.
+        let resolved = resolve_compiler_options(None).unwrap();
+        assert!(!resolved.checker.module_explicitly_set);
     }
 }

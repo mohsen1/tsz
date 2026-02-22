@@ -529,6 +529,7 @@ fn test_import_equals_require_in_esm_emits_ts1202() {
     let types = TypeInterner::new();
     let options = CheckerOptions {
         module: crate::common::ModuleKind::ES2015,
+        module_explicitly_set: true,
         ..Default::default()
     };
 
