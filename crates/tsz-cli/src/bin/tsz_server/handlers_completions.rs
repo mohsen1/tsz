@@ -2,6 +2,7 @@
 
 use super::{Server, TsServerRequest, TsServerResponse};
 use rustc_hash::FxHashSet;
+use std::cmp::Ordering;
 use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, Completions};
@@ -313,6 +314,44 @@ impl Server {
                 _ => 1,
             }
         }
+        fn compare_completion_sources(a: Option<&str>, b: Option<&str>) -> Ordering {
+            match (a, b) {
+                (Some(a), Some(b)) => {
+                    let a_segments = a.matches('/').count();
+                    let b_segments = b.matches('/').count();
+                    let candidate_rank = |candidate: &str| -> u8 {
+                        if candidate.starts_with("./") {
+                            0
+                        } else if !candidate.starts_with('.') {
+                            1
+                        } else if candidate.starts_with("../") {
+                            2
+                        } else {
+                            3
+                        }
+                    };
+                    let index_penalty = |candidate: &str| -> u8 {
+                        if candidate == "."
+                            || candidate == ".."
+                            || candidate.ends_with("/index")
+                        {
+                            1
+                        } else {
+                            0
+                        }
+                    };
+                    a_segments
+                        .cmp(&b_segments)
+                        .then_with(|| candidate_rank(a).cmp(&candidate_rank(b)))
+                        .then_with(|| index_penalty(a).cmp(&index_penalty(b)))
+                        .then_with(|| a.len().cmp(&b.len()))
+                        .then_with(|| a.cmp(b))
+                }
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Less,
+                (Some(_), None) => Ordering::Greater,
+            }
+        }
 
         items.sort_by(|a, b| {
             a.effective_sort_text()
@@ -324,7 +363,7 @@ impl Server {
                         .cmp(&b.label.to_ascii_lowercase())
                 })
                 .then_with(|| a.label.cmp(&b.label))
-                .then_with(|| a.source.cmp(&b.source))
+                .then_with(|| compare_completion_sources(a.source.as_deref(), b.source.as_deref()))
         });
     }
 
@@ -1301,5 +1340,26 @@ impl Server {
         }
 
         parts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz::lsp::completions::CompletionItemKind;
+
+    #[test]
+    fn sort_tsserver_completion_items_prefers_direct_source_over_index_for_same_symbol() {
+        let mut items = vec![
+            CompletionItem::new("Thing2A".to_string(), CompletionItemKind::Class)
+                .with_source("./index".to_string()),
+            CompletionItem::new("Thing2A".to_string(), CompletionItemKind::Class)
+                .with_source("./thing2A".to_string()),
+        ];
+
+        Server::sort_tsserver_completion_items(&mut items);
+
+        assert_eq!(items[0].source.as_deref(), Some("./thing2A"));
+        assert_eq!(items[1].source.as_deref(), Some("./index"));
     }
 }
