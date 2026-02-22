@@ -5,10 +5,10 @@
 //! Identifier resolution is in `type_computation_identifier.rs` and tagged
 //! template expression handling is in `type_computation_tagged_template.rs`.
 
+use super::type_computation_complex::is_contextually_sensitive;
 use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
-use crate::type_computation_complex::is_contextually_sensitive;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;

@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-22 (12th audit)
-**Branch**: main (commit b9db67920)
-**Status**: CI FIX — corrected emit baselines
+**Date**: 2026-02-22 (13th audit)
+**Branch**: main (commit e38a95d3f)
+**Status**: REFACTOR — grouped domain-specific checker files into checkers/ subdirectory
 
 ---
 
@@ -116,5 +116,5 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
 12. **DRY violation: `emit_exported_variable` vs `emit_variable_declaration_statement`** — `exports.rs:602-692` and `mod.rs:1648-1796` in `declaration_emitter/` share heavily duplicated variable declaration emission logic. The exported path was missing type inference fallbacks that the non-exported path had (fixed in ef72ac342). These two functions should ideally be refactored to share a common inner helper.
 13. ~~**Emit JS pass rate regression**: Commit 92ba86966 ("Fix auto-accessor emit ordering") caused JS emit pass rate to drop from 67.9% → 67.7% (23 fewer passing tests).~~ ✅ Fixed — root cause was unconditional `mark_class_helpers` call for auto-accessor classes at ALL targets. The `__classPrivateFieldGet`/`Set` helpers were emitted even for ES2022+/ESNext where native syntax should be used. Fix gates both helper marking (`lowering_pass.rs`) and WeakMap emission (`declarations.rs`) behind `needs_es2022_lowering`. Pass rate restored to 67.9% (9,254 tests, +8 net improvement).
 14. ~~**Misplaced non-source files in checker `src/`**: `keyof-type-checking/` (scaffolded skill template with placeholders) and `state_orchestration_docs.md` (orphaned architectural doc) were sitting inside `crates/tsz-checker/src/`.~~ ✅ Removed (c0cc2fb4c).
-15. ~~**Checker top-level file sprawl**: assignability/assignment/subtype_identity checkers~~ ✅ Done (d45a73578) — moved `assignability_checker.rs`, `assignment_checker.rs`, `subtype_identity_checker.rs` into `assignability/` subdirectory (24 → 21 loose files). Remaining grouping candidates: call/param/signature checkers, type-related checkers (generic, iterable, promise). Consider organizing into subdirectories as the module grows.
+15. ~~**Checker top-level file sprawl**: assignability/assignment/subtype_identity checkers~~ ✅ Done (d45a73578) — moved `assignability_checker.rs`, `assignment_checker.rs`, `subtype_identity_checker.rs` into `assignability/` subdirectory (24 → 21 loose files). ~~Remaining grouping candidates: call/param/signature checkers, type-related checkers (generic, iterable, promise).~~ ✅ Done (e38a95d3f) — moved 10 `*_checker.rs` + `signature_builder.rs` files (3,913 LOC) into `checkers/` subdirectory (21 → 11 loose files). Remaining grouping candidates: `error_handler.rs`/`error_reporter.rs` into an `errors/` directory, `decorators.rs`/`optional_chain.rs`/`triple_slash_validator.rs` if more related files accumulate.
 16. **Solver re-export shims**: `judge.rs` and `visitor.rs` in solver `src/` are 1-line `pub use` shims (`pub use crate::relations::judge::*` / `pub use crate::visitors::visitor::*`). Used from ~20 call sites in checker/emitter. Low priority — they provide stable convenience paths.
