@@ -312,7 +312,15 @@ impl<'a> Printer<'a> {
             }
         }
 
-        self.write("export ");
+        // For merged enums/namespaces/classes/functions, the second+ declaration
+        // should not be prefixed with `export`. The first declaration gets
+        // `export var E;` and subsequent ones are bare IIFEs. We detect this by
+        // checking if the name is already in `declared_namespace_names`, which
+        // means a prior declaration already emitted the `var`/`export` prefix.
+        let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
+        if !is_merged_subsequent {
+            self.write("export ");
+        }
         self.emit(export.export_clause);
 
         if export.module_specifier.is_some() {
@@ -1078,6 +1086,30 @@ impl<'a> Printer<'a> {
         crate::transforms::emit_utils::export_clause_is_type_only(self.arena, clause_node)
     }
 
+    /// Check if this declaration is a subsequent (merged) declaration whose name
+    /// was already declared by a prior statement. For merged enums/namespaces,
+    /// the first declaration emits `export var E;` and subsequent ones should
+    /// be bare IIFEs without `export`.
+    fn is_merged_subsequent_declaration(&self, clause_node: &Node) -> bool {
+        match clause_node.kind {
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.arena.get_enum(clause_node)
+                    && let Some(name) = self.get_identifier_text_opt(enum_decl.name) {
+                        return self.declared_namespace_names.contains(&name);
+                    }
+                false
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module_decl) = self.arena.get_module(clause_node)
+                    && let Some(name) = self.get_module_root_name(module_decl.name) {
+                        return self.declared_namespace_names.contains(&name);
+                    }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Check if the file contains an export assignment (export =)
     pub(super) fn has_export_assignment(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
@@ -1796,6 +1828,73 @@ export { impl as myFunc };
         assert!(
             !output.contains("exports.myFunc = void 0"),
             "Aliased function export should NOT get void 0.\nOutput:\n{output}"
+        );
+    }
+
+    /// Merged enum declarations in ESM should only have `export` on the first
+    /// declaration's `var` statement. Subsequent IIFEs should be bare.
+    #[test]
+    fn merged_enum_esm_no_spurious_export() {
+        let source = r#"export enum Animals {
+    Cat = 1
+}
+export enum Animals {
+    Dog = 2
+}
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // First IIFE should be preceded by `export var Animals;`
+        assert!(
+            output.contains("export var Animals;"),
+            "First enum should have `export var Animals;`.\nOutput:\n{output}"
+        );
+
+        // Second IIFE should NOT be preceded by `export`
+        // Count occurrences of "export" — should be exactly 1 (on the var decl)
+        let export_count = output.matches("export ").count();
+        assert_eq!(
+            export_count, 1,
+            "Should have exactly one `export` (on the var declaration), not on subsequent IIFEs.\nOutput:\n{output}"
+        );
+    }
+
+    /// Merged namespace declarations in ESM should only have `export` on the
+    /// first var declaration, not on subsequent IIFEs.
+    #[test]
+    fn merged_namespace_esm_no_spurious_export() {
+        let source = r#"export function F() { }
+export namespace F {
+    export var x = 1;
+}
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The namespace IIFE `(function (F) {...})(F || (F = {}))` should NOT
+        // be preceded by `export`.
+        assert!(
+            !output.contains("export (function"),
+            "Merged namespace IIFE should not be preceded by `export`.\nOutput:\n{output}"
         );
     }
 }
