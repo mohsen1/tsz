@@ -650,7 +650,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
 
                 // Check numeric index signature for numeric property names
-                use crate::index_signatures::IndexSignatureResolver;
+                use crate::objects::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(ref idx) = shape.number_index
@@ -854,7 +854,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Handle numeric index access (e.g., arr[0], arr["0"])
-        use crate::index_signatures::IndexSignatureResolver;
+        use crate::objects::index_signatures::IndexSignatureResolver;
         let resolver = IndexSignatureResolver::new(self.interner());
         if resolver.is_numeric_index_name(prop_name) {
             let element_or_undefined = self.element_type_with_undefined(element_type);

@@ -7,8 +7,8 @@
 use crate::caches::db::{QueryDatabase, TypeDatabase};
 use crate::caches::query_trace;
 use crate::def::DefId;
-use crate::element_access::ElementAccessResult;
 use crate::intern::TypeInterner;
+use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::compat::CompatChecker;
 use crate::relations::subtype::TypeResolver;

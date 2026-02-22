@@ -5,9 +5,9 @@
 
 use crate::ObjectLiteralBuilder;
 use crate::def::DefId;
-use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::intern::TypeInterner;
 use crate::narrowing;
+use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::relations::subtype::TypeResolver;
 use crate::type_factory::TypeFactory;
 use crate::types::{

@@ -12,7 +12,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use crate::index_signatures::IndexSignatureResolver;
+//! use crate::objects::index_signatures::IndexSignatureResolver;
 //!
 //! let resolver = IndexSignatureResolver::new(db);
 //!
@@ -408,5 +408,5 @@ impl<'a> IndexSignatureResolver<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/index_signatures_tests.rs"]
+#[path = "../../tests/index_signatures_tests.rs"]
 mod tests;

@@ -11,7 +11,6 @@
 //! - O(1) type equality via interning (`TypeId` comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
-mod apparent;
 mod application;
 mod caches;
 pub mod canonicalize;
@@ -21,19 +20,16 @@ mod contextual;
 mod contextual_extractors;
 pub mod def;
 mod diagnostics;
-pub mod element_access;
 pub mod evaluation;
 pub mod expression_ops;
 mod flow_analysis;
 mod format;
-mod index_signatures;
 mod inference;
 pub mod inheritance;
 mod instantiation;
 mod intern;
 pub mod judge;
 mod narrowing;
-mod object_literal;
 pub mod objects;
 pub mod operations;
 pub mod recursion;
@@ -72,10 +68,6 @@ pub use visitors::visitor::{
     type_query_symbol, union_list_id, unique_symbol_ref, walk_referenced_types,
 };
 
-pub use apparent::{
-    ApparentMemberKind, apparent_object_member_kind, apparent_primitive_member_kind,
-    apparent_primitive_members,
-};
 pub use application::*;
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
@@ -89,11 +81,9 @@ pub use diagnostics::{
     DiagnosticArg, DiagnosticBuilder, DiagnosticCollector, DiagnosticSeverity, PendingDiagnostic,
     PendingDiagnosticBuilder, SourceLocation, SourceSpan, SpannedDiagnosticBuilder,
 };
-pub use element_access::*;
 pub use evaluation::evaluate::*;
 pub use flow_analysis::*;
 pub use format::TypeFormatter;
-pub use index_signatures::*;
 pub use inference::infer::*;
 pub use inheritance::*;
 pub use instantiation::instantiate::{
@@ -101,7 +91,6 @@ pub use instantiation::instantiate::{
     substitute_this_type,
 };
 pub use narrowing::*;
-pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
