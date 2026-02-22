@@ -136,3 +136,19 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `28`: expected `(property) IBar.foo: IFoo`, got empty quick info).
   Reason: remaining gap appears to be declaration-site/property quick info resolution in object-literal contextual typing (`foo` property under `IBar`) and needs a separate member/property quick-info resolver follow-up beyond this parameter-context fix.
+
+## 2026-02-22 (call hierarchy containerName parity follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/callHierarchyContainerName.ts` and `TypeScript/tests/cases/fourslash/server/callHierarchyContainerNameServer.ts` parity by improving call hierarchy callable discovery/shape for:
+  - class-name markers resolving to constructors for hierarchy queries,
+  - accessor response shaping (`getter`/`setter` kind + stripped name),
+  - namespace/object container propagation (`containerName` for `Foo`/`Obj`),
+  - constructor/class incoming caller modeling and range calculations.
+- Added focused Rust unit coverage in `crates/tsz-lsp/tests/call_hierarchy_tests.rs` for:
+  - same-name incoming disambiguation across classes/namespaces/object accessors,
+  - precise method selection ranges.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/callHierarchyCallExpressionByConstNamedFunctionExpression.ts`: still emits `baz` quick-prepare baseline instead of `bar` at `bar()` marker in this run.
+  Reason: appears to require deeper `find_node_at_offset`/prepare resolution parity for top-level call-site markers where parser node ranges over-approximate surrounding declarations; current targeted call-hierarchy container fix intentionally avoided broader node-selection/prepare resolver refactors.

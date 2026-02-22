@@ -67,11 +67,17 @@ impl<'a> CallHierarchyProvider<'a> {
             return None;
         }
 
+        // Prefer exact symbol resolution at callsites before falling back to
+        // enclosing-function probing.
+        if let Some(item) = self.prepare_item_from_reference(node_idx) {
+            return Some(item);
+        }
+
         // Walk up from the found node to find the enclosing function-like node.
         // If the cursor is on an identifier that is the name of a function, use
         // the function itself; otherwise walk parents.
-        let func_idx = self.find_function_at_or_around(node_idx)?;
-        self.make_call_hierarchy_item(func_idx)
+        self.find_function_at_or_around(node_idx)
+            .and_then(|func_idx| self.make_call_hierarchy_item(func_idx))
     }
 
     /// Find all incoming calls (callers) for the function at the given position.
@@ -102,19 +108,33 @@ impl<'a> CallHierarchyProvider<'a> {
             None => return results,
         };
 
-        // Get the name of this function via escaped_text (avoids interner dependency)
-        let target_name = match self.get_function_name_idx(func_idx) {
-            Some(name_idx) => match self.get_identifier_text(name_idx) {
+        let target_kind = self.get_function_symbol_kind(func_idx);
+        // Get the query name for this callable. Constructors use the containing class name.
+        let target_name = if target_kind == SymbolKind::Constructor {
+            match self.constructor_target_name(func_idx) {
                 Some(name) => name,
                 None => return results,
-            },
-            None => return results,
+            }
+        } else {
+            match self.get_function_name_idx(func_idx) {
+                Some(name_idx) => match self.get_identifier_text(name_idx) {
+                    Some(name) => name,
+                    None => return results,
+                },
+                None => return results,
+            }
         };
 
         let name_idx = self.get_function_name_idx(func_idx);
+        let target_member_container_hint = self.member_container_hint_for_callable(func_idx);
+        let target_is_member_like =
+            matches!(target_kind, SymbolKind::Method | SymbolKind::Property)
+                || self
+                    .property_declaration_for_function_initializer(func_idx)
+                    .is_some();
 
-        // Scan all identifier nodes in the arena that match the target name
-        // and appear inside a CallExpression, grouping by containing function.
+        // Scan all identifier nodes in the arena that match the target name and
+        // appear in a relevant call/reference context, grouping by containing function.
         let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
 
         for (i, node) in self.arena.nodes.iter().enumerate() {
@@ -137,8 +157,25 @@ impl<'a> CallHierarchyProvider<'a> {
                 continue;
             }
 
-            // Check if this identifier is inside a CallExpression
-            if !self.is_inside_call_expression(idx) {
+            if target_is_member_like {
+                // Member-like targets should only consider property-access references and
+                // reject unrelated same-name members from other containers.
+                let Some(receiver_idx) = self.property_access_receiver(idx) else {
+                    continue;
+                };
+                if let Some(container_name) = target_member_container_hint.as_deref()
+                    && !self.receiver_matches_container(receiver_idx, container_name)
+                {
+                    continue;
+                } else if target_member_container_hint.is_none() {
+                    continue;
+                }
+            } else if !self.is_inside_call_expression(idx) {
+                // Function-like targets should remain call-expression driven.
+                continue;
+            } else if target_kind == SymbolKind::Function && self.is_property_access_name(idx) {
+                // Function targets should not treat `obj.sameName()` member calls as
+                // references to a same-named free function.
                 continue;
             }
 
@@ -149,14 +186,17 @@ impl<'a> CallHierarchyProvider<'a> {
                     continue;
                 }
                 let range = self.get_range(idx);
-                callers.entry(containing_func.0).or_default().push(range);
+                let caller_idx = self
+                    .class_parent_for_constructor(containing_func)
+                    .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
             }
         }
 
         // Convert grouped callers into CallHierarchyIncomingCall items
         for (caller_idx_raw, ranges) in callers {
             let caller_idx = NodeIndex(caller_idx_raw);
-            if let Some(item) = self.make_call_hierarchy_item(caller_idx) {
+            if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
                 results.push(CallHierarchyIncomingCall {
                     from: item,
                     from_ranges: ranges,
@@ -353,6 +393,16 @@ impl<'a> CallHierarchyProvider<'a> {
             && let Some(ext) = self.arena.get_extended(node_idx)
         {
             let parent = ext.parent;
+            if parent.is_some()
+                && let Some(parent_node) = self.arena.get(parent)
+                && (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && let Some(class_decl) = self.arena.get_class(parent_node)
+                    && class_decl.name == node_idx
+                    && let Some(ctor_idx) = self.class_constructor_node(parent)
+                {
+                    return Some(ctor_idx);
+                }
             if let Some(property_initializer) =
                 self.property_initializer_function_for_name(node_idx, parent)
             {
@@ -410,11 +460,35 @@ impl<'a> CallHierarchyProvider<'a> {
         (prop.initializer == func_idx).then_some(parent_idx)
     }
 
+    fn variable_declaration_for_function_initializer(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if func_idx.is_none() {
+            return None;
+        }
+        let ext = self.arena.get_extended(func_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(parent)?;
+        (var_decl.initializer == func_idx).then_some(parent_idx)
+    }
+
     fn property_name_selection_range(&self, prop_idx: NodeIndex) -> Option<Range> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_decl = self.arena.get_property_decl(prop_node)?;
-        let name_text = self.get_identifier_text(prop_decl.name)?;
-        let name_node = self.arena.get(prop_decl.name)?;
+        self.identifier_selection_range(prop_decl.name)
+    }
+
+    fn identifier_selection_range(&self, ident_idx: NodeIndex) -> Option<Range> {
+        let name_text = self.get_identifier_text(ident_idx)?;
+        let name_node = self.arena.get(ident_idx)?;
         let start_offset = name_node.pos;
         let end_offset = start_offset.saturating_add(name_text.len() as u32);
         Some(Range::new(
@@ -488,8 +562,49 @@ impl<'a> CallHierarchyProvider<'a> {
                 }
                 return Some("<class>".to_string());
             }
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                let module_decl = self.arena.get_module(parent_node)?;
+                if module_decl.name.is_some() {
+                    return self.get_identifier_text(module_decl.name);
+                }
+            }
             current = parent;
         }
+    }
+
+    fn class_constructor_node(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
+        let class_node = self.arena.get(class_idx)?;
+        let class_decl = self.arena.get_class(class_node)?;
+        for &member_idx in class_decl.members.nodes.iter() {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                return Some(member_idx);
+            }
+        }
+        None
+    }
+
+    fn class_parent_for_constructor(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(func_idx)?;
+        if node.kind != syntax_kind_ext::CONSTRUCTOR {
+            return None;
+        }
+        let ext = self.arena.get_extended(func_idx)?;
+        let parent = ext.parent;
+        if parent.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent)?;
+        (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            .then_some(parent)
+    }
+
+    fn constructor_target_name(&self, func_idx: NodeIndex) -> Option<String> {
+        let class_idx = self.class_parent_for_constructor(func_idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class_decl = self.arena.get_class(class_node)?;
+        self.get_identifier_text(class_decl.name)
     }
 
     /// Walk up the parent chain to find the nearest containing function-like node.
@@ -504,6 +619,101 @@ impl<'a> CallHierarchyProvider<'a> {
             let parent_node = self.arena.get(parent)?;
             if parent_node.is_function_like() {
                 return Some(parent);
+            }
+            current = parent;
+        }
+    }
+
+    fn is_property_access_name(&self, node_idx: NodeIndex) -> bool {
+        let Some(ext) = self.arena.get_extended(node_idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_access_expr(parent_node)
+            .is_some_and(|access| access.name_or_argument == node_idx)
+    }
+
+    fn property_access_receiver(&self, name_idx: NodeIndex) -> Option<NodeIndex> {
+        if !self.is_property_access_name(name_idx) {
+            return None;
+        }
+        let ext = self.arena.get_extended(name_idx)?;
+        let parent = ext.parent;
+        let parent_node = self.arena.get(parent)?;
+        let access = self.arena.get_access_expr(parent_node)?;
+        Some(access.expression)
+    }
+
+    fn receiver_matches_container(&self, receiver_idx: NodeIndex, container_name: &str) -> bool {
+        let Some(receiver_node) = self.arena.get(receiver_idx) else {
+            return false;
+        };
+
+        match receiver_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .get_identifier_text(receiver_idx)
+                .is_some_and(|text| text == container_name),
+            k if k == SyntaxKind::ThisKeyword as u16 || k == SyntaxKind::SuperKeyword as u16 => {
+                true
+            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self
+                .arena
+                .get_call_expr(receiver_node)
+                .and_then(|call| {
+                    let callee_ident = self.get_callee_identifier(call.expression);
+                    self.get_identifier_text(callee_ident)
+                })
+                .is_some_and(|text| text == container_name),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(receiver_node)
+                    && self
+                        .get_identifier_text(access.name_or_argument)
+                        .is_some_and(|text| text == container_name)
+                {
+                    return true;
+                }
+                self.arena
+                    .get_access_expr(receiver_node)
+                    .is_some_and(|access| {
+                        self.receiver_matches_container(access.expression, container_name)
+                    })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(receiver_node)
+                .is_some_and(|expr| {
+                    self.receiver_matches_container(expr.expression, container_name)
+                }),
+            _ => false,
+        }
+    }
+
+    fn member_container_hint_for_callable(&self, callable_idx: NodeIndex) -> Option<String> {
+        if let Some(class_name) = self.container_name_for_callable(callable_idx) {
+            return Some(class_name);
+        }
+
+        let mut current = callable_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let var_decl = self.arena.get_variable_declaration(parent_node)?;
+                return self.get_identifier_text(var_decl.name);
             }
             current = parent;
         }
@@ -553,6 +763,12 @@ impl<'a> CallHierarchyProvider<'a> {
                     && let Some(prop_decl) = self.arena.get_property_decl(prop_node)
                 {
                     return Some(prop_decl.name);
+                }
+                if let Some(var_idx) = self.variable_declaration_for_function_initializer(func_idx)
+                    && let Some(var_node) = self.arena.get(var_idx)
+                    && let Some(var_decl) = self.arena.get_variable_declaration(var_node)
+                {
+                    return Some(var_decl.name);
                 }
                 None
             }
@@ -789,7 +1005,8 @@ impl<'a> CallHierarchyProvider<'a> {
                 self.property_name_selection_range(prop_idx)
                     .unwrap_or_else(|| self.get_range(func_idx))
             } else if let Some(name_idx) = self.get_function_name_idx(func_idx) {
-                self.get_range(name_idx)
+                self.identifier_selection_range(name_idx)
+                    .unwrap_or_else(|| self.get_range(name_idx))
             } else {
                 // For constructors or anonymous functions, use a small range at the start
                 let start = self.line_map.offset_to_position(node.pos, self.source_text);
@@ -805,7 +1022,9 @@ impl<'a> CallHierarchyProvider<'a> {
             uri: self.file_name.clone(),
             range,
             selection_range,
-            container_name: self.container_name_for_callable(func_idx),
+            container_name: self
+                .container_name_for_callable(func_idx)
+                .or_else(|| self.member_container_hint_for_callable(func_idx)),
         })
     }
 
@@ -833,10 +1052,17 @@ impl<'a> CallHierarchyProvider<'a> {
             if let Some(class_decl) = self.arena.get_class(node)
                 && class_decl.name.is_some()
             {
-                selection_range = self.get_range(class_decl.name);
+                selection_range = self
+                    .identifier_selection_range(class_decl.name)
+                    .unwrap_or_else(|| self.get_range(class_decl.name));
             }
         }
-        let range = self.get_range(decl_idx);
+        let range = if kind == SymbolKind::Class {
+            self.class_range(decl_idx)
+                .unwrap_or_else(|| self.get_range(decl_idx))
+        } else {
+            self.get_range(decl_idx)
+        };
         Some(CallHierarchyItem {
             name: symbol_name.to_string(),
             kind,
@@ -845,6 +1071,87 @@ impl<'a> CallHierarchyProvider<'a> {
             selection_range,
             container_name: self.container_name_for_callable(decl_idx),
         })
+    }
+
+    fn class_range(&self, class_idx: NodeIndex) -> Option<Range> {
+        let class_node = self.arena.get(class_idx)?;
+        let class_decl = self.arena.get_class(class_node)?;
+        let mut start_offset = class_decl
+            .modifiers
+            .as_ref()
+            .and_then(|mods| mods.nodes.first().copied())
+            .and_then(|mod_idx| self.arena.get(mod_idx).map(|n| n.pos))
+            .unwrap_or(class_node.pos);
+        if class_node.pos > 0 {
+            let bytes = self.source_text.as_bytes();
+            let mut line_start = class_node.pos as usize;
+            while line_start > 0 && bytes[line_start - 1] != b'\n' {
+                line_start -= 1;
+            }
+            let prefix = &self.source_text[line_start..class_node.pos as usize];
+            if let Some(export_offset) = prefix.find("export") {
+                start_offset = (line_start + export_offset) as u32;
+            }
+        }
+        let end_offset = self
+            .find_function_body_end_offset_from_source(start_offset)
+            .unwrap_or(class_node.end);
+        Some(Range::new(
+            self.line_map
+                .offset_to_position(start_offset, self.source_text),
+            self.line_map
+                .offset_to_position(end_offset, self.source_text),
+        ))
+    }
+
+    fn make_call_hierarchy_item_for_caller(
+        &self,
+        caller_idx: NodeIndex,
+    ) -> Option<CallHierarchyItem> {
+        if let Some(item) = self.make_call_hierarchy_item(caller_idx) {
+            return Some(item);
+        }
+        let caller_node = self.arena.get(caller_idx)?;
+        if caller_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || caller_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            let class_decl = self.arena.get_class(caller_node)?;
+            let class_name = self.get_identifier_text(class_decl.name)?;
+            return self.make_call_hierarchy_item_for_declaration(caller_idx, &class_name);
+        }
+        None
+    }
+
+    fn prepare_item_from_reference(&self, node_idx: NodeIndex) -> Option<CallHierarchyItem> {
+        let ident_idx = self.reference_identifier_at_or_above(node_idx)?;
+        let (_sym, decl_idx, name) = self.resolve_callee_symbol(ident_idx)?;
+        self.make_call_hierarchy_item_for_declaration(decl_idx, &name)
+    }
+
+    fn reference_identifier_at_or_above(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        for _ in 0..8 {
+            let node = self.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 && self.is_inside_call_expression(current)
+            {
+                return Some(current);
+            }
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || node.kind == syntax_kind_ext::NEW_EXPRESSION
+            {
+                let call_data = self.arena.get_call_expr(node)?;
+                let ident = self.get_callee_identifier(call_data.expression);
+                if ident.is_some() {
+                    return Some(ident);
+                }
+            }
+            let ext = self.arena.get_extended(current)?;
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+        }
+        None
     }
 
     /// Get the text of an identifier node.
