@@ -860,25 +860,46 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<NodeIndex> {
+        if let Some(cached) = self
+            .ctx
+            .class_symbol_to_decl_cache
+            .borrow()
+            .get(&sym_id)
+            .copied()
+        {
+            return cached;
+        }
+
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.value_declaration.is_some() {
+        let resolved = if symbol.value_declaration.is_some() {
             let decl_idx = symbol.value_declaration;
             if let Some(node) = self.ctx.arena.get(decl_idx)
                 && self.ctx.arena.get_class(node).is_some()
             {
-                return Some(decl_idx);
+                Some(decl_idx)
+            } else {
+                symbol.declarations.iter().find_map(|&decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_class(node).map(|_| decl_idx))
+                })
             }
-        }
+        } else {
+            symbol.declarations.iter().find_map(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_class(node).map(|_| decl_idx))
+            })
+        };
 
-        for &decl_idx in &symbol.declarations {
-            if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some()
-            {
-                return Some(decl_idx);
-            }
-        }
+        self.ctx
+            .class_symbol_to_decl_cache
+            .borrow_mut()
+            .insert(sym_id, resolved);
 
-        None
+        resolved
     }
 
     // =========================================================================

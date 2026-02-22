@@ -475,10 +475,6 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 };
-                let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
-                    break;
-                };
-
                 // Check for self-referential class BEFORE processing
                 if let Some(sym_id) = current_sym
                     && base_sym_id == sym_id
@@ -494,24 +490,8 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
-                let mut base_class_idx = None;
-                for &decl_idx in &base_symbol.declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some()
-                    {
-                        base_class_idx = Some(decl_idx);
-                        break;
-                    }
-                }
-                if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
-                    let decl_idx = base_symbol.value_declaration;
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some()
-                    {
-                        base_class_idx = Some(decl_idx);
-                    }
-                }
-                let Some(base_class_idx) = base_class_idx else {
+                let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
+                else {
                     // Check if the base expression has a type parameter type (mixin pattern).
                     // e.g., `class extends base` where `base: T extends Constructor<{}>`.
                     let expr_type = self.get_type_of_node(expr_idx);

@@ -428,6 +428,10 @@ pub struct CheckerContext<'a> {
     /// Avoids recomputing constructor inheritance checks in class-heavy programs.
     pub class_constructor_type_cache: FxHashMap<NodeIndex, TypeId>,
 
+    /// Cache class symbol -> class declaration node lookups used in inheritance queries.
+    /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
+    pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
+
     /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
     /// Avoids repeating private-brand scans on hot miss paths.
     pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,

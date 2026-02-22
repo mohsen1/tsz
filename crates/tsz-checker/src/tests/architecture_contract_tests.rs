@@ -1301,3 +1301,28 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
         "ambient_signature_checks should route function return queries via query boundaries"
     );
 }
+
+#[test]
+fn test_class_inheritance_paths_use_shared_class_declaration_lookup_helper() {
+    let instance_src = fs::read_to_string("src/types/class_type.rs")
+        .expect("failed to read src/types/class_type.rs for architecture guard");
+    let constructor_src = fs::read_to_string("src/types/class_type_constructor.rs")
+        .expect("failed to read src/types/class_type_constructor.rs for architecture guard");
+
+    assert!(
+        instance_src.contains("self.get_class_declaration_from_symbol(base_sym_id)"),
+        "class_type should route base class declaration lookup through shared helper"
+    );
+    assert!(
+        constructor_src.contains("self.get_class_declaration_from_symbol(base_sym_id)"),
+        "class_type_constructor should route base class declaration lookup through shared helper"
+    );
+    assert!(
+        !instance_src.contains("for &decl_idx in &base_symbol.declarations"),
+        "class_type should not rescan base symbol declarations on hot inheritance path"
+    );
+    assert!(
+        !constructor_src.contains("for &decl_idx in &base_symbol.declarations"),
+        "class_type_constructor should not rescan base symbol declarations on hot inheritance path"
+    );
+}
