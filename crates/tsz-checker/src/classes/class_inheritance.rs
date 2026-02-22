@@ -245,7 +245,6 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
         let node = self.ctx.arena.get(expr_idx)?;
 
-        // println!("resolve_heritage_symbol: expr_idx={:?}, sym={:?}", expr_idx, sym);
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             // FIX: Use resolve_identifier instead of get_node_symbol
             // get_node_symbol only works for declaration nodes, not references

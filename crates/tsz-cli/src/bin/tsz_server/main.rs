@@ -30,6 +30,7 @@
 //! ```
 
 mod check;
+mod handlers_code_fixes;
 mod handlers_completions;
 mod handlers_diagnostics;
 mod handlers_editing;
