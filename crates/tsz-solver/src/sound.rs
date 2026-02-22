@@ -67,18 +67,6 @@ pub enum SoundDiagnosticCode {
     /// TS9005: Enum-number assignment.
     /// Enum values should not be freely assignable to/from number.
     EnumNumberAssignment = 9005,
-
-    /// TS9006: Missing index signature.
-    /// Object being used as a map without proper index signature.
-    MissingIndexSignature = 9006,
-
-    /// TS9007: Unsafe type assertion.
-    /// Type assertion doesn't match actual runtime type.
-    UnsafeTypeAssertion = 9007,
-
-    /// TS9008: Unchecked indexed access.
-    /// Accessing array/object by index without undefined check.
-    UncheckedIndexedAccess = 9008,
 }
 
 impl SoundDiagnosticCode {
@@ -105,15 +93,6 @@ impl SoundDiagnosticCode {
             Self::EnumNumberAssignment => {
                 "Enum '{0}' should not be assigned to/from number without explicit conversion."
             }
-            Self::MissingIndexSignature => {
-                "Type '{0}' is being used as a map but lacks an index signature. Add '[key: string]: {1}' to the type."
-            }
-            Self::UnsafeTypeAssertion => {
-                "Type assertion from '{0}' to '{1}' may be unsafe. The types do not overlap sufficiently."
-            }
-            Self::UncheckedIndexedAccess => {
-                "Indexed access '{0}[{1}]' may return undefined. Add a null check or enable noUncheckedIndexedAccess."
-            }
         }
     }
 }
@@ -126,9 +105,6 @@ pub struct SoundDiagnostic {
 
     /// Message arguments for formatting
     pub args: Vec<String>,
-
-    /// Source location (`file_id`, start, end)
-    pub location: Option<(u32, u32, u32)>,
 }
 
 impl SoundDiagnostic {
@@ -137,19 +113,12 @@ impl SoundDiagnostic {
         Self {
             code,
             args: Vec::new(),
-            location: None,
         }
     }
 
     /// Add a message argument.
     pub fn with_arg(mut self, arg: impl Into<String>) -> Self {
         self.args.push(arg.into());
-        self
-    }
-
-    /// Set the source location.
-    pub const fn with_location(mut self, file_id: u32, start: u32, end: u32) -> Self {
-        self.location = Some((file_id, start, end));
         self
     }
 
@@ -241,35 +210,6 @@ impl<'a> SoundLawyer<'a> {
         checker.no_unchecked_indexed_access = self.config.no_unchecked_indexed_access;
 
         checker.is_subtype_of(source, target)
-    }
-
-    /// Check assignment and collect diagnostics.
-    pub fn check_assignment(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        diagnostics: &mut Vec<SoundDiagnostic>,
-    ) -> bool {
-        // Check for any escape
-        if self.is_any_escape(source, target) {
-            diagnostics.push(SoundDiagnostic::new(SoundDiagnosticCode::AnyEscape));
-            return false;
-        }
-
-        // Check for mutable array covariance
-        if let Some(diag) = self.check_array_covariance(source, target) {
-            diagnostics.push(diag);
-            return false;
-        }
-
-        // Standard assignability
-        self.is_assignable(source, target)
-    }
-
-    /// Check for "any escape" - using any to bypass type checks.
-    fn is_any_escape(&self, source: TypeId, target: TypeId) -> bool {
-        // any escaping to a non-top type
-        source == TypeId::ANY && target != TypeId::ANY && target != TypeId::UNKNOWN
     }
 
     /// Check for unsafe mutable array covariance.
