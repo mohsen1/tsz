@@ -12,6 +12,8 @@ use std::collections::HashMap;
 /// Matches: // @key: value (captures entire rest of line as value)
 static DIRECTIVE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*//\s*@(\w+)\s*:\s*([^\r\n]*)").unwrap());
+static TS_DIRECTIVE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*//\s*@([\w-]+)\s*$").unwrap());
 
 /// Parsed test directives
 #[derive(Debug, Default, Clone)]
@@ -84,6 +86,23 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 }
                 directives.options.insert(key_lower, value.to_string());
             }
+        } else if let Some(cap) = TS_DIRECTIVE_RE.captures(line) {
+            let key = cap.get(1).unwrap().as_str();
+            let key_lower = key.to_lowercase();
+
+            let (mapped_key, value) = match key_lower.as_str() {
+                "ts-check" => ("checkjs", "true"),
+                "ts-nocheck" => ("checkjs", "false"),
+                _ => continue,
+            };
+
+            if !directives.options.contains_key(mapped_key) {
+                directives.option_order.push(mapped_key.to_string());
+            }
+            directives.options.insert(mapped_key.to_string(), value.to_string());
+            if current_filename.is_some() {
+                current_content.push(line.to_string());
+            }
         } else {
             // Non-directive line - add to current file content
             current_content.push(line.to_string());
@@ -117,6 +136,31 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ts_check_directive() {
+        let content = "// @ts-check\nconst x: any = 1;";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("checkjs"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_ts_nocheck_directive() {
+        let content = "// @ts-nocheck\nconst x = 1;";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("checkjs"),
+            Some(&"false".to_string())
+        );
+    }
 }
 
 /// Expand directives with comma-separated values into multiple option variants.
