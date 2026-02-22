@@ -74,7 +74,19 @@ start at the beginning of the statement.
 - **Reason**: These are the core type-checking error codes. Improvements are ongoing
   in solver/checker. Each individual fix is complex and requires careful tsc parity analysis.
 
+## TS2300 — Duplicate identifier false positives (parameter+var, fixed)
+- **Tests**: 24 `arguments`-related false positives eliminated; 3 conformance tests now pass
+- **Root cause**: `resolve_duplicate_decl_node` did not recognize PARAMETER nodes, so
+  they resolved to the parent FunctionDeclaration and got FUNCTION flags. This made
+  parameter+var pairs appear as FUNCTION vs FUNCTION_SCOPED_VARIABLE conflicts.
+- **Fix**: Added PARAMETER to recognized node kinds and returned FUNCTION_SCOPED_VARIABLE
+  from `declaration_symbol_flags`.
+- **Remaining TS2300 issues**: `let`/`const` redeclarations conflicting with parameters
+  in the same block scope are not yet detected (pre-existing gap, separate from this fix).
+
 ## Deferred issues from this run (not fixed)
 
+- **TS2300**: `TypeScript/tests/cases/compiler/collisionArgumentsArrowFunctions.ts` — remaining failure is TS5025 (compiler option casing), not TS2300.
+- **TS2300**: `TypeScript/tests/cases/compiler/collisionArgumentsInterfaceMembers.ts` — remaining failure is TS5025.
 - **TS5057**: `TypeScript/tests/cases/compiler/commonSourceDir1.ts` — requires project/tsconfig discovery and compiler option plumbing that is not yet wired into the current checker flow.
 - **TS5095**: `TypeScript/tests/cases/compiler/declarationEmitBundleWithAmbientReferences.ts` — requires moduleResolution validation against module-kind constraints, which is still outside current scope.
