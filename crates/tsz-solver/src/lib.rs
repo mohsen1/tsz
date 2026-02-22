@@ -35,7 +35,6 @@ pub mod recursion;
 pub mod relations;
 #[cfg(test)]
 mod sound;
-pub mod tracer;
 mod type_factory;
 pub mod type_queries;
 pub mod type_resolver;
@@ -165,7 +164,6 @@ mod template_literal_comprehensive_test;
 #[cfg(test)]
 #[path = "../tests/template_literal_subtype_tests.rs"]
 mod template_literal_subtype_tests;
-// tracer_tests: tests are in tracer.rs module
 #[cfg(test)]
 #[path = "../tests/type_law_tests.rs"]
 mod type_law_tests;
