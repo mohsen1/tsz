@@ -273,3 +273,26 @@ Investigated but punted:
   Reason: requires dedicated call-hierarchy declaration/prepare support for class `static {}` blocks (constructor-like modeling) beyond this targeted file-start bridge fix.
 - `TypeScript/tests/cases/fourslash/callHierarchyFunctionAmbiguity.{2,3}.ts`: still create local baselines in full-suite runs.
   Reason: appears to require overload/ambient declaration disambiguation parity in call-hierarchy declaration resolution and span shaping, which is broader than this focused incoming-query guard.
+
+## 2026-02-22 (auto-import exclude-pattern completion/codefix follow-up)
+
+Completed in this pass:
+- Added tsserver completion-item post-processing in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` to prune deeper and `index`-penalized duplicate auto-import sources for the same symbol label.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` for the new pruning behavior.
+- Added focused tsserver integration coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for `autoImportFileExcludePatterns` completion behavior (`Button` from `./lib/main` with no duplicate `Button` entries in completion responses).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts`: still fails on `verify.importFixModuleSpecifiers` after completion-path dedupe changes.
+  Reason: completion parity gap narrowed (failure moved from `globalsPlus` list mismatch to import-fix module-specifier mismatch), but remaining issue appears in non-server import-fix request shaping/preferences propagation and requires deeper adapter-level tracing beyond this small handler-only fix.
+
+## 2026-02-22 (auto-import exclude-pattern import-fix ordering follow-up)
+
+Completed in this pass:
+- Fixed tsserver missing-import candidate ordering for same-symbol relative module specifiers by preferring shallower paths in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` for relative specifier ordering (`./lib/main` before `./lib/components/button/Button`).
+- Verified `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts` now passes in targeted runs.
+- Re-ran capped fourslash sample with `./scripts/run-fourslash.sh --max=200`: improved from `186/200` to `187/200` passing in this run.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`: still missing `container` class member snippet completions.
+  Reason: requires tsserver-parity class-member-snippet generation/source plumbing (`includeCompletionsWithClassMemberSnippets`) beyond this targeted import-fix ordering change.
