@@ -175,7 +175,7 @@ impl<'a> Printer<'a> {
                 Some(format_js_number(value))
             }
             b'o' | b'O' if needs_es5_downlevel => {
-                // Octal literal: parse and convert to decimal
+                // ES2015 octal literal: parse and convert to decimal
                 let digits = &text[2..];
                 if digits.is_empty() {
                     return None;
@@ -187,6 +187,24 @@ impl<'a> Printer<'a> {
                             .bytes()
                             .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
                     });
+                Some(format_js_number(value))
+            }
+            b'0'..=b'9' => {
+                // Legacy octal (01, 076, 009): tsc converts these for ALL targets.
+                // If all digits are 0-7, parse as octal; otherwise parse as decimal.
+                let digits = &text[1..]; // skip leading '0'
+                let is_octal = digits.bytes().all(|b| matches!(b, b'0'..=b'7'));
+                let value: f64 = if is_octal {
+                    u128::from_str_radix(digits, 8)
+                        .map(|v| v as f64)
+                        .unwrap_or_else(|_| {
+                            digits
+                                .bytes()
+                                .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
+                        })
+                } else {
+                    text.parse::<f64>().unwrap_or(0.0)
+                };
                 Some(format_js_number(value))
             }
             _ => None,
@@ -541,4 +559,66 @@ fn format_js_number(value: f64) -> String {
         return s;
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    /// Legacy octal literals (01, 076, 009) must be converted to decimal
+    /// in emitted JS, matching tsc behavior for ALL targets.
+    #[test]
+    fn legacy_octal_converted_to_decimal() {
+        let cases = [("01;", "1;"), ("076;", "62;"), ("00;", "0;"), ("07;", "7;")];
+        for (source, expected_fragment) in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected_fragment),
+                "Legacy octal {source} should emit {expected_fragment}\nGot: {output}"
+            );
+        }
+    }
+
+    /// Legacy octal with non-octal digits (08, 09, 089) are parsed as decimal
+    /// by JS engines. tsc still strips the leading zero.
+    #[test]
+    fn legacy_octal_with_non_octal_digits() {
+        let cases = [("009;", "9;"), ("08;", "8;")];
+        for (source, expected_fragment) in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected_fragment),
+                "Non-octal legacy form {source} should emit {expected_fragment}\nGot: {output}"
+            );
+        }
+    }
+
+    /// Regular decimal, hex, and float literals should NOT be modified.
+    #[test]
+    fn non_octal_literals_unchanged() {
+        let cases = ["42;", "0;", "0.5;", "1e3;"];
+        for source in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(source.trim_end_matches('\n')),
+                "Non-octal {source} should be preserved unchanged.\nGot: {output}"
+            );
+        }
+    }
 }

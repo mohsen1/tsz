@@ -1,8 +1,25 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 4982/7163 = 69.6% JS, 406/1036 = 39.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 9478/13623 = 69.6% JS, 763/1990 = 38.3% DTS)
 
 ### Fixed This Session
+- **Legacy octal literal conversion** (+20 JS tests):
+  tsc always converts legacy octal literals (`01`, `076`, `009`) to their decimal equivalents
+  in emitted JS, regardless of target. tsz was emitting them verbatim. The fix adds a
+  `b'0'..=b'9'` match arm to `convert_numeric_literal_downlevel()` in `literals.rs` that:
+  1. If all digits after leading `0` are `0-7`: parse as octal and emit decimal form
+  2. If any digit is `8` or `9`: parse entire literal as decimal and emit decimal form
+  This is distinct from ES2015 `0o`/`0b` downleveling (which is target-gated); legacy octal
+  conversion fires for ALL targets, matching tsc behavior. Three unit tests added.
+  Tests fixed: `scannerNumericLiteral2/3/8/9` (both targets), `scannerES3NumericLiteral2/3`,
+  `octalLiteralInStrictModeES3`, `octalLiteralAndEscapeSequence`, and 12 additional tests
+  where legacy octals appeared incidentally.
+  Note: `es5-oldStyleOctalLiteralInEnums` still fails because the enum IIFE generator uses
+  evaluated enum values from a separate code path (not `emit_numeric_literal`). Similarly,
+  `strictModeOctalLiterals` still fails due to const enum value folding (expression `12 + 01`
+  is not evaluated to `13`).
+
+### Previously Fixed
 - **Enum IIFE `var` → `let` for block-scoped enums at ES2015+** (+7 JS tests):
   tsc uses `var` for top-level enums but `let` for enums inside block scopes (functions,
   methods, constructors, namespaces) when targeting ES2015+. Two code paths needed fixing:
@@ -240,7 +257,7 @@
 - **Const enum value folding (~33 tests)**: Const enum member property accesses (`E.A`) are not replaced with their literal values (`0 /* E.A */`). Requires solver integration. Affects `constEnumPropertyAccess*`.
 - **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
 - **Extra source comments on transformed constructs (~37 tests)**: tsz emits source-level comments (like `// error`, `// no error`, `// should not error`) that tsc strips during transformation. Broader than item #13 which only covers erased constructs — these comments are attached to parameter lists, expressions, and statement-level constructs that tsc transforms.
-- **Numeric literal not downleveled for ES5 (~13 tests)**: Octal literals (`01`, `0o00`) and hex literals (`0xA0B0C0`) are emitted verbatim instead of being converted to decimal equivalents for ES3/ES5 targets. Affects `scannerES3NumericLiteral*`, `scannerNumericLiteral*`, `octalLiteralInStrictModeES3`.
+- ~~**Numeric literal not downleveled for ES5 (~13 tests)**~~ — **PARTIALLY FIXED** (see "Fixed This Session"): Legacy octal conversion now works for all targets. Remaining: ES2015 octal (`0o`) with numeric separators at ES2015+ targets may need additional handling (affects `parser.numericSeparators.octal`/`octalNegative`). Enum IIFE initializer paths still use un-converted source text.
 - **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
 - **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
 - ~~**Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**~~ — **FIXED** (see "Fixed This Session").
@@ -253,6 +270,15 @@
 - `crates/tsz-emitter/src/declaration_emitter/tests.rs: test_variable_declaration_infers_accessor_object_type_from_initializer_when_type_cache_missing`: this failure predates this pass and is currently blocked by a broader declaration-emitter regression in the same module; skipped to keep this change focused on emitter transform comment ordering.
 - `./scripts/emit/run.sh` full run (`JS+DTs`) and `scripts/emit` broader checks: large pre-existing failure set (6,828 failures total for JS+DTS) plus 2 timeouts remain; deferred for dedicated conformance/reporter work outside this smallest parity pass.
 - **Extra blank lines between JSDoc blocks in .js files (~18 tests)**: When tsz processes `.js` source files, it inserts extra blank lines between JSDoc comment blocks and following declarations. tsc does not add these. Affects `checkJsdocTypeTag1`, `checkJsdocTypeTag2`, `checkJsdocSatisfiesTag15`. Likely a newline-after-statement issue in the emission loop for files where type annotations are erased.
+- **Duplicate `//# sourceMappingURL` in multi-file concatenation (~10 tests, runner issue)**: When tests
+  use `@outFile` with a non-`out.js` name (e.g., `testfiles/fooResult.js`), the runner doesn't pass
+  `--outFile` to tsz (only does so for `out.js`). tsz ignores `--outFile` anyway (bundling not implemented).
+  The baseline parser also includes the expected output JS file as a source input to tsz, causing tsz to
+  re-emit the bundled output file and append a second `//# sourceMappingURL`. Two-pronged issue:
+  1. Runner should exclude expected output files from source inputs
+  2. tsz's `--outFile` bundling is not yet implemented
+  Affects `declarationMapsWithSourceMap`, `sourceMapWithCaseSensitiveFileNames`, `out-flag2/3`, etc.
+  The runner's persistent `emit-cache.json` can mask changes — clear `.cache/emit-cache.json` when debugging.
 - **Class expression static property comma-expression lowering (~12 tests)**: tsc emits a comma-expression pattern with a temp variable (`var _a; var v = (_a = class C {}, _a.a = 1, _a);`) for class expressions with static properties. tsz emits separate statements. Affects `classExpressionWithStaticProperties1`-`ES64`, `classBlockScoping`.
 - **`super(...arguments)` in `extends null` classes (~5 tests)**: tsz inserts `super(...arguments)` for classes that `extends null`, which tsc does not. Auto-super injection logic doesn't account for `extends null`. Affects `classExtendingNull`.
 - **JSX text whitespace collapsing in React transform mode (~remaining JSX tests)**: The `re_scan_jsx_token` fix resolves preserve-mode JSX text, but some JSX tests using React transform may have different whitespace-handling requirements where tsc strips certain whitespace-only text nodes.
