@@ -24,6 +24,69 @@ struct ParsedFileContext<'a> {
 }
 
 impl Server {
+    fn is_js_identifier_char(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+    }
+
+    fn class_keyword_quickinfo_from_source(
+        source_text: &str,
+        line_map: &LineMap,
+        position: tsz_common::position::Position,
+    ) -> Option<(String, tsz_common::position::Range)> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        let offset = line_map.position_to_offset(position, source_text)?;
+        if offset >= len {
+            return None;
+        }
+        let mut start = offset;
+        while start > 0 && bytes[(start - 1) as usize].is_ascii_alphabetic() {
+            start -= 1;
+        }
+        let mut end = offset;
+        while end < len && bytes[end as usize].is_ascii_alphabetic() {
+            end += 1;
+        }
+        if end <= start {
+            return None;
+        }
+        let token = &source_text[start as usize..end as usize];
+        if token != "class" {
+            return None;
+        }
+        if start > 0 && Self::is_js_identifier_char(bytes[(start - 1) as usize]) {
+            return None;
+        }
+        if end < len && Self::is_js_identifier_char(bytes[end as usize]) {
+            return None;
+        }
+
+        let mut probe = end;
+        while probe < len && bytes[probe as usize].is_ascii_whitespace() {
+            probe += 1;
+        }
+        let name = if probe < len
+            && ((bytes[probe as usize].is_ascii_alphabetic())
+                || bytes[probe as usize] == b'_'
+                || bytes[probe as usize] == b'$')
+        {
+            let name_start = probe;
+            probe += 1;
+            while probe < len && Self::is_js_identifier_char(bytes[probe as usize]) {
+                probe += 1;
+            }
+            source_text[name_start as usize..probe as usize].to_string()
+        } else {
+            "(Anonymous class)".to_string()
+        };
+
+        let range = tsz_common::position::Range::new(
+            line_map.offset_to_position(start, source_text),
+            line_map.offset_to_position(end, source_text),
+        );
+        Some((format!("(local class) {name}"), range))
+    }
+
     fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {
         let idx = offset as usize;
         if idx > source_text.len() {
@@ -305,7 +368,95 @@ impl Server {
             let provider =
                 HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file);
             let mut type_cache = None;
-            let info = provider.get_hover(root, position, &mut type_cache)?;
+            let mut info = provider.get_hover(root, position, &mut type_cache);
+            let bytes = source_text.as_bytes();
+            if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
+                let len = bytes.len() as u32;
+                // On `.`/`?.` cursor positions, tsserver quickinfo resolves the RHS member.
+                if base_offset < len {
+                    let mut rhs_probe = None;
+                    let current = bytes[base_offset as usize];
+                    if current == b'.' {
+                        rhs_probe = Some(base_offset + 1);
+                    } else if current == b'?'
+                        && base_offset + 1 < len
+                        && bytes[(base_offset + 1) as usize] == b'.'
+                    {
+                        rhs_probe = Some(base_offset + 2);
+                    }
+                    if let Some(mut probe) = rhs_probe {
+                        while probe < len && bytes[probe as usize].is_ascii_whitespace() {
+                            probe += 1;
+                        }
+                        if probe < len {
+                            let probe_pos = line_map.offset_to_position(probe, &source_text);
+                            if let Some(member_hover) =
+                                provider.get_hover(root, probe_pos, &mut type_cache)
+                            {
+                                info = Some(member_hover);
+                            }
+                        }
+                    }
+                }
+
+                if info.is_none() {
+                    // tsserver/fourslash markers may place cursor on punctuation directly
+                    // adjacent to the symbol token (e.g. `x./**/m`). Probe nearby offsets
+                    // to recover the expected symbol hover without broad behavior changes.
+                    let mut probes = [base_offset; 3];
+                    let mut probe_count = 0usize;
+                    if base_offset < len {
+                        let current = bytes[base_offset as usize];
+                        if current == b'.'
+                            || current == b'?'
+                            || current == b':'
+                            || current == b'('
+                            || current == b')'
+                            || current == b','
+                            || current.is_ascii_whitespace()
+                        {
+                            if base_offset + 1 < len {
+                                probes[probe_count] = base_offset + 1;
+                                probe_count += 1;
+                            }
+                            if base_offset > 0 {
+                                probes[probe_count] = base_offset - 1;
+                                probe_count += 1;
+                            }
+                        }
+                    } else if base_offset > 0 {
+                        probes[probe_count] = base_offset - 1;
+                        probe_count += 1;
+                    }
+
+                    for probe_offset in probes.into_iter().take(probe_count) {
+                        let probe_pos = line_map.offset_to_position(probe_offset, &source_text);
+                        info = provider.get_hover(root, probe_pos, &mut type_cache);
+                        if info.is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+            let info = match info {
+                Some(info) => info,
+                None => {
+                    if let Some((display_string, range)) =
+                        Self::class_keyword_quickinfo_from_source(&source_text, &line_map, position)
+                    {
+                        return Some(serde_json::json!({
+                            "displayString": display_string,
+                            "documentation": serde_json::json!([]),
+                            "kind": "class",
+                            "kindModifiers": "",
+                            "tags": [],
+                            "start": Self::lsp_to_tsserver_position(range.start),
+                            "end": Self::lsp_to_tsserver_position(range.end),
+                        }));
+                    }
+                    return None;
+                }
+            };
 
             // Use structured fields from HoverInfo when available,
             // falling back to parsing from markdown contents
