@@ -294,6 +294,51 @@ fn test_completions_includes_keywords() {
 }
 
 #[test]
+fn test_completions_global_surface_matches_fourslash_globals() {
+    let source = "Button";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let position = Position::new(0, 6);
+
+    let completions = Completions::new(arena, &binder, &line_map, source);
+    let items = completions
+        .get_completions(root, position)
+        .expect("Should have completions");
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+    assert!(
+        names.contains(&"Array"),
+        "Expected `Array` in global completions"
+    );
+    assert!(
+        names.contains(&"globalThis"),
+        "Expected `globalThis` in global completions"
+    );
+    assert!(
+        names.contains(&"undefined"),
+        "Expected `undefined` in global completions"
+    );
+    assert!(
+        !names.contains(&"Promise"),
+        "Expected `Promise` to be excluded from fourslash globals surface"
+    );
+    assert!(
+        !names.contains(&"Map"),
+        "Expected `Map` to be excluded from fourslash globals surface"
+    );
+    assert!(
+        !names.contains(&"private"),
+        "Expected `private` to be excluded from global keyword list"
+    );
+}
+
+#[test]
 fn test_completions_jsdoc_documentation() {
     // Test that JSDoc comments are included in completion items
     let source = "/** This is a test function */\nfunction foo() {}\n";
