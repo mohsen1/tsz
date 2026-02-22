@@ -1330,4 +1330,12 @@ fn test_class_inheritance_paths_use_shared_class_declaration_lookup_helper() {
         !constructor_src.contains("for &decl_idx in &base_symbol.declarations"),
         "class_type_constructor should not rescan base symbol declarations on hot inheritance path"
     );
+
+    let instance_lookup_calls = instance_src
+        .match_indices("self.get_class_declaration_from_symbol(base_sym_id)")
+        .count();
+    assert_eq!(
+        instance_lookup_calls, 1,
+        "class_type should resolve base declaration once per inheritance path"
+    );
 }

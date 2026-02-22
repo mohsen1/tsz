@@ -574,12 +574,13 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 };
+                let base_class_decl = self.get_class_declaration_from_symbol(base_sym_id);
+
                 // Canonicalize class symbol for cycle guards. Some paths can observe
                 // alias/default-export symbols while the active resolution set tracks
                 // the declaration symbol; check both to avoid recursion leaks.
-                let canonical_base_sym = self
-                    .get_class_declaration_from_symbol(base_sym_id)
-                    .and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                let canonical_base_sym =
+                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
                 let base_in_resolution_set = self
                     .ctx
                     .class_instance_resolution_set
@@ -612,8 +613,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
-                let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
-                else {
+                let Some(base_class_idx) = base_class_decl else {
                     // Base class node not found in current arena (cross-file case).
                     // Try to resolve the base class type through the symbol system.
                     // If base class is being resolved, skip to prevent infinite loop
