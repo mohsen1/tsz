@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9541/13623 = 70.0% JS, 776/1990 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current 9542/13623 = 70.0% JS, 777/1990 = 39.0% DTS)
 
 ### Fixed This Session
+- **Missing parentheses in `extends` clause for lowered optional chains** (+1 JS, +1 DTS):
+  When `class C extends A?.B {}` is emitted with target < ES2020, the optional chain is lowered
+  to `A === null || A === void 0 ? void 0 : A.B`. This conditional expression needs parens in
+  the `extends` position because JavaScript grammar requires a `LeftHandSideExpression` there.
+  The parser stores the heritage expression directly as a `PropertyAccessExpression` (not wrapped
+  in `ExpressionWithTypeArguments`) when there are no type arguments, so the fix checks
+  `question_dot_token` on `AccessExprData` in both branches of `emit_heritage_expression()`.
+  A `heritage_expr_needs_optional_chain_parens()` helper handles property access, element access,
+  and call expression optional chains. Unit test added.
+  Test fixed: `classExtendingOptionalChain`.
+  JS: 9541 → 9542, DTS: 776 → 777, zero regressions.
+
+### Previously Fixed
 - **`/// <reference>` directives emitted inside AMD/UMD/System wrapper body** (+10 JS tests):
   tsc places `/// <reference path="..." />` directives at file top level, BEFORE the module
   wrapper (`define()`, UMD IIFE, `System.register()`). tsz was emitting them inside the wrapper
