@@ -20,6 +20,7 @@ mod contextual;
 mod contextual_extractors;
 pub mod def;
 mod diagnostics;
+mod diagnostics_builders;
 pub mod evaluation;
 pub mod expression_ops;
 mod flow_analysis;
@@ -78,8 +79,10 @@ pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use def::*;
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::{
-    DiagnosticArg, DiagnosticBuilder, DiagnosticCollector, DiagnosticSeverity, PendingDiagnostic,
-    PendingDiagnosticBuilder, SourceLocation, SourceSpan, SpannedDiagnosticBuilder,
+    DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
+};
+pub use diagnostics_builders::{
+    DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
 pub use evaluation::evaluate::*;
 pub use flow_analysis::*;

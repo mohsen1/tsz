@@ -2,6 +2,10 @@
 
 use super::*;
 use crate::TypeInterner;
+use crate::diagnostics_builders::{
+    DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
+};
+use crate::format::TypeFormatter;
 #[test]
 fn test_format_intrinsic_types() {
     let interner = TypeInterner::new();
