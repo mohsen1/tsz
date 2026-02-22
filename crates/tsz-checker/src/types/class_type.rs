@@ -106,15 +106,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                     &[&name_text],
                 );
-                // Avoid duplicate emission
-
-                if !self.ctx.diagnostics.iter().any(|d| d.code == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION && d.start == self.ctx.arena.get(error_node).map_or(0, |n| n.pos)) {
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                    );
-                }
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                );
                 return TypeId::ERROR;
             }
         } else {
@@ -713,12 +709,8 @@ impl<'a> CheckerState<'a> {
                     let base_sym = base_sym_id;
                     if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
                         if base_symbol.flags & symbol_flags::CLASS != 0 {
-                            // Ensure the class is tracked in symbol_resolution_stack to prevent
-                            // infinite recursion when evaluating base class properties.
-                            // get_type_of_symbol returns the constructor type, but also caches
-                            // the instance type as a side-effect.
-                            let _ = self.get_type_of_symbol(base_sym);
-                            // Use class_instance_type_from_symbol to get the instance type
+                            // Use class_instance_type_from_symbol directly to avoid redundant
+                            // constructor-type computation on hot inheritance paths.
                             self.class_instance_type_from_symbol(base_sym)
                                 .unwrap_or(TypeId::ANY)
                         } else {
