@@ -64,3 +64,5 @@ Investigated but punted:
   Reason: remaining gap is namespace default/type-only import-fix candidate surfacing for `ns.A` (`import type ns from "./ns"`), which needs deeper import-candidate discovery logic beyond this targeted combined-fix patch.
 - `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` under `module:none` + `target:es5`.
   Reason: completion still leaks through a non-trivial inferred-options/module-gating path that needs a dedicated completion pipeline trace; deferred to keep this run focused on combined missing-import fix-all correctness.
+- `TypeScript/tests/cases/fourslash/autoImportModuleNone{1,2}.ts`: now fails on `verify.getSemanticDiagnostics` payload parity after completion/edit flow.
+  Reason: diagnostics path still diverges from tsserver/harness expectations for module:none test-state protocol handling (shape/content/source of diagnostics), requiring deeper TestState/SessionClient bridge tracing beyond this targeted LSP server fix.
