@@ -363,6 +363,7 @@ impl DocumentFormattingProvider {
             if options.semicolons.as_deref() != Some("remove") {
                 processed = Self::normalize_semicolons(&processed);
             }
+            processed = Self::normalize_as_operator_spacing(&processed);
 
             // Apply proper indentation
             let indent_prefix = indent_str.repeat(effective_indent as usize);
@@ -552,6 +553,60 @@ impl DocumentFormattingProvider {
         } else {
             trimmed.to_string()
         }
+    }
+
+    /// Normalize spacing around the `as` type-assertion operator.
+    fn normalize_as_operator_spacing(line: &str) -> String {
+        if !line.contains("as") {
+            return line.to_string();
+        }
+
+        let mut out = String::with_capacity(line.len());
+        let mut i = 0usize;
+        while i < line.len() {
+            let Some(ch) = line[i..].chars().next() else {
+                break;
+            };
+            if !ch.is_whitespace() {
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            }
+
+            let ws_start = i;
+            while let Some(next) = line[i..].chars().next() {
+                if !next.is_whitespace() {
+                    break;
+                }
+                i += next.len_utf8();
+            }
+
+            if line[i..].starts_with("as") {
+                let as_end = i + 2;
+                let mut after_as = as_end;
+                while let Some(next) = line[after_as..].chars().next() {
+                    if !next.is_whitespace() {
+                        break;
+                    }
+                    after_as += next.len_utf8();
+                }
+                if after_as > as_end {
+                    if !out.ends_with(' ') && !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str("as");
+                    if after_as < line.len() {
+                        out.push(' ');
+                    }
+                    i = after_as;
+                    continue;
+                }
+            }
+
+            out.push_str(&line[ws_start..i]);
+        }
+
+        out
     }
 
     /// Convert leading spaces to tabs based on tab size.

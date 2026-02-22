@@ -204,6 +204,14 @@ fn test_format_no_double_semicolons() {
 }
 
 #[test]
+fn test_format_normalizes_as_operator_spacing() {
+    let source = "var x = 3   as  number;\n";
+    let options = FormattingOptions::default();
+    let formatted = DocumentFormattingProvider::format_text(source, &options);
+    assert_eq!(formatted, "var x = 3 as number;\n");
+}
+
+#[test]
 fn test_format_tab_size_2() {
     let source = "function foo() {\nlet x = 1;\n}";
     let options = FormattingOptions {
