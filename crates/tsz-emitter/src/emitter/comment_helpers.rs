@@ -344,16 +344,17 @@ impl<'a> Printer<'a> {
                 // boundary and the comment. If so, the comment belongs to that code
                 // (e.g., a closing `}`), not to the erased node — don't consume it.
                 if c.pos >= gap_anchor
-                    && let Some(bytes) = source_bytes {
-                        let gap_start = gap_anchor as usize;
-                        let gap_end = std::cmp::min(c.pos as usize, bytes.len());
-                        let has_code_between = bytes[gap_start..gap_end]
-                            .iter()
-                            .any(|&b| !matches!(b, b' ' | b'\t'));
-                        if has_code_between {
-                            break;
-                        }
+                    && let Some(bytes) = source_bytes
+                {
+                    let gap_start = gap_anchor as usize;
+                    let gap_end = std::cmp::min(c.pos as usize, bytes.len());
+                    let has_code_between = bytes[gap_start..gap_end]
+                        .iter()
+                        .any(|&b| !matches!(b, b' ' | b'\t'));
+                    if has_code_between {
+                        break;
                     }
+                }
                 self.comment_emit_idx += 1;
             } else {
                 break;
