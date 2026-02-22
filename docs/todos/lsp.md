@@ -343,3 +343,15 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: still missing completion `execActionWithCount`.
   Reason: appears blocked on broader class-member snippet completion parity (`includeCompletionsWithClassMemberSnippets` completion source + entry detail shaping), which is larger than this targeted call-hierarchy fix.
+
+## 2026-02-22 (quickinfo contextual parameter fallback follow-up)
+
+Completed in this pass:
+- Fixed quickinfo contextual-typing fallback for function-expression parameters under object-literal contextual members by refining tsserver quickinfo recovery in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs`.
+- Added focused tsserver unit test coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for contextual object-literal function parameter quickinfo.
+- Verified targeted fourslash progress with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `31` (`(parameter) i: any`) to marker `34`.
+- Re-ran capped sample with `./scripts/run-fourslash.sh --skip-build --max=200`: remains `188/200` passing in this run (no sampled regressions).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `34` (`(property) IFoo.a: any[]` vs expected `number[]`).
+  Reason: requires deeper contextual typing parity for declaration-site/object-literal array property quickinfo resolution in the hover/quickinfo provider path beyond this targeted parameter fallback patch.
