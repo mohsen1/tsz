@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5036/7163 = 70.3% JS, 416/1036 = 40.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 5033/7163 = 70.3% JS, 415/1036 = 40.1% DTS)
 
 ### Fixed This Session
+- **Wrong AST accessors for method/constructor overload erasure** (+3 JS, +1 DTS):
+  The `is_erased` check in the class member emission loop (line ~870 in `declarations.rs`) used
+  `self.arena.get_function(member_node)` for `METHOD_DECLARATION` and `CONSTRUCTOR` kinds. But
+  `get_function()` only matches `FUNCTION_DECLARATION | FUNCTION_EXPRESSION | ARROW_FUNCTION` —
+  it always returns `None` for methods and constructors. This meant bodyless overload signatures
+  were never detected as erased, so their leading comments (JSDoc blocks, `// error` annotations)
+  leaked into the JS output. Fix: use `get_method_decl()` for methods and `get_constructor()` for
+  constructors. Two unit tests added.
+  This fix also removes the extra-comment component from ~66 multi-issue failures, making future
+  fixes in that area easier.
+  JS: 5030 → 5033, DTS: 414 → 415, zero regressions.
+
+### Previously Fixed
 - **Private fields (#name) with initializers dropped at ES2022+ when useDefineForClassFields=false** (+8 JS, +1 DTS):
   Private class fields use native syntax at ES2022+ and are unaffected by
   `useDefineForClassFields` (which only controls public field semantics). The class field
