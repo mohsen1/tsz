@@ -398,11 +398,11 @@ impl<'a> CallHierarchyProvider<'a> {
                 && (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
                 && let Some(class_decl) = self.arena.get_class(parent_node)
-                    && class_decl.name == node_idx
-                    && let Some(ctor_idx) = self.class_constructor_node(parent)
-                {
-                    return Some(ctor_idx);
-                }
+                && class_decl.name == node_idx
+                && let Some(ctor_idx) = self.class_constructor_node(parent)
+            {
+                return Some(ctor_idx);
+            }
             if let Some(property_initializer) =
                 self.property_initializer_function_for_name(node_idx, parent)
             {
