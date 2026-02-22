@@ -109,8 +109,8 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
    - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
    - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
 2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
-3. **Solver top-level file sprawl**: ~50 files at solver root. Remaining file families to organize into subdirectories (following the pattern now established by `narrowing/`, `relations/`, `evaluation/`, `inference/`, `instantiation/`, `visitors/`, `caches/`):
-   - `operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory
+3. **Solver top-level file sprawl**: Remaining file families to organize into subdirectories (following the pattern now established by `narrowing/`, `relations/`, `evaluation/`, `inference/`, `instantiation/`, `visitors/`, `caches/`, `operations/`):
+   - ~~`operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory~~ ✅ Done (c3365ed0d)
    - `type_queries_*.rs` (5 files) → `type_queries/` subdirectory
-   - `intern_*.rs` (3 files: `intern.rs`, `intern_normalize.rs`, `intern_template.rs`) → `intern/` subdirectory
+   - ~~`intern_*.rs` (4 files: `intern.rs`, `intern_normalize.rs`, `intern_intersection.rs`, `intern_template.rs`) → `intern/` subdirectory~~ ✅ Done
 4. **Checker `context*.rs` files**: 4 files at checker top level (`context.rs` 1,830 LOC, `context_constructors.rs` 1,030 LOC, `context_resolver.rs` 582 LOC, `context_def_mapping.rs` 346 LOC — total 3,788 LOC) could be organized into a `context/` subdirectory.

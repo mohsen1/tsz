@@ -108,10 +108,10 @@ fn test_direct_typedata_construction_is_quarantined_to_intern() {
 
     let mut violations = Vec::new();
     for path in source_files {
-        if path.ends_with("src/intern.rs")
-            || path.ends_with("src/intern_intersection.rs")
-            || path.ends_with("src/intern_normalize.rs")
-            || path.ends_with("src/intern_template.rs")
+        if path.ends_with("src/intern/mod.rs")
+            || path.ends_with("src/intern/intersection.rs")
+            || path.ends_with("src/intern/normalize.rs")
+            || path.ends_with("src/intern/template.rs")
         {
             continue;
         }

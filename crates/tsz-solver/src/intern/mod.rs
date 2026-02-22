@@ -42,10 +42,9 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
-#[path = "intern_intersection.rs"]
-mod intern_intersection;
-
-// Re-export for test access
+mod intersection;
+mod normalize;
+mod template;
 
 const SHARD_BITS: u32 = 6;
 const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
@@ -1205,7 +1204,7 @@ impl TypeInterner {
     }
 
     // Intersection normalization, empty object elimination, callable/object
-    // merging, and distribution are in `intern_intersection.rs`.
+    // merging, and distribution are in `intersection.rs`.
 
     /// Intern an array type
     pub fn array(&self, element: TypeId) -> TypeId {
@@ -1419,9 +1418,9 @@ impl Default for TypeInterner {
 }
 
 #[cfg(test)]
-#[path = "../tests/intern_tests.rs"]
+#[path = "../../tests/intern_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../tests/concurrent_tests.rs"]
+#[path = "../../tests/concurrent_tests.rs"]
 mod concurrent_tests;

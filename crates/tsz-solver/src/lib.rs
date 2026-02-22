@@ -37,8 +37,6 @@ pub mod inheritance;
 mod instantiate;
 mod instantiation;
 mod intern;
-mod intern_normalize;
-mod intern_template;
 pub mod judge;
 mod narrowing;
 mod object_literal;
