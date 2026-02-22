@@ -320,7 +320,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Propagates to the internal `SubtypeChecker`.
     pub const fn set_inheritance_graph(
         &mut self,
-        graph: Option<&'a crate::inheritance::InheritanceGraph>,
+        graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
     ) {
         self.subtype.inheritance_graph = graph;
     }
