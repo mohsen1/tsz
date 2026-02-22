@@ -1,4 +1,4 @@
-use super::Printer;
+use super::super::Printer;
 use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
@@ -9,7 +9,7 @@ use tsz_scanner::SyntaxKind;
 /// When the right-hand side is a simple identifier, we access properties/elements directly.
 /// When complex, we create a temp variable first.
 impl<'a> Printer<'a> {
-    pub(super) fn emit_variable_declaration_list_es5(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_variable_declaration_list_es5(&mut self, node: &Node) {
         let Some(decl_list) = self.arena.get_variable(node) else {
             return;
         };
@@ -69,7 +69,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Count effective (non-omitted) bindings in a destructuring pattern
-    pub(super) fn count_effective_bindings(&self, pattern_node: &Node) -> (usize, bool) {
+    pub(in crate::emitter) fn count_effective_bindings(
+        &self,
+        pattern_node: &Node,
+    ) -> (usize, bool) {
         let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
             return (0, false);
         };
@@ -96,7 +99,7 @@ impl<'a> Printer<'a> {
 
     /// For single-binding array patterns with complex expressions,
     /// find the single effective binding's index and emit inline.
-    pub(super) fn emit_single_array_binding_inline(
+    pub(in crate::emitter) fn emit_single_array_binding_inline(
         &mut self,
         pattern_node: &Node,
         initializer: NodeIndex,
@@ -198,7 +201,7 @@ impl<'a> Printer<'a> {
 
     /// For rest-only array patterns [...rest] = expr, emit: rest = expr.slice(0)
     /// TypeScript inlines this without a temp variable for any expression type.
-    pub(super) fn emit_rest_only_array_inline(
+    pub(in crate::emitter) fn emit_rest_only_array_inline(
         &mut self,
         pattern_node: &Node,
         initializer: NodeIndex,
@@ -250,7 +253,7 @@ impl<'a> Printer<'a> {
 
     /// Inline a single-element array pattern at index 0 from a string expression.
     /// [x] from expr → x = expr[0]
-    pub(super) fn try_emit_single_inline_from_expr(
+    pub(in crate::emitter) fn try_emit_single_inline_from_expr(
         &mut self,
         pattern_node: &Node,
         expr: &str,
@@ -316,7 +319,7 @@ impl<'a> Printer<'a> {
 
     /// Inline a rest-only array pattern from a string expression.
     /// [...rest] from expr → rest = expr.slice(0)
-    pub(super) fn try_emit_rest_only_from_expr(
+    pub(in crate::emitter) fn try_emit_rest_only_from_expr(
         &mut self,
         pattern_node: &Node,
         expr: &str,
@@ -353,7 +356,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn unwrap_parenthesized_binding_pattern(
+    pub(in crate::emitter) fn unwrap_parenthesized_binding_pattern(
         &self,
         mut pattern_idx: NodeIndex,
     ) -> NodeIndex {
@@ -372,7 +375,7 @@ impl<'a> Printer<'a> {
         pattern_idx
     }
 
-    pub(super) fn is_binding_pattern_array_shape(&self, pattern_node: &Node) -> bool {
+    pub(in crate::emitter) fn is_binding_pattern_array_shape(&self, pattern_node: &Node) -> bool {
         if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             return false;
         }
@@ -396,7 +399,7 @@ impl<'a> Printer<'a> {
         })
     }
 
-    pub(super) fn binding_pattern_non_rest_count(&self, pattern_node: &Node) -> usize {
+    pub(in crate::emitter) fn binding_pattern_non_rest_count(&self, pattern_node: &Node) -> usize {
         if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             return 0;
         }
@@ -429,7 +432,11 @@ impl<'a> Printer<'a> {
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
     /// When the initializer is a simple identifier, TypeScript skips the temp variable
     /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
-    pub(super) fn emit_es5_destructuring(&mut self, decl_idx: NodeIndex, first: &mut bool) {
+    pub(in crate::emitter) fn emit_es5_destructuring(
+        &mut self,
+        decl_idx: NodeIndex,
+        first: &mut bool,
+    ) {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
         };
@@ -461,7 +468,7 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
     }
 
-    pub(super) fn emit_es5_destructuring_fallback(
+    pub(in crate::emitter) fn emit_es5_destructuring_fallback(
         &mut self,
         pattern_node: &Node,
         initializer: NodeIndex,
@@ -520,7 +527,7 @@ impl<'a> Printer<'a> {
     // Example: var { x } = { x: 1 } -> var x = { x: 1 }.x
     // Default initializer still uses a value temp:
     // var { z = "" } = { z: undefined } -> var _a = { z: undefined }.z, z = _a === void 0 ? "" : _a
-    pub(super) fn emit_single_object_binding_inline_simple(
+    pub(in crate::emitter) fn emit_single_object_binding_inline_simple(
         &mut self,
         pattern_node: &Node,
         initializer: NodeIndex,
@@ -603,7 +610,7 @@ impl<'a> Printer<'a> {
         true
     }
 
-    pub(super) fn emit_single_object_binding_inline_nested(
+    pub(in crate::emitter) fn emit_single_object_binding_inline_nested(
         &mut self,
         pattern_node: &Node,
         initializer: NodeIndex,
@@ -829,7 +836,7 @@ impl<'a> Printer<'a> {
         true
     }
 
-    pub(super) fn emit_single_object_binding_inline_nested_object(
+    pub(in crate::emitter) fn emit_single_object_binding_inline_nested_object(
         &mut self,
         pattern_node: NodeIndex,
         source_name: &str,
@@ -908,7 +915,7 @@ impl<'a> Printer<'a> {
         true
     }
 
-    pub(super) fn emit_single_object_binding_inline_nested_object_node(
+    pub(in crate::emitter) fn emit_single_object_binding_inline_nested_object_node(
         &mut self,
         pattern_node: NodeIndex,
         initializer: NodeIndex,
@@ -1003,7 +1010,7 @@ impl<'a> Printer<'a> {
         true
     }
 
-    pub(super) fn emit_es5_destructuring_from_value(
+    pub(in crate::emitter) fn emit_es5_destructuring_from_value(
         &mut self,
         pattern_idx: NodeIndex,
         result_name: &str,
@@ -1030,7 +1037,7 @@ impl<'a> Printer<'a> {
     /// Emit ES5 destructuring using __read helper for downlevelIteration
     /// Transforms: `[a = 0, b = 1] = expr`
     /// Into: `_d = __read(expr, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, _f = _d[1], b = _f === void 0 ? 1 : _f`
-    pub(super) fn emit_es5_destructuring_with_read_node(
+    pub(in crate::emitter) fn emit_es5_destructuring_with_read_node(
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: NodeIndex,
@@ -1223,7 +1230,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_with_read_tail(
+    pub(in crate::emitter) fn emit_es5_destructuring_with_read_tail(
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: &str,
@@ -1321,7 +1328,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_with_read(
+    pub(in crate::emitter) fn emit_es5_destructuring_with_read(
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: &str,
@@ -1451,6 +1458,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    // Binding element patterns + param bindings → es5_bindings_patterns.rs
-    // For-of array + assignment destructuring → es5_bindings_assignment.rs
+    // Binding element patterns + param bindings → es5/bindings_patterns.rs
+    // For-of array + assignment destructuring → es5/bindings_assignment.rs
 }

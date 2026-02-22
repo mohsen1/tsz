@@ -1015,7 +1015,10 @@ impl Server {
         (!ty.is_empty()).then(|| (ty.to_string(), is_optional))
     }
 
-    fn extract_param_type_from_fn_type(type_text: &str, param_index: usize) -> Option<(String, bool)> {
+    fn extract_param_type_from_fn_type(
+        type_text: &str,
+        param_index: usize,
+    ) -> Option<(String, bool)> {
         let trimmed = Self::strip_outer_parens(type_text);
         let open = trimmed.find('(')?;
         let mut depth = 0i32;
@@ -1328,8 +1331,10 @@ impl Server {
         for probe in probes {
             let probe_pos = line_map.offset_to_position(probe, source_text);
             if let Some(hover) = provider.get_hover(root, probe_pos, type_cache)
-                && let Some(param_type) =
-                    Self::parameter_type_from_callable_display(&hover.display_string, parameter_index)
+                && let Some(param_type) = Self::parameter_type_from_callable_display(
+                    &hover.display_string,
+                    parameter_index,
+                )
             {
                 return Some(param_type);
             }

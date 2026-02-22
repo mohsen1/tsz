@@ -4,8 +4,8 @@
 //! ES5 function parameter lowering, class expression IIFE emission,
 //! tagged template support, and spread call lowering.
 
-use super::es5_helpers::ArraySegment;
-use super::*;
+use super::super::*;
+use super::helpers::ArraySegment;
 use crate::transforms::emit_utils;
 
 impl<'a> Printer<'a> {
@@ -62,7 +62,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
-    pub(super) fn emit_async_function_es5(
+    pub(in crate::emitter) fn emit_async_function_es5(
         &mut self,
         func: &tsz_parser::parser::node::FunctionData,
         func_name: &str,
@@ -71,7 +71,7 @@ impl<'a> Printer<'a> {
         self.emit_async_function_es5_body(func_name, &func.parameters.nodes, func.body, this_expr);
     }
 
-    pub(super) fn emit_async_function_es5_body(
+    pub(in crate::emitter) fn emit_async_function_es5_body(
         &mut self,
         func_name: &str,
         params: &[NodeIndex],
@@ -347,7 +347,10 @@ impl<'a> Printer<'a> {
         })
     }
 
-    pub(super) fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn param_initializer_has_top_level_await(
+        &self,
+        param_idx: NodeIndex,
+    ) -> bool {
         let Some(param_node) = self.arena.get(param_idx) else {
             return false;
         };
@@ -424,7 +427,7 @@ impl<'a> Printer<'a> {
         block.statements.nodes.is_empty()
     }
 
-    pub(super) fn emit_function_parameters_es5(
+    pub(in crate::emitter) fn emit_function_parameters_es5(
         &mut self,
         params: &[NodeIndex],
     ) -> ParamTransformPlan {
@@ -499,7 +502,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an ES5-compatible class expression by wrapping the class IIFE in an expression.
-    pub(super) fn emit_class_expression_es5(&mut self, class_node: NodeIndex) {
+    pub(in crate::emitter) fn emit_class_expression_es5(&mut self, class_node: NodeIndex) {
         let Some(node) = self.arena.get(class_node) else {
             return;
         };
@@ -570,13 +573,13 @@ impl<'a> Printer<'a> {
         self.write("})()");
     }
 
-    pub(super) fn has_es5_transforms(&self) -> bool {
+    pub(in crate::emitter) fn has_es5_transforms(&self) -> bool {
         self.transforms
             .iter()
             .any(|(_, directive)| Self::directive_has_es5(directive))
     }
 
-    pub(super) fn directive_has_es5(directive: &TransformDirective) -> bool {
+    pub(in crate::emitter) fn directive_has_es5(directive: &TransformDirective) -> bool {
         match directive {
             TransformDirective::ES5Class { .. }
             | TransformDirective::ES5ClassExpression { .. }
@@ -596,11 +599,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn tagged_template_var_name(&self, idx: NodeIndex) -> String {
+    pub(in crate::emitter) fn tagged_template_var_name(&self, idx: NodeIndex) -> String {
         format!("__templateObject_{}", idx.0)
     }
 
-    pub(super) fn collect_tagged_template_vars(&self) -> Vec<String> {
+    pub(in crate::emitter) fn collect_tagged_template_vars(&self) -> Vec<String> {
         if self.transforms.helpers_populated() {
             return self.collect_tagged_template_vars_from_transforms();
         }
@@ -614,7 +617,7 @@ impl<'a> Printer<'a> {
         vars
     }
 
-    pub(super) fn collect_tagged_template_vars_from_transforms(&self) -> Vec<String> {
+    pub(in crate::emitter) fn collect_tagged_template_vars_from_transforms(&self) -> Vec<String> {
         let mut vars = Vec::new();
         for (&idx, directive) in self.transforms.iter() {
             if !matches!(directive, TransformDirective::ES5TemplateLiteral { .. }) {
@@ -637,7 +640,7 @@ impl<'a> Printer<'a> {
     /// - `foo(...arr)` -> `foo.apply(void 0, arr)`
     /// - `foo(...arr, 1, 2)` -> `foo.apply(void 0, __spreadArray(__spreadArray([], arr, false), [1, 2], false))`
     /// - `obj.method(...arr)` -> `obj.method.apply(obj, arr)`
-    pub(super) fn emit_call_expression_es5_spread(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_call_expression_es5_spread(&mut self, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };

@@ -1,17 +1,20 @@
 //! ES5 destructuring - for-of array indexing and assignment destructuring.
 
-use super::{Printer, is_valid_identifier_name};
+use super::super::{Printer, is_valid_identifier_name};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn preallocate_nested_iterator_return_temps(&mut self, stmt_idx: NodeIndex) {
+    pub(in crate::emitter) fn preallocate_nested_iterator_return_temps(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
         self.visit_for_of_return_temp_prealloc(stmt_idx);
     }
 
-    pub(super) fn visit_for_of_return_temp_prealloc(&mut self, idx: NodeIndex) {
+    pub(in crate::emitter) fn visit_for_of_return_temp_prealloc(&mut self, idx: NodeIndex) {
         if idx.is_none() {
             return;
         }
@@ -107,7 +110,10 @@ impl<'a> Printer<'a> {
     /// }
     /// ```
     /// Note: This only works for arrays, not for Sets, Maps, Strings, or Generators.
-    pub(super) fn emit_for_of_statement_es5_array_indexing(&mut self, for_in_of: &ForInOfData) {
+    pub(in crate::emitter) fn emit_for_of_statement_es5_array_indexing(
+        &mut self,
+        for_in_of: &ForInOfData,
+    ) {
         // Simple array indexing pattern (default, no --downlevelIteration):
         // for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
         //     var v = arr_1[_i];
@@ -233,7 +239,10 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
-    pub(super) fn estimate_for_of_assignment_temp_reserve(&self, initializer: NodeIndex) -> usize {
+    pub(in crate::emitter) fn estimate_for_of_assignment_temp_reserve(
+        &self,
+        initializer: NodeIndex,
+    ) -> usize {
         let Some(init_node) = self.arena.get(initializer) else {
             return 0;
         };
@@ -277,7 +286,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit the for-of loop body (common logic for both array and iterator modes)
-    pub(super) fn emit_for_of_body(&mut self, statement: NodeIndex) {
+    pub(in crate::emitter) fn emit_for_of_body(&mut self, statement: NodeIndex) {
         if let Some(stmt_node) = self.arena.get(statement) {
             if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::BLOCK {
                 // If body is a block, emit its statements directly (unwrap the block)
@@ -295,7 +304,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit value binding for iterator protocol: `var item = _a.value;`
-    pub(super) fn emit_for_of_value_binding_iterator_es5(
+    pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5(
         &mut self,
         initializer: NodeIndex,
         result_name: &str,
@@ -361,7 +370,7 @@ impl<'a> Printer<'a> {
 
     /// Emit value binding for async iterator protocol: `var item = _a.value;`
     /// Uses direct `.value` access (no `__read`) for `for await...of` downleveling.
-    pub(super) fn emit_for_of_value_binding_iterator_es5_async(
+    pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5_async(
         &mut self,
         initializer: NodeIndex,
         result_name: &str,
@@ -430,7 +439,7 @@ impl<'a> Printer<'a> {
     /// Note: Only registers variables from `VARIABLE_DECLARATION_LIST` nodes (e.g., `for (let v of ...)`).
     /// Bare identifiers (e.g., `for (v of ...)`) are assignment targets, not declarations, so they don't
     /// create new variables and shouldn't be pre-registered.
-    pub(super) fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
+    pub(in crate::emitter) fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
         if initializer.is_none() {
             return;
         }
@@ -459,7 +468,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Pre-register a binding name (identifier or pattern) in the current scope
-    pub(super) fn pre_register_binding_name(&mut self, name_idx: NodeIndex) {
+    pub(in crate::emitter) fn pre_register_binding_name(&mut self, name_idx: NodeIndex) {
         if name_idx.is_none() {
             return;
         }
@@ -493,7 +502,7 @@ impl<'a> Printer<'a> {
 
     /// Pre-register a var binding name. Uses `register_var_declaration` which allows
     /// same-scope redeclarations but renames for parent-scope conflicts.
-    pub(super) fn pre_register_var_binding_name(&mut self, name_idx: NodeIndex) {
+    pub(in crate::emitter) fn pre_register_var_binding_name(&mut self, name_idx: NodeIndex) {
         if name_idx.is_none() {
             return;
         }
@@ -536,7 +545,7 @@ impl<'a> Printer<'a> {
 
     /// Emit variable binding for array-indexed for-of pattern:
     /// `var v = _a[_i];`
-    pub(super) fn emit_for_of_value_binding_array_es5(
+    pub(in crate::emitter) fn emit_for_of_value_binding_array_es5(
         &mut self,
         initializer: NodeIndex,
         array_name: &str,
@@ -750,7 +759,7 @@ impl<'a> Printer<'a> {
 
     /// Lower an assignment destructuring pattern to ES5.
     /// Called from `emit_binary_expression` when left side is array/object literal.
-    pub(super) fn emit_assignment_destructuring_es5(
+    pub(in crate::emitter) fn emit_assignment_destructuring_es5(
         &mut self,
         left_node: &Node,
         right_idx: NodeIndex,
@@ -862,7 +871,7 @@ impl<'a> Printer<'a> {
     ///
     /// When `inline_source` is Some, the source expression is emitted inline
     /// instead of using the `source` string. Used when only one access is needed.
-    pub(super) fn emit_assignment_array_destructuring(
+    pub(in crate::emitter) fn emit_assignment_array_destructuring(
         &mut self,
         elements: &[NodeIndex],
         source: &str,
@@ -1022,7 +1031,7 @@ impl<'a> Printer<'a> {
     /// Emit lowered object assignment destructuring.
     /// `{ name: nameA, skill: skillA } = source` →
     /// `nameA = source.name, skillA = source.skill`
-    pub(super) fn emit_assignment_object_destructuring(
+    pub(in crate::emitter) fn emit_assignment_object_destructuring(
         &mut self,
         elements: &[NodeIndex],
         source: &str,
@@ -1153,7 +1162,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Helper to emit nested destructuring from a source name.
-    pub(super) fn emit_assignment_nested_destructuring(
+    pub(in crate::emitter) fn emit_assignment_nested_destructuring(
         &mut self,
         pattern_idx: NodeIndex,
         source: &str,
@@ -1201,7 +1210,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_object_key_access(&mut self, source: &str, key: &str) {
+    pub(in crate::emitter) fn emit_object_key_access(&mut self, source: &str, key: &str) {
         if is_valid_identifier_name(key) {
             self.write(source);
             self.write(".");
@@ -1214,7 +1223,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn get_binding_or_literal_elements(&self, node: &Node) -> Option<Vec<NodeIndex>> {
+    pub(in crate::emitter) fn get_binding_or_literal_elements(
+        &self,
+        node: &Node,
+    ) -> Option<Vec<NodeIndex>> {
         self.arena
             .get_literal_expr(node)
             .map(|lit| lit.elements.nodes.to_vec())
@@ -1226,7 +1238,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit separator for assignment destructuring (`, ` between parts).
-    pub(super) fn emit_assignment_separator(&mut self, first: &mut bool) {
+    pub(in crate::emitter) fn emit_assignment_separator(&mut self, first: &mut bool) {
         if !*first {
             self.write(", ");
         }
@@ -1234,7 +1246,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Get property key text from a property name node.
-    pub(super) fn get_property_key_text(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn get_property_key_text(&self, name_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(name_idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             Some(self.get_identifier_text(name_idx))
@@ -1248,7 +1260,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn get_string_literal_text(&self, idx: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn get_string_literal_text(&self, idx: NodeIndex) -> Option<String> {
         let source = self.source_text?;
         let node = self.arena.get(idx)?;
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
@@ -1262,7 +1274,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn get_numeric_literal_text(&self, idx: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn get_numeric_literal_text(&self, idx: NodeIndex) -> Option<String> {
         let source = self.source_text?;
         let node = self.arena.get(idx)?;
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;

@@ -1,13 +1,13 @@
 //! ES5 destructuring - binding element patterns and parameter bindings.
 
-use super::{ParamTransformPlan, Printer};
+use super::super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn get_binding_element_property_key(
+    pub(in crate::emitter) fn get_binding_element_property_key(
         &self,
         elem: &BindingElementData,
     ) -> Option<NodeIndex> {
@@ -30,7 +30,11 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a single binding element for ES5 object destructuring
-    pub(super) fn emit_es5_binding_element(&mut self, elem_idx: NodeIndex, temp_name: &str) {
+    pub(in crate::emitter) fn emit_es5_binding_element(
+        &mut self,
+        elem_idx: NodeIndex,
+        temp_name: &str,
+    ) {
         let Some(elem_node) = self.arena.get(elem_idx) else {
             return;
         };
@@ -116,7 +120,7 @@ impl<'a> Printer<'a> {
 
     /// If `key_idx` is a computed property, emit a temp variable assignment and return the temp name
     /// Returns None if not computed
-    pub(super) fn emit_computed_key_temp_if_needed(
+    pub(in crate::emitter) fn emit_computed_key_temp_if_needed(
         &mut self,
         key_idx: NodeIndex,
     ) -> Option<String> {
@@ -137,7 +141,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a single binding element for ES5 array destructuring
-    pub(super) fn emit_es5_array_binding_element(
+    pub(in crate::emitter) fn emit_es5_array_binding_element(
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
@@ -219,7 +223,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Like `emit_es5_binding_element` but with first flag for separator control
-    pub(super) fn emit_es5_binding_element_direct(
+    pub(in crate::emitter) fn emit_es5_binding_element_direct(
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
@@ -317,7 +321,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Similar to `emit_computed_key_temp_if_needed` but handles the first flag for direct destructuring
-    pub(super) fn emit_computed_key_temp_for_direct(
+    pub(in crate::emitter) fn emit_computed_key_temp_for_direct(
         &mut self,
         key_idx: NodeIndex,
         first: &mut bool,
@@ -342,7 +346,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Like `emit_es5_array_binding_element` but with first flag for separator control
-    pub(super) fn emit_es5_array_binding_element_direct(
+    pub(in crate::emitter) fn emit_es5_array_binding_element_direct(
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
@@ -456,7 +460,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_pattern(&mut self, pattern_node: &Node, temp_name: &str) {
+    pub(in crate::emitter) fn emit_es5_destructuring_pattern(
+        &mut self,
+        pattern_node: &Node,
+        temp_name: &str,
+    ) {
         if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
                 return;
@@ -490,7 +498,7 @@ impl<'a> Printer<'a> {
     /// Like `emit_es5_destructuring_pattern` but handles the `first` flag for the first
     /// non-omitted element, allowing it to be emitted without a `, ` prefix.
     /// Used when the initializer is a simple identifier and no temp variable is needed.
-    pub(super) fn emit_es5_destructuring_pattern_direct(
+    pub(in crate::emitter) fn emit_es5_destructuring_pattern_direct(
         &mut self,
         pattern_node: &Node,
         ident_name: &str,
@@ -530,7 +538,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
+    pub(in crate::emitter) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
                 if let Some(pattern) = param.pattern {
@@ -605,7 +613,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_default_assignment(&mut self, name: &str, initializer: NodeIndex) {
+    pub(in crate::emitter) fn emit_param_default_assignment(
+        &mut self,
+        name: &str,
+        initializer: NodeIndex,
+    ) {
         if name.is_empty() {
             return;
         }
@@ -619,7 +631,7 @@ impl<'a> Printer<'a> {
         self.write_line();
     }
 
-    pub(super) fn emit_param_binding_assignments(
+    pub(in crate::emitter) fn emit_param_binding_assignments(
         &mut self,
         pattern_idx: NodeIndex,
         temp_name: &str,
@@ -667,7 +679,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_object_binding_element(
+    pub(in crate::emitter) fn emit_param_object_binding_element(
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
@@ -751,7 +763,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Similar to `emit_computed_key_temp_if_needed` but handles started flag for param destructuring
-    pub(super) fn emit_computed_key_temp_for_param(
+    pub(in crate::emitter) fn emit_computed_key_temp_for_param(
         &mut self,
         key_idx: NodeIndex,
         started: &mut bool,
@@ -772,7 +784,7 @@ impl<'a> Printer<'a> {
         None
     }
 
-    pub(super) fn emit_param_array_binding_element(
+    pub(in crate::emitter) fn emit_param_array_binding_element(
         &mut self,
         elem_idx: NodeIndex,
         temp_name: &str,
@@ -855,7 +867,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_object_rest_element(
+    pub(in crate::emitter) fn emit_param_object_rest_element(
         &mut self,
         elem: &BindingElementData,
         rest_props: &[NodeIndex],
@@ -883,7 +895,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_array_rest_element(
+    pub(in crate::emitter) fn emit_param_array_rest_element(
         &mut self,
         rest_target: NodeIndex,
         temp_name: &str,
@@ -913,7 +925,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_param_assignment_prefix(&mut self, started: &mut bool) {
+    pub(in crate::emitter) fn emit_param_assignment_prefix(&mut self, started: &mut bool) {
         if !*started {
             self.write("var ");
             *started = true;
@@ -922,7 +934,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_object_rest_element(
+    pub(in crate::emitter) fn emit_es5_object_rest_element(
         &mut self,
         elem: &BindingElementData,
         rest_props: &[NodeIndex],
@@ -949,7 +961,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_array_rest_element(
+    pub(in crate::emitter) fn emit_es5_array_rest_element(
         &mut self,
         rest_target: NodeIndex,
         temp_name: &str,
@@ -978,7 +990,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_pattern_idx(
+    pub(in crate::emitter) fn emit_es5_destructuring_pattern_idx(
         &mut self,
         pattern_idx: NodeIndex,
         temp_name: &str,
@@ -989,7 +1001,10 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_pattern(pattern_node, temp_name);
     }
 
-    pub(super) fn collect_object_rest_props(&self, pattern: &BindingPatternData) -> Vec<NodeIndex> {
+    pub(in crate::emitter) fn collect_object_rest_props(
+        &self,
+        pattern: &BindingPatternData,
+    ) -> Vec<NodeIndex> {
         let mut props = Vec::new();
         for &elem_idx in &pattern.elements.nodes {
             let Some(elem_node) = self.arena.get(elem_idx) else {
@@ -1017,7 +1032,7 @@ impl<'a> Printer<'a> {
         props
     }
 
-    pub(super) fn emit_rest_exclude_list(&mut self, props: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_rest_exclude_list(&mut self, props: &[NodeIndex]) {
         self.write("[");
         let mut first = true;
         for &prop_idx in props {
@@ -1030,7 +1045,7 @@ impl<'a> Printer<'a> {
         self.write("]");
     }
 
-    pub(super) fn emit_rest_property_key(&mut self, key_idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_rest_property_key(&mut self, key_idx: NodeIndex) {
         let Some(key_node) = self.arena.get(key_idx) else {
             return;
         };
@@ -1059,7 +1074,7 @@ impl<'a> Printer<'a> {
         self.emit_expression(key_idx);
     }
 
-    pub(super) fn emit_for_of_statement_es5(
+    pub(in crate::emitter) fn emit_for_of_statement_es5(
         &mut self,
         for_of_idx: NodeIndex,
         for_in_of: &ForInOfData,
@@ -1096,7 +1111,7 @@ impl<'a> Printer<'a> {
     ///     finally { if (e_1) throw e_1.error; }
     /// }
     /// ```
-    pub(super) fn emit_for_of_statement_es5_iterator(
+    pub(in crate::emitter) fn emit_for_of_statement_es5_iterator(
         &mut self,
         for_of_idx: NodeIndex,
         for_in_of: &ForInOfData,
@@ -1272,7 +1287,7 @@ impl<'a> Printer<'a> {
     ///     finally { if (e_1) throw e_1.error; }
     /// }
     /// ```
-    pub(super) fn emit_for_of_statement_es5_async_iterator(
+    pub(in crate::emitter) fn emit_for_of_statement_es5_async_iterator(
         &mut self,
         for_of_idx: NodeIndex,
         for_in_of: &ForInOfData,
