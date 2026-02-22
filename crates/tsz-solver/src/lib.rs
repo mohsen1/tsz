@@ -14,7 +14,7 @@
 mod application;
 mod caches;
 pub mod canonicalize;
-mod class_hierarchy;
+pub mod classes;
 pub mod compound_assignment;
 mod contextual;
 mod contextual_extractors;
@@ -25,7 +25,6 @@ pub mod expression_ops;
 mod flow_analysis;
 mod format;
 mod inference;
-pub mod inheritance;
 mod instantiation;
 mod intern;
 pub mod judge;
@@ -72,7 +71,8 @@ pub use application::*;
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
-pub use class_hierarchy::*;
+pub use classes::class_hierarchy::*;
+pub use classes::inheritance::*;
 pub use compound_assignment::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use def::*;
@@ -85,7 +85,6 @@ pub use evaluation::evaluate::*;
 pub use flow_analysis::*;
 pub use format::TypeFormatter;
 pub use inference::infer::*;
-pub use inheritance::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_type,
     substitute_this_type,

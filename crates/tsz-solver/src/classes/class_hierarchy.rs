@@ -171,12 +171,12 @@ impl<'a> ClassTypeBuilder<'a> {
 pub fn would_create_inheritance_cycle(
     child: SymbolId,
     parent: SymbolId,
-    graph: &crate::inheritance::InheritanceGraph,
+    graph: &crate::classes::inheritance::InheritanceGraph,
 ) -> bool {
     // If parent is already derived from child, adding child->parent creates a cycle
     graph.is_derived_from(parent, child)
 }
 
 #[cfg(test)]
-#[path = "../tests/class_hierarchy_tests.rs"]
+#[path = "../../tests/class_hierarchy_tests.rs"]
 mod tests;

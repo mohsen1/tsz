@@ -498,7 +498,7 @@ pub struct CheckerContext<'a> {
     pub reported_implicit_any_vars: FxHashSet<SymbolId>,
 
     /// Inheritance graph tracking class/interface relationships
-    pub inheritance_graph: tsz_solver::inheritance::InheritanceGraph,
+    pub inheritance_graph: tsz_solver::classes::inheritance::InheritanceGraph,
 
     /// Stack of nodes being resolved.
     pub node_resolution_stack: Vec<NodeIndex>,

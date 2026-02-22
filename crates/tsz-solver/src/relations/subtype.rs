@@ -164,7 +164,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub disable_method_bivariance: bool,
     /// Optional inheritance graph for O(1) nominal class subtype checking.
     /// When provided, enables fast nominal checks for class inheritance.
-    pub inheritance_graph: Option<&'a crate::inheritance::InheritanceGraph>,
+    pub inheritance_graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
     /// Optional callback to check if a symbol is a class (for nominal subtyping).
     /// Returns true if the symbol has the CLASS flag set.
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
@@ -252,7 +252,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Set the inheritance graph for O(1) nominal class subtype checking.
     pub const fn with_inheritance_graph(
         mut self,
-        graph: &'a crate::inheritance::InheritanceGraph,
+        graph: &'a crate::classes::inheritance::InheritanceGraph,
     ) -> Self {
         self.inheritance_graph = Some(graph);
         self

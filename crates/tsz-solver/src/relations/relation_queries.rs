@@ -6,7 +6,7 @@
 
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
-use crate::inheritance::InheritanceGraph;
+use crate::classes::inheritance::InheritanceGraph;
 use crate::operations::AssignabilityChecker;
 use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
