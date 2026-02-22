@@ -403,7 +403,6 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
                     // Check if this symbol has value semantics
                     let is_value = (sym.flags & symbol_flags::VALUE) != 0;
-                    let _is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
                     let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
 
                     // TS2300: duplicate `import =` aliases with the same name in the same scope.

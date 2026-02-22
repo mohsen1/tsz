@@ -401,8 +401,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-        let _is_function_declaration = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-
         match node.kind {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
