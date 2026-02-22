@@ -9,6 +9,8 @@ use tsz_common::position::Range;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+use crate::utils::{is_import_keyword, is_require_identifier};
+
 /// A document link representing a clickable module specifier in the source.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DocumentLink {
@@ -218,8 +220,8 @@ impl<'a> DocumentLinkProvider<'a> {
             return;
         };
 
-        let is_dynamic_import = self.is_import_keyword(call_data.expression);
-        let is_require = self.is_require_identifier(call_data.expression);
+        let is_dynamic_import = is_import_keyword(self.arena, call_data.expression);
+        let is_require = is_require_identifier(self.arena, call_data.expression);
 
         if !is_dynamic_import && !is_require {
             return;
@@ -235,35 +237,6 @@ impl<'a> DocumentLinkProvider<'a> {
         };
 
         self.try_add_link_for_specifier(first_arg, links);
-    }
-
-    /// Check if a node is the `import` keyword (for dynamic import expressions).
-    /// Dynamic imports use `SyntaxKind::ImportKeyword` as the expression.
-    fn is_import_keyword(&self, node_idx: NodeIndex) -> bool {
-        if node_idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-        node.kind == SyntaxKind::ImportKeyword as u16
-    }
-
-    /// Check if a node is a `require` identifier.
-    fn is_require_identifier(&self, node_idx: NodeIndex) -> bool {
-        if node_idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let Some(ident_data) = self.arena.get_identifier(node) else {
-            return false;
-        };
-        ident_data.escaped_text == "require"
     }
 }
 
