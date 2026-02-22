@@ -1137,12 +1137,12 @@ impl Server {
             let name = arena.get_identifier_text(param.name)?.to_string();
             let pos = line_map.offset_to_position(name_node.pos, source_text);
             let hover = provider.get_hover(root, pos, type_cache)?;
-            let mut ty =
-                Self::normalize_parameter_type_text(&Self::parse_hover_parameter_type(
-                    &hover.display_string,
-                    &name,
-                )?);
-            if ty == "any" && param_position == 0
+            let mut ty = Self::normalize_parameter_type_text(&Self::parse_hover_parameter_type(
+                &hover.display_string,
+                &name,
+            )?);
+            if ty == "any"
+                && param_position == 0
                 && let Some(contextual) = contextual_first_param.as_ref()
             {
                 ty = contextual.clone();
