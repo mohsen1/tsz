@@ -296,3 +296,19 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`: still missing `container` class member snippet completions.
   Reason: requires tsserver-parity class-member-snippet generation/source plumbing (`includeCompletionsWithClassMemberSnippets`) beyond this targeted import-fix ordering change.
+
+## 2026-02-22 (quickInfo contextual function-valued property follow-up)
+
+Completed in this pass:
+- Improved contextual object-literal property hover recovery in `crates/tsz-lsp/src/hover.rs` for function-valued properties (`f: function(...)`) by:
+  - allowing contextual-property fallback from nearest enclosing `PROPERTY_ASSIGNMENT` (not only direct identifier hits),
+  - handling parenthesized wrappers when discovering object-literal contextual types (`<IFoo>({...})`),
+  - preferring contextual container member type lookup over initializer-inferred `any`,
+  - synthesizing method-style quick info signatures from contextual interface/type-literal member declarations when needed.
+- Added focused hover unit coverage in `crates/tsz-lsp/tests/hover_tests.rs` for function-valued property quick info under contextual typing (`(method) IFoo.f(i: number, s: string): string`).
+- Verified targeted improvement with `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose`: failure moved from marker `30` to marker `31`.
+- Re-ran capped fourslash command with `./scripts/run-fourslash.sh --max=200` (current harness still executes the full set in this environment): total passes improved from `880` to `886`.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `31`: expected `(parameter) i: number`, got `(parameter) i: any`).
+  Reason: remaining gap is tsserver quickinfo contextual parameter typing for function-expression parameters inside contextually typed object-literal property assignments, which needs a follow-up in quickinfo parameter-type extraction/bridge logic beyond this targeted property-name hover parity patch.

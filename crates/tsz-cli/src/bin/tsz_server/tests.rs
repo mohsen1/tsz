@@ -2294,6 +2294,146 @@ fn test_completion_info_auto_import_file_exclude_patterns_exclude_node_modules_p
 }
 
 #[test]
+fn test_completion_info_auto_import_file_exclude_patterns_keeps_button_from_main() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/lib/components/button/Button.ts".to_string(),
+        "export function Button() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/button/index.ts".to_string(),
+        "export * from \"./Button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/index.ts".to_string(),
+        "export * from \"./button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/main.ts".to_string(),
+        "export { Button } from \"./components\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/index.ts".to_string(),
+        "export * from \"./main\";\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/i-hate-index-files.ts".to_string(), "Button\n".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/i-hate-index-files.ts",
+            "line": 1,
+            "offset": 7,
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["/**/index.*"]
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        entries.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("Button")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("./lib/main")
+        }),
+        "expected auto-import `Button` from `./lib/main`, got entries: {entries:?}"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| {
+                entry.get("name").and_then(serde_json::Value::as_str) == Some("Button")
+            })
+            .count(),
+        1,
+        "expected exactly one `Button` completion entry, got entries: {entries:?}"
+    );
+
+    let completions_req = make_request(
+        "completions",
+        serde_json::json!({
+            "file": "/i-hate-index-files.ts",
+            "line": 1,
+            "offset": 7,
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["/**/index.*"]
+            }
+        }),
+    );
+    let completions_resp = server.handle_tsserver_request(completions_req);
+    assert!(completions_resp.success);
+    let completions_body = completions_resp
+        .body
+        .expect("completions should return a body");
+    let completions_entries = completions_body["entries"]
+        .as_array()
+        .expect("completions should include entries");
+    assert_eq!(
+        completions_entries
+            .iter()
+            .filter(|entry| {
+                entry.get("name").and_then(serde_json::Value::as_str) == Some("Button")
+            })
+            .count(),
+        1,
+        "expected exactly one `Button` completion entry from `completions`, got entries: {completions_entries:?}"
+    );
+
+    let configure_req = make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["/**/index.*"]
+            }
+        }),
+    );
+    let configure_resp = server.handle_tsserver_request(configure_req);
+    assert!(configure_resp.success);
+
+    let completions_from_configured_req = make_request(
+        "completions",
+        serde_json::json!({
+            "file": "/i-hate-index-files.ts",
+            "line": 1,
+            "offset": 7
+        }),
+    );
+    let completions_from_configured_resp =
+        server.handle_tsserver_request(completions_from_configured_req);
+    assert!(completions_from_configured_resp.success);
+    let completions_from_configured_body = completions_from_configured_resp
+        .body
+        .expect("configured completions should return a body");
+    let completions_from_configured_entries = completions_from_configured_body["entries"]
+        .as_array()
+        .expect("configured completions should include entries");
+    assert_eq!(
+        completions_from_configured_entries
+            .iter()
+            .filter(|entry| {
+                entry.get("name").and_then(serde_json::Value::as_str) == Some("Button")
+            })
+            .count(),
+        1,
+        "expected exactly one `Button` completion entry after configure, got entries: {completions_from_configured_entries:?}"
+    );
+}
+
+#[test]
 fn test_quickinfo_uses_hover_info_structured_fields() {
     // When HoverInfo returns structured kind/kindModifiers/displayString/
     // documentation fields, they should be used in the response instead of
