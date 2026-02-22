@@ -39,6 +39,7 @@ mod binding_patterns;
 mod comment_helpers;
 mod comments;
 mod declarations;
+mod declarations_class;
 mod declarations_class_members;
 mod declarations_namespace;
 mod es5_bindings;
