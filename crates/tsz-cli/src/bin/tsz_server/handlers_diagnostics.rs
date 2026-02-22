@@ -553,7 +553,8 @@ impl Server {
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
             let auto_import_specifier_exclude_regexes =
-                Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+                Self::extract_auto_import_specifier_exclude_regexes(request)
+                    .unwrap_or_else(|| self.auto_import_specifier_exclude_regexes.clone());
             let import_module_specifier_preference = request
                 .arguments
                 .get("preferences")
@@ -3446,7 +3447,8 @@ impl Server {
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
             let auto_import_specifier_exclude_regexes =
-                Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+                Self::extract_auto_import_specifier_exclude_regexes(request)
+                    .unwrap_or_else(|| self.auto_import_specifier_exclude_regexes.clone());
             let import_module_specifier_preference = request
                 .arguments
                 .get("preferences")

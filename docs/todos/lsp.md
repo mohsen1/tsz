@@ -13,6 +13,8 @@ Completed in this pass:
 - Added focused completion regression tests in `crates/tsz-cli/src/bin/tsz_server/tests.rs` and `crates/tsz-lsp/tests/completions_tests.rs` for private constructor-parameter properties.
 
 Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: missing class member snippet completion `execActionWithCount`.
+  Reason: requires implementing tsserver-style `includeCompletionsWithClassMemberSnippets` pipeline (including `ClassMemberSnippet/` completion source + code-action shaping), which is broader than this targeted module-specifier parity fix.
 - `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` in `module:none` + `target:es5` scenario.
   Reason: auto-import gating paths were added for tsconfig/inferred/fourslash directive contexts, but this failure appears to involve completion entry surfacing outside current gate points and needs a deeper completion pipeline trace.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`: missing `container` class member snippet completion.
