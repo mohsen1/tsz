@@ -425,6 +425,76 @@ fn test_semantic_diagnostics_skip_module_none_for_extra_slash_fourslash_directiv
 }
 
 #[test]
+fn test_semantic_diagnostics_module_none_fourslash_exact_payload_shape() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/fourslash.ts".to_string(),
+        "// @module: none\n// @target: es5\n".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/dep/index.d.ts".to_string(),
+        "export const x: number;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts",
+            "includeLinePosition": true
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+
+    let module_none_diag = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(
+                    tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                        as u64,
+                )
+        })
+        .expect("expected TS1148 diagnostic payload for module:none import syntax");
+    let has_cannot_find_name = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
+    });
+    assert!(
+        !has_cannot_find_name,
+        "did not expect synthetic Cannot find name diagnostics when TS1148 is present"
+    );
+
+    let diag = module_none_diag;
+    assert_eq!(
+        diag.get("code").and_then(serde_json::Value::as_u64),
+        Some(
+            tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                as u64,
+        )
+    );
+    assert_eq!(
+        diag.get("message").and_then(serde_json::Value::as_str),
+        Some("Cannot use imports, exports, or module augmentations when '--module' is 'none'.")
+    );
+    assert_eq!(diag.get("start").and_then(serde_json::Value::as_u64), Some(0));
+    assert_eq!(
+        diag.get("length").and_then(serde_json::Value::as_u64),
+        Some("import { x } from 'dep';".len() as u64)
+    );
+}
+
+#[test]
 fn test_semantic_diagnostics_resolve_imports_from_open_dependency_files() {
     let mut server = make_server();
     server.open_files.insert(

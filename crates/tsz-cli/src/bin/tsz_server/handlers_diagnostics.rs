@@ -111,7 +111,12 @@ impl Server {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
                 let mut full_diags = self.get_semantic_diagnostics_full(file_path, &content);
-                if full_diags
+                let has_module_none_diagnostic = full_diags.iter().any(|d| {
+                    d.code
+                        == tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                });
+                if !has_module_none_diagnostic
+                    && full_diags
                     .iter()
                     .all(|d| d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
                     && let Some((_, binder, _, _)) = self.parse_and_bind_file(file_path)
@@ -128,9 +133,10 @@ impl Server {
                 full_diags
                     .iter()
                     .map(|diag| {
+                        let (start_offset, length) = Self::normalized_diagnostic_span(diag, &content);
                         Self::format_diagnostic(DiagnosticFormatInput {
-                            start_offset: diag.start,
-                            length: diag.length,
+                            start_offset,
+                            length,
                             message: &diag.message_text,
                             code: diag.code,
                             category: diag.category,
@@ -267,6 +273,39 @@ impl Server {
                 "category": cat_str,
             })
         }
+    }
+
+    fn normalized_diagnostic_span(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+        content: &str,
+    ) -> (u32, u32) {
+        if diag.code
+            != tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+        {
+            return (diag.start, diag.length);
+        }
+
+        let Ok(start) = usize::try_from(diag.start) else {
+            return (diag.start, diag.length);
+        };
+        let Some(mut end) = start.checked_add(diag.length as usize) else {
+            return (diag.start, diag.length);
+        };
+        end = end.min(content.len());
+        if start >= end || start >= content.len() {
+            return (diag.start, diag.length);
+        }
+
+        let bytes = content.as_bytes();
+        let slice = &bytes[start..end];
+        if let Some(rel) = slice.iter().position(|b| *b == b';') {
+            return (diag.start, (rel + 1) as u32);
+        }
+        if let Some(rel) = slice.iter().position(|b| *b == b'\n') {
+            return (diag.start, rel as u32);
+        }
+
+        (diag.start, diag.length)
     }
 
     pub(crate) fn handle_suggestion_diagnostics_sync(
