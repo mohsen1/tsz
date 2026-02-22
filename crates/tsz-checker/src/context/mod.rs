@@ -437,6 +437,14 @@ pub struct CheckerContext<'a> {
     /// class and interface inheritance passes.
     pub heritage_symbol_cache: RefCell<FxHashMap<NodeIndex, Option<SymbolId>>>,
 
+    /// Cache constructor type fallback for heritage expressions with no explicit type args.
+    /// Avoids repeatedly re-evaluating anonymous/complex `extends` expressions.
+    pub base_constructor_expr_cache: RefCell<FxHashMap<NodeIndex, Option<TypeId>>>,
+
+    /// Cache instance type fallback for heritage expressions with no explicit type args.
+    /// Reuses constructor->instance fallback work across class instance checks.
+    pub base_instance_expr_cache: RefCell<FxHashMap<NodeIndex, Option<TypeId>>>,
+
     /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
     /// Avoids repeating private-brand scans on hot miss paths.
     pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,
