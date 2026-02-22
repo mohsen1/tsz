@@ -315,17 +315,6 @@ impl<'a> CallHierarchyProvider<'a> {
         None
     }
 
-    /// Check whether a node kind is a function-like declaration.
-    const fn is_function_like(&self, kind: u16) -> bool {
-        kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || kind == syntax_kind_ext::ARROW_FUNCTION
-            || kind == syntax_kind_ext::METHOD_DECLARATION
-            || kind == syntax_kind_ext::CONSTRUCTOR
-            || kind == syntax_kind_ext::GET_ACCESSOR
-            || kind == syntax_kind_ext::SET_ACCESSOR
-    }
-
     /// Find the function-like node at or containing the given node.
     ///
     /// First checks whether `node_idx` itself is a function-like node or the
@@ -338,7 +327,7 @@ impl<'a> CallHierarchyProvider<'a> {
         let node = self.arena.get(node_idx)?;
 
         // If we are directly on a function-like node, return it.
-        if self.is_function_like(node.kind) {
+        if node.is_function_like() {
             return Some(node_idx);
         }
 
@@ -350,7 +339,7 @@ impl<'a> CallHierarchyProvider<'a> {
             let parent = ext.parent;
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
-                && self.is_function_like(parent_node.kind)
+                && parent_node.is_function_like()
             {
                 return Some(parent);
             }
@@ -370,7 +359,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 return None;
             }
             let parent_node = self.arena.get(parent)?;
-            if self.is_function_like(parent_node.kind) {
+            if parent_node.is_function_like() {
                 return Some(parent);
             }
             current = parent;
@@ -618,7 +607,7 @@ impl<'a> CallHierarchyProvider<'a> {
     /// Build a `CallHierarchyItem` for a function-like node.
     fn make_call_hierarchy_item(&self, func_idx: NodeIndex) -> Option<CallHierarchyItem> {
         let node = self.arena.get(func_idx)?;
-        if !self.is_function_like(node.kind) {
+        if !node.is_function_like() {
             return None;
         }
 
@@ -657,7 +646,7 @@ impl<'a> CallHierarchyProvider<'a> {
         let node = self.arena.get(decl_idx)?;
 
         // If the declaration itself is function-like, use make_call_hierarchy_item
-        if self.is_function_like(node.kind) {
+        if node.is_function_like() {
             return self.make_call_hierarchy_item(decl_idx);
         }
 
