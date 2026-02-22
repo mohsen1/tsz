@@ -113,7 +113,8 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
    - ~~`operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory~~ ✅ Done (c3365ed0d)
    - ~~`type_queries_*.rs` (5 files) → `type_queries/` subdirectory~~ ✅ Done
    - ~~`intern_*.rs` (4 files: `intern.rs`, `intern_normalize.rs`, `intern_intersection.rs`, `intern_template.rs`) → `intern/` subdirectory~~ ✅ Done
+   - ~~Re-export shim files (7 files: `compat.rs`, `db.rs`, `evaluate.rs`, `infer.rs`, `instantiate.rs`, `query_trace.rs`, `subtype.rs`) removed~~ ✅ Done (a727b3b8b) — internal imports updated to direct module paths. Two externally-used shims (`judge.rs`, `visitor.rs`) retained.
 4. ~~**Checker `context*.rs` files**: organized into `context/` subdirectory~~ ✅ Done
-5. **Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit. Consider splitting by concern (e.g., literal classifiers, application/instance helpers, constructor helpers).
+5. ~~**Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit~~ ✅ Done — extracted constructor/class/instance classifiers (~482 LOC) into `extended_constructors.rs`, reducing `extended.rs` to ~1,442 LOC.
 6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 LOC by extracting iterable classifications into `iterable.rs`. Still contains traversal, property lookup, evaluation, signature, and constraint sections that could be further split if growth continues.
 7. **Solver `visitors/visitor.rs`** reduced from 1,945 → ~1,130 LOC by extracting type predicates (`is_*`, `contains_*`, `classify_*`, `ObjectTypeKind`) and their internal helper structs into `visitor_predicates.rs` (~585 LOC). The `ConstAssertionVisitor` (~178 LOC) remains in `visitor.rs` but could be extracted if the file grows again.

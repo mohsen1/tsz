@@ -30,6 +30,7 @@
 pub mod classifiers;
 pub mod data;
 pub mod extended;
+pub mod extended_constructors;
 pub mod flow;
 pub mod iterable;
 
@@ -47,17 +48,13 @@ pub use classifiers::{
 };
 pub use extended::get_application_info;
 pub use extended::{
-    AbstractClassCheckKind, AbstractConstructorAnchor, AbstractConstructorKind, ArrayLikeKind,
-    BaseInstanceMergeKind, CallSignaturesKind, ClassDeclTypeKind, ConstructorCheckKind,
-    ConstructorReturnMergeKind, ContextualLiteralAllowKind, ElementIndexableKind, IndexKeyKind,
-    InstanceTypeKind, KeyOfTypeKind, LazyTypeKind, LiteralKeyKind, LiteralTypeKind,
+    ArrayLikeKind, CallSignaturesKind, ContextualLiteralAllowKind, ElementIndexableKind,
+    IndexKeyKind, KeyOfTypeKind, LazyTypeKind, LiteralKeyKind, LiteralTypeKind,
     MappedConstraintKind, NamespaceMemberKind, PrivateBrandKind, PromiseTypeKind,
     PropertyAccessResolutionKind, StringLiteralKeyKind, TypeArgumentExtractionKind,
     TypeParameterKind, TypeQueryKind, TypeResolutionKind, classify_array_like,
-    classify_element_indexable, classify_for_abstract_check, classify_for_base_instance_merge,
-    classify_for_call_signatures, classify_for_class_decl, classify_for_constructor_check,
-    classify_for_constructor_return_merge, classify_for_contextual_literal,
-    classify_for_instance_type, classify_for_lazy_resolution, classify_for_private_brand,
+    classify_element_indexable, classify_for_call_signatures, classify_for_contextual_literal,
+    classify_for_lazy_resolution, classify_for_private_brand,
     classify_for_property_access_resolution, classify_for_string_literal_keys,
     classify_for_type_argument_extraction, classify_for_type_resolution, classify_index_key,
     classify_literal_key, classify_literal_type, classify_mapped_constraint,
@@ -67,8 +64,17 @@ pub use extended::{
     get_invalid_index_type_member, get_literal_property_name, get_number_literal_value,
     get_string_literal_atom, get_string_literal_value, get_tuple_list_id, get_type_param_default,
     get_widened_literal_type, is_boolean_literal, is_direct_type_parameter, is_invalid_index_type,
-    is_number_literal, is_object_with_index_type, is_string_literal,
-    resolve_abstract_constructor_anchor, unwrap_readonly_for_lookup, widen_literal_to_primitive,
+    is_number_literal, is_object_with_index_type, is_string_literal, unwrap_readonly_for_lookup,
+    widen_literal_to_primitive,
+};
+pub use extended_constructors::{
+    AbstractClassCheckKind, AbstractConstructorAnchor, AbstractConstructorKind,
+    BaseInstanceMergeKind, ClassDeclTypeKind, ConstructSignatureKind, ConstructorCheckKind,
+    ConstructorReturnMergeKind, InstanceTypeKind, NewExpressionTypeKind,
+    classify_for_abstract_check, classify_for_abstract_constructor,
+    classify_for_base_instance_merge, classify_for_class_decl, classify_for_construct_signature,
+    classify_for_constructor_check, classify_for_constructor_return_merge,
+    classify_for_instance_type, classify_for_new_expression, resolve_abstract_constructor_anchor,
 };
 
 pub use data::*;
