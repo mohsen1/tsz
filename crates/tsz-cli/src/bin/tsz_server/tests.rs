@@ -284,6 +284,44 @@ fn test_quickinfo_on_nonexistent_file_has_valid_spans() {
 }
 
 #[test]
+fn test_completion_info_member_excludes_private_class_property() {
+    let mut server = make_server();
+    let source = "class n {\n    constructor (public x: number, public y: number, private z: string) { }\n}\nvar t = new n(0, 1, '');\nt.";
+    server
+        .open_files
+        .insert("/test.ts".to_string(), source.to_string());
+    let req = make_request(
+        "completionInfo",
+        serde_json::json!({"file": "/test.ts", "line": 5, "offset": 3}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completionInfo should return a body");
+    assert_eq!(body["isMemberCompletion"], serde_json::json!(true));
+
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+
+    assert!(
+        names.contains(&"x"),
+        "Expected public member x in completions"
+    );
+    assert!(
+        names.contains(&"y"),
+        "Expected public member y in completions"
+    );
+    assert!(
+        !names.contains(&"z"),
+        "Private member z should not be suggested in member completions"
+    );
+}
+
+#[test]
 fn test_quickinfo_uses_hover_info_structured_fields() {
     // When HoverInfo returns structured kind/kindModifiers/displayString/
     // documentation fields, they should be used in the response instead of

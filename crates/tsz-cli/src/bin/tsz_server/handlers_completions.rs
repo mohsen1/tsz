@@ -167,7 +167,11 @@ impl Server {
                 position,
                 request.arguments.get("preferences"),
             );
-            let items = if project_items.is_empty() {
+            let items = if completion_result
+                .as_ref()
+                .is_some_and(|result| result.is_member_completion)
+                || project_items.is_empty()
+            {
                 provider_items
             } else {
                 project_items
@@ -226,7 +230,11 @@ impl Server {
                 .unwrap_or_default();
             let project_items =
                 self.project_completion_items(file, position, request.arguments.get("preferences"));
-            let items = if project_items.is_empty() {
+            let items = if completion_result
+                .as_ref()
+                .is_some_and(|result| result.is_member_completion)
+                || project_items.is_empty()
+            {
                 provider_items
             } else {
                 project_items
