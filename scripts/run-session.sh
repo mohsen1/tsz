@@ -471,7 +471,7 @@ try_runner() {
     if [[ "$type" == "codex-spark" ]]; then
       effort="xhigh"
     fi
-    local cmd=(codex exec -m "$model" -c "model_reasoning_effort=\"$effort\"" --dangerously-bypass-approvals-and-sandbox "$prompt")
+    local cmd=(codex exec --model="$model" --config "model_reasoning_effort=$effort" --dangerously-bypass-approvals-and-sandbox "$prompt")
     log "Command: ${cmd[*]}"
 
     if $DRY_RUN; then
@@ -665,6 +665,13 @@ main() {
     # Reload prompt each iteration (picks up changes to session.sh)
     local prompt
     prompt="$(load_prompt)"
+
+    # Per-session timeout override: look for "# timeout: N" in session script
+    local session_timeout
+    session_timeout="$(grep -m1 '^# timeout:' "$SESSION_SCRIPT" 2>/dev/null | sed 's/^# timeout: *//' || true)"
+    if [[ -n "$session_timeout" && "$session_timeout" =~ ^[0-9]+$ ]]; then
+      TIMEOUT_SECONDS="$session_timeout"
+    fi
 
     run_cycle "$prompt" || true
 
