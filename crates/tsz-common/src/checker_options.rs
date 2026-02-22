@@ -58,7 +58,7 @@ pub struct CheckerOptions {
     /// - `any` escapes (TS9004)
     /// - Excess properties via sticky freshness (TS9001)
     ///
-    /// Activated via: `--sound` CLI flag or `// @ts-sound` pragma
+    /// Activated via: `--sound` CLI flag or `// @tsz-sound` pragma
     pub sound_mode: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.
