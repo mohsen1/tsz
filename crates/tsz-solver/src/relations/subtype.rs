@@ -1071,13 +1071,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
                 return SubtypeResult::True;
             }
-            if matches!(
-                self.interner.lookup(source),
-                Some(TypeData::Literal(LiteralValue::Number(_)))
-            ) && self.resolver.is_numeric_enum(t_def_id)
-            {
-                return SubtypeResult::True;
-            }
+            // For number literals, fall through to structural check against t_members
+            // so that only actual enum member values (e.g., 0|1|2) are accepted
             return self.check_subtype(source, t_members);
         }
 
