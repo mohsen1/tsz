@@ -24,6 +24,7 @@ fn make_server() -> Server {
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
         auto_imports_allowed_for_inferred_projects: true,
+        inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
     }
 }
@@ -205,6 +206,260 @@ fn test_compiler_options_for_inferred_projects_accepts_direct_options_shape() {
     assert!(
         !has_auto_import_x,
         "auto-import completion should be gated when inferred options are sent directly"
+    );
+}
+
+#[test]
+fn test_compiler_options_for_inferred_projects_accepts_compiler_options_shape() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/dep/index.d.ts".to_string(),
+        "export const x: number;\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "x".to_string());
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "compilerOptions": {
+                "module": "none",
+                "target": "es5"
+            }
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+    assert_eq!(options_resp.body, Some(serde_json::json!(true)));
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 2,
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let has_auto_import_x = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+            && entry.get("source").is_some()
+    });
+    assert!(
+        !has_auto_import_x,
+        "auto-import completion should be gated when inferred options are nested under compilerOptions"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_respect_inferred_module_none() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let options_req = make_request(
+        "compilerOptionsForInferredProjects",
+        serde_json::json!({
+            "options": {
+                "module": "none",
+                "target": "es5"
+            }
+        }),
+    );
+    let options_resp = server.handle_tsserver_request(options_req);
+    assert!(options_resp.success);
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_module_none_diag = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                    as u64,
+            )
+    });
+    assert!(
+        has_module_none_diag,
+        "expected TS1148-style diagnostic when inferred options set module:none"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_respect_fourslash_module_none_directive() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/fourslash.ts".to_string(),
+        "// @module: none\n// @target: es5\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_module_none_diag = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                    as u64,
+            )
+    });
+    assert!(
+        has_module_none_diag,
+        "expected TS1148-style diagnostic when fourslash directives set module:none"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_skip_module_none_when_fourslash_target_supports_imports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/fourslash.ts".to_string(),
+        "// @module: none\n// @target: es2015\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_module_none_diag = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                    as u64,
+            )
+    });
+    assert!(
+        !has_module_none_diag,
+        "did not expect TS1148-style diagnostic when target supports import syntax"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_skip_module_none_for_extra_slash_fourslash_directives() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/fourslash.ts".to_string(),
+        "//// @module: none\n//// @target: es2015\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_module_none_diag = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                    as u64,
+            )
+    });
+    assert!(
+        !has_module_none_diag,
+        "did not expect TS1148-style diagnostic for es2015 directives with extra leading slashes"
+    );
+}
+
+#[test]
+fn test_semantic_diagnostics_resolve_imports_from_open_dependency_files() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/dep/index.d.ts".to_string(),
+        "export const x: number;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { x } from 'dep'; x;".to_string(),
+    );
+
+    let diagnostics_req = make_request(
+        "semanticDiagnosticsSync",
+        serde_json::json!({
+            "file": "/index.ts"
+        }),
+    );
+    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
+    assert!(diagnostics_resp.success);
+    let diagnostics = diagnostics_resp
+        .body
+        .expect("semanticDiagnosticsSync should return a body")
+        .as_array()
+        .expect("semanticDiagnosticsSync body should be an array")
+        .clone();
+    let has_cannot_find_module = diagnostics.iter().any(|diag| {
+        diag.get("code").and_then(serde_json::Value::as_u64)
+            == Some(
+                tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                    as u64,
+            )
+    });
+    assert!(
+        !has_cannot_find_module,
+        "did not expect unresolved-module diagnostics for open dependency files"
     );
 }
 
