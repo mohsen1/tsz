@@ -30,7 +30,6 @@ pub mod call_hierarchy;
 pub mod code_actions;
 pub mod code_lens;
 pub mod completions;
-pub mod definition;
 pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
@@ -41,13 +40,12 @@ pub mod folding;
 pub mod formatting;
 pub mod highlighting;
 pub mod hover;
-pub mod implementation;
 pub mod inlay_hints;
 pub mod jsdoc;
 pub mod linked_editing;
 pub use tsz_common::position;
+pub mod navigation;
 pub mod project;
-pub mod references;
 pub mod rename;
 pub mod resolver;
 mod resolver_children;
@@ -56,7 +54,6 @@ pub mod semantic_tokens;
 pub mod signature_help;
 pub mod symbol_index;
 pub mod symbols;
-pub mod type_definition;
 pub mod type_hierarchy;
 pub mod utils;
 pub mod workspace_symbols;
@@ -76,7 +73,6 @@ pub use code_actions::{
     ImportCandidate, ImportCandidateKind,
 };
 pub use completions::{CompletionItem, CompletionItemKind, Completions};
-pub use definition::GoToDefinition;
 pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
 pub use document_symbols::{DocumentSymbol, DocumentSymbolProvider, SymbolKind};
 pub use folding::{FoldingRange, FoldingRangeProvider};
@@ -85,11 +81,13 @@ pub use formatting::{
 };
 pub use highlighting::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightProvider};
 pub use hover::{HoverInfo, HoverProvider};
+pub use navigation::definition::GoToDefinition;
+pub use navigation::references::{FindReferences, ReferenceInfo, RenameLocation};
+pub use navigation::{definition, implementation, references, type_definition};
 pub use position::{Location, Position, Range, SourceLocation};
 pub use project::{
     Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
 };
-pub use references::{FindReferences, ReferenceInfo, RenameLocation};
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
 pub use semantic_tokens::{SemanticTokenType, SemanticTokensProvider, semantic_token_modifiers};
 pub use signature_help::{
@@ -101,7 +99,7 @@ pub use symbols::DocumentSymbols;
 pub use selection_range::{SelectionRange, SelectionRangeProvider};
 
 // Type Definition
-pub use type_definition::TypeDefinitionProvider;
+pub use navigation::type_definition::TypeDefinitionProvider;
 
 // Code Lens
 pub use code_lens::{CodeLens, CodeLensCommand, CodeLensData, CodeLensKind, CodeLensProvider};
@@ -116,7 +114,7 @@ pub use document_links::{DocumentLink, DocumentLinkProvider};
 pub use workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 
 // Go to Implementation
-pub use implementation::GoToImplementationProvider;
+pub use navigation::implementation::GoToImplementationProvider;
 
 // Call Hierarchy
 pub use call_hierarchy::{

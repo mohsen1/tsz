@@ -8,7 +8,7 @@
 //! Code Lenses are displayed inline in the editor and can be clicked to
 //! perform actions like "Show References" or "Run Test".
 
-use crate::references::FindReferences;
+use crate::navigation::references::FindReferences;
 use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 

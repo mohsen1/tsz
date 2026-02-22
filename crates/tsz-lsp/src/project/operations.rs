@@ -6,8 +6,8 @@ use web_time::Instant;
 
 use rustc_hash::FxHashSet;
 
-use crate::implementation::{GoToImplementationProvider, TargetKind};
-use crate::references::FindReferences;
+use crate::navigation::implementation::{GoToImplementationProvider, TargetKind};
+use crate::navigation::references::FindReferences;
 use crate::rename::{RenameProvider, TextEdit, WorkspaceEdit};
 use crate::resolver::ScopeCacheStats;
 use crate::utils::find_node_at_offset;
