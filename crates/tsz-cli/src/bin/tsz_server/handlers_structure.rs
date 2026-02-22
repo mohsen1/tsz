@@ -328,6 +328,104 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        match request.command.as_str() {
+            "openExternalProject" => {
+                let project_name = request
+                    .arguments
+                    .get("projectFileName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+
+                let mut tracked_files = Vec::new();
+                if let Some(root_files) = request
+                    .arguments
+                    .get("rootFiles")
+                    .and_then(serde_json::Value::as_array)
+                {
+                    for entry in root_files {
+                        let Some(file_name) = entry.get("fileName").and_then(|v| v.as_str()) else {
+                            continue;
+                        };
+                        let content = entry
+                            .get("content")
+                            .and_then(serde_json::Value::as_str)
+                            .map(std::string::ToString::to_string)
+                            .or_else(|| std::fs::read_to_string(file_name).ok());
+                        if let Some(content) = content {
+                            self.open_files.insert(file_name.to_string(), content);
+                            tracked_files.push(file_name.to_string());
+                        }
+                    }
+                }
+                if !project_name.is_empty() {
+                    self.external_project_files
+                        .insert(project_name, tracked_files);
+                }
+            }
+            "openExternalProjects" => {
+                if let Some(projects) = request
+                    .arguments
+                    .get("projects")
+                    .and_then(serde_json::Value::as_array)
+                {
+                    for project in projects {
+                        let project_name = project
+                            .get("projectFileName")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+
+                        let mut tracked_files = Vec::new();
+                        if let Some(root_files) = project
+                            .get("rootFiles")
+                            .and_then(serde_json::Value::as_array)
+                        {
+                            for entry in root_files {
+                                let Some(file_name) =
+                                    entry.get("fileName").and_then(|v| v.as_str())
+                                else {
+                                    continue;
+                                };
+                                let content = entry
+                                    .get("content")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(std::string::ToString::to_string)
+                                    .or_else(|| std::fs::read_to_string(file_name).ok());
+                                if let Some(content) = content {
+                                    self.open_files.insert(file_name.to_string(), content);
+                                    tracked_files.push(file_name.to_string());
+                                }
+                            }
+                        }
+                        if !project_name.is_empty() {
+                            self.external_project_files
+                                .insert(project_name, tracked_files);
+                        }
+                    }
+                }
+            }
+            "closeExternalProject" => {
+                if let Some(project_name) = request
+                    .arguments
+                    .get("projectFileName")
+                    .and_then(serde_json::Value::as_str)
+                    && let Some(files) = self.external_project_files.remove(project_name)
+                {
+                    for file in files {
+                        let still_owned_elsewhere = self
+                            .external_project_files
+                            .values()
+                            .any(|other_files| other_files.iter().any(|p| p == &file));
+                        if !still_owned_elsewhere {
+                            self.open_files.remove(&file);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
         self.stub_response(seq, request, None)
     }
 

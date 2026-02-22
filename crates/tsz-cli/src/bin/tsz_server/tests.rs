@@ -14,6 +14,7 @@ fn make_server() -> Server {
         checks_completed: 0,
         response_seq: 0,
         open_files: FxHashMap::default(),
+        external_project_files: FxHashMap::default(),
         _server_mode: ServerMode::Semantic,
         _log_config: LogConfig {
             level: LogLevel::Off,
@@ -582,6 +583,101 @@ fn test_get_code_fixes_uses_configured_auto_import_specifier_exclude_regexes() {
         }))
         .is_empty()
     );
+}
+
+#[test]
+fn test_open_external_project_populates_auto_import_code_fixes() {
+    let mut server = make_server();
+
+    let open_external = make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "rootFiles": [
+                {
+                    "fileName": "/node_modules/lib/index.d.ts",
+                    "content": "declare module \"ambient\" { export const x: number; }\ndeclare module \"ambient/utils\" { export const x: number; }\n"
+                },
+                {
+                    "fileName": "/index.ts",
+                    "content": "x"
+                }
+            ]
+        }),
+    );
+    let open_resp = server.handle_tsserver_request(open_external);
+    assert!(open_resp.success);
+
+    let fixes_req = make_request(
+        "getCodeFixes",
+        serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 2,
+            "errorCodes": [2304],
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let fixes_resp = server.handle_tsserver_request(fixes_req);
+    assert!(fixes_resp.success);
+    let fixes = fixes_resp
+        .body
+        .expect("getCodeFixes should return a body")
+        .as_array()
+        .expect("getCodeFixes body should be an array")
+        .clone();
+
+    let mut specifiers = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                if let Some(capture) = new_text
+                    .split("from ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                {
+                    specifiers.push(capture.to_string());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        specifiers,
+        vec!["ambient".to_string(), "ambient/utils".to_string()]
+    );
+
+    let close_external = make_request(
+        "closeExternalProject",
+        serde_json::json!({ "projectFileName": "/project.csproj" }),
+    );
+    let close_resp = server.handle_tsserver_request(close_external);
+    assert!(close_resp.success);
+    assert!(
+        !server
+            .open_files
+            .contains_key("/node_modules/lib/index.d.ts")
+    );
+    assert!(!server.open_files.contains_key("/index.ts"));
 }
 
 #[test]
