@@ -471,10 +471,24 @@ li {
     TSZ (Project Zang) is a TypeScript compiler written in Rust, targeting exact parity
     with <code>tsc</code>. "Zang" is the Persian word for "rust." This document explains
     how source code flows through the compiler, what data structures it produces at each
-    stage, and how the type system works internally. Everything here maps directly to the
-    codebase&mdash;the struct names, constant values, and function signatures are real.
+    stage, and how the type system works internally. This document is source-grounded:
+    struct names, constant values, and function signatures are real. Where implementation
+    is still migrating toward the target architecture, sections below call out
+    <em>current state</em> versus <em>target state</em>.
   </p>
 </header>
+
+<div class="callout">
+  <div class="callout-title">Current State vs Target State</div>
+  <p>
+    This page describes both the architecture target and the practical state of the codebase.
+    Some checker paths still contain transitional logic that is being moved behind solver
+    query boundaries.
+  </p>
+  <p>
+    Ongoing cleanup work is tracked in <code>docs/todos/architecture-purity.md</code>.
+  </p>
+</div>
 
 <!-- ════════════════════════════════════════════ -->
 <h2 id="pipeline">1. The Pipeline at a Glance</h2>
@@ -521,7 +535,7 @@ li {
 
   <rect x="685" y="20" width="105" height="40" class="box" fill="var(--bg-subtle)" stroke="var(--emitter-color)"/>
   <text x="737" y="40" class="box-text" fill="var(--emitter-color)">Emitter</text>
-  <text x="737" y="72" class="sub-text" fill="var(--text-tertiary)">~52K LOC</text>
+  <text x="737" y="72" class="sub-text" fill="var(--text-tertiary)">~54K LOC</text>
 
   <!-- Arrows -->
   <path d="M115,40 L145,40" class="arrow-line" stroke="var(--text-tertiary)"/>
@@ -536,12 +550,13 @@ li {
 </svg>
 </div>
 
-<p>
-  The arrow between Checker and Solver is bidirectional in practice: the Checker walks
-  the AST and asks the Solver questions ("is type A assignable to type B?"), then the
-  Solver returns answers. But the Checker never computes type answers itself&mdash;it
-  only decides <em>where</em> to ask and how to report the result.
-</p>
+  <p>
+    The arrow between Checker and Solver is bidirectional in practice: the Checker walks
+    the AST and asks the Solver questions ("is type A assignable to type B?"), then the
+    Solver returns answers. The target architecture is that the Checker only decides
+    <em>where</em> to ask and how to report results. Current implementation still has
+    some checker-side semantic fast paths and narrowing logic while migration continues.
+  </p>
 
 <h3>Responsibility Matrix</h3>
 
@@ -563,7 +578,7 @@ li {
     <tr>
       <td><strong>WHAT</strong> is the type?</td>
       <td><span class="label solver">Solver</span></td>
-      <td>All type relations, inference, evaluation, instantiation, narrowing. The single source of truth for type computation.</td>
+      <td>Target owner of all type relations, inference, evaluation, instantiation, and narrowing. Migration in progress for remaining checker-side semantics.</td>
     </tr>
     <tr>
       <td><strong>WHERE</strong> to report?</td>
@@ -573,7 +588,7 @@ li {
     <tr>
       <td><strong>OUTPUT</strong>?</td>
       <td><span class="label emitter">Emitter</span></td>
-      <td>Generates JavaScript and <code>.d.ts</code> declaration files. No semantic type validation.</td>
+      <td>Generates JavaScript and <code>.d.ts</code> declaration files. Should not own general semantic type validation.</td>
     </tr>
   </tbody>
 </table>
@@ -957,8 +972,9 @@ Symbol {
       TS2322 ("Type 'X' is not assignable to type 'Y'") is the most common diagnostic.
       Its path is strictly controlled: <strong>relation first</strong> (Solver determines
       assignability), <strong>reason second</strong> (Solver explains why), <strong>location
-      last</strong> (Checker picks the span and formats the message). All TS2322/TS2345/TS2416
-      paths must go through the <code>query_boundaries</code> assignability gateway.
+      last</strong> (Checker picks the span and formats the message). New TS2322/TS2345/TS2416
+      work must go through the <code>query_boundaries</code> assignability gateway, and
+      remaining legacy call sites are being migrated.
     </p>
   </div>
 </div>
@@ -1339,10 +1355,10 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
     <tr><td><code>tsz-solver</code></td><td>~70K</td><td>Type relations, inference, instantiation, narrowing</td></tr>
     <tr><td><code>tsz-lowering</code></td><td>~3K</td><td>AST-to-type bridge (converts AST type nodes to TypeIds)</td></tr>
     <tr><td><code>tsz-checker</code></td><td>~107K</td><td>AST traversal, diagnostics orchestration</td></tr>
-    <tr><td><code>tsz-emitter</code></td><td>~52K</td><td>JavaScript and declaration file generation</td></tr>
-    <tr><td><code>tsz-lsp</code></td><td>~29K</td><td>Language Server Protocol implementation</td></tr>
+    <tr><td><code>tsz-emitter</code></td><td>~54K</td><td>JavaScript and declaration file generation</td></tr>
+    <tr><td><code>tsz-lsp</code></td><td>~30K</td><td>Language Server Protocol implementation</td></tr>
     <tr><td><code>tsz-cli</code></td><td>~26K</td><td>Command-line interface, project driver</td></tr>
-    <tr><td><code>tsz-wasm</code></td><td>~5K</td><td>WebAssembly bindings</td></tr>
+    <tr><td><code>tsz-wasm</code></td><td>~4.5K</td><td>WebAssembly bindings</td></tr>
     <tr><td><code>conformance</code></td><td>&mdash;</td><td>Conformance test runner and infrastructure</td></tr>
   </tbody>
 </table>
@@ -1367,8 +1383,9 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <p>
   If code computes type semantics&mdash;subtyping, inference, evaluation, narrowing,
   instantiation&mdash;it belongs in the Solver. The Checker is a thin orchestration
-  layer that walks the AST and asks the Solver questions. It never implements type
-  algorithms itself. This prevents logic duplication and ensures there is one source
+  layer that walks the AST and asks the Solver questions. This is the architectural
+  target; remaining checker-side semantic logic is technical debt being paid down.
+  Keeping semantics in Solver prevents logic duplication and ensures there is one source
   of truth for "what does this type mean?"
 </p>
 
@@ -1383,10 +1400,10 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 
 <h3>One Type Universe</h3>
 <p>
-  There is exactly one global <code>TypeInterner</code>. All types everywhere in the program
-  share the same ID space. If the same structural type is created in two different files, it
-  gets the same <code>TypeId</code>. This means type equality is always a single integer
-  comparison, no matter how complex the types are.
+  TSZ uses one global canonical <code>TypeInterner</code> for persistent semantic types.
+  The system also supports local ephemeral <code>TypeId</code>s for scoped operations, but
+  cross-file semantic identity and relation caches are anchored to the global type universe.
+  This keeps type equality as a fast integer comparison.
 </p>
 
 <h3>tsc Parity Above All</h3>
@@ -1527,7 +1544,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   passes when TSZ produces exactly the same set of diagnostics as <code>tsc</code> for a
   given input file&mdash;same error code (e.g., TS2322), same file, same line, same column,
   same message text. The official TypeScript conformance test suite has ~12,500 tests.
-  TSZ currently passes ~58.8% of them.
+  As of 2026-02-22, TSZ passes 60.8% (7,650/12,574). See the README for the latest figure.
 </p>
 
 <h3 id="g-contravariant">Contravariance</h3>
