@@ -19,8 +19,8 @@ fn exposes_type_computation_access_boundary_queries() {
             rest: false,
         },
     ]);
-    let string_literal = tsz_solver::type_queries_extended::create_string_literal_type(&types, "x");
-    let number_literal = tsz_solver::type_queries_extended::create_number_literal_type(&types, 1.0);
+    let string_literal = tsz_solver::type_queries::create_string_literal_type(&types, "x");
+    let number_literal = tsz_solver::type_queries::create_number_literal_type(&types, 1.0);
     let object = types.object(vec![]);
 
     assert_eq!(

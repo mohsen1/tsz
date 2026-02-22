@@ -490,8 +490,7 @@ impl<'a> NarrowingContext<'a> {
         let resolved_constructor = self.resolve_type(constructor_type);
 
         // Extract the instance type from the constructor
-        use crate::type_queries_extended::InstanceTypeKind;
-        use crate::type_queries_extended::classify_for_instance_type;
+        use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 
         let instance_type = match classify_for_instance_type(self.db, resolved_constructor) {
             InstanceTypeKind::Callable(shape_id) => {

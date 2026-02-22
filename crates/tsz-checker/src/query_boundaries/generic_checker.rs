@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{callable_shape_for_type, contains_type_parameters};
-pub(crate) use tsz_solver::type_queries_extended::TypeArgumentExtractionKind;
+pub(crate) use tsz_solver::type_queries::TypeArgumentExtractionKind;
 
 pub(crate) fn classify_for_type_argument_extraction(
     db: &dyn TypeDatabase,

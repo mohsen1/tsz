@@ -7,9 +7,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries_extended::{
-    ContextualLiteralAllowKind, classify_for_contextual_literal,
-};
+use tsz_solver::type_queries::{ContextualLiteralAllowKind, classify_for_contextual_literal};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
