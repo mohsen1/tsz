@@ -17,6 +17,7 @@ use crate::types::{
     TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::TypeVisitor;
+use tsz_common::interner::Atom;
 
 // =============================================================================
 // Helper Functions
@@ -436,12 +437,25 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
 /// Visitor to extract property type from object types by name.
 struct PropertyExtractor<'a> {
     db: &'a dyn TypeDatabase,
-    name: String,
+    name_atom: Atom,
+    is_numeric_name: bool,
 }
 
 impl<'a> PropertyExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase, name: String) -> Self {
-        Self { db, name }
+    fn new(db: &'a dyn TypeDatabase, name: &str) -> Self {
+        Self {
+            db,
+            name_atom: db.intern_string(name),
+            is_numeric_name: name.parse::<f64>().is_ok(),
+        }
+    }
+
+    fn from_atom(db: &'a dyn TypeDatabase, name_atom: Atom, is_numeric_name: bool) -> Self {
+        Self {
+            db,
+            name_atom,
+            is_numeric_name,
+        }
     }
 
     fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -463,7 +477,7 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         for prop in &shape.properties {
-            if self.db.resolve_atom_ref(prop.name).as_ref() == self.name {
+            if prop.name == self.name_atom {
                 return Some(prop.type_id);
             }
         }
@@ -471,7 +485,7 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         // This handles cases where interfaces/types have index signatures
         // but are stored as Object rather than ObjectWithIndex
         // For numeric property names (e.g., "1"), check number index signature first
-        if self.name.parse::<f64>().is_ok()
+        if self.is_numeric_name
             && let Some(ref idx) = shape.number_index
         {
             return Some(idx.value_type);
@@ -489,7 +503,7 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         }
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         // For numeric property names, check number index signature first
-        if self.name.parse::<f64>().is_ok()
+        if self.is_numeric_name
             && let Some(ref idx) = shape.number_index
         {
             return Some(idx.value_type);
@@ -518,7 +532,8 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         let types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor = PropertyExtractor::new(self.db, self.name.clone());
+                let mut extractor =
+                    PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
                 extractor.extract(member)
             })
             .collect();
@@ -528,7 +543,8 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
         for &member in members.iter() {
-            let mut extractor = PropertyExtractor::new(self.db, self.name.clone());
+            let mut extractor =
+                PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
             if let Some(ty) = extractor.extract(member) {
                 return Some(ty);
             }
@@ -1445,7 +1461,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Use visitor for Object types
-        let mut extractor = PropertyExtractor::new(self.interner, name.to_string());
+        let mut extractor = PropertyExtractor::new(self.interner, name);
         extractor.extract(expected)
     }
 

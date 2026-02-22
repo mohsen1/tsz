@@ -40,6 +40,18 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Optional-chain access results (`obj?.prop`, `obj?.[k]`) already encode
+        // nullish behavior during property/element access typing. Re-running flow
+        // analysis at the access node is redundant and expensive on repeated chains.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && access.question_dot_token
+        {
+            return declared_type;
+        }
+
         // Get the flow node for this expression usage FIRST
         // If there's no flow info, no narrowing is possible regardless of node type
         let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
