@@ -1184,6 +1184,43 @@ fn test_project_completions_prefix_matching() {
 }
 
 #[test]
+fn test_project_completions_include_export_equals_auto_import_when_name_already_completes() {
+    let mut project = Project::new();
+    project.set_file(
+        "/ts.d.ts".to_string(),
+        r#"declare namespace ts {
+  interface SourceFile {
+    text: string;
+  }
+}
+export = ts;
+"#
+        .to_string(),
+    );
+    project.set_file(
+        "/types.ts".to_string(),
+        "export interface VFS {\n  getSourceFile(path: string): ts\n}\n".to_string(),
+    );
+
+    let file = project.file("/types.ts").expect("Expected /types.ts");
+    let ts_range = range_for_substring(file.source_text(), file.line_map(), "ts\n");
+    let items = project
+        .get_completions("/types.ts", ts_range.start)
+        .expect("Expected completions");
+
+    let ts_auto_import = items
+        .iter()
+        .find(|item| item.label == "ts" && item.source.as_deref() == Some("./ts"))
+        .expect("Expected auto-import completion for `ts` from `./ts`");
+
+    assert!(ts_auto_import.has_action);
+    assert!(
+        ts_auto_import.additional_text_edits.is_some(),
+        "Expected auto-import completion to include text edits"
+    );
+}
+
+#[test]
 fn test_project_diagnostics_cached() {
     let mut project = Project::new();
 

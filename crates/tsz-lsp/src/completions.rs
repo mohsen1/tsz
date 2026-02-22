@@ -132,7 +132,7 @@ pub struct CompletionItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     /// Display label for the source module (tsserver: `sourceDisplay`).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sourceDisplay", skip_serializing_if = "Option::is_none")]
     pub source_display: Option<String>,
     /// Comma-separated modifier flags such as `export`, `declare`, `abstract`,
     /// `static`, `private`, `protected` (tsserver: `kindModifiers`).
@@ -507,9 +507,20 @@ impl<'a> Completions<'a> {
                 if seen_names.contains(name) {
                     continue;
                 }
-                seen_names.insert(name.clone());
 
                 if let Some(symbol) = self.binder.symbols.get(*symbol_id) {
+                    // Synthetic CommonJS helpers should not appear in globals-style completion lists.
+                    // Keep user-declared symbols with these names by requiring no declarations.
+                    if matches!(
+                        name.as_str(),
+                        "exports" | "require" | "module" | "__dirname" | "__filename"
+                    ) && symbol.declarations.is_empty()
+                        && symbol.value_declaration.is_none()
+                    {
+                        continue;
+                    }
+
+                    seen_names.insert(name.clone());
                     let mut kind = self.determine_completion_kind(symbol);
                     if kind == CompletionItemKind::Variable && self.symbol_is_parameter(symbol) {
                         kind = CompletionItemKind::Parameter;
@@ -559,7 +570,7 @@ impl<'a> Completions<'a> {
         if !seen_names.contains("globalThis") {
             seen_names.insert("globalThis".to_string());
             let mut item =
-                CompletionItem::new("globalThis".to_string(), CompletionItemKind::Variable);
+                CompletionItem::new("globalThis".to_string(), CompletionItemKind::Module);
             item.sort_text = Some(sort_priority::GLOBALS_OR_KEYWORDS.to_string());
             completions.push(item);
         }

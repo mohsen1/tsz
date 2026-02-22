@@ -108,10 +108,17 @@ impl Project {
                 .unwrap_or_default()
         };
 
-        let mut existing = FxHashSet::default();
-        for item in &completions {
-            existing.insert(item.label.clone());
-        }
+        let existing_file_symbols: FxHashSet<String> = self
+            .files
+            .get(file_name)
+            .map(|file| {
+                file.binder
+                    .file_locals
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let (missing_name, skip_auto_import) = {
             let file = self.files.get(file_name)?;
@@ -156,7 +163,7 @@ impl Project {
             self.collect_import_candidates_for_prefix(
                 file,
                 &prefix,
-                &existing,
+                &existing_file_symbols,
                 &mut candidates,
                 &mut seen,
             );
@@ -206,14 +213,16 @@ impl Project {
             );
 
             for candidate in candidates {
-                if existing.contains(&candidate.local_name) {
+                if existing_file_symbols.contains(&candidate.local_name) {
                     continue;
                 }
 
                 // Generate additional text edits for auto-import
-                if let Some(edits) =
-                    code_action_provider.build_auto_import_edit(file.root(), &candidate)
-                {
+                if let Some(edits) = code_action_provider.build_auto_import_edit_for_completion(
+                    file.root(),
+                    &candidate,
+                    position,
+                ) {
                     let mut item = self.completion_from_import_candidate(&candidate);
                     item = item.with_additional_edits(edits);
                     completions.push(item);

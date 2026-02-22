@@ -308,6 +308,74 @@ impl Server {
     }
 
     fn sort_tsserver_completion_items(items: &mut [CompletionItem]) {
+        fn compare_case_sensitive_ui(a: &str, b: &str) -> Ordering {
+            fn split_numeric_segments(s: &str) -> Vec<&str> {
+                let mut segments = Vec::new();
+                let mut start = 0;
+                let mut in_digit = false;
+
+                for (i, ch) in s.char_indices() {
+                    let is_digit = ch.is_ascii_digit();
+                    if i == 0 {
+                        in_digit = is_digit;
+                    } else if is_digit != in_digit {
+                        segments.push(&s[start..i]);
+                        start = i;
+                        in_digit = is_digit;
+                    }
+                }
+                if start < s.len() {
+                    segments.push(&s[start..]);
+                }
+                segments
+            }
+
+            let a_segments = split_numeric_segments(a);
+            let b_segments = split_numeric_segments(b);
+
+            for (a_seg, b_seg) in a_segments.iter().zip(b_segments.iter()) {
+                let a_is_digit = a_seg.chars().next().is_some_and(|c| c.is_ascii_digit());
+                let b_is_digit = b_seg.chars().next().is_some_and(|c| c.is_ascii_digit());
+
+                let cmp = if a_is_digit && b_is_digit {
+                    let a_num = a_seg.parse::<u64>().unwrap_or(0);
+                    let b_num = b_seg.parse::<u64>().unwrap_or(0);
+                    a_num.cmp(&b_num)
+                } else {
+                    a_seg.to_lowercase().cmp(&b_seg.to_lowercase())
+                };
+
+                if cmp != Ordering::Equal {
+                    return cmp;
+                }
+            }
+
+            let seg_cmp = a_segments.len().cmp(&b_segments.len());
+            if seg_cmp != Ordering::Equal {
+                return seg_cmp;
+            }
+
+            for (a_ch, b_ch) in a.chars().zip(b.chars()) {
+                if a_ch == b_ch {
+                    continue;
+                }
+
+                let a_lower = a_ch.to_lowercase().next().unwrap_or(a_ch);
+                let b_lower = b_ch.to_lowercase().next().unwrap_or(b_ch);
+
+                if a_lower == b_lower {
+                    if a_ch.is_lowercase() && b_ch.is_uppercase() {
+                        return Ordering::Less;
+                    }
+                    if a_ch.is_uppercase() && b_ch.is_lowercase() {
+                        return Ordering::Greater;
+                    }
+                }
+            }
+
+            a.cmp(b)
+        }
+
         fn compare_completion_sources(a: Option<&str>, b: Option<&str>) -> Ordering {
             match (a, b) {
                 (Some(a), Some(b)) => {
@@ -336,7 +404,7 @@ impl Server {
                         .then_with(|| candidate_rank(a).cmp(&candidate_rank(b)))
                         .then_with(|| index_penalty(a).cmp(&index_penalty(b)))
                         .then_with(|| a.len().cmp(&b.len()))
-                        .then_with(|| a.cmp(b))
+                        .then_with(|| compare_case_sensitive_ui(a, b))
                 }
                 (None, None) => Ordering::Equal,
                 (None, Some(_)) => Ordering::Less,
@@ -345,14 +413,8 @@ impl Server {
         }
 
         items.sort_by(|a, b| {
-            a.effective_sort_text()
-                .cmp(b.effective_sort_text())
-                .then_with(|| {
-                    a.label
-                        .to_ascii_lowercase()
-                        .cmp(&b.label.to_ascii_lowercase())
-                })
-                .then_with(|| a.label.cmp(&b.label))
+            compare_case_sensitive_ui(a.effective_sort_text(), b.effective_sort_text())
+                .then_with(|| compare_case_sensitive_ui(&a.label, &b.label))
                 .then_with(|| compare_completion_sources(a.source.as_deref(), b.source.as_deref()))
         });
     }
@@ -1351,6 +1413,23 @@ mod tests {
 
         assert_eq!(items[0].source.as_deref(), Some("./thing2A"));
         assert_eq!(items[1].source.as_deref(), Some("./index"));
+    }
+
+    #[test]
+    fn sort_tsserver_completion_items_uses_numeric_aware_ui_order() {
+        let mut items = vec![
+            CompletionItem::new("Int16Array".to_string(), CompletionItemKind::Variable)
+                .with_sort_text("15".to_string()),
+            CompletionItem::new("Int8Array".to_string(), CompletionItemKind::Variable)
+                .with_sort_text("15".to_string()),
+            CompletionItem::new("Int32Array".to_string(), CompletionItemKind::Variable)
+                .with_sort_text("15".to_string()),
+        ];
+
+        Server::sort_tsserver_completion_items(&mut items);
+
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, vec!["Int8Array", "Int16Array", "Int32Array"]);
     }
 
     #[test]

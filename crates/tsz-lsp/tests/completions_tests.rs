@@ -339,6 +339,37 @@ fn test_completions_global_surface_matches_fourslash_globals() {
 }
 
 #[test]
+fn test_completions_global_entry_kinds_match_fourslash() {
+    let source = "Table";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let position = Position::new(0, 5);
+
+    let completions = Completions::new(arena, &binder, &line_map, source);
+    let items = completions
+        .get_completions(root, position)
+        .expect("Should have completions");
+
+    let find_kind = |name: &str| {
+        items
+            .iter()
+            .find(|item| item.label == name)
+            .map(|item| item.kind)
+            .unwrap_or_else(|| panic!("Expected completion `{name}`"))
+    };
+
+    assert_eq!(find_kind("Array"), CompletionItemKind::Variable);
+    assert_eq!(find_kind("Math"), CompletionItemKind::Variable);
+    assert_eq!(find_kind("Intl"), CompletionItemKind::Module);
+}
+
+#[test]
 fn test_completions_jsdoc_documentation() {
     // Test that JSDoc comments are included in completion items
     let source = "/** This is a test function */\nfunction foo() {}\n";
@@ -812,6 +843,25 @@ fn test_completions_source_default_none() {
             item.label,
         );
     }
+}
+
+#[test]
+fn test_completion_item_serializes_source_display_camel_case() {
+    let item = CompletionItem::new("Foo".to_string(), CompletionItemKind::Variable)
+        .with_source("./lib/foo".to_string())
+        .with_source_display("./lib/foo".to_string());
+
+    let value = serde_json::to_value(&item).expect("serialize completion item");
+    assert_eq!(
+        value
+            .get("sourceDisplay")
+            .and_then(serde_json::Value::as_str),
+        Some("./lib/foo")
+    );
+    assert!(
+        value.get("source_display").is_none(),
+        "sourceDisplay should serialize in tsserver camelCase"
+    );
 }
 
 #[test]

@@ -1865,6 +1865,107 @@ fn test_open_external_project_module_none_es5_blocks_auto_import_completions() {
 }
 
 #[test]
+fn test_completion_info_partial_ambient_file_exclusion_keeps_merged_module_exports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/ambient1.d.ts".to_string(),
+        "declare module \"foo\" { export const x = 1; }\n".to_string(),
+    );
+    server.open_files.insert(
+        "/ambient2.d.ts".to_string(),
+        "declare module \"foo\" { export const y = 2; }\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 1,
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["/**/ambient1.d.ts"]
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_x_from_foo = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("foo")
+    });
+    let has_y_from_foo = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("y")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("foo")
+    });
+
+    assert!(
+        has_x_from_foo,
+        "expected ambient export `x` from module `foo` to remain when only one declaration file is excluded"
+    );
+    assert!(
+        has_y_from_foo,
+        "expected ambient export `y` from module `foo` to remain when only one declaration file is excluded"
+    );
+}
+
+#[test]
+fn test_completion_info_full_ambient_file_exclusion_hides_merged_module_exports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/ambient1.d.ts".to_string(),
+        "declare module \"foo\" { export const x = 1; }\n".to_string(),
+    );
+    server.open_files.insert(
+        "/ambient2.d.ts".to_string(),
+        "declare module \"foo\" { export const y = 2; }\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 1,
+            "preferences": {
+                "allowIncompleteCompletions": true,
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["/**/ambient*"]
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    assert!(
+        !entries.iter().any(|entry| {
+            entry.get("source").and_then(serde_json::Value::as_str) == Some("foo")
+        }),
+        "expected ambient module `foo` completions to be excluded when all declaration files are excluded"
+    );
+}
+
+#[test]
 fn test_completion_info_contextual_string_literal_keyof_constraint() {
     let mut server = make_server();
     let source = "interface Events { click: any; drag: any; }\ndeclare function addListener<K extends keyof Events>(type: K, listener: (ev: Events[K]) => any): void;\naddListener(\"\")\n";
@@ -1926,6 +2027,241 @@ fn test_completion_info_contextual_string_literal_keyof_constraint() {
     assert!(
         completion_names.contains(&"drag"),
         "expected 'drag' in completions, got {completion_names:?}"
+    );
+}
+
+#[test]
+fn test_completion_info_globals_exclude_synthetic_commonjs_helpers() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "lib": ["es5"]
+  }
+}"#
+        .to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "".to_string());
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 1,
+            "preferences": {
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let names: std::collections::HashSet<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        !names.contains("exports"),
+        "expected synthetic CommonJS helper `exports` to be excluded from globals completions"
+    );
+    assert!(
+        !names.contains("require"),
+        "expected synthetic CommonJS helper `require` to be excluded from globals completions"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_export_equals_type_only_preferred() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "verbatimModuleSyntax": true,
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/ts.d.ts".to_string(),
+        "declare namespace ts {\n  interface SourceFile {\n    text: string;\n  }\n  function createSourceFile(): SourceFile;\n}\nexport = ts;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/types.ts".to_string(),
+        "export interface VFS {\n  getSourceFile(path: string): ts/**/\n}\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/types.ts",
+            "line": 2,
+            "offset": 34,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let has_ts_auto_import = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("ts")
+            && entry.get("source").and_then(serde_json::Value::as_str) == Some("./ts")
+            && entry.get("hasAction").and_then(serde_json::Value::as_bool) == Some(true)
+            && entry.get("sortText").and_then(serde_json::Value::as_str) == Some("16")
+    });
+    let ts_entries: Vec<&serde_json::Value> = entries
+        .iter()
+        .filter(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("ts"))
+        .collect();
+    assert_eq!(
+        ts_entries.len(),
+        1,
+        "expected a single `ts` completion entry, got: {ts_entries:?}"
+    );
+    let ts_entry = ts_entries[0];
+    let source_display = ts_entry
+        .get("sourceDisplay")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|parts| parts.first())
+        .and_then(|part| part.get("text"))
+        .and_then(serde_json::Value::as_str);
+    assert_eq!(
+        source_display,
+        Some("./ts"),
+        "expected completionInfo sourceDisplay display parts for `ts`, got: {ts_entry:?}"
+    );
+    assert!(
+        has_ts_auto_import,
+        "expected ts auto-import completion from ./ts, got entries: {entries:?}"
+    );
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/types.ts",
+            "line": 2,
+            "offset": 34,
+            "entryNames": [{ "name": "ts", "source": "./ts" }],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let code_actions = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .expect("completion details should include auto-import code actions");
+    let text_changes = code_actions
+        .first()
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("auto-import code action should include text changes");
+    let import_text = text_changes
+        .first()
+        .and_then(|change| change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("auto-import text change should include newText");
+    assert!(
+        import_text.contains("import type ts from \"./ts\";"),
+        "expected type-only default import text edit, got: {import_text}"
+    );
+}
+
+#[test]
+fn test_completion_info_auto_import_file_exclude_patterns_exclude_node_modules_package_tree() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/home/src/workspaces/project/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs"
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/aws-sdk/package.json".to_string(),
+        r#"{ "name": "aws-sdk", "version": "2.0.0", "main": "index.js" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/aws-sdk/index.d.ts".to_string(),
+        "export * from \"./clients/s3\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/node_modules/aws-sdk/clients/s3.d.ts".to_string(),
+        "export declare class S3 {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/package.json".to_string(),
+        r#"{ "dependencies": { "aws-sdk": "*" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/home/src/workspaces/project/index.ts".to_string(),
+        "S3/**/\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/home/src/workspaces/project/index.ts",
+            "line": 1,
+            "offset": 3,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "autoImportFileExcludePatterns": ["**/node_modules/aws-sdk"]
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| { entry.get("name").and_then(serde_json::Value::as_str) == Some("S3") }),
+        "expected `S3` to be excluded, got entries: {entries:?}"
     );
 }
 
