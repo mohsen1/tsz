@@ -178,4 +178,47 @@ mod tests {
             "Self-closing element with expression attribute should NOT have extra space before />.\nOutput: {output}"
         );
     }
+
+    #[test]
+    fn jsx_text_multiline_content_preserves_whitespace() {
+        // tsc preserves JSX text content including leading/trailing whitespace and newlines.
+        // The scanner's re_scan_jsx_token must reset to full_start_pos (before trivia)
+        // so the text node captures the complete whitespace content.
+        let source = "let k1 = <Comp a={10} b=\"hi\">\n        hi hi hi!\n    </Comp>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("\n        hi hi hi!\n    "),
+            "JSX text should preserve leading/trailing whitespace and newlines.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_text_single_line_content() {
+        let output = emit_jsx("let x = <div>hello world</div>;");
+        assert!(
+            output.contains(">hello world</"),
+            "JSX text on single line should be preserved.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_text_with_nested_elements() {
+        let source = "let x = <Comp>\n        <div>inner</div>\n    </Comp>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("\n        <div>inner</div>\n    "),
+            "JSX text whitespace around nested elements should be preserved.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_text_whitespace_only_between_elements() {
+        // Whitespace-only text nodes between JSX elements should be preserved
+        let source = "let x = <div>\n    <span>a</span>\n    <span>b</span>\n</div>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("<span>a</span>\n    <span>b</span>"),
+            "Whitespace between JSX children should be preserved.\nOutput: {output}"
+        );
+    }
 }

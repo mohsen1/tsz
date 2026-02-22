@@ -276,3 +276,68 @@ fn scanner_set_text_slice_scan_window() {
     assert_eq!(scanner.get_token_value(), "99");
     assert_eq!(scanner.get_token_end(), 6);
 }
+
+#[test]
+fn re_scan_jsx_token_includes_leading_whitespace() {
+    // After parsing a JSX opening element's `>`, the regular scanner skips trivia
+    // (newline + spaces) and scans the first identifier. re_scan_jsx_token must
+    // reset to full_start_pos (before trivia) so the JSX text node includes
+    // leading whitespace and newlines, matching tsc behavior.
+    let source = ">\n        hi hi hi!\n    <".to_string();
+    let mut scanner = ScannerState::new(source, true);
+
+    // Regular scan: skips trivia, scans "hi" as identifier
+    let token = scanner.scan();
+    assert_eq!(token, SyntaxKind::GreaterThanToken);
+    let token = scanner.scan();
+    assert_eq!(token, SyntaxKind::Identifier);
+    assert_eq!(scanner.get_token_value(), "hi");
+
+    // Rescan as JSX text: must include leading whitespace from full_start_pos
+    let token = scanner.re_scan_jsx_token(true);
+    assert_eq!(token, SyntaxKind::JsxText);
+    assert_eq!(
+        scanner.get_token_value(),
+        "\n        hi hi hi!\n    ",
+        "JSX text should include leading whitespace/newlines from full_start_pos"
+    );
+}
+
+#[test]
+fn re_scan_jsx_token_clears_stale_identifier_atom() {
+    // After scanning an identifier, token_atom is set. re_scan_jsx_token must
+    // clear token_atom so get_token_value_ref() returns the JSX text, not
+    // the stale identifier string.
+    let source = ">\n    text\n<".to_string();
+    let mut scanner = ScannerState::new(source, true);
+
+    scanner.scan(); // >
+    scanner.scan(); // "text" as identifier
+
+    let token = scanner.re_scan_jsx_token(true);
+    assert_eq!(token, SyntaxKind::JsxText);
+    // get_token_value uses get_token_value_ref internally — both must return JSX text
+    let value = scanner.get_token_value();
+    assert!(
+        value.contains("text"),
+        "get_token_value should return JSX text, not stale identifier"
+    );
+    assert!(
+        value.starts_with('\n'),
+        "JSX text should include leading newline: {value:?}"
+    );
+}
+
+#[test]
+fn re_scan_jsx_token_single_line_text() {
+    // JSX text without leading trivia should also work correctly
+    let source = ">hello world<".to_string();
+    let mut scanner = ScannerState::new(source, true);
+
+    scanner.scan(); // >
+    scanner.scan(); // "hello" as identifier
+
+    let token = scanner.re_scan_jsx_token(true);
+    assert_eq!(token, SyntaxKind::JsxText);
+    assert_eq!(scanner.get_token_value(), "hello world");
+}
