@@ -406,5 +406,5 @@ impl<W: Write> StreamingPrinter<W> {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "../tests/printer.rs"]
+#[path = "../../tests/printer.rs"]
 mod tests;

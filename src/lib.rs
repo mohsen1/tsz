@@ -155,7 +155,7 @@ pub use tsz_emitter::emitter;
 mod transform_api_tests;
 
 // Printer - re-exported from tsz-emitter workspace crate
-pub use tsz_emitter::printer;
+pub use tsz_emitter::output::printer;
 
 // Safe string slice utilities - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::safe_slice;
@@ -203,7 +203,7 @@ mod source_map_tests_3;
 mod source_map_tests_4;
 
 // SourceWriter - re-exported from tsz-emitter workspace crate
-pub use tsz_emitter::source_writer;
+pub use tsz_emitter::output::source_writer;
 #[cfg(test)]
 #[path = "../tests/source_writer_tests.rs"]
 mod source_writer_tests;

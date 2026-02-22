@@ -603,7 +603,7 @@ fn format_js_number(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::printer::{PrintOptions, Printer};
+    use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
     /// Legacy octal literals (01, 076, 009) must be converted to decimal

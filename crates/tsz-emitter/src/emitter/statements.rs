@@ -618,12 +618,12 @@ impl<'a> Printer<'a> {
                         semis.push(start + i);
                     }
                 }
-                let s1 = semis
-                    .first()
-                    .map(|&p| crate::source_writer::source_position_from_offset(text, p as u32));
-                let s2 = semis
-                    .get(1)
-                    .map(|&p| crate::source_writer::source_position_from_offset(text, p as u32));
+                let s1 = semis.first().map(|&p| {
+                    crate::output::source_writer::source_position_from_offset(text, p as u32)
+                });
+                let s2 = semis.get(1).map(|&p| {
+                    crate::output::source_writer::source_position_from_offset(text, p as u32)
+                });
                 (s1, s2)
             } else {
                 (None, None)
@@ -1007,7 +1007,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::printer::{PrintOptions, Printer};
+    use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
     /// Case clause with a single non-block statement on the same source line

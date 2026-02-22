@@ -1,6 +1,6 @@
 //! Integration tests for comment preservation in emitter
 
-use tsz_emitter::printer::PrintOptions;
+use tsz_emitter::output::printer::PrintOptions;
 use tsz_parser::ParserState;
 
 #[test]
@@ -13,7 +13,7 @@ fn test_comment_between_call_arguments() {
     let root = parser.parse_source_file();
 
     // Need to use Printer directly to set source text for comment preservation
-    use tsz_emitter::printer::Printer;
+    use tsz_emitter::output::printer::Printer;
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
     printer.set_source_text(source);
     printer.print(root);
