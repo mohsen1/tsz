@@ -713,6 +713,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         .expect("failed to read src/state/state_variable_checking.rs for architecture guard");
     let state_class_checking_src = fs::read_to_string("src/state/state_class_checking.rs")
         .expect("failed to read src/state/state_class_checking.rs for architecture guard");
+    let state_heritage_checking_src = fs::read_to_string("src/state/state_heritage_checking.rs")
+        .expect("failed to read src/state/state_heritage_checking.rs for architecture guard");
     let property_access_type_src = fs::read_to_string("src/types/property_access_type.rs")
         .expect("failed to read src/types/property_access_type.rs for architecture guard");
     let property_checker_src = fs::read_to_string("src/property_checker.rs")
@@ -742,16 +744,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_variable_checking_destructuring should not call solver type_queries directly; use state_checking query boundaries"
     );
     assert!(
-        state_class_checking_src.contains("class_query::construct_signatures_for_type("),
-        "state_class_checking constructor signature checks should route through query_boundaries::class_type"
+        state_heritage_checking_src.contains("class_query::construct_signatures_for_type("),
+        "state_heritage_checking constructor signature checks should route through query_boundaries::class_type"
     );
     assert!(
-        state_class_checking_src.contains("class_query::is_mapped_type("),
-        "state_class_checking mapped-type checks should route through query_boundaries::class_type"
+        state_heritage_checking_src.contains("class_query::is_mapped_type("),
+        "state_heritage_checking mapped-type checks should route through query_boundaries::class_type"
     );
     assert!(
-        state_class_checking_src.contains("class_query::is_generic_type("),
-        "state_class_checking generic-type checks should route through query_boundaries::class_type"
+        state_heritage_checking_src.contains("class_query::is_generic_type("),
+        "state_heritage_checking generic-type checks should route through query_boundaries::class_type"
     );
     assert!(
         state_class_checking_src.contains("class_query::type_includes_undefined("),

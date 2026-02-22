@@ -154,8 +154,14 @@ fn compile_with_options(
 fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
+    let lib_files = load_lib_files_for_test();
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
+
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -164,6 +170,19 @@ fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnos
         "test.ts".to_string(),
         CheckerOptions::default(),
     );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| crate::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
@@ -369,7 +388,7 @@ function foo<T>(x: { bar: T; baz: T }) {
     return x;
 }
 
-var r = foo({ bar: 1, baz: '' });
+var r = foo<number>({ bar: 1, baz: '' });
 "#;
 
     let diagnostics = diagnostics_for_source(source);
