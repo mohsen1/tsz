@@ -7,7 +7,9 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
+use crate::operations::{
+    AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
+};
 use crate::types::{
     CallSignature, FunctionShape, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
     TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
@@ -26,6 +28,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: TypeId,
         priority: crate::types::InferencePriority,
     ) {
+        {
+            let mut steps = self.constraint_step_count.borrow_mut();
+            if *steps >= MAX_CONSTRAINT_STEPS {
+                return;
+            }
+            *steps += 1;
+        }
+
         if !self.constraint_pairs.borrow_mut().insert((source, target)) {
             return;
         }
