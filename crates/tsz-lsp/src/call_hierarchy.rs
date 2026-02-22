@@ -133,6 +133,10 @@ impl<'a> CallHierarchyProvider<'a> {
         };
 
         let name_idx = self.get_function_name_idx(func_idx);
+        let target_symbol_id = name_idx
+            .and_then(|idx| self.binder.node_symbols.get(&idx.0).copied())
+            .or_else(|| self.binder.node_symbols.get(&func_idx.0).copied());
+        let target_namespace_hint = self.enclosing_namespace_name(func_idx);
         let target_member_container_hint = self.member_container_hint_for_callable(func_idx);
         let target_is_member_like =
             matches!(target_kind, SymbolKind::Method | SymbolKind::Property)
@@ -184,6 +188,31 @@ impl<'a> CallHierarchyProvider<'a> {
             } else if target_kind == SymbolKind::Function && self.is_property_access_name(idx) {
                 // Function targets should not treat `obj.sameName()` member calls as
                 // references to a same-named free function.
+                continue;
+            }
+
+            if !target_is_member_like && let Some(target_symbol) = target_symbol_id {
+                let reference_symbol = self
+                    .binder
+                    .node_symbols
+                    .get(&idx.0)
+                    .copied()
+                    .or_else(|| self.resolve_callee_symbol(idx).map(|(sym, _, _)| sym));
+                if let Some(reference_symbol) = reference_symbol
+                    && reference_symbol != target_symbol
+                {
+                    continue;
+                }
+            }
+            if !target_is_member_like
+                && target_kind == SymbolKind::Function
+                && let Some(target_namespace) = target_namespace_hint.as_deref()
+                && !self.is_property_access_name(idx)
+                && self
+                    .enclosing_namespace_name(idx)
+                    .as_deref()
+                    .is_some_and(|caller_namespace| caller_namespace != target_namespace)
+            {
                 continue;
             }
 
@@ -641,15 +670,21 @@ impl<'a> CallHierarchyProvider<'a> {
         if node.kind != syntax_kind_ext::CONSTRUCTOR {
             return None;
         }
-        let ext = self.arena.get_extended(func_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
+        let mut current = func_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(parent);
+            }
+            current = parent;
         }
-        let parent_node = self.arena.get(parent)?;
-        (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
-            .then_some(parent)
     }
 
     fn constructor_target_name(&self, func_idx: NodeIndex) -> Option<String> {
@@ -766,9 +801,31 @@ impl<'a> CallHierarchyProvider<'a> {
             if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 let var_decl = self.arena.get_variable_declaration(parent_node)?;
                 if var_decl.initializer == current {
-                    return None;
+                    let current_node = self.arena.get(current)?;
+                    if current_node.is_function_like() {
+                        return None;
+                    }
                 }
                 return self.get_identifier_text(var_decl.name);
+            }
+            current = parent;
+        }
+    }
+
+    fn enclosing_namespace_name(&self, node_idx: NodeIndex) -> Option<String> {
+        let mut current = node_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                let module_decl = self.arena.get_module(parent_node)?;
+                if module_decl.name.is_some() {
+                    return self.get_identifier_text(module_decl.name);
+                }
             }
             current = parent;
         }
@@ -1080,10 +1137,13 @@ impl<'a> CallHierarchyProvider<'a> {
             uri: self.file_name.clone(),
             range,
             selection_range,
-            container_name: self.container_name_for_callable(func_idx).or_else(|| {
-                self.property_declaration_for_function_initializer(func_idx)
-                    .and_then(|_| self.member_container_hint_for_callable(func_idx))
-            }),
+            container_name: self
+                .container_name_for_callable(func_idx)
+                .or_else(|| {
+                    self.property_declaration_for_function_initializer(func_idx)
+                        .and_then(|_| self.member_container_hint_for_callable(func_idx))
+                })
+                .or_else(|| self.member_container_hint_for_callable(func_idx)),
         })
     }
 
@@ -1164,6 +1224,30 @@ impl<'a> CallHierarchyProvider<'a> {
     ) -> Option<CallHierarchyItem> {
         let node = self.arena.get(decl_idx)?;
 
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            let mut selection_range = self.get_range(decl_idx);
+            if let Some(class_decl) = self.arena.get_class(node)
+                && class_decl.name.is_some()
+            {
+                selection_range = self
+                    .identifier_selection_range(class_decl.name)
+                    .unwrap_or_else(|| self.get_range(class_decl.name));
+            }
+            let range = self
+                .class_range(decl_idx)
+                .unwrap_or_else(|| self.get_range(decl_idx));
+            return Some(CallHierarchyItem {
+                name: symbol_name.to_string(),
+                kind: SymbolKind::Class,
+                uri: self.file_name.clone(),
+                range,
+                selection_range,
+                container_name: self.container_name_for_callable(decl_idx),
+            });
+        }
+
         if let Some(callable_idx) = self.callable_from_declaration(decl_idx) {
             return self.make_call_hierarchy_item(callable_idx);
         }
@@ -1174,26 +1258,9 @@ impl<'a> CallHierarchyProvider<'a> {
         }
 
         // Otherwise (e.g. class/variable declaration), build an item from declaration info.
-        let mut kind = SymbolKind::Function;
-        let mut selection_range = self.get_range(decl_idx);
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
-            kind = SymbolKind::Class;
-            if let Some(class_decl) = self.arena.get_class(node)
-                && class_decl.name.is_some()
-            {
-                selection_range = self
-                    .identifier_selection_range(class_decl.name)
-                    .unwrap_or_else(|| self.get_range(class_decl.name));
-            }
-        }
-        let range = if kind == SymbolKind::Class {
-            self.class_range(decl_idx)
-                .unwrap_or_else(|| self.get_range(decl_idx))
-        } else {
-            self.get_range(decl_idx)
-        };
+        let kind = SymbolKind::Function;
+        let selection_range = self.get_range(decl_idx);
+        let range = self.get_range(decl_idx);
         Some(CallHierarchyItem {
             name: symbol_name.to_string(),
             kind,

@@ -374,6 +374,128 @@ fn test_incoming_calls_disambiguates_same_name_symbols() {
 }
 
 #[test]
+fn test_prepare_object_literal_getter_has_variable_container_name() {
+    let source = "const Obj = {\n  get sameName() {\n    return 1;\n  }\n};\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 6);
+    let item = provider
+        .prepare(root, pos)
+        .expect("Should prepare getter declaration");
+
+    assert_eq!(item.name, "get sameName");
+    assert_eq!(item.container_name.as_deref(), Some("Obj"));
+}
+
+#[test]
+fn test_incoming_calls_for_object_literal_getter_track_property_access_callers() {
+    let source = "class A {\n  static sameName() {\n  }\n}\n\nclass B {\n  sameName() {\n    A.sameName();\n  }\n}\n\nconst Obj = {\n  get sameName() {\n    return new B().sameName;\n  }\n};\n\nnamespace Foo {\n  function sameName() {\n    return Obj.sameName;\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position on getter Obj.sameName declaration (line 12, col 6).
+    let pos = Position::new(12, 6);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|call| {
+            call.from.name == "sameName" && call.from.container_name.as_deref() == Some("Foo")
+        }),
+        "Expected incoming reference from Foo.sameName to Obj.sameName getter, got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_incoming_calls_for_function_inside_constructor_reports_class_caller() {
+    let source = "namespace Foo {\n  function sameName() {\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let ctor_pos = Position::new(5, 6);
+    let ctor_offset = line_map
+        .position_to_offset(ctor_pos, source)
+        .expect("constructor position must be valid");
+    let ctor_node = crate::utils::find_node_at_offset(arena, ctor_offset);
+    let ctor_func = provider
+        .find_function_at_or_around(ctor_node)
+        .expect("constructor function should resolve");
+    assert_eq!(
+        provider.get_function_symbol_kind(ctor_func),
+        SymbolKind::Constructor
+    );
+    assert!(
+        provider.class_parent_for_constructor(ctor_func).is_some(),
+        "constructor should map to containing class for incoming call hierarchy"
+    );
+
+    // Position on function Foo.sameName declaration.
+    let pos = Position::new(1, 11);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.from.kind == SymbolKind::Class && call.from.name == "C"),
+        "Expected class caller for constructor invocation, got: {calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.from.kind != SymbolKind::Constructor),
+        "Did not expect constructor caller in incoming hierarchy, got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_incoming_calls_do_not_cross_namespace_same_name_functions() {
+    let source = "namespace Foo {\n  export function sameName() {\n  }\n\n  export class C {\n    constructor() {\n      sameName();\n    }\n  }\n}\n\nnamespace Foo.Bar {\n  export const sameName = () => new Foo.C();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position on Foo.Bar.sameName declaration.
+    let pos = Position::new(12, 15);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.is_empty(),
+        "Expected no incoming callers for Foo.Bar.sameName, got: {calls:?}"
+    );
+}
+
+#[test]
 fn test_prepare_method_selection_range_uses_identifier_length() {
     let source = "class A {\n  static sameName() {\n  }\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
