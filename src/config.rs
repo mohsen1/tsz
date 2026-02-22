@@ -652,10 +652,20 @@ pub fn resolve_compiler_options(
         }
     }
 
-    // TypeScript defaults to `noImplicitAny: true` when not explicitly set.
-    // `strict: false` should remain the only source that disables it by default.
-    if options.strict.is_none() && options.no_implicit_any.is_none() {
-        resolved.checker.no_implicit_any = true;
+    // When `strict` is not explicitly set, TypeScript defaults all strict-family
+    // options to false. Only an explicit `strict: true` enables them.
+    // This overrides the CheckerOptions::default() values (which use strict=true).
+    if options.strict.is_none() {
+        resolved.checker.strict = false;
+        resolved.checker.no_implicit_any = false;
+        resolved.checker.strict_null_checks = false;
+        resolved.checker.strict_function_types = false;
+        resolved.checker.strict_bind_call_apply = false;
+        resolved.checker.strict_property_initialization = false;
+        resolved.checker.no_implicit_this = false;
+        resolved.checker.use_unknown_in_catch_variables = false;
+        resolved.checker.always_strict = false;
+        resolved.printer.always_strict = false;
     }
 
     // Individual strict-family options (override strict if set explicitly)
