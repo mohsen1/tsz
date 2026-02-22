@@ -491,31 +491,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let prop_message = format_message(
-                        diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                        &[&prop_name],
-                    );
-                    let nested_message = if let Some(nested) = nested_reason {
-                        self.render_failure_reason(
-                            nested,
-                            *source_property_type,
-                            *target_property_type,
-                            idx,
-                            depth + 1,
-                        )
-                        .message_text
-                    } else {
-                        let src = self.format_type_for_assignability_message(*source_property_type);
-                        let tgt = self.format_type_for_assignability_message(*target_property_type);
-                        format_message(
-                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&src, &tgt],
-                        )
-                    };
-                    // tsc emits property type mismatch elaboration as related information
-                    let _prop_message = prop_message;
-                    let _nested_message = nested_message;
+                    // TODO: tsc emits property type mismatch elaboration as related information
                     return Diagnostic::error(
                         file_name,
                         start,
@@ -564,12 +540,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let _detail = format_message(
-                        diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                        &[&prop_name, &source_str, &target_str],
-                    );
-                    // tsc emits elaboration as related information, not in the main message
+                    // TODO: tsc emits property optional/required elaboration as related information
                     Diagnostic::error(
                         file_name,
                         start,
@@ -598,50 +569,14 @@ impl<'a> CheckerState<'a> {
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
 
-            SubtypeFailureReason::PropertyVisibilityMismatch {
-                property_name,
-                source_visibility,
-                target_visibility,
-            } => {
+            SubtypeFailureReason::PropertyVisibilityMismatch { .. } => {
                 let source_str = self.format_type_for_assignability_message(source);
                 let target_str = self.format_type_for_assignability_message(target);
                 let base = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let detail = match (source_visibility, target_visibility) {
-                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Private) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &target_str, &source_str],
-                        )
-                    }
-                    (tsz_solver::Visibility::Private, tsz_solver::Visibility::Public) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &source_str, &target_str],
-                        )
-                    }
-                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
-                            &[&prop_name, &target_str, &source_str],
-                        )
-                    }
-                    (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Public) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
-                            &[&prop_name, &source_str, &target_str],
-                        )
-                    }
-                    _ => format_message(
-                        diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
-                        &[&prop_name],
-                    ),
-                };
-                // tsc emits visibility elaboration as related information, not in the main message
-                let _detail = detail;
+                // TODO: tsc emits visibility elaboration as related information
                 Diagnostic::error(
                     file_name,
                     start,
@@ -651,46 +586,14 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
-            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+            SubtypeFailureReason::PropertyNominalMismatch { .. } => {
                 let source_str = self.format_type_for_assignability_message(source);
                 let target_str = self.format_type_for_assignability_message(target);
                 let base = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
-                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                let detail = match self.property_visibility_pair(source, target, *property_name) {
-                    Some((tsz_solver::Visibility::Public, tsz_solver::Visibility::Private)) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &target_str, &source_str],
-                        )
-                    }
-                    Some((tsz_solver::Visibility::Private, tsz_solver::Visibility::Public)) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &source_str, &target_str],
-                        )
-                    }
-                    Some((tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected)) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
-                            &[&prop_name, &target_str, &source_str],
-                        )
-                    }
-                    Some((tsz_solver::Visibility::Protected, tsz_solver::Visibility::Public)) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
-                            &[&prop_name, &source_str, &target_str],
-                        )
-                    }
-                    _ => format_message(
-                        diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
-                        &[&prop_name],
-                    ),
-                };
-                // tsc emits nominal mismatch elaboration as related information
-                let _detail = detail;
+                // TODO: tsc emits nominal mismatch elaboration as related information
                 Diagnostic::error(
                     file_name,
                     start,
@@ -905,19 +808,8 @@ impl<'a> CheckerState<'a> {
                             "nonpublic constructor param property probe"
                         );
                     }
-                    if let Some((member_name, level)) = nonpublic {
-                        let detail = match level {
-                            MemberAccessLevel::Private => format_message(
-                                diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                                &[&member_name, &target_str, &source_str],
-                            ),
-                            MemberAccessLevel::Protected => format_message(
-                                diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
-                                &[&member_name, &target_str, &source_str],
-                            ),
-                        };
-                        // tsc emits constructor param visibility as related information
-                        let _detail = detail;
+                    if nonpublic.is_some() {
+                        // TODO: tsc emits constructor param visibility as related information
                         return Diagnostic::error(
                             file_name,
                             start,
@@ -928,26 +820,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if depth == 0
-                    && let Some(_detail) = self.elaborate_type_mismatch_detail(source, target)
-                {
-                    // tsc emits elaboration as related information, not in the main message
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        base,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
-                } else {
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        base,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    )
-                }
+                // TODO: tsc would emit elaboration from elaborate_type_mismatch_detail as related info
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    base,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
             }
 
             _ => {

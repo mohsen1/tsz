@@ -303,18 +303,7 @@ impl<'a> CheckerState<'a> {
                 &[&arg_str, &param_str],
             );
             tracing::debug!("File name: {}", self.ctx.file_name);
-            // tsc emits elaboration as related information, not in the main TS2345 message.
-            // We compute elaboration for future use but don't append it to the message.
-            if let Some(prop_name) = self.missing_single_required_property(arg_type, param_type) {
-                let _prop = self.ctx.types.resolve_atom_ref(prop_name);
-            } else if (param_str == "Callable" || param_str == "Applicable")
-                && !tsz_solver::is_primitive_type(self.ctx.types, arg_type)
-            {
-                // Callable/Applicable property elaboration omitted from main message
-            } else if let Some(_detail) = self.elaborate_type_mismatch_detail(arg_type, param_type)
-            {
-                // Type mismatch elaboration omitted from main message
-            }
+            // TODO: tsc emits elaboration (missing properties, callable, type mismatch) as related information
             self.ctx.diagnostics.push(Diagnostic::error(
                 self.ctx.file_name.clone(),
                 loc.start,
