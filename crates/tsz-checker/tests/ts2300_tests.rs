@@ -339,3 +339,40 @@ fn acceptable_alias_repro() {
         &[],
     );
 }
+
+/// Test that parameter + var with the same name in a function body does NOT
+/// produce TS2300. In TypeScript, `var` declarations in a function body
+/// merge with parameters of the same name (both are function-scoped).
+#[test]
+fn parameter_and_var_same_name_no_ts2300() {
+    let diagnostics = verify_errors("function f(x: number) { var x = 10; }", &[]);
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 0, "Parameter + var should NOT produce TS2300");
+}
+
+/// Test that the implicit `arguments` binding combined with a parameter named
+/// `arguments` and a var named `arguments` does NOT produce TS2300. This was
+/// a regression where PARAMETER nodes were incorrectly resolved to their parent
+/// `FunctionDeclaration`, making them appear as FUNCTION-flagged declarations.
+#[test]
+fn arguments_parameter_and_var_no_ts2300() {
+    let diagnostics = verify_errors("function f(arguments: number) { var arguments = 10; }", &[]);
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 0, "arguments param + var should NOT produce TS2300");
+}
+
+/// Test that parameter named `arguments` with rest parameters does NOT
+/// produce false TS2300 (the collision is handled by TS2396 or TS1100
+/// in strict mode, not TS2300).
+#[test]
+fn arguments_parameter_with_rest_no_ts2300() {
+    let diagnostics = verify_errors(
+        "function f(arguments: number, ...rest: any[]) { var arguments: any; }",
+        &[],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "arguments param with rest should NOT produce TS2300"
+    );
+}

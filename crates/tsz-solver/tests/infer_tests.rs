@@ -284,6 +284,36 @@ fn test_resolve_lower_bounds_ignores_never() {
 }
 
 #[test]
+fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    let bar = interner.intern_string("bar");
+    let baz = interner.intern_string("baz");
+
+    // Candidates are inserted out of source order (string then number), and names indicate
+    // original property order so name-based fallback should prefer `bar: number`.
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::STRING,
+        crate::types::InferencePriority::NakedTypeVariable,
+        1,
+        Some(baz),
+    );
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::NUMBER,
+        crate::types::InferencePriority::NakedTypeVariable,
+        0,
+        Some(bar),
+    );
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(result, TypeId::NUMBER);
+}
+
+#[test]
 fn test_resolve_upper_bound_only() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);

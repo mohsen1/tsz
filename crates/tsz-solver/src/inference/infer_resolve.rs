@@ -300,6 +300,9 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
+        let all_from_object_properties = filtered_no_never
+            .iter()
+            .all(|candidate| candidate.from_object_property);
         // TypeScript preserves literal types when the constraint implies literals
         // (e.g., T extends "a" | "b"). Widening "b" to string would violate the constraint.
         let preserve_literals = is_const || self.constraint_implies_literals(upper_bounds);
@@ -315,7 +318,57 @@ impl<'a> InferenceContext<'a> {
         } else {
             self.widen_candidate_types(&filtered_no_never)
         };
-        self.best_common_type(&widened)
+        let resolved = self.best_common_type(&widened);
+        if all_from_object_properties
+            && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
+        {
+            let member_count = self.interner.type_list(member_list_id).len();
+            if member_count > 1 {
+                let mut first_property_name = None;
+                let mut has_multiple_property_names = false;
+                for candidate in &filtered_no_never {
+                    if let Some(name) = candidate.object_property_name {
+                        if let Some(prev_name) = first_property_name {
+                            if prev_name != name {
+                                has_multiple_property_names = true;
+                                break;
+                            }
+                        } else {
+                            first_property_name = Some(name);
+                        }
+                    } else {
+                        has_multiple_property_names = false;
+                        break;
+                    }
+                }
+
+                if !has_multiple_property_names {
+                    return resolved;
+                }
+
+                if let Some(fallback_idx) = filtered_no_never
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, candidate)| {
+                        candidate.object_property_name.map(|name| {
+                            (
+                                self.interner.resolve_atom_ref(name),
+                                candidate.object_property_index.unwrap_or(u32::MAX),
+                                idx,
+                            )
+                        })
+                    })
+                    .min_by(|(name_l, index_l, _), (name_r, index_r, _)| {
+                        name_l.cmp(name_r).then_with(|| index_l.cmp(index_r))
+                    })
+                    .map(|(_, _, fallback_idx)| fallback_idx)
+                {
+                    return widened[fallback_idx];
+                }
+                return widened[0];
+            }
+        }
+        resolved
     }
 
     /// Check if any upper bounds contain or imply literal types.

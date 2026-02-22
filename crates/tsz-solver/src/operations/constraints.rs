@@ -941,28 +941,65 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             match source.name.cmp(&target.name) {
                 std::cmp::Ordering::Equal => {
-                    self.constrain_types(ctx, var_map, source.type_id, target.type_id, priority);
+                    let property_index = source_idx as u32;
+                    if let Some(&var) = var_map.get(&target.type_id) {
+                        ctx.add_property_candidate_with_index(
+                            var,
+                            source.type_id,
+                            priority,
+                            property_index,
+                            Some(source.name),
+                        );
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            source.type_id,
+                            target.type_id,
+                            priority,
+                        );
+                    }
                     // Check write type compatibility for mutable targets
                     // A readonly source cannot satisfy a mutable target
                     if !target.readonly {
                         // If source is readonly but target is mutable, this is a mismatch
                         // We constrain with ERROR to signal the failure
                         if source.readonly {
+                            if let Some(&var) = var_map.get(&target.write_type) {
+                                ctx.add_property_candidate_with_index(
+                                    var,
+                                    TypeId::ERROR,
+                                    priority,
+                                    property_index,
+                                    Some(source.name),
+                                );
+                            } else {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    TypeId::ERROR,
+                                    target.write_type,
+                                    priority,
+                                );
+                            }
+                        }
+                        if let Some(&var) = var_map.get(&target.write_type) {
+                            ctx.add_property_candidate_with_index(
+                                var,
+                                source.write_type,
+                                priority,
+                                property_index,
+                                Some(source.name),
+                            );
+                        } else {
                             self.constrain_types(
                                 ctx,
                                 var_map,
-                                TypeId::ERROR,
                                 target.write_type,
+                                source.write_type,
                                 priority,
                             );
                         }
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            target.write_type,
-                            source.write_type,
-                            priority,
-                        );
                     }
                     source_idx += 1;
                     target_idx += 1;
@@ -1259,17 +1296,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        for prop in source_props {
+        for (i, prop) in source_props.iter().enumerate() {
             let prop_type = self.optional_property_type(prop);
+            let property_index = i as u32;
 
             if let Some(number_idx) = number_index
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
-                self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
+                if let Some(&var) = var_map.get(&number_idx.value_type) {
+                    ctx.add_property_candidate_with_index(
+                        var,
+                        prop_type,
+                        priority,
+                        property_index,
+                        None,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, prop_type, number_idx.value_type, priority);
+                }
             }
 
             if let Some(string_idx) = string_index {
-                self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
+                if let Some(&var) = var_map.get(&string_idx.value_type) {
+                    ctx.add_property_candidate_with_index(
+                        var,
+                        prop_type,
+                        priority,
+                        property_index,
+                        None,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, prop_type, string_idx.value_type, priority);
+                }
             }
         }
     }
@@ -1289,7 +1347,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        for prop in target_props {
+        for (i, prop) in target_props.iter().enumerate() {
             // CRITICAL: Only infer from index signatures if the property is optional.
             // Required properties missing from the source cause a structural mismatch,
             // so TypeScript does not infer from them.
@@ -1298,15 +1356,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             let prop_type = self.optional_property_type(prop);
+            let property_index = i as u32;
 
             if let Some(number_idx) = number_index
                 && utils::is_numeric_property_name(self.interner, prop.name)
             {
-                self.constrain_types(ctx, var_map, number_idx.value_type, prop_type, priority);
+                if let Some(&var) = var_map.get(&prop_type) {
+                    ctx.add_property_candidate_with_index(
+                        var,
+                        number_idx.value_type,
+                        priority,
+                        property_index,
+                        None,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, number_idx.value_type, prop_type, priority);
+                }
             }
 
             if let Some(string_idx) = string_index {
-                self.constrain_types(ctx, var_map, string_idx.value_type, prop_type, priority);
+                if let Some(&var) = var_map.get(&prop_type) {
+                    ctx.add_property_candidate_with_index(
+                        var,
+                        string_idx.value_type,
+                        priority,
+                        property_index,
+                        None,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, string_idx.value_type, prop_type, priority);
+                }
             }
         }
     }

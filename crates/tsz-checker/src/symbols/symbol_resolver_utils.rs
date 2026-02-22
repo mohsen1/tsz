@@ -799,7 +799,8 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_SPECIFIER
-                | syntax_kind_ext::CONSTRUCTOR => {
+                | syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::PARAMETER => {
                     return Some(current);
                 }
                 _ => {

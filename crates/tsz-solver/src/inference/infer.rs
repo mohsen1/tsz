@@ -65,6 +65,9 @@ pub struct InferenceCandidate {
     pub type_id: TypeId,
     pub priority: InferencePriority,
     pub is_fresh_literal: bool,
+    pub from_object_property: bool,
+    pub object_property_index: Option<u32>,
+    pub object_property_name: Option<Atom>,
 }
 
 /// Value stored for each inference variable root.
@@ -582,6 +585,9 @@ impl<'a> InferenceContext<'a> {
                 type_id: candidate.type_id,
                 priority: InferencePriority::Circular,
                 is_fresh_literal: candidate.is_fresh_literal,
+                from_object_property: candidate.from_object_property,
+                object_property_index: candidate.object_property_index,
+                object_property_name: candidate.object_property_name,
             });
         }
 
@@ -974,11 +980,59 @@ impl<'a> InferenceContext<'a> {
 
     /// Add an inference candidate for a variable.
     pub fn add_candidate(&mut self, var: InferenceVar, ty: TypeId, priority: InferencePriority) {
+        self.add_candidate_with_context(var, ty, priority, false, None, None);
+    }
+
+    /// Add an inference candidate for a variable that originates from object property inference.
+    /// Object-property candidates are tracked so the resolver can apply tighter union handling
+    /// for repeated property positions (e.g. `{ bar: T; baz: T }`).
+    pub fn add_property_candidate(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+    ) {
+        self.add_candidate_with_context(var, ty, priority, true, None, None);
+    }
+
+    /// Add an inference candidate for a variable that originates from an object property.
+    /// `object_property_index` captures the source property order and enables deterministic
+    /// tie-breaking when repeated property candidates collapse to a union.
+    pub fn add_property_candidate_with_index(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+        object_property_index: u32,
+        object_property_name: Option<Atom>,
+    ) {
+        self.add_candidate_with_context(
+            var,
+            ty,
+            priority,
+            true,
+            Some(object_property_index),
+            object_property_name,
+        );
+    }
+
+    fn add_candidate_with_context(
+        &mut self,
+        var: InferenceVar,
+        ty: TypeId,
+        priority: InferencePriority,
+        from_object_property: bool,
+        object_property_index: Option<u32>,
+        object_property_name: Option<Atom>,
+    ) {
         let root = self.table.find(var);
         let candidate = InferenceCandidate {
             type_id: ty,
             priority,
             is_fresh_literal: is_literal_type(self.interner, ty),
+            from_object_property,
+            object_property_index,
+            object_property_name,
         };
         self.table.union_value(
             root,
