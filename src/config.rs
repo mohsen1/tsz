@@ -1067,6 +1067,73 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
         }
+
+        // TS5069: Option '{0}' cannot be specified without specifying option '{1}' or option '{2}'.
+        let requires_decl_or_composite: &[&str] = &[
+            "emitDeclarationOnly",
+            "declarationMap",
+            "isolatedDeclarations",
+        ];
+        for &opt in requires_decl_or_composite {
+            if option_is_truthy(compiler_opts.get(opt))
+                && !option_is_truthy(compiler_opts.get("declaration"))
+                && !option_is_truthy(compiler_opts.get("composite"))
+            {
+                let start = find_key_offset_in_source(&stripped, opt);
+                let key_len = opt.len() as u32 + 2; // include quotes
+                let msg = format_message(
+                    diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+                    &[opt, "declaration", "composite"],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    msg,
+                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION,
+                ));
+            }
+        }
+
+        // TS5053: Option '{0}' cannot be specified with option '{1}'.
+        // tsc emits for each conflicting key, pointing at the key's position.
+        // The message always names the pair (A, B) regardless of which key is pointed at.
+        let conflicting_pairs: &[(&str, &str)] = &[
+            ("sourceMap", "inlineSourceMap"),
+            ("mapRoot", "inlineSourceMap"),
+            ("reactNamespace", "jsxFactory"),
+            ("allowJs", "isolatedDeclarations"),
+        ];
+        for &(opt_a, opt_b) in conflicting_pairs {
+            if option_is_truthy(compiler_opts.get(opt_a))
+                && option_is_truthy(compiler_opts.get(opt_b))
+            {
+                // Emit at opt_a's position
+                let start = find_key_offset_in_source(&stripped, opt_a);
+                let key_len = opt_a.len() as u32 + 2;
+                let msg = format_message(
+                    diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                    &[opt_a, opt_b],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    msg.clone(),
+                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                ));
+                // Emit at opt_b's position (same message, different location)
+                let start_b = find_key_offset_in_source(&stripped, opt_b);
+                let key_len_b = opt_b.len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start_b,
+                    key_len_b,
+                    msg,
+                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                ));
+            }
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -1075,6 +1142,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         config,
         diagnostics,
     })
+}
+
+/// Check whether a JSON value represents a truthy compiler option.
+/// Returns true for `true` booleans, non-empty strings, and non-null values
+/// that aren't `false`. Returns false for `None`, `null`, and `false`.
+const fn option_is_truthy(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        // String options (like jsxFactory, reactNamespace) are truthy when present
+        Some(_) => true,
+    }
 }
 
 /// Find the byte offset of a JSON key within the source text.
@@ -2515,6 +2594,97 @@ mod tests {
         assert!(
             !codes.contains(&5110),
             "Should NOT emit TS5110 when module matches moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5069_emit_declaration_only_without_declaration() {
+        let source = r#"{"compilerOptions":{"emitDeclarationOnly":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5069),
+            "Expected TS5069 for emitDeclarationOnly without declaration, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5069_not_emitted_with_declaration() {
+        let source = r#"{"compilerOptions":{"emitDeclarationOnly":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5069),
+            "Should NOT emit TS5069 when declaration is true, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5069_not_emitted_with_composite() {
+        let source = r#"{"compilerOptions":{"emitDeclarationOnly":true,"composite":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5069),
+            "Should NOT emit TS5069 when composite is true, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5069_declaration_map_without_declaration() {
+        let source = r#"{"compilerOptions":{"declarationMap":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5069),
+            "Expected TS5069 for declarationMap without declaration, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5053_sourcemap_with_inline_sourcemap() {
+        let source = r#"{"compilerOptions":{"sourceMap":true,"inlineSourceMap":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5053),
+            "Expected TS5053 for sourceMap with inlineSourceMap, got: {:?}",
+            codes
+        );
+        // tsc emits twice (at each key position)
+        let count = codes.iter().filter(|&&c| c == 5053).count();
+        assert_eq!(
+            count, 2,
+            "Expected 2 TS5053 diagnostics (one per key), got: {}",
+            count
+        );
+    }
+
+    #[test]
+    fn test_ts5053_not_emitted_without_conflict() {
+        let source = r#"{"compilerOptions":{"sourceMap":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5053),
+            "Should NOT emit TS5053 for sourceMap alone, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5053_allow_js_with_isolated_declarations() {
+        let source = r#"{"compilerOptions":{"allowJs":true,"isolatedDeclarations":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5053),
+            "Expected TS5053 for allowJs with isolatedDeclarations, got: {:?}",
             codes
         );
     }
