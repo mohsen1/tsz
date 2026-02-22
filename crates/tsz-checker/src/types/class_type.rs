@@ -606,48 +606,10 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
-                let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
-                    break;
-                };
-
-                let mut base_class_idx = None;
-                for &decl_idx in &base_symbol.declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some()
-                    {
-                        base_class_idx = Some(decl_idx);
-                        break;
-                    }
-                }
-                if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
-                    let decl_idx = base_symbol.value_declaration;
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some()
-                    {
-                        base_class_idx = Some(decl_idx);
-                    }
-                }
-                let Some(base_class_idx) = base_class_idx else {
+                let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
+                else {
                     // Base class node not found in current arena (cross-file case).
                     // Try to resolve the base class type through the symbol system.
-                    let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
-                        Some(sym_id) => sym_id,
-                        None => {
-                            // Can't resolve symbol, try expression-based resolution
-                            if let Some(base_instance_type) =
-                                self.base_instance_type_from_expression(expr_idx, type_arguments)
-                            {
-                                self.merge_base_instance_properties(
-                                    base_instance_type,
-                                    &mut properties,
-                                    &mut string_index,
-                                    &mut number_index,
-                                );
-                            }
-                            break;
-                        }
-                    };
-
                     // If base class is being resolved, skip to prevent infinite loop
                     if self
                         .ctx
