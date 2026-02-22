@@ -3598,6 +3598,7 @@ impl Server {
             }
         }
 
+        reorder_import_candidates_for_package_roots(&mut deduped);
         deduped
     }
 
@@ -4334,6 +4335,59 @@ fn parse_bare_identifier_expression(line: &str) -> Option<(usize, &str)> {
     Some((leading_ws, expr))
 }
 
+fn is_same_import_candidate_symbol(a: &ImportCandidate, b: &ImportCandidate) -> bool {
+    if a.local_name != b.local_name || a.is_type_only != b.is_type_only {
+        return false;
+    }
+    match (&a.kind, &b.kind) {
+        (
+            tsz::lsp::code_actions::ImportCandidateKind::Named {
+                export_name: a_export_name,
+            },
+            tsz::lsp::code_actions::ImportCandidateKind::Named {
+                export_name: b_export_name,
+            },
+        ) => a_export_name == b_export_name,
+        (
+            tsz::lsp::code_actions::ImportCandidateKind::Default,
+            tsz::lsp::code_actions::ImportCandidateKind::Default,
+        ) => true,
+        (
+            tsz::lsp::code_actions::ImportCandidateKind::Namespace,
+            tsz::lsp::code_actions::ImportCandidateKind::Namespace,
+        ) => true,
+        _ => false,
+    }
+}
+
+fn prefers_package_root_specifier(a: &ImportCandidate, b: &ImportCandidate) -> bool {
+    if !is_same_import_candidate_symbol(a, b) {
+        return false;
+    }
+    if a.module_specifier.starts_with('.') || b.module_specifier.starts_with('.') {
+        return false;
+    }
+    if a.module_specifier == b.module_specifier {
+        return false;
+    }
+    let Some(rest) = b.module_specifier.strip_prefix(&a.module_specifier) else {
+        return false;
+    };
+    rest.starts_with('/')
+}
+
+fn reorder_import_candidates_for_package_roots(candidates: &mut [ImportCandidate]) {
+    // Keep the original discovery order unless a package root/module-subpath pair
+    // targets the same symbol, in which case tsserver prefers the package root.
+    for i in 0..candidates.len() {
+        for j in (i + 1)..candidates.len() {
+            if prefers_package_root_specifier(&candidates[j], &candidates[i]) {
+                candidates.swap(i, j);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Server, TsServerRequest};
@@ -4545,6 +4599,60 @@ mod tests {
                 .iter()
                 .all(|spec| spec != "./totally-irrelevant-no-way-this-changes-things-right"),
             "did not expect unrelated default export candidate, got {module_specifiers:?}"
+        );
+    }
+
+    #[test]
+    fn collect_import_candidates_prefers_package_root_specifier_before_subpath() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+    "name": "pkg",
+    "version": "1.0.0",
+    "exports": {
+        ".": "./index.js",
+        "./utils": "./utils.js"
+    }
+}"#
+            .to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/pkg/utils.d.ts".to_string(),
+            "export function add(a: number, b: number) {}".to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/pkg/index.d.ts".to_string(),
+            "export * from \"./utils\";".to_string(),
+        );
+        server
+            .open_files
+            .insert("/src/index.ts".to_string(), "add".to_string());
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 3),
+            ),
+            message: "Cannot find name 'add'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates = server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None);
+        let module_specifiers: Vec<String> = candidates
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "add")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert_eq!(
+            module_specifiers,
+            vec!["pkg".to_string(), "pkg/utils".to_string()]
         );
     }
 
