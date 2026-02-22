@@ -668,18 +668,39 @@ impl<'a> DeclarationEmitter<'a> {
                                 && decl.initializer.is_some()
                                 && self.is_symbol_call(decl.initializer);
 
+                            // Check if initializer is null/undefined (should emit `: any`)
+                            let is_null_or_undefined = if decl.initializer.is_some() {
+                                if let Some(init_node) = self.arena.get(decl.initializer) {
+                                    let k = init_node.kind;
+                                    k == SyntaxKind::NullKeyword as u16
+                                        || k == SyntaxKind::UndefinedKeyword as u16
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
                             if decl.type_annotation.is_some() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
                             } else if is_unique_symbol {
                                 // const x = Symbol() gets : unique symbol
                                 self.write(": unique symbol");
+                            } else if is_null_or_undefined {
+                                // null/undefined initializers get `any` type in .d.ts
+                                self.write(": any");
                             } else if let Some(type_id) =
                                 self.get_node_type_or_names(&[decl_idx, decl.name])
                             {
                                 // No explicit type, but we have inferred type from cache
                                 self.write(": ");
                                 self.write(&self.print_type_id(type_id));
+                            } else if let Some(type_text) =
+                                self.infer_fallback_type_text(decl.initializer)
+                            {
+                                self.write(": ");
+                                self.write(&type_text);
                             }
                         }
                     }
