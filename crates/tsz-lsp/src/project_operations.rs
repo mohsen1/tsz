@@ -2837,13 +2837,25 @@ impl Project {
     }
 
     fn auto_imports_allowed_from_fourslash_directives(&self, from_file: &str) -> Option<bool> {
-        let file = self.files.get(from_file)?;
+        self.files
+            .get(from_file)
+            .and_then(|file| Self::fourslash_auto_import_directive_result(file.source_text()))
+            .or_else(|| {
+                self.files.values().find_map(|file| {
+                    (file.file_name != from_file)
+                        .then(|| Self::fourslash_auto_import_directive_result(file.source_text()))
+                        .flatten()
+                })
+            })
+    }
+
+    fn fourslash_auto_import_directive_result(source_text: &str) -> Option<bool> {
         let mut saw_module = false;
         let mut module_none = false;
         let mut saw_target = false;
         let mut target_supports_imports = false;
 
-        for line in file.source_text().lines().take(64) {
+        for line in source_text.lines().take(64) {
             let trimmed = line.trim_start();
             if let Some(rest) = trimmed.strip_prefix("// @module:") {
                 saw_module = true;
@@ -4130,6 +4142,18 @@ mod tests {
         );
 
         assert!(project.auto_imports_allowed_for_file("/index.ts"));
+    }
+
+    #[test]
+    fn auto_imports_disabled_from_fourslash_directives_in_sibling_file() {
+        let mut project = Project::new();
+        project.set_file(
+            "/fourslash.ts".to_string(),
+            "// @module: none\n// @target: es5\n".to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "x".to_string());
+
+        assert!(!project.auto_imports_allowed_for_file("/index.ts"));
     }
 
     #[test]

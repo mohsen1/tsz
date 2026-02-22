@@ -386,6 +386,53 @@ fn test_completion_info_member_excludes_private_class_property() {
 }
 
 #[test]
+fn test_completion_info_global_keywords_rank_ahead_of_globals() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "".to_string());
+    server.open_files.insert(
+        "/lib.ts".to_string(),
+        "export const Button = 1;\n".to_string(),
+    );
+
+    let req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 1,
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("completionInfo should return a body");
+    assert_eq!(body["isMemberCompletion"], serde_json::json!(false));
+
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+
+    let abstract_idx = names
+        .iter()
+        .position(|name| *name == "abstract")
+        .expect("Expected keyword 'abstract' in completion list");
+    let array_idx = names
+        .iter()
+        .position(|name| *name == "Array")
+        .expect("Expected global 'Array' in completion list");
+    assert!(
+        abstract_idx < array_idx,
+        "Expected keyword ordering to rank before globals"
+    );
+}
+
+#[test]
 fn test_completion_entry_details_auto_import_omits_documentation() {
     let mut server = make_server();
     server.open_files.insert(
@@ -836,6 +883,60 @@ fn test_open_external_project_populates_auto_import_code_fixes() {
             .contains_key("/node_modules/lib/index.d.ts")
     );
     assert!(!server.open_files.contains_key("/index.ts"));
+}
+
+#[test]
+fn test_open_external_project_module_none_es5_blocks_auto_import_completions() {
+    let mut server = make_server();
+
+    let open_external = make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "options": {
+                "module": "none",
+                "target": "es5"
+            },
+            "rootFiles": [
+                {
+                    "fileName": "/node_modules/dep/index.d.ts",
+                    "content": "export const x: number;\n"
+                },
+                {
+                    "fileName": "/index.ts",
+                    "content": "x"
+                }
+            ]
+        }),
+    );
+    let open_resp = server.handle_tsserver_request(open_external);
+    assert!(open_resp.success);
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 1,
+            "offset": 2,
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let has_auto_import_x = entries.iter().any(|entry| {
+        entry.get("name").and_then(serde_json::Value::as_str) == Some("x")
+            && entry.get("source").is_some()
+    });
+    assert!(
+        !has_auto_import_x,
+        "auto-import completion should be gated for module:none + target:es5 inferred project"
+    );
 }
 
 #[test]

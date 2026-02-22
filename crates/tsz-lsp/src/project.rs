@@ -1914,7 +1914,6 @@ impl Project {
         let result = if completions.is_empty() {
             None
         } else {
-            completions.sort_by(|a, b| a.label.cmp(&b.label));
             Some(completions)
         };
 

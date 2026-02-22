@@ -1107,6 +1107,34 @@ fn test_project_completions_auto_import_function_kind() {
 }
 
 #[test]
+fn test_project_completions_preserve_keyword_order_when_auto_imports_present() {
+    let mut project = Project::new();
+    project.set_file(
+        "/lib/main.ts".to_string(),
+        "export const Button = 1;\n".to_string(),
+    );
+    project.set_file("/index.ts".to_string(), "Button".to_string());
+
+    let items = project
+        .get_completions("/index.ts", Position::new(0, 6))
+        .expect("Expected completions");
+    let names: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+
+    let abstract_idx = names
+        .iter()
+        .position(|name| *name == "abstract")
+        .expect("Expected keyword 'abstract' in completions");
+    let array_idx = names
+        .iter()
+        .position(|name| *name == "Array")
+        .expect("Expected global 'Array' in completions");
+    assert!(
+        abstract_idx < array_idx,
+        "Expected keyword completions to keep tsserver-style ordering ahead of globals"
+    );
+}
+
+#[test]
 fn test_project_completions_prefix_matching() {
     let mut project = Project::new();
 

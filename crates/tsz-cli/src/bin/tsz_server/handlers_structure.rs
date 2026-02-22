@@ -13,6 +13,17 @@ use tsz::lsp::semantic_tokens::SemanticTokensProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn apply_inferred_project_options(&mut self, options: Option<&serde_json::Value>) {
+        if let Some(options) = options {
+            self.allow_importing_ts_extensions = options
+                .get("allowImportingTsExtensions")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.auto_imports_allowed_for_inferred_projects =
+                Self::inferred_auto_imports_allowed(options);
+        }
+    }
+
     pub(crate) fn inferred_auto_imports_allowed(options: &serde_json::Value) -> bool {
         let module_none = options
             .get("module")
@@ -310,16 +321,7 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        let options = request.arguments.get("options");
-        self.allow_importing_ts_extensions = request
-            .arguments
-            .get("options")
-            .and_then(|o| o.get("allowImportingTsExtensions"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        self.auto_imports_allowed_for_inferred_projects = options
-            .map(Self::inferred_auto_imports_allowed)
-            .unwrap_or(true);
+        self.apply_inferred_project_options(request.arguments.get("options"));
         self.stub_response(seq, request, None)
     }
 
@@ -330,6 +332,7 @@ impl Server {
     ) -> TsServerResponse {
         match request.command.as_str() {
             "openExternalProject" => {
+                self.apply_inferred_project_options(request.arguments.get("options"));
                 let project_name = request
                     .arguments
                     .get("projectFileName")
@@ -370,6 +373,7 @@ impl Server {
                     .and_then(serde_json::Value::as_array)
                 {
                     for project in projects {
+                        self.apply_inferred_project_options(project.get("options"));
                         let project_name = project
                             .get("projectFileName")
                             .and_then(serde_json::Value::as_str)
