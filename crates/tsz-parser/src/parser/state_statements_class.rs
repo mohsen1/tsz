@@ -21,19 +21,8 @@ impl ParserState {
         decorators: Option<NodeList>,
         start_pos: u32,
     ) -> NodeIndex {
-        if let Some(decorators_list) = &decorators
-            && let Some(first_decorator) = decorators_list.nodes.first()
-            && let Some(node) = self.arena.get(*first_decorator)
-        {
-            // TS1206: Decorators are not valid on class expressions
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                node.pos,
-                0,
-                "Decorators are not valid here.",
-                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-            );
-        }
+        // ES decorators (TC39 Stage 3) are valid on class expressions.
+        // With --experimentalDecorators, the checker emits TS1206 if needed.
 
         self.parse_expected(SyntaxKind::ClassKeyword);
 
