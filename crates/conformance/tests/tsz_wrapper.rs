@@ -219,10 +219,7 @@ fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
             "tsconfig.json".to_string(),
             r#"{"compilerOptions": {}}"#.to_string(),
         ),
-        (
-            "src/app.ts".to_string(),
-            "export const x = 1;".to_string(),
-        ),
+        ("src/app.ts".to_string(), "export const x = 1;".to_string()),
     ];
     let options: HashMap<String, String> = HashMap::new();
 
@@ -242,10 +239,7 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
             "configs/tsconfig.json".to_string(),
             r#"{"compilerOptions": {}}"#.to_string(),
         ),
-        (
-            "src/app.ts".to_string(),
-            "export const x = 1;".to_string(),
-        ),
+        ("src/app.ts".to_string(), "export const x = 1;".to_string()),
     ];
     let options: HashMap<String, String> = HashMap::new();
 

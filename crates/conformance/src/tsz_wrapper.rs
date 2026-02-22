@@ -333,9 +333,8 @@ fn parse_diagnostic_fingerprints_from_text(
         Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
             .expect("valid regex")
     });
-    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap()
-    });
+    static DIAG_NO_POS_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
 
     let mut fingerprints = Vec::new();
     for raw_line in text.lines() {
