@@ -1,6 +1,5 @@
 //! Source-file directive checking: triple-slash references and AMD module names.
 
-use crate::error_handler::ErrorHandler;
 use crate::state::CheckerState;
 
 impl<'a> CheckerState<'a> {
