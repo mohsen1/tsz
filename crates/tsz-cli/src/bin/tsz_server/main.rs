@@ -526,6 +526,8 @@ pub(crate) struct Server {
     pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
     /// Compiler option propagated by `compilerOptionsForInferredProjects`.
     pub(crate) allow_importing_ts_extensions: bool,
+    /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
+    pub(crate) auto_imports_allowed_for_inferred_projects: bool,
     /// Server mode
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
@@ -589,6 +591,7 @@ impl Server {
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
             allow_importing_ts_extensions: false,
+            auto_imports_allowed_for_inferred_projects: true,
             _server_mode: server_mode,
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,

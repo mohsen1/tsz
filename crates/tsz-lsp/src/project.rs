@@ -1122,6 +1122,7 @@ pub struct Project {
     pub(crate) import_module_specifier_preference: Option<String>,
     pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
     pub(crate) auto_import_specifier_exclude_matchers: Vec<Regex>,
+    pub(crate) auto_imports_allowed_without_tsconfig: bool,
 }
 
 impl Project {
@@ -1138,6 +1139,7 @@ impl Project {
             import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
             auto_import_specifier_exclude_matchers: Vec::new(),
+            auto_imports_allowed_without_tsconfig: true,
         }
     }
 
@@ -1154,6 +1156,7 @@ impl Project {
             import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
             auto_import_specifier_exclude_matchers: Vec::new(),
+            auto_imports_allowed_without_tsconfig: true,
         }
     }
 
@@ -1210,6 +1213,11 @@ impl Project {
                 self.auto_import_specifier_exclude_matchers.push(regex);
             }
         }
+    }
+
+    /// Set inferred-project fallback for whether module-export auto-imports are legal.
+    pub const fn set_auto_imports_allowed_without_tsconfig(&mut self, allow: bool) {
+        self.auto_imports_allowed_without_tsconfig = allow;
     }
 
     /// Total number of files tracked by the project.
