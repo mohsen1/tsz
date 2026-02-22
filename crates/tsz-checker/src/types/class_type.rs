@@ -24,6 +24,12 @@ const fn can_skip_base_instantiation(
     base_type_param_count == 0 && explicit_type_arg_count == 0
 }
 
+#[inline]
+const fn exceeds_class_inheritance_depth_limit(depth: usize) -> bool {
+    // Keep well above realistic inheritance chains while bounding pathological recursion.
+    depth > 256
+}
+
 // =============================================================================
 // Class Type Resolution
 // =============================================================================
@@ -143,6 +149,12 @@ impl<'a> CheckerState<'a> {
             }
             return TypeId::ERROR; // Circular reference detected via node index
         }
+        if exceeds_class_inheritance_depth_limit(visited_nodes.len()) {
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR;
+        }
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
@@ -178,6 +190,7 @@ impl<'a> CheckerState<'a> {
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
         let mut has_nominal_members = false;
+        let mut merged_interface_type_for_class: Option<TypeId> = None;
 
         // Process all class members
         for &member_idx in &class.members.nodes {
@@ -897,6 +910,7 @@ impl<'a> CheckerState<'a> {
                 let interface_type = lowering.lower_interface_declarations(&interface_decls);
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
+                merged_interface_type_for_class = Some(interface_type);
 
                 if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                     for prop in &shape.properties {
@@ -947,38 +961,8 @@ impl<'a> CheckerState<'a> {
 
         // Final interface merging pass
         if let Some(sym_id) = current_sym {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let interface_decls: Vec<NodeIndex> = symbol
-                    .declarations
-                    .iter()
-                    .copied()
-                    .filter(|decl_idx| {
-                        self.ctx
-                            .arena
-                            .get(*decl_idx)
-                            .and_then(|node| self.ctx.arena.get_interface(node))
-                            .is_some()
-                    })
-                    .collect();
-
-                if !interface_decls.is_empty() {
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = TypeLowering::with_resolvers(
-                        self.ctx.arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    let interface_type = lowering.lower_interface_declarations(&interface_decls);
-                    let interface_type =
-                        self.merge_interface_heritage_types(&interface_decls, interface_type);
-                    instance_type = self.merge_interface_types(instance_type, interface_type);
-                }
+            if let Some(interface_type) = merged_interface_type_for_class {
+                instance_type = self.merge_interface_types(instance_type, interface_type);
             }
             visited.remove(&sym_id);
             visited_nodes.remove(&class_idx);
@@ -1006,7 +990,7 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::can_skip_base_instantiation;
+    use super::{can_skip_base_instantiation, exceeds_class_inheritance_depth_limit};
 
     #[test]
     fn skip_base_instantiation_only_without_generics() {
@@ -1014,5 +998,13 @@ mod tests {
         assert!(!can_skip_base_instantiation(1, 0));
         assert!(!can_skip_base_instantiation(0, 1));
         assert!(!can_skip_base_instantiation(2, 3));
+    }
+
+    #[test]
+    fn class_inheritance_depth_guard_is_conservative() {
+        assert!(!exceeds_class_inheritance_depth_limit(1));
+        assert!(!exceeds_class_inheritance_depth_limit(100));
+        assert!(!exceeds_class_inheritance_depth_limit(256));
+        assert!(exceeds_class_inheritance_depth_limit(257));
     }
 }

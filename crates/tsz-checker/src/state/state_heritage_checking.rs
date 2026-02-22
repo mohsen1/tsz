@@ -231,12 +231,6 @@ impl<'a> CheckerState<'a> {
                         // True TS2506 cycle detection is handled by dedicated
                         // inheritance cycle checks, not by this resolution guard.
 
-                        let symbol_type = if is_being_resolved {
-                            // Skip type resolution for symbols already being resolved to prevent infinite recursion
-                            TypeId::ERROR
-                        } else {
-                            self.get_type_of_symbol(sym_to_check)
-                        };
                         if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
                             let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
                             // Merged declarations like `namespace N {}` + `class N {}`
@@ -331,44 +325,57 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::CANNOT_EXTEND_AN_INTERFACE_DID_YOU_MEAN_IMPLEMENTS,
                                 );
                             }
-                        } else if !is_interface_only
-                            && is_class_declaration
-                            && symbol_type != TypeId::ERROR  // Skip error recovery - don't emit TS2507 for unresolved types
-                            && !self.is_constructor_type(symbol_type)
-                            && !self.is_class_symbol(sym_to_check)
-                            // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
-                            // (built-in types like Array, Object, Promise) — the variable
-                            // side provides the constructor even though the interface type
-                            // doesn't have construct signatures.
-                            && self
-                                .ctx
-                                .binder
-                                .get_symbol(sym_to_check)
-                                .is_none_or(|s| {
-                                    !((s.flags & symbol_flags::INTERFACE) != 0
-                                        && (s.flags & symbol_flags::VARIABLE) != 0)
-                                })
-                        {
-                            // For classes extending non-interfaces: emit TS2507 if not a constructor type
-                            // For interfaces: don't check constructor types (interfaces can extend any interface)
-                            if let Some(name) = self.heritage_name_text(expr_idx) {
-                                use crate::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
+                        } else if !is_interface_only && is_class_declaration {
+                            // Fast path: class symbols are valid extends targets without needing
+                            // full symbol type resolution here.
+                            if !self.is_class_symbol(sym_to_check) {
+                                let symbol_type = if is_being_resolved {
+                                    // Skip type resolution for symbols already being resolved to prevent infinite recursion
+                                    TypeId::ERROR
+                                } else {
+                                    self.get_type_of_symbol(sym_to_check)
                                 };
-                                let message = format_message(
-                                    diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                    &[&name],
-                                );
-                                self.error_at_node(
-                                    expr_idx,
-                                    &message,
-                                    diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-                                );
+                                if symbol_type != TypeId::ERROR
+                                    && !self.is_constructor_type(symbol_type)
+                                    // Skip TS2507 for symbols with both INTERFACE and VARIABLE flags
+                                    // (built-in types like Array, Object, Promise) — the variable
+                                    // side provides the constructor even though the interface type
+                                    // doesn't have construct signatures.
+                                    && self
+                                        .ctx
+                                        .binder
+                                        .get_symbol(sym_to_check)
+                                        .is_none_or(|s| {
+                                            !((s.flags & symbol_flags::INTERFACE) != 0
+                                                && (s.flags & symbol_flags::VARIABLE) != 0)
+                                        })
+                                {
+                                    // For classes extending non-interfaces: emit TS2507 if not a constructor type
+                                    if let Some(name) = self.heritage_name_text(expr_idx) {
+                                        use crate::diagnostics::{
+                                            diagnostic_codes, diagnostic_messages, format_message,
+                                        };
+                                        let message = format_message(
+                                            diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                            &[&name],
+                                        );
+                                        self.error_at_node(
+                                            expr_idx,
+                                            &message,
+                                            diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                        );
+                                    }
+                                }
                             }
-                        } else if !is_class_declaration
-                            && symbol_type != TypeId::ERROR
-                            && symbol_type != TypeId::ANY
-                        {
+                        } else if !is_class_declaration {
+                            let symbol_type = if is_being_resolved {
+                                TypeId::ERROR
+                            } else {
+                                self.get_type_of_symbol(sym_to_check)
+                            };
+                            if symbol_type == TypeId::ERROR || symbol_type == TypeId::ANY {
+                                continue;
+                            }
                             let mut instantiated_type = symbol_type;
                             if let Some(args) = type_args {
                                 let mut evaluated_args = Vec::new();
