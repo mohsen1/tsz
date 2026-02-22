@@ -1,0 +1,10 @@
+---
+title: Deep Dive
+layout: layouts/base.njk
+page_class: architecture
+permalink: /architecture/index.html
+eleventyComputed:
+  extra_head: "{{ architecture_page.head | safe }}"
+  extra_scripts: "{{ architecture_page.scripts | safe }}"
+---
+{{ architecture_page.body | safe }}

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>How TSZ Works</title>
+<title>How tsz Works</title>
 <style>
 /* ── Theme: System-aware ── */
 :root {
@@ -442,7 +442,7 @@ li {
 
 <!-- ── Sidebar ── -->
 <nav class="sidebar" id="sidebar">
-  <div class="sidebar-title">How TSZ Works</div>
+  <div class="sidebar-title">How tsz Works</div>
   <a href="#intro">Introduction</a>
   <a href="#pipeline">1. The Pipeline</a>
   <a href="#trace">2. Full Trace</a>
@@ -465,10 +465,10 @@ li {
 
 <!-- ════════════════════════════════════════════ -->
 <header id="intro">
-  <h1>How TSZ Works</h1>
+  <h1>How tsz Works</h1>
   <p class="page-subtitle">An architectural guide for contributors</p>
   <p class="page-description">
-    TSZ (Project Zang) is a TypeScript compiler written in Rust, targeting exact parity
+    tsz (Project Zang) is a TypeScript compiler written in Rust, targeting exact parity
     with <code>tsc</code>. This document explains
     how source code flows through the compiler, what data structures it produces at each
     stage, and how the type system works internally. This document is source-grounded:
@@ -494,7 +494,7 @@ li {
 <h2 id="pipeline">1. The Pipeline at a Glance</h2>
 
 <p>
-  TSZ compiles TypeScript through six sequential stages. Each stage has a single
+  tsz compiles TypeScript through six sequential stages. Each stage has a single
   responsibility, consumes the output of the previous stage, and is forbidden from
   reaching backward into a previous stage's internals.
 </p>
@@ -985,7 +985,7 @@ Symbol {
 <h2 id="memory">3. Memory Architecture</h2>
 
 <p>
-  TSZ uses <strong>arena allocation</strong> for all major data structures. Instead of
+  tsz uses <strong>arena allocation</strong> for all major data structures. Instead of
   allocating each AST node, symbol, or type on the heap individually, data is stored
   in contiguous arrays and referenced by lightweight <code>u32</code> handles. This
   eliminates fragmentation, enables O(1) access, and plays well with CPU caches.
@@ -1193,7 +1193,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 </p>
 
 <p>
-  TSZ separates these concerns into two layers:
+  tsz separates these concerns into two layers:
 </p>
 
 <h3>The Judge: <code>SubtypeChecker</code></h3>
@@ -1251,7 +1251,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 </table>
 
 <p>
-  This separation means TSZ can reason about <em>actual</em> type safety (what the Judge
+  This separation means tsz can reason about <em>actual</em> type safety (what the Judge
   thinks) while still producing the same diagnostics as <code>tsc</code> (what the Lawyer
   decides after applying compatibility rules). It also makes it possible to implement a
   hypothetical "strict mode" in the future that uses only the Judge.
@@ -1263,7 +1263,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <h2 id="crates">6. Crate Map</h2>
 
 <p>
-  TSZ is organized as a Cargo workspace with 12 crates. The dependency direction is
+  tsz is organized as a Cargo workspace with 12 crates. The dependency direction is
   strictly one-way: downstream crates depend on upstream ones, never the reverse. This
   is enforced by CI.
 </p>
@@ -1400,7 +1400,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 
 <h3>One Type Universe</h3>
 <p>
-  TSZ uses one global canonical <code>TypeInterner</code> for persistent semantic types.
+  tsz uses one global canonical <code>TypeInterner</code> for persistent semantic types.
   The system also supports local ephemeral <code>TypeId</code>s for scoped operations, but
   cross-file semantic identity and relation caches are anchored to the global type universe.
   This keeps type equality as a fast integer comparison.
@@ -1480,7 +1480,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   <code>VariableDeclaration</code> with children for the name, type annotation, and
   initializer. "Abstract" means it doesn't include every character (like semicolons or
   parentheses used only for grouping)&mdash;it captures the <em>structure</em>, not the
-  exact characters. In TSZ, the AST is stored in a <code>NodeArena</code> as compact
+  exact characters. In tsz, the AST is stored in a <code>NodeArena</code> as compact
   16-byte node headers.
 </p>
 
@@ -1520,7 +1520,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <p>
   The smallest unit of data the CPU transfers between main memory and the CPU cache.
   On most modern processors, a cache line is 64 bytes. When the CPU reads one byte, it
-  actually loads the entire 64-byte block containing that byte. This is why TSZ's 16-byte
+  actually loads the entire 64-byte block containing that byte. This is why tsz's 16-byte
   AST node headers matter: four nodes fit in one cache line, so iterating over nodes is
   very fast because the CPU loads four at a time.
 </p>
@@ -1540,11 +1540,11 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 
 <h3 id="g-conformance">Conformance</h3>
 <p>
-  The measure of how closely TSZ matches <code>tsc</code>'s output. A conformance test
-  passes when TSZ produces exactly the same set of diagnostics as <code>tsc</code> for a
+  The measure of how closely tsz matches <code>tsc</code>'s output. A conformance test
+  passes when tsz produces exactly the same set of diagnostics as <code>tsc</code> for a
   given input file&mdash;same error code (e.g., TS2322), same file, same line, same column,
   same message text. The official TypeScript conformance test suite has ~12,500 tests.
-  As of 2026-02-22, TSZ passes 60.8% (7,650/12,574). See the README for the latest figure.
+  As of 2026-02-22, tsz passes 60.8% (7,650/12,574). See the README for the latest figure.
 </p>
 
 <h3 id="g-contravariant">Contravariance</h3>
@@ -1582,7 +1582,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   A compiler message reported to the user. In TypeScript, each diagnostic has an error
   code (e.g., TS2322), a severity (error, warning, suggestion), a source location (file,
   line, column), and a message. Example: <code>error TS2322: Type 'number' is not assignable
-  to type 'string'</code>. TSZ must produce diagnostics identical to <code>tsc</code> for
+  to type 'string'</code>. tsz must produce diagnostics identical to <code>tsc</code> for
   conformance tests to pass.
 </p>
 
@@ -1636,7 +1636,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   A technique for deduplicating data structures by storing each unique value exactly once.
   When you want to create a new value, you first hash it and check if an identical value
   already exists. If so, return the existing handle; if not, store the new value and return
-  a fresh handle. In TSZ, the <code>TypeInterner</code> hash-conses types: creating the type
+  a fresh handle. In tsz, the <code>TypeInterner</code> hash-conses types: creating the type
   <code>string | number</code> twice returns the same <code>TypeId</code> both times. The
   string interner does the same for identifiers (returning the same <code>Atom</code>).
   This is the core mechanism behind O(1) equality checks.
@@ -1677,7 +1677,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <p>
   The first time you intern a string, it's stored and you get back an integer handle. Every
   subsequent time you intern the same string, you get back the <em>same</em> integer without
-  storing it again. TSZ has two interners:
+  storing it again. tsz has two interners:
 </p>
 <ul>
   <li><strong>String interner</strong> (<code>tsz-common</code>): Maps strings to <code>Atom(u32)</code>. Used for all identifiers, keywords, and string content.</li>
@@ -1807,7 +1807,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   contains a symbol table mapping names to <code>SymbolId</code>s. When the checker needs
   to resolve a name like <code>x</code>, it looks in the current scope first, then walks
   up the parent chain until it finds it. Unlike a stack-based approach (push scope on
-  entry, pop on exit), TSZ uses a persistent tree: scopes are never destroyed. This is
+  entry, pop on exit), tsz uses a persistent tree: scopes are never destroyed. This is
   important for incremental compilation&mdash;you can query a scope later without
   re-building it.
 </p>
@@ -1917,7 +1917,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   <li><strong>Invariant:</strong> Neither direction. Mutable references need this for soundness.</li>
 </ul>
 <p>
-  In TSZ, the Judge (SubtypeChecker) uses strict variance rules, and the Lawyer
+  In tsz, the Judge (SubtypeChecker) uses strict variance rules, and the Lawyer
   (CompatChecker) overrides them where TypeScript's legacy behavior requires it (e.g.,
   bivariant method parameters).
 </p>

@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs",
-    "dev": "node build.mjs && node serve.mjs"
+    "build": "node scripts/sync-docs.mjs && eleventy",
+    "dev": "node scripts/sync-docs.mjs && eleventy --serve --watch",
+    "build:legacy": "node build.mjs"
   },
   "dependencies": {
+    "@11ty/eleventy": "^3.0.0",
     "marked": "^15.0.0"
   }
 }
