@@ -23,7 +23,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████░░░░░░░░] 61.1% (7,686/12,574 tests)
+Progress: [████████████░░░░░░░░] 61.1% (7,685/12,574 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -49,7 +49,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [███░░░░░░░░░░░░░░░░░] 16.8% (1,102 / 6,564 tests)
+Progress: [███░░░░░░░░░░░░░░░░░] 16.8% (1,100 / 6,564 tests)
 ```
 <!-- FOURSLASH_END -->
 
