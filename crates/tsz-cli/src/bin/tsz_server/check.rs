@@ -757,6 +757,7 @@ impl Server {
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_mode: tsz_common::checker_options::JsxMode::None,
+            module_explicitly_set: options.module.is_some(),
         }
     }
 }

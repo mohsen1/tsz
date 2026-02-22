@@ -91,6 +91,10 @@ pub struct CheckerOptions {
     /// JSX emit mode (preserve, react, react-jsx, react-jsxdev, react-native).
     /// Only "react" (classic transform) requires the factory to be in scope.
     pub jsx_mode: JsxMode,
+    /// Whether the `module` option was explicitly set by the user (via tsconfig or CLI).
+    /// When false, the module kind was computed from defaults (e.g. based on target).
+    /// tsc only emits TS1202 (import assignment in ESM) when module is explicitly set.
+    pub module_explicitly_set: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -149,6 +153,7 @@ impl Default for CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_mode: JsxMode::None,
+            module_explicitly_set: false,
         }
     }
 }
