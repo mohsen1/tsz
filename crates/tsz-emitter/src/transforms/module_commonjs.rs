@@ -242,7 +242,24 @@ pub fn collect_export_names_categorized(
     let mut other_exports = Vec::new();
     let all = collect_export_names(arena, statements);
 
-    // Re-scan to categorize: function declarations are hoisted
+    // First pass: collect all function declaration names in the file (including
+    // non-exported ones) so we can resolve `export { f }` specifiers.
+    let mut func_decl_names: Vec<String> = Vec::new();
+    for &stmt_idx in statements {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = arena.get_function(node)
+                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                && let Some(name) = get_identifier_text(arena, func.name)
+                && !func_decl_names.contains(&name)
+            {
+                func_decl_names.push(name);
+            }
+    }
+
+    // Second pass: categorize exports as function (hoisted) vs other
     for &stmt_idx in statements {
         let Some(node) = arena.get(stmt_idx) else {
             continue;
@@ -275,6 +292,35 @@ pub fn collect_export_names_categorized(
             && !func_exports.contains(&name)
         {
             func_exports.push(name);
+        }
+        // Named export specifiers: export { f } where f is a function declaration
+        // JS function declarations are hoisted, so `exports.f = f;` can appear
+        // in the preamble (before the function body), matching tsc behavior.
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_decl) = arena.get_export_decl(node)
+            && !export_decl.is_type_only
+            && !export_decl.is_default_export
+            && export_decl.module_specifier.is_none()
+            && let Some(clause_node) = arena.get(export_decl.export_clause)
+            && let Some(named_exports) = arena.get_named_imports(clause_node)
+        {
+            for &spec_idx in &named_exports.elements.nodes {
+                if let Some(spec) = arena.get_specifier_at(spec_idx)
+                    && !spec.is_type_only
+                {
+                    // The local name is property_name if present, otherwise name
+                    let local_name = if spec.property_name.is_some() {
+                        get_identifier_text(arena, spec.property_name)
+                    } else {
+                        get_identifier_text(arena, spec.name)
+                    };
+                    let exported_name = get_identifier_text(arena, spec.name);
+                    if let (Some(local), Some(exported)) = (local_name, exported_name)
+                        && func_decl_names.contains(&local) && !func_exports.contains(&exported) {
+                            func_exports.push(exported);
+                        }
+                }
+            }
         }
     }
 

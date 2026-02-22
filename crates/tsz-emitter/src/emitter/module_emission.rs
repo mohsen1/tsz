@@ -796,6 +796,18 @@ impl<'a> Printer<'a> {
                                     export_name.clone()
                                 };
 
+                                // Skip function export specifiers already handled
+                                // by the preamble (`exports.f = f;` before statements).
+                                if self
+                                    .ctx
+                                    .module_state
+                                    .hoisted_func_exports
+                                    .iter()
+                                    .any(|n| n == &export_name)
+                                {
+                                    continue;
+                                }
+
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");
@@ -1719,6 +1731,83 @@ mod tests {
         assert!(
             preamble_pos.unwrap() < func_pos.unwrap(),
             "Preamble exports.g = g; should appear before function g().\nOutput:\n{output}"
+        );
+    }
+
+    /// `export { f }` where `f` is a function declaration should emit
+    /// `exports.f = f;` in the preamble (hoisted) and NOT emit a duplicate
+    /// assignment at the `export { f }` statement position.
+    #[test]
+    fn named_export_specifier_for_function_hoisted() {
+        let source = r#"function isValid(x: unknown): x is string {
+    return typeof x === "string";
+}
+export { isValid };
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The preamble should contain `exports.isValid = isValid;`
+        assert!(
+            output.contains("exports.isValid = isValid;"),
+            "Should emit hoisted exports.isValid = isValid; in preamble.\nOutput:\n{output}"
+        );
+        // Should NOT contain `exports.isValid = void 0;`
+        assert!(
+            !output.contains("exports.isValid = void 0"),
+            "Function export should NOT get void 0 initialization.\nOutput:\n{output}"
+        );
+        // The hoisted assignment should appear before the function body
+        let export_pos = output.find("exports.isValid = isValid;").unwrap();
+        let func_pos = output.find("function isValid(").unwrap();
+        assert!(
+            export_pos < func_pos,
+            "exports.isValid = isValid; should appear before function isValid().\nOutput:\n{output}"
+        );
+        // Should only appear once (no duplicate from the inline export { } handler)
+        let count = output.matches("exports.isValid = isValid;").count();
+        assert_eq!(
+            count, 1,
+            "exports.isValid = isValid; should appear exactly once.\nOutput:\n{output}"
+        );
+    }
+
+    /// `export { f as g }` where `f` is a function should still hoist
+    /// the export with the exported name `g` in the preamble.
+    #[test]
+    fn named_export_specifier_aliased_function_hoisted() {
+        let source = r#"function impl() { return 42; }
+export { impl as myFunc };
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The preamble should contain `exports.myFunc = myFunc;` (using the exported name)
+        assert!(
+            output.contains("exports.myFunc = myFunc;"),
+            "Should emit hoisted exports.myFunc = myFunc; in preamble.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("exports.myFunc = void 0"),
+            "Aliased function export should NOT get void 0.\nOutput:\n{output}"
         );
     }
 }

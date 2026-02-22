@@ -403,6 +403,9 @@ impl<'a> Printer<'a> {
             // Track non-hoisted exports (vars/classes/enums/modules) so default export
             // assignments can preserve live bindings (`exports.default = exports.x`).
             self.ctx.module_state.pending_exports = other_exports.clone();
+            // Track function exports so `export { f }` clauses can skip
+            // duplicate inline emission (already handled in preamble).
+            self.ctx.module_state.hoisted_func_exports = func_exports.clone();
             // Emit other exports first: exports.X = void 0;
             // TypeScript emits void 0 initialization before hoisted function exports
             if !other_exports.is_empty() {
