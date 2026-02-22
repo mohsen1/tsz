@@ -14,6 +14,9 @@ use tsz_solver::TypeInterner;
 
 impl Server {
     fn tsserver_call_hierarchy_name_kind(name: &str, kind: &str) -> (String, String) {
+        if kind == "file" {
+            return (name.to_string(), "script".to_string());
+        }
         if kind == "property" {
             if let Some(stripped) = name.strip_prefix("get ") {
                 return (stripped.to_string(), "getter".to_string());
