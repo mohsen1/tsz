@@ -3249,11 +3249,22 @@ fn path_to_string(path: &Path) -> String {
 fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
     let a_segments = a.matches('/').count();
     let b_segments = b.matches('/').count();
-    let a_relative = a.starts_with('.');
-    let b_relative = b.starts_with('.');
+    let candidate_rank = |candidate: &str| -> u8 {
+        if candidate.starts_with("./") {
+            0
+        } else if !candidate.starts_with('.') {
+            1
+        } else if candidate.starts_with("../") {
+            2
+        } else {
+            3
+        }
+    };
+    let a_rank = candidate_rank(a);
+    let b_rank = candidate_rank(b);
     a_segments
         .cmp(&b_segments)
-        .then_with(|| a_relative.cmp(&b_relative))
+        .then_with(|| a_rank.cmp(&b_rank))
         .then_with(|| a.len().cmp(&b.len()))
         .then_with(|| a.cmp(b))
 }
@@ -3670,6 +3681,59 @@ mod tests {
                 "package2/file1".to_string(),
                 "../package2/file1.js".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn shortest_prefers_relative_over_paths_when_depth_matches() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "preserve",
+    "paths": {
+      "@app/*": ["./src/*"]
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/src/utils.ts".to_string(),
+            "export function add(a: number, b: number) {}".to_string(),
+        );
+        project.set_file("/src/index.ts".to_string(), "ad".to_string());
+
+        assert_eq!(
+            project.auto_import_module_specifiers_from_files("/src/index.ts", "/src/utils.ts"),
+            vec!["./utils".to_string(), "@app/utils".to_string()]
+        );
+    }
+
+    #[test]
+    fn shortest_keeps_path_mapping_ahead_of_parent_relative_specifier() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "paths": {
+      "@root/*": ["${configDir}/src/*"]
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/src/one.ts".to_string(),
+            "export const one = 1;".to_string(),
+        );
+        project.set_file("/src/foo/two.ts".to_string(), "one".to_string());
+
+        assert_eq!(
+            project.auto_import_module_specifiers_from_files("/src/foo/two.ts", "/src/one.ts"),
+            vec!["@root/one".to_string(), "../one".to_string()]
         );
     }
 

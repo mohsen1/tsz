@@ -405,6 +405,123 @@ fn test_completion_entry_details_auto_import_uses_update_description_when_import
 }
 
 #[test]
+fn test_get_code_fixes_uses_configured_auto_import_specifier_exclude_regexes() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "preserve",
+    "paths": {
+      "@app/*": ["./src/*"]
+    }
+  }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/src/utils.ts".to_string(),
+        "export function add(a: number, b: number) {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("/src/index.ts".to_string(), "add".to_string());
+
+    let mut module_specifiers_for_prefs = |preferences: serde_json::Value| -> Vec<String> {
+        let configure_req = make_request(
+            "configure",
+            serde_json::json!({ "preferences": preferences }),
+        );
+        let configure_resp = server.handle_tsserver_request(configure_req);
+        assert!(configure_resp.success);
+
+        let fixes_req = make_request(
+            "getCodeFixes",
+            serde_json::json!({
+                "file": "/src/index.ts",
+                "startLine": 1,
+                "startOffset": 1,
+                "endLine": 1,
+                "endOffset": 4,
+                "errorCodes": [2304]
+            }),
+        );
+        let fixes_resp = server.handle_tsserver_request(fixes_req);
+        assert!(fixes_resp.success);
+        let fixes = fixes_resp
+            .body
+            .expect("getCodeFixes should return a body")
+            .as_array()
+            .expect("getCodeFixes body should be an array")
+            .clone();
+
+        let mut specifiers = Vec::new();
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    else {
+                        continue;
+                    };
+                    if let Some(capture) = new_text
+                        .split("from ")
+                        .nth(1)
+                        .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                    {
+                        specifiers.push(capture.to_string());
+                    }
+                }
+            }
+        }
+        specifiers
+    };
+
+    assert_eq!(
+        module_specifiers_for_prefs(serde_json::json!({})),
+        vec!["./utils".to_string()]
+    );
+    assert_eq!(
+        module_specifiers_for_prefs(serde_json::json!({
+            "autoImportSpecifierExcludeRegexes": ["^\\./"]
+        })),
+        vec!["@app/utils".to_string()]
+    );
+    assert_eq!(
+        module_specifiers_for_prefs(serde_json::json!({
+            "importModuleSpecifierPreference": "non-relative"
+        })),
+        vec!["@app/utils".to_string()]
+    );
+    assert_eq!(
+        module_specifiers_for_prefs(serde_json::json!({
+            "importModuleSpecifierPreference": "non-relative",
+            "autoImportSpecifierExcludeRegexes": ["^@app/"]
+        })),
+        vec!["./utils".to_string()]
+    );
+    assert!(
+        module_specifiers_for_prefs(serde_json::json!({
+            "autoImportSpecifierExcludeRegexes": ["utils"]
+        }))
+        .is_empty()
+    );
+}
+
+#[test]
 fn test_quickinfo_uses_hover_info_structured_fields() {
     // When HoverInfo returns structured kind/kindModifiers/displayString/
     // documentation fields, they should be used in the response instead of
