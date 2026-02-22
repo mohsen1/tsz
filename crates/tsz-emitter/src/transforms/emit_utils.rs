@@ -18,6 +18,23 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Get enum member name from a node index (identifier or string literal).
+///
+/// Returns the identifier's escaped text or the literal's text, or an empty string
+/// if the node is neither.
+pub(crate) fn enum_member_name(arena: &NodeArena, idx: NodeIndex) -> String {
+    let Some(node) = arena.get(idx) else {
+        return String::new();
+    };
+    if let Some(ident) = arena.get_identifier(node) {
+        return ident.escaped_text.clone();
+    }
+    if let Some(lit) = arena.get_literal(node) {
+        return lit.text.clone();
+    }
+    String::new()
+}
+
 /// Check if an export declaration has any runtime (non-type-only) value that needs to be emitted.
 ///
 /// Returns `false` for `export type { ... }`, re-exports of only type-only specifiers,
