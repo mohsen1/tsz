@@ -51,7 +51,7 @@ pub mod block_scoping_es5;
 pub mod class_es5;
 pub mod class_es5_ir;
 pub mod destructuring_es5;
-mod emit_utils;
+pub(crate) mod emit_utils;
 pub mod emitter;
 pub mod enum_es5;
 pub mod enum_es5_ir;

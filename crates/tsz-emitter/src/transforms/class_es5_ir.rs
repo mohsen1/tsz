@@ -2027,10 +2027,12 @@ enum PropertyNameIR {
 // =============================================================================
 
 fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    // Try simple identifier first
+    if let Some(text) = crate::transforms::emit_utils::identifier_text(arena, idx) {
+        return Some(text);
+    }
     let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+    if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
         // For computed property names like ["goodbye"], extract the string literal text
         if let Some(computed) = arena.get_computed_property(node)
             && let Some(expr_node) = arena.get(computed.expression)

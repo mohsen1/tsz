@@ -1155,13 +1155,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
     /// Get identifier text from a node
     pub fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && node.kind == SyntaxKind::Identifier as u16
-            && let Some(id) = self.arena.get_identifier(node)
-        {
-            return id.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Collect parameter names from a parameter list

@@ -408,12 +408,7 @@ impl<'a> EnumTransformer<'a> {
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node)
-        {
-            return ident.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     fn get_member_name(&self, idx: NodeIndex) -> String {

@@ -100,14 +100,7 @@ pub(super) fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::no
     false
 }
 
-pub(super) fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else {
-        None
-    }
-}
+pub(super) use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 
 pub(super) fn has_declare_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     arena.has_modifier(modifiers, SyntaxKind::DeclareKeyword)

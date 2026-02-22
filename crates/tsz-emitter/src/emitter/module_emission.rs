@@ -1615,14 +1615,7 @@ impl<'a> Printer<'a> {
 
     /// Get identifier text from optional node index
     pub(super) fn get_identifier_text_opt(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            self.arena
-                .get_identifier(node)
-                .map(|id| id.escaped_text.clone())
-        } else {
-            None
-        }
+        crate::transforms::emit_utils::identifier_text(self.arena, idx)
     }
 
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -1649,13 +1642,7 @@ impl<'a> Printer<'a> {
 
     /// Get identifier text from a node index
     pub(super) fn get_identifier_text_idx(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && node.kind == SyntaxKind::Identifier as u16
-            && let Some(id) = self.arena.get_identifier(node)
-        {
-            return id.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     pub(super) fn emit_entity_name(&mut self, idx: NodeIndex) {
