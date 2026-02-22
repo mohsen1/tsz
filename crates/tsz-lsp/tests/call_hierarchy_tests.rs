@@ -366,8 +366,72 @@ fn test_prepare_on_call_expression_resolves_const_function_expression_declaratio
         .expect("Should resolve call expression callee to declaration");
 
     assert_eq!(item.name, "bar");
+    assert_eq!(item.container_name, None);
     assert_eq!(item.selection_range.start, Position::new(4, 6));
     assert_eq!(item.selection_range.end, Position::new(4, 9));
+}
+
+#[test]
+fn test_call_expression_on_const_function_expression_has_incoming_and_outgoing() {
+    let source = "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(11, 0);
+
+    let incoming = provider.incoming_calls(root, pos);
+    assert!(
+        incoming.iter().any(|call| call.from.name == "foo"),
+        "Expected incoming call from 'foo', got: {incoming:?}"
+    );
+    assert!(
+        incoming
+            .iter()
+            .any(|call| call.from.kind == SymbolKind::File && call.from_ranges.len() == 1),
+        "Expected script-level incoming call entry with one callsite, got: {incoming:?}"
+    );
+
+    let outgoing = provider.outgoing_calls(root, pos);
+    assert!(
+        outgoing.iter().any(|call| call.to.name == "baz"),
+        "Expected outgoing call to 'baz', got: {outgoing:?}"
+    );
+}
+
+#[test]
+fn test_declaration_name_position_for_const_function_expression_has_incoming_and_outgoing() {
+    let source = "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let declaration_pos = Position::new(4, 6);
+    let incoming = provider.incoming_calls(root, declaration_pos);
+    assert!(
+        incoming.iter().any(|call| call.from.name == "foo"),
+        "Expected incoming call from 'foo' at declaration position, got: {incoming:?}"
+    );
+
+    let outgoing = provider.outgoing_calls(root, declaration_pos);
+    assert!(
+        outgoing.iter().any(|call| call.to.name == "baz"),
+        "Expected outgoing call to 'baz' at declaration position, got: {outgoing:?}"
+    );
 }
 
 #[test]

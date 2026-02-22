@@ -870,6 +870,35 @@ fn test_call_hierarchy_outgoing_includes_constructor_call_target() {
 }
 
 #[test]
+fn test_call_hierarchy_incoming_uses_script_kind_for_top_level_caller() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "function foo() {\n    bar();\n}\n\nconst bar = function () {\n    baz();\n}\n\nfunction baz() {\n}\n\nbar()\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "provideCallHierarchyIncomingCalls",
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 5,
+            "offset": 7
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("incoming calls should return a body");
+    let calls = body
+        .as_array()
+        .expect("provideCallHierarchyIncomingCalls body should be an array");
+    assert!(
+        calls.iter().any(|call| call["from"]["kind"] == "script"),
+        "Expected top-level caller to be mapped to tsserver kind 'script', got: {calls:?}"
+    );
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";

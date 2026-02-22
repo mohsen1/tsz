@@ -102,8 +102,12 @@ impl<'a> CallHierarchyProvider<'a> {
             return results;
         }
 
-        // Find the function-like node at this position
-        let func_idx = match self.find_function_at_or_around(node_idx) {
+        // Find the target callable at this position. Prefer explicit symbol
+        // resolution from callsites (e.g. `bar()` -> `const bar = function(){}`).
+        let func_idx = match self
+            .resolve_reference_callable(node_idx)
+            .or_else(|| self.find_function_at_or_around(node_idx))
+        {
             Some(idx) => idx,
             None => return results,
         };
@@ -136,6 +140,7 @@ impl<'a> CallHierarchyProvider<'a> {
         // Scan all identifier nodes in the arena that match the target name and
         // appear in a relevant call/reference context, grouping by containing function.
         let mut callers: FxHashMap<u32, Vec<Range>> = FxHashMap::default();
+        let mut script_from_ranges = Vec::new();
 
         for (i, node) in self.arena.nodes.iter().enumerate() {
             if node.kind != SyntaxKind::Identifier as u16 {
@@ -180,16 +185,18 @@ impl<'a> CallHierarchyProvider<'a> {
             }
 
             // Walk up to find the containing function
+            let range = self.get_range(idx);
             if let Some(containing_func) = self.find_containing_function(idx) {
                 // Don't list the function as calling itself from its own declaration
                 if containing_func == func_idx {
                     continue;
                 }
-                let range = self.get_range(idx);
                 let caller_idx = self
                     .class_parent_for_constructor(containing_func)
                     .unwrap_or(containing_func);
                 callers.entry(caller_idx.0).or_default().push(range);
+            } else {
+                script_from_ranges.push(range);
             }
         }
 
@@ -202,6 +209,13 @@ impl<'a> CallHierarchyProvider<'a> {
                     from_ranges: ranges,
                 });
             }
+        }
+
+        if !script_from_ranges.is_empty() {
+            results.push(CallHierarchyIncomingCall {
+                from: self.script_call_hierarchy_item(),
+                from_ranges: script_from_ranges,
+            });
         }
 
         results
@@ -228,8 +242,12 @@ impl<'a> CallHierarchyProvider<'a> {
             return results;
         }
 
-        // Find the function-like node
-        let func_idx = match self.find_function_at_or_around(node_idx) {
+        // Find the target callable at this position. Prefer explicit symbol
+        // resolution from callsites (e.g. `bar()` -> `const bar = function(){}`).
+        let func_idx = match self
+            .resolve_reference_callable(node_idx)
+            .or_else(|| self.find_function_at_or_around(node_idx))
+        {
             Some(idx) => idx,
             None => return results,
         };
@@ -408,6 +426,11 @@ impl<'a> CallHierarchyProvider<'a> {
             {
                 return Some(property_initializer);
             }
+            if let Some(variable_initializer) =
+                self.variable_initializer_function_for_name(node_idx, parent)
+            {
+                return Some(variable_initializer);
+            }
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && parent_node.is_function_like()
@@ -438,6 +461,26 @@ impl<'a> CallHierarchyProvider<'a> {
         }
         let init_node = self.arena.get(prop.initializer)?;
         init_node.is_function_like().then_some(prop.initializer)
+    }
+
+    fn variable_initializer_function_for_name(
+        &self,
+        ident_idx: NodeIndex,
+        parent_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(parent)?;
+        if var_decl.name != ident_idx || var_decl.initializer.is_none() {
+            return None;
+        }
+        let init_node = self.arena.get(var_decl.initializer)?;
+        init_node.is_function_like().then_some(var_decl.initializer)
     }
 
     fn property_declaration_for_function_initializer(
@@ -713,6 +756,9 @@ impl<'a> CallHierarchyProvider<'a> {
             let parent_node = self.arena.get(parent)?;
             if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 let var_decl = self.arena.get_variable_declaration(parent_node)?;
+                if var_decl.initializer == current {
+                    return None;
+                }
                 return self.get_identifier_text(var_decl.name);
             }
             current = parent;
@@ -1022,9 +1068,10 @@ impl<'a> CallHierarchyProvider<'a> {
             uri: self.file_name.clone(),
             range,
             selection_range,
-            container_name: self
-                .container_name_for_callable(func_idx)
-                .or_else(|| self.member_container_hint_for_callable(func_idx)),
+            container_name: self.container_name_for_callable(func_idx).or_else(|| {
+                self.property_declaration_for_function_initializer(func_idx)
+                    .and_then(|_| self.member_container_hint_for_callable(func_idx))
+            }),
         })
     }
 
@@ -1036,6 +1083,10 @@ impl<'a> CallHierarchyProvider<'a> {
         symbol_name: &str,
     ) -> Option<CallHierarchyItem> {
         let node = self.arena.get(decl_idx)?;
+
+        if let Some(callable_idx) = self.callable_from_declaration(decl_idx) {
+            return self.make_call_hierarchy_item(callable_idx);
+        }
 
         // If the declaration itself is function-like, use make_call_hierarchy_item
         if node.is_function_like() {
@@ -1128,6 +1179,48 @@ impl<'a> CallHierarchyProvider<'a> {
         self.make_call_hierarchy_item_for_declaration(decl_idx, &name)
     }
 
+    fn resolve_reference_callable(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let ident_idx = self.reference_identifier_at_or_above(node_idx)?;
+        let (_sym, decl_idx, _name) = self.resolve_callee_symbol(ident_idx)?;
+        self.callable_from_declaration(decl_idx)
+    }
+
+    fn callable_from_declaration(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(decl_idx)?;
+        if node.is_function_like() {
+            return Some(decl_idx);
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.arena.get_variable_declaration(node)?;
+            if var_decl.initializer.is_some() {
+                let init_node = self.arena.get(var_decl.initializer)?;
+                if init_node.is_function_like() {
+                    return Some(var_decl.initializer);
+                }
+            }
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let prop_decl = self.arena.get_property_decl(node)?;
+            if prop_decl.initializer.is_some() {
+                let init_node = self.arena.get(prop_decl.initializer)?;
+                if init_node.is_function_like() {
+                    return Some(prop_decl.initializer);
+                }
+            }
+        }
+
+        if (node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            && let Some(ctor_idx) = self.class_constructor_node(decl_idx)
+        {
+            return Some(ctor_idx);
+        }
+
+        None
+    }
+
     fn reference_identifier_at_or_above(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = node_idx;
         for _ in 0..8 {
@@ -1162,6 +1255,25 @@ impl<'a> CallHierarchyProvider<'a> {
     /// Convert a node to an LSP Range.
     fn get_range(&self, node_idx: NodeIndex) -> Range {
         node_range(self.arena, self.line_map, self.source_text, node_idx)
+    }
+
+    fn script_call_hierarchy_item(&self) -> CallHierarchyItem {
+        let start_offset = 0u32;
+        let end_offset = self.source_text.len() as u32;
+        let start = self
+            .line_map
+            .offset_to_position(start_offset, self.source_text);
+        let end = self
+            .line_map
+            .offset_to_position(end_offset, self.source_text);
+        CallHierarchyItem {
+            name: self.file_name.clone(),
+            kind: SymbolKind::File,
+            uri: self.file_name.clone(),
+            range: Range::new(start, end),
+            selection_range: Range::new(start, start),
+            container_name: None,
+        }
     }
 }
 

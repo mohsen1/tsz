@@ -152,3 +152,16 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/callHierarchyCallExpressionByConstNamedFunctionExpression.ts`: still emits `baz` quick-prepare baseline instead of `bar` at `bar()` marker in this run.
   Reason: appears to require deeper `find_node_at_offset`/prepare resolution parity for top-level call-site markers where parser node ranges over-approximate surrounding declarations; current targeted call-hierarchy container fix intentionally avoided broader node-selection/prepare resolver refactors.
+
+## 2026-02-22 (call hierarchy const function expression follow-up)
+
+Completed in this pass:
+- Fixed call hierarchy callable resolution for const-assigned function expressions so declaration-name positions resolve to the initializer callable (`const bar = function () {}`), restoring incoming/outgoing call discovery parity for `TypeScript/tests/cases/fourslash/callHierarchyCallExpressionByConstNamedFunctionExpression.ts`.
+- Added script-level incoming caller modeling in `crates/tsz-lsp/src/call_hierarchy.rs` and tsserver kind-shaping parity (`file` -> `script`) in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs`.
+- Suppressed incorrect `containerName` emission for top-level const function-expression call hierarchy items.
+- Added focused unit coverage:
+  - `crates/tsz-lsp/tests/call_hierarchy_tests.rs` (declaration-position incoming/outgoing + no containerName regression)
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (tsserver incoming caller kind maps to `script`)
+
+Investigated but punted:
+- None in this pass.
