@@ -10,19 +10,20 @@
 
 pub mod flow;
 pub mod lib_loader;
-pub mod module_resolution_debug;
+mod modules;
 pub mod scopes;
 pub mod state;
 mod state_binding;
 mod state_binding_validation;
 mod state_flow_helpers;
-mod state_import_export;
 mod state_lib_merge;
-mod state_module_binding;
 mod state_node_binding;
 mod state_node_binding_names;
 mod state_resolution;
 pub mod symbols;
+
+// Re-export for external consumers.
+pub use modules::resolution_debug as module_resolution_debug;
 
 // Re-export core data types at crate root for convenience.
 pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
