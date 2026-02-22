@@ -170,6 +170,9 @@ pub struct CompilerOptions {
     /// Enable error reporting in type-checked JavaScript files
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub check_js: Option<bool>,
+    /// Skip type checking of declaration files (.d.ts)
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub skip_lib_check: Option<bool>,
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
@@ -312,6 +315,8 @@ pub struct ResolvedCompilerOptions {
     pub allow_js: bool,
     /// Enable error reporting in type-checked JavaScript files
     pub check_js: bool,
+    /// Skip type checking of declaration files (.d.ts)
+    pub skip_lib_check: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -789,7 +794,9 @@ pub fn resolve_compiler_options(
 
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
-        resolved.checker.check_js = check_js;
+    }
+    if let Some(skip_lib_check) = options.skip_lib_check {
+        resolved.skip_lib_check = skip_lib_check;
     }
 
     if let Some(ref module_detection) = options.module_detection
@@ -1727,6 +1734,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             import_helpers,
             allow_js,
             check_js,
+            skip_lib_check,
             always_strict,
             use_define_for_class_fields,
             no_implicit_any,

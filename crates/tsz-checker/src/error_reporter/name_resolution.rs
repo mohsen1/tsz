@@ -771,17 +771,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Report TS2591: Cannot find name 'X' - suggest installing @types/node and adding to tsconfig.
-    /// tsc uses TS2591 (with "add 'node' to types field") when a tsconfig exists, and TS2580
-    /// (without that suggestion) when there's no tsconfig. Since tsz is always invoked via
-    /// tsconfig, we use TS2591 to match tsc's conformance output.
+    /// Report TS2580: Cannot find name 'X' - suggest installing @types/node.
+    /// tsc uses TS2580 (without tsconfig suggestion) when the tsconfig has no `types` field,
+    /// and TS2591 (with tsconfig suggestion) when a `types` field is configured.
+    /// Most conformance tests have no `types` field, so TS2580 matches tsc behavior.
     pub fn error_cannot_find_name_install_node_types(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2));
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE));
         }
     }
 
