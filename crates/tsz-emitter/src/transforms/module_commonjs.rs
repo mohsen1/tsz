@@ -62,7 +62,9 @@ fn collect_export_name_from_declaration(
                 if has_declare_modifier_from_list(arena, &func.modifiers) {
                     return;
                 }
-                if let Some(name) = get_identifier_text(arena, func.name) {
+                if let Some(name) = get_identifier_text(arena, func.name)
+                    && !exports.contains(&name)
+                {
                     exports.push(name);
                 }
             }
@@ -177,11 +179,14 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                 }
             }
             // export function foo() {}
+            // Note: overloaded functions produce multiple FUNCTION_DECLARATION nodes
+            // with the same name; deduplicate to avoid repeated exports.
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
                     && has_export_modifier_from_list(arena, &func.modifiers)
                     && !has_declare_modifier_from_list(arena, &func.modifiers)
                     && let Some(name) = get_identifier_text(arena, func.name)
+                    && !exports.contains(&name)
                 {
                     exports.push(name);
                 }
@@ -243,11 +248,14 @@ pub fn collect_export_names_categorized(
         };
 
         // Direct: export function f() {}
+        // Note: overloaded functions produce multiple FUNCTION_DECLARATION nodes
+        // with the same name; deduplicate to emit only one `exports.X = X;`.
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
             if let Some(func) = arena.get_function(node)
                 && has_export_modifier_from_list(arena, &func.modifiers)
                 && !has_declare_modifier_from_list(arena, &func.modifiers)
                 && let Some(name) = get_identifier_text(arena, func.name)
+                && !func_exports.contains(&name)
             {
                 func_exports.push(name);
             }
@@ -263,6 +271,7 @@ pub fn collect_export_names_categorized(
             && let Some(func) = arena.get_function(clause_node)
             && !has_declare_modifier_from_list(arena, &func.modifiers)
             && let Some(name) = get_identifier_text(arena, func.name)
+            && !func_exports.contains(&name)
         {
             func_exports.push(name);
         }
