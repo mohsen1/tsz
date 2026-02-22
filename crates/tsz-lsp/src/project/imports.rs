@@ -10,7 +10,7 @@ use rustc_hash::FxHashSet;
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
 use crate::completions::{CompletionItem, CompletionItemKind, sort_priority};
 use crate::diagnostics::LspDiagnostic;
-use crate::document_symbols::SymbolKind;
+use crate::symbols::document_symbols::SymbolKind;
 use crate::utils::find_node_at_offset;
 use tsz_common::position::{Location, Position, Range};
 use tsz_parser::parser::node::NodeAccess;

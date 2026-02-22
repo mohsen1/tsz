@@ -8,7 +8,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::document_symbols::SymbolKind;
+use super::document_symbols::SymbolKind;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_common::position::Location;
 use tsz_parser::NodeArena;
@@ -794,5 +794,5 @@ pub struct SymbolIndexStats {
 }
 
 #[cfg(test)]
-#[path = "../tests/symbol_index_tests.rs"]
+#[path = "../../tests/symbol_index_tests.rs"]
 mod symbol_index_tests;

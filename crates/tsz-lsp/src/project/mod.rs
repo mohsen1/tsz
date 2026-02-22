@@ -27,7 +27,7 @@ use crate::rename::TextEdit;
 use crate::rename::WorkspaceEdit;
 use crate::resolver::{ScopeCache, ScopeCacheStats};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
-use crate::symbol_index::SymbolIndex;
+use crate::symbols::symbol_index::SymbolIndex;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_checker::TypeCache;
