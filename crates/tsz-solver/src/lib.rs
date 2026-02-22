@@ -80,9 +80,8 @@ pub use apparent::{
 };
 pub use application::*;
 pub use binary_ops::*;
-pub use caches::db::{
-    QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase,
-};
+pub use caches::db::{QueryDatabase, TypeDatabase};
+pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
 pub use class_hierarchy::*;
 pub use compound_assignment::*;

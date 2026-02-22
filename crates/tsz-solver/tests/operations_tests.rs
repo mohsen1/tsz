@@ -7609,7 +7609,7 @@ fn test_property_access_array_push_with_env_resolver() {
 /// a false TS2339 in checker paths that use `QueryCache` as the resolver.
 #[test]
 fn test_property_access_array_push_with_query_cache_resolver() {
-    use crate::caches::db::QueryCache;
+    use crate::caches::query_cache::QueryCache;
     use crate::types::TypeParamInfo;
 
     let interner = TypeInterner::new();
