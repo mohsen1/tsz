@@ -44,12 +44,12 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 | `types/type_computation_call.rs` | 1,994 | 6 lines |
 | `state_checking_members/member_declaration_checks.rs` | 1,994 | 6 lines |
 | `types/type_computation_access.rs` | 1,972 | 28 lines |
-| `state/state_type_resolution_module.rs` | 1,908 | 92 lines |
+| ~~`state/state_type_resolution_module.rs`~~ | ~~1,908~~ | ✅ Split — extracted constructor/class type ops (~767 LOC) into `state_type_resolution_constructors.rs`, reducing to ~1,140 LOC |
 | `types/type_checking_queries_lib.rs` | 1,901 | 99 lines |
 | `flow/control_flow_narrowing.rs` | 1,883 | 117 lines |
 | `types/type_computation.rs` | 1,882 | 118 lines |
 | `flow/control_flow_assignment.rs` | 1,837 | 163 lines |
-| `context.rs` | 1,830 | 170 lines |
+| ~~`context.rs`~~ | ~~1,830~~ | ✅ Split — `context/mod.rs` now 1,546 LOC (extracted `compiler_options.rs` + `lib_queries.rs`) |
 | `types/class_type.rs` | 1,803 | 197 lines |
 
 Total checker codebase: ~148 files, ~106,525 LOC.

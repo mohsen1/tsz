@@ -12,6 +12,7 @@ pub(crate) mod state_type_analysis_cross_file;
 pub mod state_type_environment;
 pub(crate) mod state_type_environment_lazy;
 pub mod state_type_resolution;
+pub(crate) mod state_type_resolution_constructors;
 pub(crate) mod state_type_resolution_module;
 pub(crate) mod state_variable_checking;
 pub(crate) mod state_variable_checking_destructuring;
