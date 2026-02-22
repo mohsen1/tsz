@@ -824,8 +824,11 @@ fn compile_inner(
     }
     if file_paths.is_empty() {
         // Emit TS18003: No inputs were found in config file.
-        // tsc always uses "tsconfig.json" in the message, not the full path.
-        let config_name = "tsconfig.json".to_string();
+        // Match tsc: use the resolved config path shown to the compiler.
+        let config_name = tsconfig_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|| "tsconfig.json".to_string());
         let include_str = discovery
             .include
             .as_ref()
