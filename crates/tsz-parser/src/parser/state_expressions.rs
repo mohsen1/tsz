@@ -998,14 +998,14 @@ impl ParserState {
                 {
                     // Parse as await expression - the checker will emit TS1308
                     // (not TS1359 from the parser) to match TSC behavior
-                } else if self.in_async_context() && self.in_parameter_default_context() {
+                } else if self.in_async_context()
+                    && self.in_parameter_default_context()
+                    && has_following_expression
+                {
                     // TS2524: 'await' expressions cannot be used in a parameter initializer
-                    // Emit TS2524 in async functions with parameter defaults, regardless of whether
-                    // there's a following expression.
-                    // Examples:
-                    //   - `async (a = await foo)` → emit TS2524
-                    //   - `async (a = await)` → emit TS2524 + TS1109 (expression expected)
-
+                    // Only emit when there IS a following expression (e.g., `async (a = await foo)`).
+                    // When there's NO following expression (e.g., `async (a = await)`), the normal
+                    // TS1109 "Expression expected" path handles it instead.
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
