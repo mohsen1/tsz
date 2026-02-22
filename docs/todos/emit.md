@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5049/7163 = 70.5% JS, 415/1036 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 876/1193 = 73.4% JS, 39/88 = 44.3% DTS)
 
 ### Fixed This Session
+- **Unterminated template literal emission preserves source verbatim** (+5 JS):
+  tsc preserves unterminated template literals verbatim in emitted JS — no closing backtick
+  is added when the source doesn't have one (error recovery). tsz was always writing a closing
+  backtick in `emit_no_substitution_template`. Two changes: (1) added
+  `no_substitution_template_has_closing_backtick()` which checks whether the source byte at
+  `node.end - 1` is an unescaped backtick (counting preceding backslashes to detect escaped
+  backticks like `\``). (2) Changed `get_raw_template_part_text()` to return the raw source
+  slice from after the opening backtick to `node.end` when no closing delimiter is found
+  (unterminated case), instead of falling back to the scanner's cooked value which loses
+  escape sequences. Five unit tests added.
+  Tests fixed: `templateStringUnterminated1_ES6`, `templateStringUnterminated2`,
+  `templateStringUnterminated3`, `templateStringUnterminated5_ES6`,
+  `taggedTemplatesWithIncompleteNoSubstitutionTemplate1`.
+  JS: 871 → 876, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Unicode escape sequences in identifiers not preserved** (+10 JS):
   tsc preserves unicode escape sequences (`\u0041`, `\u{102A7}`) verbatim in emitted identifiers,
   but tsz resolved them to their Unicode characters (`A`, `𐊧`). Root cause: the scanner resolves
