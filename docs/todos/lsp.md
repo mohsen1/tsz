@@ -60,3 +60,7 @@ Investigated but punted:
   Reason: likely needs deeper auto-import candidate surfacing for `export =` ambient modules plus CommonJS object-literal exports under `verbatimModuleSyntax`, beyond this focused diagnostics/codefix rewrite.
 - `TypeScript/tests/cases/fourslash/automaticConstructorToggling.ts`: still fails constructor quick-info parity for edited generic constructors (`Bsig`/`Dsig` in this run).
   Reason: robust parity appears to require deeper integration between edit-state-aware quick-info and constructor signature inference/instantiation (beyond a safe small fix in this pass).
+- `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred3.ts`: still fails at marker `e` (`No codefixes returned`) after fixing earlier `codeFixAll` marker-`c` parity.
+  Reason: remaining gap is namespace default/type-only import-fix candidate surfacing for `ns.A` (`import type ns from "./ns"`), which needs deeper import-candidate discovery logic beyond this targeted combined-fix patch.
+- `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` under `module:none` + `target:es5`.
+  Reason: completion still leaks through a non-trivial inferred-options/module-gating path that needs a dedicated completion pipeline trace; deferred to keep this run focused on combined missing-import fix-all correctness.
