@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use tsz_common::position::{LineMap, Position, Range};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
@@ -91,6 +92,37 @@ pub fn find_nodes_in_range(arena: &NodeArena, start: u32, end: u32) -> Vec<NodeI
     }
 
     result
+}
+
+/// Convert a node to an LSP Range using the line map.
+///
+/// Returns a zero-width range at (0,0) if the node index is invalid.
+pub fn node_range(
+    arena: &NodeArena,
+    line_map: &LineMap,
+    source_text: &str,
+    node_idx: NodeIndex,
+) -> Range {
+    if let Some(node) = arena.get(node_idx) {
+        let start = line_map.offset_to_position(node.pos, source_text);
+        let end = line_map.offset_to_position(node.end, source_text);
+        Range::new(start, end)
+    } else {
+        Range::new(Position::new(0, 0), Position::new(0, 0))
+    }
+}
+
+/// Get the text of an identifier node, or `None` if the node is not an identifier.
+pub fn identifier_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+    if node_idx.is_none() {
+        return None;
+    }
+    let node = arena.get(node_idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        arena.get_identifier(node).map(|id| id.escaped_text.clone())
+    } else {
+        None
+    }
 }
 
 /// Check whether a node is a valid symbol-query target for LSP symbol-resolution flows.

@@ -7,7 +7,7 @@
 //! - `subtypes`: finds what classes/interfaces extend or implement this type
 
 use crate::document_symbols::SymbolKind;
-use crate::utils::find_node_at_offset;
+use crate::utils::{find_node_at_offset, identifier_text, node_range};
 use tsz_binder::BinderState;
 use tsz_common::position::{LineMap, Position, Range};
 use tsz_parser::parser::node::NodeArena;
@@ -555,28 +555,12 @@ impl<'a> TypeHierarchyProvider<'a> {
 
     /// Get the text of an identifier node.
     fn get_identifier_text(&self, node_idx: NodeIndex) -> Option<String> {
-        if node_idx.is_none() {
-            return None;
-        }
-        let node = self.arena.get(node_idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            self.arena
-                .get_identifier(node)
-                .map(|id| id.escaped_text.clone())
-        } else {
-            None
-        }
+        identifier_text(self.arena, node_idx)
     }
 
     /// Convert a node to an LSP Range.
     fn get_range(&self, node_idx: NodeIndex) -> Range {
-        if let Some(node) = self.arena.get(node_idx) {
-            let start = self.line_map.offset_to_position(node.pos, self.source_text);
-            let end = self.line_map.offset_to_position(node.end, self.source_text);
-            Range::new(start, end)
-        } else {
-            Range::new(Position::new(0, 0), Position::new(0, 0))
-        }
+        node_range(self.arena, self.line_map, self.source_text, node_idx)
     }
 }
 
