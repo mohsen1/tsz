@@ -88,7 +88,7 @@ fn compile_test(
         ])
     };
     if !has_tsconfig_file {
-        let mut compiler_options = convert_options_to_tsconfig(options);
+        let mut compiler_options = convert_options_to_tsconfig(options, &[]);
         if allow_js {
             if let serde_json::Value::Object(ref mut map) = compiler_options {
                 map.entry("allowJs")
@@ -212,25 +212,48 @@ fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
 }
 
 #[test]
-fn test_prepare_test_dir_copies_absolute_tsconfig_to_root() {
+fn test_prepare_test_dir_copies_root_tsconfig_to_root() {
     let content = "";
     let filenames = vec![
         (
-            "/project/tsconfig.json".to_string(),
+            "tsconfig.json".to_string(),
             r#"{"compilerOptions": {}}"#.to_string(),
         ),
         (
-            "/project/src/app.ts".to_string(),
+            "src/app.ts".to_string(),
             "export const x = 1;".to_string(),
         ),
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         root_tsconfig.is_file(),
         "tsconfig should exist at project root"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
+    let content = "";
+    let filenames = vec![
+        (
+            "configs/tsconfig.json".to_string(),
+            r#"{"compilerOptions": {}}"#.to_string(),
+        ),
+        (
+            "src/app.ts".to_string(),
+            "export const x = 1;".to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> = HashMap::new();
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
+    assert!(
+        !root_tsconfig.exists(),
+        "non-root tsconfig should not be promoted to project root"
     );
 }
 
@@ -381,7 +404,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         ),
     ];
 
-    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None, &[]).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
@@ -391,53 +414,6 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         parsed.get("include").is_none(),
         "Expected provided tsconfig to be preserved without injected include"
     );
-}
-
-#[test]
-fn test_prepare_test_dir_wraps_nested_tsconfig_with_extends() {
-    let filenames = vec![
-        (
-            "/other/tsconfig.base.json".to_string(),
-            r#"{
-                "compilerOptions": {
-                  "paths": {
-                    "p1": ["./lib/p1"]
-                  }
-                }
-            }"#
-            .to_string(),
-        ),
-        (
-            "/project/tsconfig.json".to_string(),
-            r#"{
-                "extends": "../other/tsconfig.base.json",
-                "compilerOptions": {
-                  "module": "commonjs"
-                }
-            }"#
-            .to_string(),
-        ),
-        (
-            "/other/lib/p1/index.ts".to_string(),
-            "export const p1 = 0;".to_string(),
-        ),
-        (
-            "/project/index.ts".to_string(),
-            "import { p1 } from \"p1\";".to_string(),
-        ),
-    ];
-    let options = [("target".to_string(), "es2015".to_string())]
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-
-    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
-    let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
-    let tsconfig_contents = std::fs::read_to_string(root_tsconfig).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
-
-    assert_eq!(parsed["extends"], "project/tsconfig.json");
-    assert_eq!(parsed["compilerOptions"]["target"], "es2015");
-    assert!(parsed.get("compilerOptions").is_some());
 }
 
 #[test]
@@ -452,6 +428,26 @@ fn test_normalize_diagnostic_path_handles_private_var_alias() {
     let root = std::path::Path::new("/var/folders/x/y/T/.tmp123");
     let raw = "/private/var/folders/x/y/T/.tmp123/src/test.ts";
     assert_eq!(normalize_diagnostic_path(raw, root), "src/test.ts");
+}
+
+#[test]
+fn test_normalize_message_paths_normalizes_ts5057_directory() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "Cannot find a tsconfig.json file at the specified directory: '/a/b/c'.";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "Cannot find a tsconfig.json file at the specified directory: ''."
+    );
+}
+
+#[test]
+fn test_normalize_message_paths_normalizes_ts5057_not_found() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let raw = "tsconfig not found at /tmp/tsz-test/tsconfig.json";
+    assert_eq!(
+        normalize_message_paths(raw, root),
+        "Cannot find a tsconfig.json file at the specified directory: ''."
+    );
 }
 
 #[test]
@@ -480,4 +476,17 @@ fn test_parse_diagnostics_from_text_ignores_non_error_lines() {
 
     let diagnostics = parse_diagnostics_from_text(output);
     assert_eq!(diagnostics.len(), 0);
+}
+
+#[test]
+fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let output = ": error TS5057: tsconfig not found at /var/tmp/tsconfig.json";
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
+    assert_eq!(fingerprints.len(), 1);
+    let fp = &fingerprints[0];
+    assert_eq!(
+        fp.display_key(),
+        "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
+    );
 }
