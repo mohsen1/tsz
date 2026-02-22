@@ -5,9 +5,9 @@
 //! (promise detection, comparability, contextual type parameter extraction).
 
 use crate::TypeDatabase;
-use crate::type_queries::{get_union_members, is_invokable_type};
-use crate::type_queries_extended::{
+use crate::type_queries::{
     StringLiteralKeyKind, classify_for_string_literal_keys, get_string_literal_value,
+    get_union_members, is_invokable_type,
 };
 use crate::types::{TypeData, TypeId};
 use tsz_common::Atom;

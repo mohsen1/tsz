@@ -3,7 +3,7 @@ use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 pub(crate) use super::common::{
     is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
 };
-pub(crate) use tsz_solver::type_queries_extended::{
+pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 

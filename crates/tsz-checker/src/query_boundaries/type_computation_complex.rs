@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
-pub(crate) use tsz_solver::type_queries_extended::{
+pub(crate) use tsz_solver::type_queries::{
     AbstractClassCheckKind, CallSignaturesKind, ClassDeclTypeKind, LazyTypeKind,
 };
 
@@ -9,11 +9,11 @@ pub(crate) fn classify_for_abstract_check(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AbstractClassCheckKind {
-    tsz_solver::type_queries_extended::classify_for_abstract_check(db, type_id)
+    tsz_solver::type_queries::classify_for_abstract_check(db, type_id)
 }
 
 pub(crate) fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
-    tsz_solver::type_queries_extended::classify_for_lazy_resolution(db, type_id)
+    tsz_solver::type_queries::classify_for_lazy_resolution(db, type_id)
 }
 
 pub(crate) fn type_parameter_info(
@@ -24,14 +24,14 @@ pub(crate) fn type_parameter_info(
 }
 
 pub(crate) fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassDeclTypeKind {
-    tsz_solver::type_queries_extended::classify_for_class_decl(db, type_id)
+    tsz_solver::type_queries::classify_for_class_decl(db, type_id)
 }
 
 pub(crate) fn classify_for_call_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> CallSignaturesKind {
-    tsz_solver::type_queries_extended::classify_for_call_signatures(db, type_id)
+    tsz_solver::type_queries::classify_for_call_signatures(db, type_id)
 }
 
 pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

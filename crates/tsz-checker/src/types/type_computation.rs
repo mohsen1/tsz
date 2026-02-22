@@ -1694,7 +1694,7 @@ impl<'a> CheckerState<'a> {
                         .literal_type_from_initializer(right_idx)
                         .unwrap_or(eval_right);
                     if matches!(op_str, "<<" | ">>" | ">>>")
-                        && let Some(n) = tsz_solver::type_queries_extended::get_number_literal_value(
+                        && let Some(n) = tsz_solver::type_queries::get_number_literal_value(
                             self.ctx.types,
                             right_narrow,
                         )

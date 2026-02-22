@@ -32,14 +32,14 @@ pub(crate) fn classify_for_base_instance_merge(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> BaseInstanceMergeKind {
-    tsz_solver::type_queries_extended::classify_for_base_instance_merge(db, type_id)
+    tsz_solver::type_queries::classify_for_base_instance_merge(db, type_id)
 }
 
 pub(crate) fn get_application_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
-    tsz_solver::type_queries_extended::get_application_info(db, type_id)
+    tsz_solver::type_queries::get_application_info(db, type_id)
 }
 
 #[cfg(test)]

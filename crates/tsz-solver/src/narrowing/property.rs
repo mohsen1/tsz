@@ -33,8 +33,7 @@ impl<'a> NarrowingContext<'a> {
             // Interface and class types (which are object-like)
             Some(TypeData::Application(_)) => {
                 // Check if the application type has construct signatures or object structure
-                use crate::type_queries_extended::InstanceTypeKind;
-                use crate::type_queries_extended::classify_for_instance_type;
+                use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 
                 matches!(
                     classify_for_instance_type(self.db, type_id),

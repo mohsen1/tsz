@@ -40,7 +40,7 @@ pub(crate) fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 pub(crate) fn def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_solver::def::DefId> {
-    tsz_solver::type_queries_classifiers::get_def_id(db, type_id)
+    tsz_solver::type_queries::get_def_id(db, type_id)
 }
 
 pub(crate) fn function_shape(

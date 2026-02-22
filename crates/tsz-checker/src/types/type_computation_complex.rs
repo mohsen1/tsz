@@ -1055,7 +1055,7 @@ impl<'a> CheckerState<'a> {
     /// // never
     /// ```
     pub(crate) fn get_keyof_type(&mut self, operand: TypeId) -> TypeId {
-        use tsz_solver::type_queries_extended::{TypeResolutionKind, classify_for_type_resolution};
+        use tsz_solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
 
         // Handle Lazy types by attempting to resolve them first
         // This allows keyof Lazy(DefId) to work correctly for circular dependencies
