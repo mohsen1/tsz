@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::apparent_primitive_member_kind;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     FunctionShape, MappedType, MappedTypeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement,
     TypeApplicationId,
@@ -398,13 +398,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     TypeSubstitution::from_args(self.interner(), type_params, &app.args);
 
                 // Instantiate the property type with substitution
-                use crate::instantiate::instantiate_type_with_infer;
+                use crate::instantiation::instantiate::instantiate_type_with_infer;
                 let instantiated_prop_type =
                     instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
                 // Handle `this` types
                 let app_type = self.interner().application(app.base, app.args.clone());
-                use crate::instantiate::substitute_this_type;
+                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
@@ -441,12 +441,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let substitution =
                     TypeSubstitution::from_args(self.interner(), type_params, &app.args);
 
-                use crate::instantiate::instantiate_type_with_infer;
+                use crate::instantiation::instantiate::instantiate_type_with_infer;
                 let instantiated_prop_type =
                     instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
                 let app_type = self.interner().application(app.base, app.args.clone());
-                use crate::instantiate::substitute_this_type;
+                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
@@ -502,7 +502,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     TypeSubstitution::from_args(self.interner(), type_params, &app.args);
 
                 // Use instantiate_type_infer to handle infer vars and avoid depth issues
-                use crate::instantiate::instantiate_type_with_infer;
+                use crate::instantiation::instantiate::instantiate_type_with_infer;
                 let instantiated_prop_type =
                     instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
 
@@ -511,7 +511,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // substituted with the actual Application type (e.g., `T[]`)
                 let app_type = self.interner().application(app.base, app.args.clone());
 
-                use crate::instantiate::substitute_this_type;
+                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 

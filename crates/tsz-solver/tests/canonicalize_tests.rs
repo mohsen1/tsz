@@ -1,6 +1,6 @@
 use super::*;
 use crate::intern::TypeInterner;
-use crate::subtype::TypeEnvironment;
+use crate::relations::subtype::TypeEnvironment;
 
 #[test]
 fn test_canonicalizer_creation() {

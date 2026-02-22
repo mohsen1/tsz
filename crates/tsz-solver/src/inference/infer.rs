@@ -235,7 +235,7 @@ impl ConstraintSet {
                 }
 
                 // If u1 <: u2, then u2 is redundant (u1 is a stricter constraint)
-                if crate::subtype::is_subtype_of(interner, u1, u2) {
+                if crate::relations::subtype::is_subtype_of(interner, u1, u2) {
                     redundant.insert(u2);
                 }
             }
@@ -258,7 +258,7 @@ impl ConstraintSet {
                     if i == j || redundant.contains(&u1) || redundant.contains(&u2) {
                         continue;
                     }
-                    if crate::subtype::is_subtype_of(interner, u1, u2) {
+                    if crate::relations::subtype::is_subtype_of(interner, u1, u2) {
                         redundant.insert(u2);
                     }
                 }
@@ -288,7 +288,7 @@ impl ConstraintSet {
                 {
                     continue;
                 }
-                if !crate::subtype::is_subtype_of(interner, lower, upper) {
+                if !crate::relations::subtype::is_subtype_of(interner, lower, upper) {
                     return Some(ConstraintConflict::LowerExceedsUpper(lower, upper));
                 }
             }

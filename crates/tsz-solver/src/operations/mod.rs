@@ -45,7 +45,7 @@ mod property_visitor;
 pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 
 use crate::diagnostics::PendingDiagnostic;
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -589,7 +589,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Resolve meta-types to their actual types before checking callability.
                 // This handles cases like conditional types that resolve to function types,
                 // index access types like T["method"], and mapped types.
-                let resolved = crate::evaluate::evaluate_type(self.interner, func_type);
+                let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, func_type);
                 if resolved != func_type {
                     self.resolve_call(resolved, arg_types)
                 } else {
@@ -1144,7 +1144,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         params: &[ParamInfo],
         arg_types: &[TypeId],
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> Option<(usize, TypeId, TypeId)> {
         let rest_param = params.last().filter(|param| param.rest)?;
         let rest_start = params.len().saturating_sub(1);
@@ -1226,7 +1226,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(crate) fn type_contains_placeholder(
         &self,
         ty: TypeId,
-        var_map: &FxHashMap<TypeId, crate::infer::InferenceVar>,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
         if var_map.contains_key(&ty) {

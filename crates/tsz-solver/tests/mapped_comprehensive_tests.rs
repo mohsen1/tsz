@@ -8,7 +8,7 @@
 //! - Readonly modifiers: +readonly, -readonly
 
 use super::*;
-use crate::evaluate::evaluate_type;
+use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::types::{MappedModifier, MappedType, PropertyInfo, TypeData, TypeParamInfo};
 

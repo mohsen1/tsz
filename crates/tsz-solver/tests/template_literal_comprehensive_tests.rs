@@ -7,9 +7,9 @@
 //! - Template literal subtype relationships
 
 use super::*;
-use crate::evaluate::evaluate_type;
+use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{TemplateSpan, TypeData, TypeParamInfo};
 
 // =============================================================================

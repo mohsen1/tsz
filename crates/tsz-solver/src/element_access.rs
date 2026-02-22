@@ -1,4 +1,4 @@
-use crate::evaluate::{evaluate_index_access_with_options, evaluate_type};
+use crate::evaluation::evaluate::{evaluate_index_access_with_options, evaluate_type};
 use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 
 #[derive(Debug, Clone)]
@@ -122,7 +122,7 @@ impl<'a> ElementAccessEvaluator<'a> {
     fn should_report_no_index_signature(&self, object_type: TypeId, index_type: TypeId) -> bool {
         let index_type = evaluate_type(self.interner, index_type);
         // PERF: Reuse a single SubtypeChecker across all checks
-        let mut checker = crate::subtype::SubtypeChecker::new(self.interner);
+        let mut checker = crate::relations::subtype::SubtypeChecker::new(self.interner);
         // Simplified check: checking if object has index signature compatible with index_type
         match self.interner.lookup(object_type) {
             Some(TypeData::Object(_)) => {

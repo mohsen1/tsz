@@ -1,7 +1,7 @@
 //! Tests for type overlap detection (TS2367).
 
 use crate::intern::TypeInterner;
-use crate::subtype::SubtypeChecker;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::*;
 
 #[test]

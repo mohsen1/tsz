@@ -922,8 +922,11 @@ fn test_property_access_optional_property() {
 /// The interface includes: length, map, at, entries, and reduce.
 fn make_array_test_env(
     interner: &TypeInterner,
-) -> (crate::subtype::TypeEnvironment, crate::types::TypeParamInfo) {
-    use crate::subtype::TypeEnvironment;
+) -> (
+    crate::relations::subtype::TypeEnvironment,
+    crate::types::TypeParamInfo,
+) {
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeParamInfo;
 
     let t_param = TypeParamInfo {
@@ -2733,7 +2736,7 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
     let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
     // IndexAccess is eagerly evaluated during instantiation (Task #46: O(1) equality)
     // The expected result is the evaluated property type, not the IndexAccess structure
-    let expected = crate::evaluate::evaluate_index_access(&interner, obj, key_literal);
+    let expected = crate::evaluation::evaluate::evaluate_index_access(&interner, obj, key_literal);
     assert_eq!(result, expected);
 }
 
@@ -7572,7 +7575,7 @@ fn test_property_access_array_push_with_env_resolver() {
 /// a false TS2339 in checker paths that use `QueryCache` as the resolver.
 #[test]
 fn test_property_access_array_push_with_query_cache_resolver() {
-    use crate::db::QueryCache;
+    use crate::caches::db::QueryCache;
     use crate::types::TypeParamInfo;
 
     let interner = TypeInterner::new();

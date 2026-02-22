@@ -10,7 +10,7 @@
 //! This module implements the solver-first architecture principle: pure type logic
 //! belongs in the solver, while the checker handles AST traversal and symbol resolution.
 
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::type_queries;
 use crate::types::TypeId;
 #[cfg(test)]

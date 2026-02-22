@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::AnyPropagationMode;
-use crate::compat::CompatChecker;
 use crate::intern::TypeInterner;
+use crate::relations::compat::CompatChecker;
 use crate::types::{FunctionShape, ParamInfo};
 use crate::{PropertyInfo, TypeId, Visibility};
 

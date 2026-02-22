@@ -3,7 +3,7 @@
 //! Tests Rule #41: Key remapping to Never should skip that property.
 
 use crate::types::*;
-use crate::{evaluate::evaluate_type, intern::TypeInterner};
+use crate::{evaluation::evaluate::evaluate_type, intern::TypeInterner};
 
 #[test]
 fn test_mapped_type_as_never_skips_property() {

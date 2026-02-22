@@ -3,8 +3,8 @@
 //! Handles TypeScript's conditional types: `T extends U ? X : Y`
 //! Including distributive conditional types over union types.
 
-use crate::instantiate::{TypeSubstitution, instantiate_type_with_infer};
-use crate::subtype::{SubtypeChecker, TypeResolver};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_with_infer};
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
 };

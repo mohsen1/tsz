@@ -3,7 +3,7 @@
 //! This module tests the [T] extends [U] tuple wrapper pattern
 //! which is critical for Exclude/Extract utility types.
 
-use crate::instantiate::instantiate_type;
+use crate::instantiation::instantiate::instantiate_type;
 use crate::intern::TypeInterner;
 use crate::types::*;
 
@@ -37,7 +37,7 @@ fn test_distributive_conditional_distributes_over_union() {
     let result = instantiate_type(
         &interner,
         conditional,
-        &crate::instantiate::TypeSubstitution::new(),
+        &crate::instantiation::instantiate::TypeSubstitution::new(),
     );
 
     // The result should be a union (distributed)
@@ -87,7 +87,7 @@ fn test_tuple_wrapper_prevents_distribution() {
     // Result: true (since string | number extends any)
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let mut subst = crate::instantiate::TypeSubstitution::new();
+    let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
     subst.insert(t_name, string_or_number);
 
     let result = instantiate_type(&interner, conditional, &subst);
@@ -138,7 +138,7 @@ fn test_exclude_utility_type_distributes() {
     let c_literal = interner.literal_string("c");
     let abc_union = interner.union(vec![a_literal, b_literal, c_literal]);
 
-    let mut subst = crate::instantiate::TypeSubstitution::new();
+    let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
     subst.insert(t_name, abc_union);
     subst.insert(u_name, a_literal);
 
@@ -204,7 +204,7 @@ fn test_extract_utility_type_distributes() {
     let c_literal = interner.literal_string("c");
     let abc_union = interner.union(vec![a_literal, b_literal, c_literal]);
 
-    let mut subst = crate::instantiate::TypeSubstitution::new();
+    let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
     subst.insert(t_name, abc_union);
     subst.insert(u_name, a_literal);
 

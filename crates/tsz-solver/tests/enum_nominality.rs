@@ -3,8 +3,8 @@
 //! These tests verify that `TypeData::Enum` wrapper is preserved during type lowering,
 //! ensuring that enum member types maintain their nominal identity.
 
-use crate::compat::CompatChecker;
 use crate::def::DefId;
+use crate::relations::compat::CompatChecker;
 use crate::types::{LiteralValue, TypeData};
 use crate::{TypeId, TypeInterner};
 

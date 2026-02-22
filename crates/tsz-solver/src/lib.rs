@@ -17,24 +17,19 @@ pub mod binary_ops;
 mod caches;
 pub mod canonicalize;
 mod class_hierarchy;
-pub mod compat;
 pub mod compound_assignment;
 mod contextual;
-mod db;
 pub mod def;
 mod diagnostics;
 pub mod element_access;
-mod evaluate;
 pub mod evaluation;
 pub mod expression_ops;
 mod flow_analysis;
 mod format;
 pub mod freshness;
 mod index_signatures;
-mod infer;
 mod inference;
 pub mod inheritance;
-mod instantiate;
 mod instantiation;
 mod intern;
 pub mod judge;
@@ -42,11 +37,9 @@ mod narrowing;
 mod object_literal;
 pub mod objects;
 pub mod operations;
-mod query_trace;
 pub mod recursion;
 mod relations;
 pub mod sound;
-mod subtype;
 pub mod tracer;
 mod type_factory;
 pub mod type_queries;
@@ -148,19 +141,19 @@ pub use widening::*;
 #[cfg(test)]
 #[path = "../tests/bidirectional_tests.rs"]
 mod bidirectional_tests;
-// callable_tests: loaded from subtype.rs
-// compat_tests: loaded from compat.rs
+// callable_tests: loaded from relations/subtype.rs
+// compat_tests: loaded from relations/compat.rs
 // contextual_tests: loaded from contextual.rs
-// db_tests: loaded from db.rs
+// db_tests: loaded from caches/db.rs
 // diagnostics_tests: loaded from diagnostics.rs
-// evaluate_tests: loaded from evaluate.rs
-// index_signature_tests: loaded from subtype.rs
-// infer_tests: loaded from infer.rs
-// instantiate_tests: loaded from instantiate.rs
+// evaluate_tests: loaded from evaluation/evaluate.rs
+// index_signature_tests: loaded from relations/subtype.rs
+// infer_tests: loaded from inference/infer.rs
+// instantiate_tests: loaded from instantiation/instantiate.rs
 #[cfg(test)]
 #[path = "../tests/integration_tests.rs"]
 mod integration_tests;
-// intern_tests: loaded from intern.rs
+// intern_tests: loaded from intern/mod.rs
 #[cfg(test)]
 #[path = "../tests/enum_nominality.rs"]
 mod enum_nominality;
@@ -172,8 +165,8 @@ mod intersection_union_tests;
 #[path = "../tests/mapped_key_remap_tests.rs"]
 mod mapped_key_remap_tests;
 // narrowing_tests: loaded from narrowing/mod.rs
-// operations_tests: loaded from operations.rs
-// subtype_tests: loaded from subtype.rs
+// operations_tests: loaded from operations/mod.rs
+// subtype_tests: loaded from relations/subtype.rs
 #[cfg(test)]
 #[path = "../tests/intersection_distributivity_tests.rs"]
 mod intersection_distributivity_tests;
@@ -194,7 +187,7 @@ mod template_literal_subtype_tests;
 #[path = "../tests/type_law_tests.rs"]
 mod type_law_tests;
 // types_tests: loaded from types.rs
-// union_tests: loaded from subtype.rs
+// union_tests: loaded from relations/subtype.rs
 #[cfg(test)]
 #[path = "../tests/isomorphism_tests.rs"]
 mod isomorphism_tests;

@@ -4,7 +4,7 @@
 //! public entry points, and special-case subtype checks
 //! (Object contract, generic index access).
 
-use crate::subtype::{
+use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
 use crate::type_resolver::TypeResolver;

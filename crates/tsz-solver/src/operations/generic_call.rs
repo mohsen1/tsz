@@ -6,8 +6,8 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
-use crate::infer::{InferenceContext, InferenceError};
-use crate::instantiate::{TypeSubstitution, instantiate_type};
+use crate::inference::infer::{InferenceContext, InferenceError};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
     FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
@@ -60,7 +60,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
         let mut substitution = TypeSubstitution::new();
-        let mut var_map: FxHashMap<TypeId, crate::infer::InferenceVar> = FxHashMap::default();
+        let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
+            FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();
@@ -772,7 +773,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
         let mut substitution = TypeSubstitution::new();
-        let mut var_map: FxHashMap<TypeId, crate::infer::InferenceVar> = FxHashMap::default();
+        let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
+            FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
 
         self.constraint_pairs.borrow_mut().clear();

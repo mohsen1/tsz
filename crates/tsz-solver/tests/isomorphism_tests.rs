@@ -3,7 +3,7 @@
 //! Tests the Canonicalizer and `are_types_structurally_identical` function.
 
 use crate::intern::TypeInterner;
-use crate::subtype::{TypeEnvironment, are_types_structurally_identical};
+use crate::relations::subtype::{TypeEnvironment, are_types_structurally_identical};
 use crate::types::TypeId;
 
 #[test]

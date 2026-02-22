@@ -6,7 +6,7 @@
 //! - Capitalize<T>
 //! - Uncapitalize<T>
 
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     IntrinsicKind, LiteralValue, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TypeData,
     TypeId,

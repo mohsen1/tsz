@@ -563,8 +563,10 @@ impl<'a> TypeInstantiator<'a> {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
                             }
-                            let evaluated =
-                                crate::evaluate::evaluate_type(self.interner, instantiated);
+                            let evaluated = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiated,
+                            );
                             if evaluated == TypeId::ERROR {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
@@ -598,8 +600,10 @@ impl<'a> TypeInstantiator<'a> {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
                             }
-                            let evaluated =
-                                crate::evaluate::evaluate_type(self.interner, instantiated);
+                            let evaluated = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiated,
+                            );
                             // Check if evaluation hit depth limit
                             if evaluated == TypeId::ERROR {
                                 self.depth_exceeded = true;
@@ -674,7 +678,7 @@ impl<'a> TypeInstantiator<'a> {
                 // into Object { host?: string, port?: number }
                 // Without this, the MappedType is returned unevaluated, causing subtype checks to fail.
                 let mapped_type = self.interner.mapped(instantiated);
-                crate::evaluate::evaluate_type(self.interner, mapped_type)
+                crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
             }
 
             // Index access: instantiate both parts and evaluate immediately
@@ -692,7 +696,11 @@ impl<'a> TypeInstantiator<'a> {
                     return self.interner.index_access(inst_obj, inst_idx);
                 }
                 // Evaluate immediately to achieve O(1) equality
-                crate::evaluate::evaluate_index_access(self.interner, inst_obj, inst_idx)
+                crate::evaluation::evaluate::evaluate_index_access(
+                    self.interner,
+                    inst_obj,
+                    inst_idx,
+                )
             }
 
             // KeyOf: instantiate the operand and evaluate immediately
@@ -709,7 +717,7 @@ impl<'a> TypeInstantiator<'a> {
                     return self.interner.keyof(inst_operand);
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
-                crate::evaluate::evaluate_keyof(self.interner, inst_operand)
+                crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand)
             }
 
             // ReadonlyType: instantiate the operand
@@ -767,7 +775,7 @@ impl<'a> TypeInstantiator<'a> {
                 // If we detected types that can be evaluated, trigger evaluation
                 // to potentially expand the template literal to a union of string literals
                 if needs_evaluation {
-                    crate::evaluate::evaluate_type(self.interner, template_type)
+                    crate::evaluation::evaluate::evaluate_type(self.interner, template_type)
                 } else {
                     template_type
                 }
@@ -787,7 +795,10 @@ impl<'a> TypeInstantiator<'a> {
                         | TypeData::Literal(LiteralValue::String(_))
                         | TypeData::TemplateLiteral(_)
                         | TypeData::Intrinsic(IntrinsicKind::String) => {
-                            crate::evaluate::evaluate_type(self.interner, string_intrinsic)
+                            crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                string_intrinsic,
+                            )
                         }
                         _ => string_intrinsic,
                     }

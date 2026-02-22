@@ -12,10 +12,10 @@
 //! - Supports distributivity for naked type parameters in unions
 
 use crate::TypeDatabase;
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
-use crate::instantiate::instantiate_generic;
-use crate::subtype::{NoopResolver, TypeResolver};
+use crate::instantiation::instantiate::instantiate_generic;
+use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -807,7 +807,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        use crate::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
+        use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
         checker.max_depth = MAX_SUBTYPE_DEPTH;

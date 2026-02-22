@@ -5,11 +5,13 @@
 //! of wiring checker internals directly to concrete checker engines.
 
 use crate::TypeDatabase;
-use crate::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::inheritance::InheritanceGraph;
 use crate::operations::AssignabilityChecker;
-use crate::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
+use crate::relations::compat::{
+    AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
+};
+use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{RelationCacheKey, SymbolRef, TypeId};
 
 /// Relation categories supported by the unified query API.

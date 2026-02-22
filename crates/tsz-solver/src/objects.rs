@@ -3,7 +3,7 @@
 //! This module provides utilities for collecting properties from intersection types
 //! while handling Lazy/Ref resolution and avoiding infinite recursion.
 
-use crate::subtype::TypeResolver;
+use crate::relations::subtype::TypeResolver;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -14,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 // Import TypeDatabase trait
-use crate::db::TypeDatabase;
+use crate::caches::db::TypeDatabase;
 
 /// Merge two visibility levels, returning the more restrictive one.
 ///

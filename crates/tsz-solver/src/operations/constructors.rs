@@ -32,7 +32,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // This matches TS2350 semantics.
                     match self.resolve_function_call(shape.as_ref(), arg_types) {
                         CallResult::Success(ret_type) => {
-                            let ret_type = crate::evaluate::evaluate_type(self.interner, ret_type);
+                            let ret_type =
+                                crate::evaluation::evaluate::evaluate_type(self.interner, ret_type);
                             if ret_type != TypeId::VOID {
                                 CallResult::NonVoidFunctionCalledWithNew
                             } else {
@@ -68,7 +69,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::Mapped(_)
             | TypeData::TemplateLiteral(_) => {
                 // Resolve meta-types to their actual types before checking constructability.
-                let resolved = crate::evaluate::evaluate_type(self.interner, type_id);
+                let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
                 if resolved != type_id {
                     self.resolve_new(resolved, arg_types)
                 } else {
@@ -91,7 +92,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if !shape.call_signatures.is_empty() {
                 match self.resolve_callable_call(shape, arg_types) {
                     CallResult::Success(ret_type) => {
-                        let ret_type = crate::evaluate::evaluate_type(self.interner, ret_type);
+                        let ret_type =
+                            crate::evaluation::evaluate::evaluate_type(self.interner, ret_type);
                         if ret_type != TypeId::VOID {
                             return CallResult::NonVoidFunctionCalledWithNew;
                         }

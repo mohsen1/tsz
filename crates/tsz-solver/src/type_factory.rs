@@ -3,7 +3,7 @@
 //! Keeps checker code on a narrow constructor surface so it cannot
 //! interact with raw type internals.
 
-use crate::db::TypeDatabase;
+use crate::caches::db::TypeDatabase;
 use crate::types::{
     CallableShape, ConditionalType, FunctionShape, MappedType, ObjectFlags, ObjectShape,
     PropertyInfo, TemplateSpan, TupleElement, TypeId, TypeParamInfo,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::TypeInterner;
-use crate::subtype::NoopResolver;
+use crate::relations::subtype::NoopResolver;
 
 #[test]
 fn test_non_application_passthrough() {

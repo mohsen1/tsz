@@ -43,7 +43,7 @@ pub struct IteratorInfo {
 /// * `Some(IteratorInfo)` - If the type is iterable
 /// * `None` - If the type is not iterable or doesn't have a valid `next()` method
 pub fn get_iterator_info(
-    db: &dyn crate::db::QueryDatabase,
+    db: &dyn crate::caches::db::QueryDatabase,
     type_id: TypeId,
     is_async: bool,
 ) -> Option<IteratorInfo> {
@@ -158,7 +158,7 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
 ///
 /// Returns the inner type T, or None if not a promise type.
 fn extract_promise_inner_type(
-    db: &dyn crate::db::QueryDatabase,
+    db: &dyn crate::caches::db::QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
     match db.lookup(type_id) {
@@ -217,7 +217,7 @@ fn extract_promise_inner_type(
 /// For sync iterators: `next()` returns `IteratorResult`<T, `TReturn`>
 /// For async iterators: `next()` returns Promise<`IteratorResult`<T, `TReturn`>>
 fn extract_iterator_result_types(
-    db: &dyn crate::db::QueryDatabase,
+    db: &dyn crate::caches::db::QueryDatabase,
     iterator_type: TypeId,
     next_method_type: TypeId,
     is_async: bool,
@@ -272,7 +272,7 @@ fn extract_iterator_result_types(
 /// Returns (`yield_type`, `return_type`). Yield comes from done:false branches,
 /// return comes from done:true branches.
 fn extract_iterator_result_value_types(
-    db: &dyn crate::db::QueryDatabase,
+    db: &dyn crate::caches::db::QueryDatabase,
     iterator_result_type: TypeId,
 ) -> (TypeId, TypeId) {
     let done_atom = db.intern_string("done");
@@ -359,7 +359,7 @@ fn extract_iterator_result_value_types(
 /// This is a convenience wrapper around `get_iterator_info` that extracts
 /// just the yield type from async iterators.
 pub fn get_async_iterable_element_type(
-    db: &dyn crate::db::QueryDatabase,
+    db: &dyn crate::caches::db::QueryDatabase,
     type_id: TypeId,
 ) -> TypeId {
     match get_iterator_info(db, type_id, true) {

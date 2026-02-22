@@ -28,7 +28,7 @@
 //! and Ref(SymbolRef) type handling.
 
 use crate::TypeVisitor;
-use crate::db::QueryDatabase;
+use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
@@ -422,7 +422,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         };
 
         // 2. Look up variance of the base type's parameters (disambiguate QueryDatabase trait)
-        use crate::db::QueryDatabase as QDB;
+        use crate::caches::db::QueryDatabase as QDB;
         let variances: Option<Arc<[Variance]>> =
             base_def_id.and_then(|def_id| QDB::get_type_param_variance(self.db, def_id));
 

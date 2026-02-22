@@ -3,8 +3,8 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::instantiate::{TypeSubstitution, instantiate_type};
-use crate::subtype::TypeResolver;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId, ObjectShape, ObjectShapeId,
     PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData, TypeId, TypeListId,

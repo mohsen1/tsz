@@ -14142,8 +14142,8 @@ fn test_conditional_infer_extract_state_union_distributive() {
 /// Expected behavior: Application types should expand to instantiated body.
 #[test]
 fn test_application_ref_expansion_box_string() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14193,8 +14193,8 @@ fn test_application_ref_expansion_box_string() {
 /// - Should expand to `(state: number | undefined, action: AnyAction) => number`
 #[test]
 fn test_application_ref_expansion_reducer_function() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14279,8 +14279,8 @@ fn test_application_ref_expansion_reducer_function() {
 /// Should expand to the fully instantiated structure.
 #[test]
 fn test_application_ref_expansion_nested() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14339,8 +14339,8 @@ fn test_application_ref_expansion_nested() {
 /// - `Optional<string, null>` should expand to `string | null`
 #[test]
 fn test_application_ref_expansion_with_defaults() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14410,8 +14410,8 @@ fn test_application_ref_expansion_with_defaults() {
 /// The constraint should be preserved/checked during expansion.
 #[test]
 fn test_application_ref_expansion_with_constraints() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14479,8 +14479,8 @@ fn test_application_ref_expansion_with_constraints() {
 /// `Box<never>` should expand to `{ value: never }`
 #[test]
 fn test_application_ref_expansion_with_never_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14526,8 +14526,8 @@ fn test_application_ref_expansion_with_never_arg() {
 /// `Box<unknown>` should expand to `{ value: unknown }`
 #[test]
 fn test_application_ref_expansion_with_unknown_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14573,8 +14573,8 @@ fn test_application_ref_expansion_with_unknown_arg() {
 /// `Box<any>` should expand to `{ value: any }`
 #[test]
 fn test_application_ref_expansion_with_any_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14620,8 +14620,8 @@ fn test_application_ref_expansion_with_any_arg() {
 /// `Box<string | number>` should expand to `{ value: string | number }`
 #[test]
 fn test_application_ref_expansion_with_union_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14668,8 +14668,8 @@ fn test_application_ref_expansion_with_union_arg() {
 /// should either pass through or handle appropriately.
 #[test]
 fn test_application_non_ref_base_passthrough() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14698,8 +14698,8 @@ fn test_application_non_ref_base_passthrough() {
 /// Recursive types need special handling to avoid infinite expansion.
 #[test]
 fn test_application_ref_expansion_recursive() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14761,8 +14761,8 @@ fn test_application_ref_expansion_recursive() {
 /// This tests: Box<string & { length: number }>
 #[test]
 fn test_application_ref_expansion_with_intersection_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14812,8 +14812,8 @@ fn test_application_ref_expansion_with_intersection_arg() {
 /// This tests: type Map<K, V> = { key: K, value: V }
 #[test]
 fn test_application_ref_expansion_multi_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14877,8 +14877,8 @@ fn test_application_ref_expansion_multi_param() {
 /// that Application expansion properly triggers conditional evaluation.
 #[test]
 fn test_application_ref_expansion_with_conditional_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -14942,8 +14942,8 @@ fn test_application_ref_expansion_with_conditional_body() {
 /// This tests: Box<[string, number]>
 #[test]
 fn test_application_ref_expansion_with_tuple_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15004,8 +15004,8 @@ fn test_application_ref_expansion_with_tuple_arg() {
 /// `type ArrayOf<T> = T[]` with `ArrayOf<string>` should expand to `string[]`
 #[test]
 fn test_application_ref_expansion_with_array_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15050,8 +15050,8 @@ fn test_application_ref_expansion_with_array_body() {
 /// should expand to `{ readonly value: number }`
 #[test]
 fn test_application_ref_expansion_with_readonly_property() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15106,8 +15106,8 @@ fn test_application_ref_expansion_with_readonly_property() {
 /// should expand to `{ value?: string }`
 #[test]
 fn test_application_ref_expansion_with_optional_property() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15162,8 +15162,8 @@ fn test_application_ref_expansion_with_optional_property() {
 /// should expand to `{ get(): boolean }`
 #[test]
 fn test_application_ref_expansion_with_method() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15231,8 +15231,8 @@ fn test_application_ref_expansion_with_method() {
 /// should expand to `(...args: string[]) => void`
 #[test]
 fn test_application_ref_expansion_with_rest_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15302,8 +15302,8 @@ fn test_application_ref_expansion_with_rest_param() {
 /// should expand to `{ [key: string]: number }`
 #[test]
 fn test_application_ref_expansion_with_index_signature() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15368,8 +15368,8 @@ fn test_application_ref_expansion_with_index_signature() {
 /// should expand to `{ [index: number]: string }`
 #[test]
 fn test_application_ref_expansion_with_number_index_signature() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15434,8 +15434,8 @@ fn test_application_ref_expansion_with_number_index_signature() {
 /// should expand to `{ value: "hello" }`
 #[test]
 fn test_application_ref_expansion_with_literal_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15484,8 +15484,8 @@ fn test_application_ref_expansion_with_literal_arg() {
 /// should expand to `{ value: 42 }`
 #[test]
 fn test_application_ref_expansion_with_numeric_literal_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15531,8 +15531,8 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
 /// should expand to `{ first: string; second: string }`
 #[test]
 fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15585,8 +15585,8 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
 /// should expand to `{ value: true }`
 #[test]
 fn test_application_ref_expansion_with_boolean_literal_arg() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15635,8 +15635,8 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
 /// should expand to `string | number`
 #[test]
 fn test_application_ref_expansion_with_union_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15690,8 +15690,8 @@ fn test_application_ref_expansion_with_union_body() {
 /// should expand to `{x: number} & {y: string}`
 #[test]
 fn test_application_ref_expansion_with_intersection_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15750,8 +15750,8 @@ fn test_application_ref_expansion_with_intersection_body() {
 /// should expand to `(this: {x: number}) => void`
 #[test]
 fn test_application_ref_expansion_with_this_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15816,8 +15816,8 @@ fn test_application_ref_expansion_with_this_param() {
 /// should expand to `(x?: string) => string`
 #[test]
 fn test_application_ref_expansion_with_optional_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15884,8 +15884,8 @@ fn test_application_ref_expansion_with_optional_param() {
 /// should expand to `readonly number[]`
 #[test]
 fn test_application_ref_expansion_with_readonly_array_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -15932,8 +15932,8 @@ fn test_application_ref_expansion_with_readonly_array_body() {
 /// should expand to `{ readonly id: string; value?: number }`
 #[test]
 fn test_application_ref_expansion_with_mixed_modifiers() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -16004,8 +16004,8 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
 /// should expand to `{ (arg: string): boolean }`
 #[test]
 fn test_application_ref_expansion_with_callable_body() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -16088,8 +16088,8 @@ fn test_application_ref_expansion_with_callable_body() {
 /// should expand to `{ new (): {x: number} }`
 #[test]
 fn test_application_ref_expansion_with_construct_signature() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -16166,8 +16166,8 @@ fn test_application_ref_expansion_with_construct_signature() {
 /// should expand to `{ inner: { value: string } }`
 #[test]
 fn test_application_ref_expansion_with_deeply_nested_param() {
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -22576,7 +22576,7 @@ fn test_extract_intersection() {
 #[test]
 fn test_noinfer_identity_behavior() {
     // NoInfer<T> should evaluate to T (identity)
-    use crate::evaluate::evaluate_type;
+    use crate::evaluation::evaluate::evaluate_type;
 
     let interner = TypeInterner::new();
 
@@ -22600,7 +22600,7 @@ fn test_noinfer_identity_behavior() {
 #[test]
 fn test_noinfer_with_union_type() {
     // NoInfer<string | number> should still be string | number
-    use crate::evaluate::evaluate_type;
+    use crate::evaluation::evaluate::evaluate_type;
 
     let interner = TypeInterner::new();
 
@@ -22619,7 +22619,7 @@ fn test_noinfer_with_union_type() {
 fn test_noinfer_in_function_param_position() {
     // function foo<T>(a: T, b: NoInfer<T>): T
     // When called as foo("hello", value), inference comes only from 'a'
-    use crate::infer::InferenceContext;
+    use crate::inference::infer::InferenceContext;
     use crate::types::InferencePriority;
 
     let interner = TypeInterner::new();
@@ -22658,7 +22658,7 @@ fn test_noinfer_inference_priority() {
     // When multiple inference sites exist, NoInfer blocks certain ones
     // function foo<T>(a: T, b: NoInfer<T>): T
     // foo("hello", 123) - T should be inferred as "hello" only, not "hello" | number
-    use crate::infer::InferenceContext;
+    use crate::inference::infer::InferenceContext;
     use crate::types::InferencePriority;
 
     let interner = TypeInterner::new();
@@ -22720,7 +22720,7 @@ fn test_noinfer_with_conditional_type() {
 fn test_noinfer_nested() {
     // NoInfer<NoInfer<T>> = NoInfer<T> = T
     // Multiple NoInfer wrappers should still result in identity
-    use crate::evaluate::evaluate_type;
+    use crate::evaluation::evaluate::evaluate_type;
 
     let interner = TypeInterner::new();
 
@@ -22764,7 +22764,7 @@ fn test_noinfer_with_object_property() {
             assert_eq!(shape.properties[0].type_id, noinfer_t);
 
             // But evaluating the NoInfer wrapper itself should yield string
-            use crate::evaluate::evaluate_type;
+            use crate::evaluation::evaluate::evaluate_type;
             let evaluated_prop = evaluate_type(&interner, shape.properties[0].type_id);
             assert_eq!(evaluated_prop, t_param);
         }
@@ -26015,8 +26015,8 @@ fn test_awaited_triple_nested() {
 #[test]
 fn test_recursive_type_simple_tree() {
     // Test: type Tree = { left?: Tree, right?: Tree, value: number }
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -26058,8 +26058,8 @@ fn test_recursive_type_simple_tree() {
 #[test]
 fn test_recursive_type_linked_list() {
     // Test: type List<T> = { value: T, next: List<T> | null }
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -26421,8 +26421,8 @@ fn test_mutually_recursive_types_state_machine() {
 fn test_mutually_recursive_types_request_response() {
     // Test: type Request<T> = { id: number, response: Response<T> }
     //       type Response<T> = { data: T, request: Request<T> }
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -26639,8 +26639,8 @@ fn test_recursive_conditional_type_deep_readonly() {
 #[test]
 fn test_depth_limited_recursion_level_1() {
     // Test recursive expansion stops at appropriate depth
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -26772,8 +26772,8 @@ fn test_depth_limited_recursion_tuple_builder() {
 #[test]
 fn test_depth_limited_recursion_max_expansion() {
     // Test that recursive types don't expand infinitely
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -26805,8 +26805,8 @@ fn test_depth_limited_recursion_max_expansion() {
 #[test]
 fn test_depth_limited_recursion_path_tracking() {
     // Test that circular references are detected in evaluation
-    use crate::evaluate::TypeEvaluator;
-    use crate::subtype::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -29389,7 +29389,7 @@ fn test_satisfies_with_intersection() {
 fn test_noinfer_blocks_inference_in_target() {
     // function foo<T>(x: NoInfer<T>): T
     // When NoInfer<T> is target, inference should be blocked
-    use crate::infer::InferenceContext;
+    use crate::inference::infer::InferenceContext;
     use crate::types::InferencePriority;
 
     let interner = TypeInterner::new();
@@ -29419,7 +29419,7 @@ fn test_noinfer_blocks_inference_in_target() {
 #[test]
 fn test_noinfer_in_union_distribution() {
     // NoInfer<string | number> should not distribute in conditionals
-    use crate::evaluate::evaluate_type;
+    use crate::evaluation::evaluate::evaluate_type;
 
     let interner = TypeInterner::new();
 
@@ -29437,7 +29437,7 @@ fn test_noinfer_in_union_distribution() {
 #[test]
 fn test_noinfer_with_array_elements() {
     // NoInfer<T[]> - should evaluate to T[] but block inference from array elements
-    use crate::evaluate::evaluate_type;
+    use crate::evaluation::evaluate::evaluate_type;
 
     let interner = TypeInterner::new();
 

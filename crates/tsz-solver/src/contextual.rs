@@ -516,7 +516,7 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
-        let resolved = crate::evaluate::evaluate_type(self.db, TypeId(def_id));
+        let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
         if resolved != TypeId(def_id) {
             self.visit_type(self.db, resolved)
         } else {
@@ -616,7 +616,7 @@ fn extract_param_type_at(
             }
             // If all returned generic types, just fall through
         } else if let Some(TypeData::Application(_app_id)) = db.lookup(last_param.type_id) {
-            let evaluated = crate::evaluate::evaluate_type(db, last_param.type_id);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(db, last_param.type_id);
             if evaluated != last_param.type_id {
                 let mut mock_params = params.to_vec();
                 mock_params.last_mut().unwrap().type_id = evaluated;
@@ -1023,7 +1023,7 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected_and_options(
                     self.interner,
@@ -1162,7 +1162,7 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
             self.interner.lookup(expected)
         {
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_return_type();
@@ -1203,7 +1203,7 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             // First try evaluating to see if it resolves to an array type
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 if let Some(elem) = ctx.get_array_element_type() {
@@ -1228,7 +1228,7 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_array_element_type();
@@ -1309,7 +1309,7 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Application explicitly - evaluate to resolve type aliases
         if let Some(TypeData::Application(_)) = self.interner.lookup(expected) {
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_tuple_element_type(index);
@@ -1328,7 +1328,7 @@ impl<'a> ContextualTypeContext<'a> {
         if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
             self.interner.lookup(expected)
         {
-            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                 return ctx.get_tuple_element_type(index);
@@ -1378,7 +1378,7 @@ impl<'a> ContextualTypeContext<'a> {
         match self.interner.lookup(expected) {
             Some(TypeData::Mapped(mapped_id)) => {
                 // First try evaluating the mapped type directly
-                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
@@ -1405,7 +1405,8 @@ impl<'a> ContextualTypeContext<'a> {
                 // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
                 if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
                     // The operand may be a Lazy type wrapping a type parameter — resolve it
-                    let resolved_operand = crate::evaluate::evaluate_type(self.interner, operand);
+                    let resolved_operand =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, operand);
                     if let Some(constraint) = crate::type_queries::get_type_parameter_constraint(
                         self.interner,
                         resolved_operand,
@@ -1423,7 +1424,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Application(app_id)) => {
-                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
@@ -1441,7 +1442,7 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             Some(TypeData::Conditional(_) | TypeData::Lazy(_)) => {
-                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
@@ -1640,7 +1641,7 @@ pub fn apply_contextual_type(
     }
 
     // PERF: Reuse a single SubtypeChecker across all subtype checks in this function
-    let mut checker = crate::subtype::SubtypeChecker::new(interner);
+    let mut checker = crate::relations::subtype::SubtypeChecker::new(interner);
 
     // Check if contextual type is a union
     if let Some(TypeData::Union(members)) = interner.lookup(ctx_type) {

@@ -35,7 +35,7 @@
 
 use crate::TypeDatabase;
 use crate::judge::JudgeConfig;
-use crate::subtype::{SubtypeChecker, TypeEnvironment};
+use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{TypeData, TypeId};
 
 // =============================================================================

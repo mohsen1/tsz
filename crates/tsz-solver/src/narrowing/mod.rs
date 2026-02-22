@@ -39,7 +39,7 @@ pub use utils::{
     split_nullish_type, type_contains_nullish, type_contains_undefined,
 };
 
-use crate::subtype::{SubtypeChecker, TypeResolver};
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 #[cfg(test)]
 use crate::types::*;
@@ -364,12 +364,13 @@ impl<'a> NarrowingContext<'a> {
                             resolver.resolve_lazy(def_id, self.db.as_type_database());
                         let type_params = resolver.get_lazy_type_params(def_id);
                         if let (Some(body), Some(params)) = (resolved_body, type_params) {
-                            let instantiated = crate::instantiate::instantiate_generic(
-                                self.db.as_type_database(),
-                                body,
-                                &params,
-                                &app.args,
-                            );
+                            let instantiated =
+                                crate::instantiation::instantiate::instantiate_generic(
+                                    self.db.as_type_database(),
+                                    body,
+                                    &params,
+                                    &app.args,
+                                );
                             type_id = instantiated;
                             continue;
                         }
@@ -750,7 +751,7 @@ impl<'a> NarrowingContext<'a> {
                     // CRITICAL FIX: Check if target_type is a subtype of member
                     // This handles cases like narrowing string | number by "hello"
                     // where "hello" is a subtype of string, so we should narrow to "hello"
-                    if crate::subtype::is_subtype_of_with_db(self.db, target_type, member) {
+                    if crate::relations::subtype::is_subtype_of_with_db(self.db, target_type, member) {
                         return Some(target_type);
                     }
                     // CRITICAL FIX: instanceof Array matching
@@ -828,7 +829,11 @@ impl<'a> NarrowingContext<'a> {
         if self.is_assignable_to(resolved_source, resolved_target) {
             trace!("Source type is assignable to target, returning source");
             source_type
-        } else if crate::subtype::is_subtype_of_with_db(self.db, resolved_target, resolved_source) {
+        } else if crate::relations::subtype::is_subtype_of_with_db(
+            self.db,
+            resolved_target,
+            resolved_source,
+        ) {
             // CRITICAL FIX: Check if target is a subtype of source (reverse narrowing)
             // This handles cases like narrowing string to "hello" where "hello" is a subtype of string
             // The inference engine uses this to narrow upper bounds by lower bounds
@@ -908,10 +913,17 @@ impl<'a> NarrowingContext<'a> {
                         );
                         continue;
                     }
-                    if crate::subtype::is_subtype_of_with_db(self.db, member, instance_type) {
+                    if crate::relations::subtype::is_subtype_of_with_db(
+                        self.db,
+                        member,
+                        instance_type,
+                    ) {
                         result.push(member);
-                    } else if crate::subtype::is_subtype_of_with_db(self.db, instance_type, member)
-                    {
+                    } else if crate::relations::subtype::is_subtype_of_with_db(
+                        self.db,
+                        instance_type,
+                        member,
+                    ) {
                         result.push(instance_type);
                     }
                 }
@@ -1575,7 +1587,7 @@ impl<'a> NarrowingContext<'a> {
         if source == target {
             return true;
         }
-        crate::subtype::is_subtype_of_with_db(self.db, source, target)
+        crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
     }
 
     /// Applies a type guard to narrow a type.
