@@ -355,3 +355,21 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `34` (`(property) IFoo.a: any[]` vs expected `number[]`).
   Reason: requires deeper contextual typing parity for declaration-site/object-literal array property quickinfo resolution in the hover/quickinfo provider path beyond this targeted parameter fallback patch.
+
+## 2026-02-22 (autoImportVerbatimTypeOnly1 completion code-action merge follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportVerbatimTypeOnly1.ts` code-action parity for the second completion application by aligning extensionless completion sources (`./mod`) with emitted JS specifiers (`./mod.js`) during named-import merge matching in `crates/tsz-lsp/src/code_actions/code_action_imports.rs`.
+- Updated tsserver completion details shaping in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` so `.mts` merged auto-import edits replace an existing `import type { ... }` line (same module) instead of inserting a duplicate import line.
+- Added focused unit tests:
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` (`normalize_mts_auto_import_edit_text_appends_existing_type_only_members`)
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_completion_entry_details_upgrades_type_only_named_import_for_value_usage` and `test_completion_entry_details_mts_type_position_adds_import_type_named_clause`)
+- Verification:
+  - `./scripts/run-fourslash.sh --filter=autoImportVerbatimTypeOnly1 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --max=200` improved from `188/200` to `189/200` passing in this run.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts` and `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts` remain failing in this sample.
+  Reason: still blocked on broader tsserver class-member snippet completion parity (`includeCompletionsWithClassMemberSnippets` source generation + entry/detail shaping), beyond this targeted `.mts` auto-import merge fix.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts` remains failing in this sample.
+  Reason: requires deeper CommonJS `export =` auto-import completion/code-fix modeling (`import x = require(...)`/member rewrite parity), which is broader than this targeted ESM verbatim type-only merge path.
