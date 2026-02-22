@@ -94,3 +94,19 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-22 (call hierarchy constructor follow-up)
+
+Completed in this pass:
+- Fixed outgoing call hierarchy constructor-target parity so `new Foo()` contributes an outgoing target instead of being dropped.
+- Fixed call-hierarchy declaration item shaping for class constructor targets so they emit `kind: class` with class-name selection spans.
+- Tightened callable range bounds using source brace matching for function-like nodes to avoid span bleed into following declarations in call hierarchy output.
+- Added focused unit coverage:
+  - `crates/tsz-lsp/tests/call_hierarchy_tests.rs`
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock.ts`: still diverges from baseline call hierarchy (`static {}` incoming/outgoing shape).
+  Reason: requires dedicated static-block callable/container modeling parity in call hierarchy, beyond this constructor-target fix.
+- `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock2.ts`: still diverges from baseline call hierarchy shape/spans.
+  Reason: appears tied to the same static-block modeling gap and needs a broader static-block follow-up.

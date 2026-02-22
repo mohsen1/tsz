@@ -104,6 +104,89 @@ fn test_outgoing_calls_simple() {
 }
 
 #[test]
+fn test_outgoing_calls_includes_new_expression_targets() {
+    let source = "class Baz {}\nfunction build() {\n  new Baz();\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "build" (line 1, col 9)
+    let pos = Position::new(1, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    let baz_call = calls.iter().find(|c| c.to.name == "Baz");
+    assert!(
+        baz_call.is_some(),
+        "Expected outgoing call target for constructor usage 'new Baz()'"
+    );
+    assert_eq!(
+        baz_call.unwrap().from_ranges.len(),
+        1,
+        "Expected one constructor callsite range"
+    );
+    assert_eq!(
+        baz_call.unwrap().to.kind,
+        SymbolKind::Class,
+        "Constructor target should be classified as class in call hierarchy"
+    );
+}
+
+#[test]
+fn test_outgoing_calls_includes_new_expression_forward_declared_class() {
+    let source = "function bar() {\n  new Baz();\n}\n\nclass Baz {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "bar" (line 0, col 9)
+    let pos = Position::new(0, 9);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|c| c.to.name == "Baz"),
+        "Expected outgoing call target for forward-declared constructor usage 'new Baz()'"
+    );
+}
+
+#[test]
+fn test_prepare_function_range_uses_source_body_end() {
+    let source = "function bar() {\n  return 1;\n}\n\nclass Baz {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(0, 9);
+    let item = provider
+        .prepare(root, pos)
+        .expect("Should prepare function declaration item");
+
+    assert_eq!(item.name, "bar");
+    assert_eq!(item.range.start, Position::new(0, 0));
+    assert_eq!(item.range.end, Position::new(2, 1));
+}
+
+#[test]
 fn test_outgoing_calls_multiple() {
     let source = "function a() {}\nfunction b() {}\nfunction c() {\n  a();\n  b();\n  a();\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
