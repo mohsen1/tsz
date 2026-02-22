@@ -13,6 +13,18 @@ use tsz::lsp::semantic_tokens::SemanticTokensProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn tsserver_call_hierarchy_name_kind(name: &str, kind: &str) -> (String, String) {
+        if kind == "property" {
+            if let Some(stripped) = name.strip_prefix("get ") {
+                return (stripped.to_string(), "getter".to_string());
+            }
+            if let Some(stripped) = name.strip_prefix("set ") {
+                return (stripped.to_string(), "setter".to_string());
+            }
+        }
+        (name.to_string(), kind.to_string())
+    }
+
     fn apply_inferred_project_options(&mut self, options: Option<&serde_json::Value>) {
         if let Some(options) = options {
             self.allow_importing_ts_extensions = options
@@ -670,9 +682,11 @@ impl Server {
                 }
             }
             let item = item?;
+            let raw_kind = format!("{:?}", item.kind).to_lowercase();
+            let (name, kind) = Self::tsserver_call_hierarchy_name_kind(&item.name, &raw_kind);
             let mut body_item = serde_json::json!({
-                "name": item.name,
-                "kind": format!("{:?}", item.kind).to_lowercase(),
+                "name": name,
+                "kind": kind,
                 "file": item.uri,
                 "span": {
                     "start": Self::lsp_to_tsserver_position(item.range.start),
@@ -732,6 +746,9 @@ impl Server {
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
+                        let raw_kind = format!("{:?}", call.from.kind).to_lowercase();
+                        let (name, kind) =
+                            Self::tsserver_call_hierarchy_name_kind(&call.from.name, &raw_kind);
                         let from_ranges: Vec<serde_json::Value> = call
                             .from_ranges
                             .iter()
@@ -744,8 +761,8 @@ impl Server {
                             .collect();
                         let mut from = serde_json::json!({
                             "from": {
-                                "name": call.from.name,
-                                "kind": format!("{:?}", call.from.kind).to_lowercase(),
+                                "name": name,
+                                "kind": kind,
                                 "file": call.from.uri,
                                 "span": {
                                     "start": Self::lsp_to_tsserver_position(call.from.range.start),
@@ -781,6 +798,9 @@ impl Server {
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
+                        let raw_kind = format!("{:?}", call.to.kind).to_lowercase();
+                        let (name, kind) =
+                            Self::tsserver_call_hierarchy_name_kind(&call.to.name, &raw_kind);
                         let from_ranges: Vec<serde_json::Value> = call
                             .from_ranges
                             .iter()
@@ -793,8 +813,8 @@ impl Server {
                             .collect();
                         let mut to = serde_json::json!({
                             "to": {
-                                "name": call.to.name,
-                                "kind": format!("{:?}", call.to.kind).to_lowercase(),
+                                "name": name,
+                                "kind": kind,
                                 "file": call.to.uri,
                                 "span": {
                                     "start": Self::lsp_to_tsserver_position(call.to.range.start),
