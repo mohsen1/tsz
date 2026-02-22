@@ -259,3 +259,17 @@ Investigated but punted:
   Reason: same adapter/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion list source harmonization.
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list equality.
   Reason: tied to the same unresolved global completion surface/content parity path as the `autoImportFileExcludePatterns{2,3}` failures.
+
+## 2026-02-22 (call hierarchy file-start incoming parity follow-up)
+
+Completed in this pass:
+- Fixed tsserver call-hierarchy incoming/outgoing bridge parity at file-start selection spans (`line:1`, `offset:1`) by treating those as source-file queries and skipping adjacent-offset probing in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs`.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` to assert `provideCallHierarchyIncomingCalls` at file-start returns no calls.
+- Verified targeted fourslash parity with `./scripts/run-fourslash.sh --skip-cargo-build --filter=callHierarchyFile --verbose` (now passing).
+- Re-ran capped fourslash sample with `./scripts/run-fourslash.sh --skip-cargo-build --max=200`: stable `186/200` passing (same sampled pass count as before this change, with no new sampled regressions).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock2.ts`: still creates a local baseline (empty call hierarchy payload in this run).
+  Reason: requires dedicated call-hierarchy declaration/prepare support for class `static {}` blocks (constructor-like modeling) beyond this targeted file-start bridge fix.
+- `TypeScript/tests/cases/fourslash/callHierarchyFunctionAmbiguity.{2,3}.ts`: still create local baselines in full-suite runs.
+  Reason: appears to require overload/ambient declaration disambiguation parity in call-hierarchy declaration resolution and span shaping, which is broader than this focused incoming-query guard.
