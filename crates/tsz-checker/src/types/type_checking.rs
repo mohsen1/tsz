@@ -1331,13 +1331,52 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check type parameters
-        if let Some(_params) = &alias.type_parameters {
-            // self.check_type_parameters(params);
-        }
+        let updates = self.push_missing_name_type_parameters(&alias.type_parameters);
+        if let Some(type_params) = &alias.type_parameters {
+            let factory = self.ctx.types.factory();
+            for &param_idx in &type_params.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(param.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
 
-        // Check the type node
+                let constraint = if param.constraint != NodeIndex::NONE {
+                    Some(self.get_type_from_type_node(param.constraint))
+                } else {
+                    None
+                };
+                let default = if param.default != NodeIndex::NONE {
+                    let default_type = self.get_type_from_type_node(param.default);
+                    if default_type == TypeId::ERROR {
+                        None
+                    } else {
+                        Some(default_type)
+                    }
+                } else {
+                    None
+                };
+                let atom = self.ctx.types.intern_string(&ident.escaped_text);
+                let constrained_param = factory.type_param(tsz_solver::TypeParamInfo {
+                    name: atom,
+                    constraint,
+                    default,
+                    is_const: false,
+                });
+                self.ctx
+                    .type_parameter_scope
+                    .insert(ident.escaped_text.clone(), constrained_param);
+            }
+        }
         self.check_type_node(alias.type_node);
+        self.pop_type_parameters(updates);
     }
 
     /// Check a type node for validity (recursive).
