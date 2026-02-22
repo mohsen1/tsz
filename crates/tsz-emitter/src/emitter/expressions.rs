@@ -1524,3 +1524,69 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_binary_operand = prev;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    /// Dynamic `import('path')` expressions must emit the `import` keyword.
+    /// Previously the emitter's `emit_node_by_kind` dispatch had no handler for
+    /// `SyntaxKind::ImportKeyword`, so the keyword was silently dropped and the
+    /// output became just `('path')`.
+    #[test]
+    fn dynamic_import_emits_import_keyword() {
+        let source = r#"const m = import("./module");"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(r#"import("./module")"#),
+            "Dynamic import must emit the 'import' keyword.\nOutput:\n{output}"
+        );
+    }
+
+    /// `import.meta` property access must emit the `import` keyword.
+    #[test]
+    fn import_meta_emits_import_keyword() {
+        let source = r#"const url = import.meta.url;"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("import.meta.url"),
+            "import.meta must emit the 'import' keyword.\nOutput:\n{output}"
+        );
+    }
+
+    /// Dynamic import inside an async function body.
+    #[test]
+    fn dynamic_import_in_async_function() {
+        let source = r#"async function load() { return await import("./lib"); }"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(r#"import("./lib")"#),
+            "Dynamic import inside async function must emit 'import' keyword.\nOutput:\n{output}"
+        );
+    }
+}

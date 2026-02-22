@@ -1299,6 +1299,7 @@ impl<'a> Printer<'a> {
                 }
             }
             k if k == SyntaxKind::SuperKeyword as u16 => self.write("super"),
+            k if k == SyntaxKind::ImportKeyword as u16 => self.write("import"),
 
             // Binding patterns (for destructuring)
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
