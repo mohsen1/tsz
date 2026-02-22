@@ -1633,5 +1633,5 @@ impl<'a> GoToDefinition<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/definition_tests.rs"]
+#[path = "../../tests/definition_tests.rs"]
 mod definition_tests;

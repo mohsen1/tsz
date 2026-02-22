@@ -4,7 +4,7 @@
 //! prepare-rename info (tsserver-compatible), shorthand property expansion,
 //! import specifier handling, and workspace edit generation.
 
-use crate::references::FindReferences;
+use crate::navigation::references::FindReferences;
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::find_node_at_offset;
 use rustc_hash::FxHashMap;

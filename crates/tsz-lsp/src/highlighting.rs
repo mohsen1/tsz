@@ -7,7 +7,7 @@
 //! Also supports keyword highlighting for matching control flow keywords:
 //! if/else, try/catch/finally, switch/case/default, while/do.
 
-use crate::references::FindReferences;
+use crate::navigation::references::FindReferences;
 use crate::utils::find_node_at_offset;
 use tsz_binder::BinderState;
 use tsz_common::position::{LineMap, Position, Range};
