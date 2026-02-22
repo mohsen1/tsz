@@ -3531,6 +3531,10 @@ impl Server {
             }
         }
 
+        if changed && Self::is_declaration_file_path(file_path) {
+            updated = Self::normalize_declaration_file_type_only_named_imports(&updated);
+        }
+
         changed.then_some(updated)
     }
 
@@ -3628,6 +3632,129 @@ impl Server {
         specifier.to_string()
     }
 
+    fn is_declaration_file_path(file_path: &str) -> bool {
+        let Some(file_name) = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+        else {
+            return false;
+        };
+
+        file_name == "d.ts"
+            || file_name.ends_with(".d.ts")
+            || file_name == "d.mts"
+            || file_name.ends_with(".d.mts")
+            || file_name == "d.cts"
+            || file_name.ends_with(".d.cts")
+    }
+
+    fn declaration_file_prefers_type_only_import(content: &str, name: &str) -> bool {
+        let type_usage = [
+            format!(": {name}"),
+            format!("<{name}>"),
+            format!("extends {name}"),
+            format!("implements {name}"),
+            format!(" as {name}"),
+        ]
+        .iter()
+        .any(|needle| content.contains(needle));
+
+        if !type_usage {
+            return false;
+        }
+
+        let value_usage = [
+            format!("new {name}"),
+            format!("{name}("),
+            format!("{name}."),
+            format!("typeof {name}"),
+        ]
+        .iter()
+        .any(|needle| content.contains(needle));
+
+        !value_usage
+    }
+
+    fn declaration_file_local_import_name(spec: &str) -> &str {
+        let trimmed = spec.trim().trim_start_matches("type ").trim();
+        if let Some((_, local)) = trimmed.split_once(" as ") {
+            local.trim()
+        } else {
+            trimmed
+        }
+    }
+
+    fn normalize_declaration_file_type_only_named_imports(content: &str) -> String {
+        let mut normalized = String::with_capacity(content.len());
+        for line in content.split_inclusive('\n') {
+            let newline = if line.ends_with("\r\n") {
+                "\r\n"
+            } else if line.ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            let line_body = line.trim_end_matches(['\r', '\n']);
+            let Some(open) = line_body.find('{') else {
+                normalized.push_str(line_body);
+                normalized.push_str(newline);
+                continue;
+            };
+            let Some(close_rel) = line_body[open + 1..].find('}') else {
+                normalized.push_str(line_body);
+                normalized.push_str(newline);
+                continue;
+            };
+            let close = open + 1 + close_rel;
+            if !line_body[..open].trim_start().starts_with("import ")
+                || !line_body[close..].contains(" from ")
+            {
+                normalized.push_str(line_body);
+                normalized.push_str(newline);
+                continue;
+            }
+
+            let import_prefix = line_body[..open].trim_start();
+            let clause_is_type_only = import_prefix.starts_with("import type ");
+            let imports = &line_body[open + 1..close];
+            let mut rebuilt = Vec::new();
+            for spec in imports.split(',') {
+                let trimmed = spec.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if trimmed.starts_with("type ") {
+                    rebuilt.push(trimmed.to_string());
+                    continue;
+                }
+                let local_name = Self::declaration_file_local_import_name(trimmed);
+                if !clause_is_type_only
+                    && Self::declaration_file_prefers_type_only_import(content, local_name)
+                {
+                    rebuilt.push(format!("type {trimmed}"));
+                } else {
+                    rebuilt.push(trimmed.to_string());
+                }
+            }
+
+            if rebuilt.is_empty() {
+                normalized.push_str(line_body);
+                normalized.push_str(newline);
+                continue;
+            }
+
+            let mut rebuilt_line = String::with_capacity(line_body.len() + 8);
+            rebuilt_line.push_str(&line_body[..open + 1]);
+            rebuilt_line.push(' ');
+            rebuilt_line.push_str(&rebuilt.join(", "));
+            rebuilt_line.push(' ');
+            rebuilt_line.push_str(&line_body[close..]);
+            normalized.push_str(&rebuilt_line);
+            normalized.push_str(newline);
+        }
+        normalized
+    }
+
     fn collect_import_candidates(
         &self,
         current_file_path: &str,
@@ -3710,7 +3837,6 @@ impl Server {
                 candidate.module_specifier =
                     Self::normalize_commonjs_module_specifier(&candidate.module_specifier);
             }
-
             let kind_key = match &candidate.kind {
                 tsz::lsp::code_actions::ImportCandidateKind::Named { export_name } => {
                     format!("named:{export_name}")
@@ -3782,7 +3908,13 @@ impl Server {
             )
             .with_organize_imports_ignore_case(organize_imports_ignore_case);
 
-            let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            diagnostics.extend(
+                self.synthetic_missing_name_expression_diagnostics(file_path, &content, &binder),
+            );
+            let mut seen_diags = rustc_hash::FxHashSet::default();
+            diagnostics
+                .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
             let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .into_iter()
@@ -5031,6 +5163,74 @@ mod tests {
         assert_eq!(
             updated,
             "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+        );
+    }
+
+    #[test]
+    fn handle_get_combined_code_fix_fix_missing_import_in_declaration_file_keeps_value_and_type_split()
+     {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/a.ts".to_string(),
+            "export class A {}\nexport class B {}\n".to_string(),
+        );
+        let original = "new A();\nlet x: B;\n";
+        server
+            .open_files
+            .insert("/d.ts".to_string(), original.to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCombinedCodeFix".to_string(),
+            arguments: serde_json::json!({
+                "scope": { "type": "file", "args": { "file": "/d.ts" } },
+                "fixId": "fixMissingImport",
+                "preferences": {
+                    "preferTypeOnlyAutoImports": true
+                }
+            }),
+        };
+
+        let resp = server.handle_get_combined_code_fix(1, &req);
+        assert!(resp.success, "expected getCombinedCodeFix to succeed");
+
+        let changes = resp
+            .body
+            .as_ref()
+            .and_then(|body| body.get("changes"))
+            .and_then(serde_json::Value::as_array)
+            .expect("missing changes array");
+        assert_eq!(changes.len(), 1, "expected one file change");
+        let text_changes = changes[0]
+            .get("textChanges")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing textChanges");
+        assert_eq!(
+            text_changes.len(),
+            1,
+            "expected one consolidated text change"
+        );
+
+        let change = &text_changes[0];
+        let start_line = change["start"]["line"].as_u64().expect("start line") as u32;
+        let start_offset = change["start"]["offset"].as_u64().expect("start offset") as u32;
+        let end_line = change["end"]["line"].as_u64().expect("end line") as u32;
+        let end_offset = change["end"]["offset"].as_u64().expect("end offset") as u32;
+        let new_text = change["newText"].as_str().expect("newText");
+
+        let updated = Server::apply_change(
+            original,
+            start_line,
+            start_offset,
+            end_line,
+            end_offset,
+            new_text,
+        );
+
+        assert_eq!(
+            updated,
+            "import { A, type B } from \"./a\";\n\nnew A();\nlet x: B;\n"
         );
     }
 

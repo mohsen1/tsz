@@ -786,6 +786,7 @@ impl Server {
             "rename" | "rename-full" => self.handle_rename(seq, &request),
             "getCodeFixes" => self.handle_get_code_fixes(seq, &request),
             "getCombinedCodeFix" => self.handle_get_combined_code_fix(seq, &request),
+            "applyCodeActionCommand" => self.handle_apply_code_action_command(seq, &request),
             "getSupportedCodeFixes" => self.handle_get_supported_code_fixes(seq, &request),
             "getApplicableRefactors" => self.handle_get_applicable_refactors(seq, &request),
             "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
