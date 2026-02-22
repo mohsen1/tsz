@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5077/7163 = 70.9% JS, 415/1035 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9644/13623 = 70.8% JS, 777/1988 = 39.1% DTS)
 
 ### Fixed This Session
+- **Spurious `export` on merged enum/namespace IIFEs in ESM** (+7 JS, +1 DTS):
+  When multiple `export enum` or `export namespace` declarations share the same
+  name (merged declarations), tsc emits `export var E;` once on the first declaration,
+  then bare IIFEs `(function (E) {...})()` for subsequent ones. tsz was unconditionally
+  writing `export ` before every `EXPORT_DECLARATION` clause in `emit_export_declaration_es6`,
+  producing invalid `export (function (E)` on the 2nd+ merged IIFEs. Fix: check
+  `declared_namespace_names` before writing the `export` prefix — if the name was
+  already declared, skip the `export`. Two unit tests added.
+  Tests fixed: `es6modulekindWithES5Target12(target=es2015)`,
+  `esnextmodulekindWithES5Target12(target=es2015)`, and 5 others.
+  JS: 9637→9644, DTS: 776→777, zero regressions.
+
+### Previously Fixed
 - **Trailing comments on opening braces moved inside block body** (+10 JS):
   When a block's opening `{` has a trailing comment on the same line (e.g.,
   `if (cond) { // comment`), tsz was moving the comment to the next line inside the
@@ -478,6 +491,18 @@
 
 ### Investigated but Deferred
 
+- **ESM `export var N;` missing for first namespace declaration at ES5 (~2 tests)**: At ES5 target,
+  `export namespace N { export var x = 1; }` should emit `export var N;\n(function (N) {...})(N || (N = {}));`.
+  Instead, tsz emits `export (function (N) {...})(N || (N = {}))` — the `var N;` declaration is missing
+  because the NamespaceES5Emitter emits the IIFE directly without a var prefix when the namespace is the
+  first of its name (i.e., not a merge). The merged-enum fix only addresses subsequent declarations; this
+  first-declaration issue requires the namespace IIFE transform to produce `var N;\n` when it's an exported
+  namespace. Affects `es6modulekindWithES5Target12(target=es5)`, `esnextmodulekindWithES5Target12(target=es5)`.
+- **Class+namespace merge produces `export var C` instead of `var C` + `export { C }` at ES5 (~2 tests)**:
+  When a class and a namespace are merged (`export class C {} export namespace C {}`), tsc at ES5 emits the
+  class IIFE as `var C = (function() {...})();` followed by `export { C };` and then the namespace IIFE.
+  tsz emits `export var C = (function() {...})();` with no separate export statement. This requires detecting
+  class+namespace merges in the ES5 class IIFE transform path. Same tests as above.
 - **JS-side double semicolons on IIFEs/yield/await (~29 tests)**: The `})();;` pattern on static
   block IIFE lowering, `yield;;`/`await ...;;` in async downlevel transforms, and
   `_this.memberClass = class { };;` in class expression lowering are all caused by the same root
