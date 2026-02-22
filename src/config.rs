@@ -935,6 +935,22 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             compiler_opts.remove(key);
         }
 
+        // Check ignoreDeprecations value (TS5103)
+        // Only "5.0" is currently accepted as a valid value.
+        if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
+            && id_value != "5.0"
+        {
+            let start = find_value_offset_in_source(&stripped, "ignoreDeprecations");
+            let value_len = id_value.len() as u32 + 2; // include quotes
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                value_len,
+                diagnostic_messages::INVALID_VALUE_FOR_IGNOREDEPRECATIONS.to_string(),
+                diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS,
+            ));
+        }
+
         // Check moduleResolution/module compatibility (TS5095)
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
@@ -2352,6 +2368,54 @@ mod tests {
         assert!(
             !codes.contains(&5095),
             "Should NOT emit TS5095 for node16 resolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5103_emitted_for_invalid_ignore_deprecations() {
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5103),
+            "Expected TS5103 for ignoreDeprecations='6.0', got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5103_emitted_for_wrong_version() {
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.1"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5103),
+            "Expected TS5103 for ignoreDeprecations='5.1', got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5103_not_emitted_for_valid_value() {
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.0"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5103),
+            "Should NOT emit TS5103 for valid ignoreDeprecations='5.0', got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5103_not_emitted_when_absent() {
+        let source = r#"{"compilerOptions":{"strict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5103),
+            "Should NOT emit TS5103 when ignoreDeprecations is absent, got: {:?}",
             codes
         );
     }
