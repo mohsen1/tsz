@@ -731,6 +731,7 @@ fn canonical_option_name(key_lower: &str) -> &str {
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
         "nounusedlocals" => "noUnusedLocals",
         "nounusedparameters" => "noUnusedParameters",
+        "out" => "out",
         "outdir" => "outDir",
         "outfile" => "outFile",
         "paths" => "paths",
