@@ -3286,6 +3286,41 @@ fn compile_missing_file_in_include_pattern_returns_error() {
 }
 
 #[test]
+fn compile_missing_file_in_include_pattern_reports_custom_config_path() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    let config_rel = PathBuf::from("configs/custom-name.json");
+    let config_path = base.join(&config_rel);
+
+    write_file(
+        &config_path,
+        r#"{
+          "compilerOptions": {
+            "outDir": "dist"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(config_rel);
+    let compilation = compile(&args, base).expect("Should return Ok with diagnostics");
+
+    let ts18003 = compilation
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 18003)
+        .expect("expected TS18003 diagnostic");
+    let expected_path = config_path.canonicalize().expect("canonical config path");
+    let expected_path = expected_path.to_string_lossy();
+    assert!(
+        ts18003.message_text.contains(expected_path.as_ref()),
+        "TS18003 should include resolved config path: {}",
+        ts18003.message_text
+    );
+}
+
+#[test]
 fn compile_missing_single_file_via_cli_args_returns_error() {
     // Test that passing a non-existent file via CLI args returns an error
     let temp = TempDir::new().expect("temp dir");
