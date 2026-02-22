@@ -362,6 +362,17 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if !skip_import_ts6133 && !skip_variable_ts6133 && !skip_destructuring_ts6133 {
+                        // Skip underscore-prefixed binding elements in destructuring patterns.
+                        // TSC suppresses TS6133 for `_`-prefixed names when they are part of a
+                        // destructuring pattern (e.g., `const [_a, b] = arr` or `const { x: _x } = obj`).
+                        // Regular declarations like `let _a = 1` are NOT suppressed.
+                        if is_variable
+                            && name.starts_with('_')
+                            && self.find_parent_binding_pattern(decl_idx).is_some()
+                        {
+                            continue;
+                        }
+
                         // Check if the symbol is referenced in JSDoc tags (e.g. `@link`, `@import`, `@type`).
                         // If so, consider it used and suppress the unused warning.
                         if self.is_symbol_used_in_jsdoc(&name) {

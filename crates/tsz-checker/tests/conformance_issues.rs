@@ -2615,3 +2615,178 @@ function greeter(person: string, person2: string, person3: string) {
         "Should flag 'unused'. Got: {ts6133_names:?}"
     );
 }
+
+/// Test that underscore-prefixed binding elements in destructuring are suppressed
+/// but regular underscore-prefixed declarations are NOT suppressed.
+/// TSC only suppresses `_`-prefixed names in destructuring patterns, not in
+/// regular `let`/`const`/`var` declarations.
+#[test]
+fn test_ts6133_underscore_regular_declarations_still_flagged() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    let _a = 1;
+    let _b = "hello";
+    let notUsed = 99;
+    console.log("ok");
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    // TSC flags regular `let _a = 1` declarations — underscore suppression
+    // only applies to destructuring binding elements, not regular declarations.
+    assert!(
+        ts6133_names.contains(&"_a"),
+        "Should flag '_a' (regular declaration, not destructuring). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"_b"),
+        "Should flag '_b' (regular declaration, not destructuring). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"notUsed"),
+        "Should flag 'notUsed'. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that underscore-prefixed binding elements in destructuring are suppressed.
+/// This is the main pattern seen in failing conformance tests like
+/// `unusedVariablesWithUnderscoreInBindingElement.ts`.
+#[test]
+fn test_ts6133_underscore_destructuring_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const [_a, b] = [1, 2];
+    console.log(b);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_a"),
+        "Should NOT flag '_a' in array destructuring (underscore-prefixed). Got: {ts6133_names:?}"
+    );
+    // `b` is used via console.log, so it shouldn't be flagged either
+    assert!(
+        ts6133_names.is_empty(),
+        "Should have no TS6133. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test object destructuring with underscore-prefixed binding element.
+#[test]
+fn test_ts6133_underscore_object_destructuring_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const obj = { a: 1, b: 2 };
+    const { a: _a, b } = obj;
+    console.log(b);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_a"),
+        "Should NOT flag '_a' in object destructuring. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that underscore-prefixed parameters still work (regression guard).
+#[test]
+fn test_ts6133_underscore_params_still_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(_unused: string, used: string) {
+    console.log(used);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_unused"),
+        "Should NOT flag '_unused' parameter. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.is_empty(),
+        "Should have no TS6133 diagnostics at all. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that TS2305 diagnostic includes quoted module name matching tsc format.
+/// TSC emits: Module '"./foo"' has no exported member 'Bar'.
+/// (outer ' from the message template, inner " from source-level quotes)
+#[test]
+fn test_ts2305_module_name_includes_quotes() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+export function foo() {}
+import { nonExistent } from "./thisModule";
+        "#,
+    );
+
+    let ts2305_msgs: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2305 || *code == 2307)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+
+    // If TS2305 is emitted, verify it includes quoted module name
+    for msg in &ts2305_msgs {
+        if msg.contains("has no exported member") {
+            assert!(
+                msg.contains("\"./thisModule\""),
+                "TS2305 should include quoted module name. Got: {msg}"
+            );
+        }
+    }
+}

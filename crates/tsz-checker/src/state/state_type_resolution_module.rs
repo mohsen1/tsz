@@ -1094,10 +1094,12 @@ impl<'a> CheckerState<'a> {
             };
 
         use crate::diagnostics::{diagnostic_messages, format_message};
+        // TSC includes source-level quotes in module diagnostic messages
+        let quoted_module = format!("\"{module_specifier}\"");
         if has_default && member_name != "default" {
             let message = format_message(
                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                &[module_specifier, member_name],
+                &[&quoted_module, member_name],
             );
             self.error(
                 start,
@@ -1108,7 +1110,7 @@ impl<'a> CheckerState<'a> {
         } else {
             let message = format_message(
                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                &[module_specifier, member_name],
+                &[&quoted_module, member_name],
             );
             self.error(
                 start,
