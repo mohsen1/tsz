@@ -15,6 +15,7 @@ use crate::parser::{
 };
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
     // =========================================================================
@@ -1882,16 +1883,36 @@ impl ParserState {
         // Check if current token is an identifier or keyword that can be used as identifier
         // This allows contextual keywords (type, interface, package, etc.) to be used as identifiers
         // in appropriate contexts (e.g., type aliases, interface names)
-        let (atom, text) = if self.is_identifier_or_keyword() {
+        let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
             // Use zero-copy accessor and clone only when storing
             let text = self.scanner.get_token_value_ref().to_string();
+            // tsc preserves unicode escape sequences in emitted identifiers.
+            // Capture the original source text when the scanner detected escapes.
+            let original_text =
+                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                    let src = self.scanner.source_text();
+                    let start = self.scanner.get_token_start();
+                    let end = self.scanner.get_token_end();
+                    if start < end && end <= src.len() {
+                        let slice = &src[start..end];
+                        if slice != text {
+                            Some(slice.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
             self.next_token();
-            (atom, text)
+            (atom, text, original_text)
         } else {
             self.error_identifier_expected();
-            (Atom::NONE, String::new())
+            (Atom::NONE, String::new(), None)
         };
 
         self.arena.add_identifier(
@@ -1901,7 +1922,7 @@ impl ParserState {
             IdentifierData {
                 atom,
                 escaped_text: text,
-                original_text: None,
+                original_text,
                 type_arguments: None,
             },
         )
@@ -1914,15 +1935,34 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
-        let (atom, text) = if self.is_identifier_or_keyword() {
+        let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
+            // Preserve unicode escape sequences for emission parity with tsc
+            let original_text =
+                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                    let src = self.scanner.source_text();
+                    let start = self.scanner.get_token_start();
+                    let end = self.scanner.get_token_end();
+                    if start < end && end <= src.len() {
+                        let slice = &src[start..end];
+                        if slice != text {
+                            Some(slice.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
             self.next_token();
-            (atom, text)
+            (atom, text, original_text)
         } else {
             self.error_identifier_expected();
-            (Atom::NONE, String::new())
+            (Atom::NONE, String::new(), None)
         };
 
         self.arena.add_identifier(
@@ -1932,7 +1972,7 @@ impl ParserState {
             IdentifierData {
                 atom,
                 escaped_text: text,
-                original_text: None,
+                original_text,
                 type_arguments: None,
             },
         )
