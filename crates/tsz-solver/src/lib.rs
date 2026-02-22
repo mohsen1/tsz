@@ -17,7 +17,6 @@ pub mod canonicalize;
 pub mod classes;
 pub mod compound_assignment;
 mod contextual;
-mod contextual_extractors;
 pub mod def;
 mod diagnostics;
 mod diagnostics_builders;
@@ -128,7 +127,7 @@ pub use widening::*;
 mod bidirectional_tests;
 // callable_tests: loaded from relations/subtype.rs
 // compat_tests: loaded from relations/compat.rs
-// contextual_tests: loaded from contextual.rs
+// contextual_tests: loaded from contextual/mod.rs
 // db_tests: loaded from caches/db.rs
 // diagnostics_tests: loaded from diagnostics.rs
 // evaluate_tests: loaded from evaluation/evaluate.rs

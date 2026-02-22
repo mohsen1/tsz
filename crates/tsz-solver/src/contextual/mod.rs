@@ -10,10 +10,12 @@
 //! to infer types for parts of the expression that would otherwise be unknown.
 //!
 //! The visitor-based type extractors used by [`ContextualTypeContext`] are in
-//! the sibling [`contextual_extractors`](super::contextual_extractors) module.
+//! the [`extractors`] submodule.
+
+pub(crate) mod extractors;
 
 use crate::TypeDatabase;
-use crate::contextual_extractors::{
+use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
     TupleElementExtractor, collect_single_or_union,
@@ -801,5 +803,5 @@ pub fn apply_contextual_type(
 }
 
 #[cfg(test)]
-#[path = "../tests/contextual_tests.rs"]
+#[path = "../../tests/contextual_tests.rs"]
 mod tests;
