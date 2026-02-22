@@ -574,11 +574,25 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 };
+                // Canonicalize class symbol for cycle guards. Some paths can observe
+                // alias/default-export symbols while the active resolution set tracks
+                // the declaration symbol; check both to avoid recursion leaks.
+                let canonical_base_sym = self
+                    .get_class_declaration_from_symbol(base_sym_id)
+                    .and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                let base_in_resolution_set = self
+                    .ctx
+                    .class_instance_resolution_set
+                    .contains(&base_sym_id)
+                    || canonical_base_sym
+                        .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym));
+                let base_visited = visited.contains(&base_sym_id)
+                    || canonical_base_sym.is_some_and(|sym| visited.contains(&sym));
 
                 // CRITICAL: Check for self-referential class BEFORE processing
                 // This catches class C extends C, class D<T> extends D<T>, etc.
                 if let Some(current_sym) = current_sym {
-                    if base_sym_id == current_sym {
+                    if base_sym_id == current_sym || canonical_base_sym == Some(current_sym) {
                         // Self-referential inheritance - emit error and stop
                         self.error_circular_class_inheritance(expr_idx, class_idx);
                         break;
@@ -586,11 +600,7 @@ impl<'a> CheckerState<'a> {
 
                     // CRITICAL: Check global resolution set to prevent infinite recursion
                     // If the base class is currently being resolved, skip it immediately
-                    if self
-                        .ctx
-                        .class_instance_resolution_set
-                        .contains(&base_sym_id)
-                    {
+                    if base_in_resolution_set {
                         // Base class is already being resolved up the call stack
                         // Skip to prevent infinite recursion
                         break;
@@ -598,7 +608,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check for circular inheritance using symbol tracking
-                if visited.contains(&base_sym_id) {
+                if base_visited {
                     break;
                 }
 
@@ -607,11 +617,7 @@ impl<'a> CheckerState<'a> {
                     // Base class node not found in current arena (cross-file case).
                     // Try to resolve the base class type through the symbol system.
                     // If base class is being resolved, skip to prevent infinite loop
-                    if self
-                        .ctx
-                        .class_instance_resolution_set
-                        .contains(&base_sym_id)
-                    {
+                    if base_in_resolution_set {
                         break;
                     }
 

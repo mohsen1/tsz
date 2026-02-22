@@ -411,8 +411,14 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
-        // Resolve symbol for caching purposes
-        let symbol_id = self.binder.resolve_identifier(self.arena, reference);
+        // Resolve symbol for caching purposes.
+        // Fallback to reference_symbol for non-identifier references (e.g. some
+        // qualified/member references) so repeated flow queries can share cache
+        // entries instead of using per-node synthetic symbols.
+        let symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, reference)
+            .or_else(|| self.reference_symbol(reference));
 
         self.check_flow(
             reference,
