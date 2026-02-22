@@ -636,6 +636,40 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_class_interface_merge_preserves_callable_and_properties() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Merged {
+    value: number = 1;
+}
+
+interface Merged {
+    (x: number): string;
+    extra: boolean;
+}
+
+declare const merged: Merged;
+const okCall: string = merged(1);
+const okProp: boolean = merged.extra;
+const badCall: number = merged(1);
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning merged callable string result to number.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2349),
+        "Did not expect TS2349; merged class/interface type should remain callable.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339; merged interface property should remain visible.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_multi_level_extends_resolves_base_instance_member_without_cycle_noise() {
     let diagnostics = compile_and_get_diagnostics(
         r"
