@@ -406,7 +406,11 @@ impl<'a> Printer<'a> {
             }
 
             self.emit_class_es6_with_options(node, idx, true, Some(("let", class_name.clone())));
-            self.write_line();
+            // Only write newline if not already at line start (class declarations
+            // with lowered static fields already end with write_line()).
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
             let commonjs_exported = self.ctx.is_commonjs()
                 && self.has_export_modifier(&class.modifiers)
                 && !self.ctx.module_state.has_export_assignment;
@@ -1952,9 +1956,13 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     self.write_line();
                                 }
-                            } else if emitted && inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                            } else if emitted
+                                && inner_kind != syntax_kind_ext::MODULE_DECLARATION
+                                && !self.writer.is_at_line_start()
+                            {
                                 // Don't write extra newline for namespaces - they already call write_line()
                                 // Also don't write newline if emit produced nothing (e.g., non-instantiated import alias)
+                                // Also skip if already at line start (class with lowered static fields)
                                 self.write_line();
                             }
                             // Clean up in case the enum emitter didn't consume it
@@ -1969,7 +1977,12 @@ impl<'a> Printer<'a> {
                     self.in_namespace_iife = prev;
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments_before(token_end, body_close_pos);
-                    self.write_line();
+                    // Only write newline if not already at line start (class
+                    // declarations with lowered static fields already end with
+                    // write_line after the last ClassName.field = value;).
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     // Nested namespace: recurse (emit_namespace_iife adds its own newline)
                     self.emit(stmt_idx);
@@ -2527,6 +2540,94 @@ mod tests {
         assert!(
             output.contains("__classPrivateFieldGet"),
             "Private field helpers should be emitted.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: class with lowered static fields followed by another
+    /// statement must not produce an extra blank line. The static field
+    /// emission ends with `write_line()` after `ClassName.field = value;`,
+    /// so the source-file-level loop must not add a second newline.
+    #[test]
+    fn no_extra_blank_line_after_static_field_lowering() {
+        let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should have `Foo.x = 1;\n` immediately followed by `const y = 2;`
+        // with NO blank line in between.
+        assert!(
+            output.contains("Foo.x = 1;\nconst y = 2;"),
+            "Should not have blank line between lowered static field and next statement.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: class with lowered static field inside a block
+    /// (e.g., for-loop body) must not produce an extra blank line before
+    /// the next statement in the block.
+    #[test]
+    fn no_extra_blank_line_after_static_field_in_block() {
+        let source = "for (const x of [1]) {\n    class Row {\n        static factory = 1;\n    }\n    use(Row);\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should have `Row.factory = 1;\n    use(Row);` with no blank line.
+        assert!(
+            !output.contains("Row.factory = 1;\n\n"),
+            "Should not have blank line after lowered static field in block.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: `export default class` with static field in CJS mode
+    /// must not produce a blank line between the lowered static field init
+    /// and the `exports.default = ClassName;` assignment.
+    #[test]
+    fn no_extra_blank_line_cjs_default_export_with_static_field() {
+        use crate::emitter::ModuleKind;
+
+        let source = "export default class MyComponent {\n    static create = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should have `MyComponent.create = 1;\n` followed by
+        // `exports.default = MyComponent;` with NO blank line.
+        assert!(
+            !output.contains("MyComponent.create = 1;\n\n"),
+            "Should not have blank line between lowered static field and CJS export.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("exports.default = MyComponent;"),
+            "Should emit CJS default export assignment.\nOutput:\n{output}"
         );
     }
 }

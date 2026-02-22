@@ -1,8 +1,28 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 4894/7163 = 68.3% JS, 406/1139 = 35.6% DTS)
+## Pattern Analysis (JS+DTS mode, current 9286/13623 = 68.2% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **Extra blank line after lowered static class properties** (~70 affected tests, 6+ sole-fix):
+  When class declarations have static fields lowered to `ClassName.field = value;` (for
+  targets < ES2022), the `write_line()` at the end of each static field init left the
+  writer at line start. Subsequent newline writes in the calling code (source file loop,
+  block loop, CJS export handler, namespace body, decorator handler) added a duplicate
+  newline, producing an unwanted blank line between the last `ClassName.field = value;`
+  and the next statement (`exports.default = ...;`, `D = __decorate(...)`, or the next
+  block statement). Fixed by adding `!self.writer.is_at_line_start()` guards in 6 places:
+  1. `statements.rs`: block-level statement loop
+  2. `module_emission.rs`: CJS `emit_commonjs_export` after inner emission
+  3. `module_emission.rs`: CJS export class declaration handler
+  4. `declarations.rs`: namespace body class emission
+  5. `declarations.rs`: namespace body exported class branch
+  6. `declarations.rs`: decorated class `write_line` after `emit_class_es6_with_options`
+  Tests fixed (sole-fix): `classImplementsImportedInterface`, `classInConvertedLoopES5(target=es2015)`,
+  `declarationEmitInvalidExport`, `es6ModuleClassDeclaration`, `es6modulekindWithES5Target(target=es2015)`,
+  `esnextmodulekindWithES5Target(target=es2015)`. Also resolved the blank-line component of
+  `defaultDeclarationEmitNamedCorrectly` (still fails for `let` vs `var` in namespace).
+
+### Previously Fixed
 - **JSX self-closing element space before `/>`** (+16 JS tests):
   Self-closing JSX elements (`<Tag />`) were emitted without the space before `/>`,
   producing `<Tag/>`. tsc always calls `writeSpace()` after the tag name in
@@ -173,14 +193,7 @@
     when `E.A` is a const-evaluable enum member. See `assignmentNonObjectTypeConstraints`,
     `blockScopedEnumVariablesUseBeforeDef*`. Requires solver integration for enum evaluation.
 
-18. **Extra blank line after class static properties** (~2 tests):
-    `amdImportNotAsPrimaryExpression` and `classInConvertedLoopES5(target=es2015)` have
-    an extra blank line after `ClassName.staticProp = value;` before the next statement.
-    This is a different code path from the namespace body fix — it occurs in the class
-    declaration's static field initializer emission (`declarations.rs:1010-1051`) where
-    `write_line()` after the last static field interacts with the `emit_source_file()`
-    loop's newline logic. The AMD variant also involves the module wrapper body path.
-    Needs careful investigation of the newline state after class emit completes.
+18. ~~**Extra blank line after class static properties**~~ — **FIXED** (see "Fixed This Session").
 
 19. **Extra `"use strict"` for AMD/outFile modules** (mostly fixed): The AMD `"use strict"`
     condition in `emit_source_file()` now correctly requires `is_file_module`, preventing

@@ -152,8 +152,10 @@ impl<'a> Printer<'a> {
 
             let before_len = self.writer.len();
             self.emit(stmt_idx);
-            // Only add newline if something was actually emitted
-            if self.writer.len() > before_len {
+            // Only add newline if something was actually emitted and we're not
+            // already at line start (e.g. class with lowered static fields already
+            // wrote a trailing newline after the last `ClassName.field = value;`).
+            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 // Emit trailing same-line comments (e.g. `foo(); // comment`).
                 // Use the next statement's pos as the scan upper bound: stmt_node.end
                 // extends into the next statement, which would cause
