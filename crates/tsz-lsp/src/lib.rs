@@ -48,6 +48,7 @@ pub mod linked_editing;
 pub use tsz_common::position;
 pub mod project;
 pub mod project_imports;
+pub mod project_module_specifiers;
 pub mod project_operations;
 pub mod references;
 pub mod rename;
