@@ -157,7 +157,7 @@ impl<'a> CheckerState<'a> {
             let target_prop_type = match self
                 .resolve_property_access_with_env(param_type, &prop_name)
             {
-                tsz_solver::operations_property::PropertyAccessResult::Success {
+                tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id, ..
                 } => type_id,
                 _ => continue,

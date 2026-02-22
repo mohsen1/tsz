@@ -8,7 +8,7 @@ use crate::def::DefId;
 use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::intern::TypeInterner;
 use crate::narrowing;
-use crate::operations_property::PropertyAccessResult;
+use crate::operations::property::PropertyAccessResult;
 use crate::subtype::TypeResolver;
 use crate::type_factory::TypeFactory;
 use crate::types::{
@@ -507,20 +507,20 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::operations_property::PropertyAccessResult;
+    ) -> crate::operations::property::PropertyAccessResult;
 
     fn resolve_property_access_with_options(
         &self,
         object_type: TypeId,
         prop_name: &str,
         no_unchecked_indexed_access: bool,
-    ) -> crate::operations_property::PropertyAccessResult;
+    ) -> crate::operations::property::PropertyAccessResult;
 
     fn property_access_type(
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::operations_property::PropertyAccessResult {
+    ) -> crate::operations::property::PropertyAccessResult {
         self.resolve_property_access_with_options(
             object_type,
             prop_name,
@@ -540,7 +540,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     }
 
     fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {
-        crate::operations_property::property_is_readonly(
+        crate::operations::property::property_is_readonly(
             self.as_type_database(),
             object_type,
             prop_name,
@@ -553,7 +553,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-        crate::operations_property::is_readonly_index_signature(
+        crate::operations::property::is_readonly_index_signature(
             self.as_type_database(),
             object_type,
             wants_string,
@@ -846,10 +846,10 @@ impl QueryDatabase for TypeInterner {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::operations_property::PropertyAccessResult {
+    ) -> crate::operations::property::PropertyAccessResult {
         // TypeInterner doesn't have TypeResolver capability, so it can't resolve Lazy types
         // Use PropertyAccessEvaluator with QueryDatabase (self implements both TypeDatabase and TypeResolver)
-        let evaluator = crate::operations_property::PropertyAccessEvaluator::new(self);
+        let evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
@@ -858,8 +858,8 @@ impl QueryDatabase for TypeInterner {
         object_type: TypeId,
         prop_name: &str,
         no_unchecked_indexed_access: bool,
-    ) -> crate::operations_property::PropertyAccessResult {
-        let mut evaluator = crate::operations_property::PropertyAccessEvaluator::new(self);
+    ) -> crate::operations::property::PropertyAccessResult {
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.resolve_property_access(object_type, prop_name)
     }
@@ -1725,7 +1725,7 @@ impl QueryDatabase for QueryCache<'_> {
         &self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> crate::operations_property::PropertyAccessResult {
+    ) -> crate::operations::property::PropertyAccessResult {
         self.resolve_property_access_with_options(
             object_type,
             prop_name,
@@ -1738,7 +1738,7 @@ impl QueryDatabase for QueryCache<'_> {
         object_type: TypeId,
         prop_name: &str,
         no_unchecked_indexed_access: bool,
-    ) -> crate::operations_property::PropertyAccessResult {
+    ) -> crate::operations::property::PropertyAccessResult {
         // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
         // with the current QueryDatabase.
         let prop_atom = self.interner.intern_string(prop_name);
@@ -1747,7 +1747,7 @@ impl QueryDatabase for QueryCache<'_> {
             return result;
         }
 
-        let mut evaluator = crate::operations_property::PropertyAccessEvaluator::new(self);
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         let result = evaluator.resolve_property_access(object_type, prop_name);
         self.insert_property_cache(key, result.clone());

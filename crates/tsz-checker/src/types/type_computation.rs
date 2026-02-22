@@ -578,7 +578,7 @@ impl<'a> CheckerState<'a> {
                     && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
                 {
-                    use tsz_solver::operations_property::PropertyAccessResult;
+                    use tsz_solver::operations::property::PropertyAccessResult;
                     let prop_name = self
                         .ctx
                         .arena

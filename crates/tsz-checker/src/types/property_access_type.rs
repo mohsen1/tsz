@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
 
     /// Inner implementation of property access type resolution.
     fn get_type_of_property_access_inner(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -897,7 +897,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::is_compiler_managed_type;
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
         let base_type =
             crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
 
@@ -1176,7 +1176,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::is_compiler_managed_type;
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         let augmentation_decls = self.ctx.binder.global_augmentations.get(interface_name)?;
         if augmentation_decls.is_empty() {
@@ -1421,7 +1421,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_has_explicit_property_member(&mut self, object_type: TypeId, prop_name: &str) -> bool {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         let Some(members) =
             crate::query_boundaries::state_checking::union_members(self.ctx.types, object_type)

@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
                 provided_attrs.push(attr_name.clone());
 
                 // Get expected type from props
-                use tsz_solver::operations_property::PropertyAccessResult;
+                use tsz_solver::operations::property::PropertyAccessResult;
                 let expected_type = match self
                     .resolve_property_access_with_env(props_type, &attr_name)
                 {

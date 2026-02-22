@@ -8,12 +8,12 @@ use crate::{ApparentMemberKind, TypeDatabase, apparent_object_member_kind};
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
-// Re-export readonly helpers for backward compatibility
-pub use crate::operations_property_readonly::{is_readonly_index_signature, property_is_readonly};
+// Re-export readonly helpers
+pub use super::property_readonly::{is_readonly_index_signature, property_is_readonly};
 
 // Child module: resolution helpers (mapped types, primitives, arrays, applications, etc.)
-#[path = "operations_property_helpers.rs"]
-mod operations_property_helpers;
+#[path = "property_helpers.rs"]
+mod property_helpers;
 
 // =============================================================================
 // Property Access Resolution
@@ -912,5 +912,5 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     // Resolution helpers (mapped types, primitives, arrays, applications, etc.)
-    // are in operations_property_helpers.rs
+    // are in property_helpers.rs
 }

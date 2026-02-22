@@ -4,8 +4,8 @@
 //! and async iterators. Used by the checker for `for..of` and `for await..of`
 //! loop type checking.
 
+use super::property::PropertyAccessEvaluator;
 use crate::TypeDatabase;
-use crate::operations_property::PropertyAccessEvaluator;
 use crate::types::{PropertyInfo, TypeData, TypeId};
 
 /// Information about an iterator type extracted from a type.

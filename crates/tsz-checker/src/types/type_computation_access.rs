@@ -14,7 +14,7 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;

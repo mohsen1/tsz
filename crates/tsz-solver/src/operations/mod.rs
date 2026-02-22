@@ -22,6 +22,23 @@
 //!
 //! Some components have been extracted to separate modules:
 //! - `binary_ops`: Binary operation evaluation (+, -, *, /, etc.)
+//! - `constraints`: Type constraint collection for generic inference
+//! - `constructors`: Constructor (new) expression resolution
+//! - `generic_call`: Generic function call inference
+//! - `generics`: Generic type instantiation validation
+//! - `iterators`: Iterator/async iterator type extraction
+//! - `property`: Property access resolution (includes helpers for mapped, primitive, array, etc.)
+//! - `property_readonly`: Readonly property checks
+//! - `property_visitor`: `TypeVisitor` impl for `PropertyAccessEvaluator`
+
+mod constraints;
+mod constructors;
+mod generic_call;
+pub mod generics;
+pub mod iterators;
+pub mod property;
+mod property_readonly;
+mod property_visitor;
 
 // Re-exports from extracted modules
 // Note: These are intentionally pub re-exported for external API use
@@ -1778,12 +1795,10 @@ pub fn get_contextual_signature_with_compat_checker(
     CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
 }
 
-// Re-exports from extracted modules
-pub use crate::operations_generics::{GenericInstantiationResult, solve_generic_instantiation};
-pub use crate::operations_iterators::{
-    IteratorInfo, get_async_iterable_element_type, get_iterator_info,
-};
+// Re-exports from submodules
+pub use generics::{GenericInstantiationResult, solve_generic_instantiation};
+pub use iterators::{IteratorInfo, get_async_iterable_element_type, get_iterator_info};
 
 #[cfg(test)]
-#[path = "../tests/operations_tests.rs"]
+#[path = "../../tests/operations_tests.rs"]
 mod tests;

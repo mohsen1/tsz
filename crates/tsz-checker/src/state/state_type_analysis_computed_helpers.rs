@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -291,7 +291,7 @@ impl<'a> CheckerState<'a> {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
             let mut found = false;
 
-            use tsz_solver::operations_property::PropertyAccessResult;
+            use tsz_solver::operations::property::PropertyAccessResult;
             match self
                 .ctx
                 .types
