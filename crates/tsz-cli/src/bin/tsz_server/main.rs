@@ -512,6 +512,8 @@ pub(crate) struct Server {
     pub(crate) response_seq: u64,
     /// Open files (for tsserver protocol)
     pub(crate) open_files: FxHashMap<String, String>,
+    /// Files registered by each external project (`openExternalProject`).
+    pub(crate) external_project_files: FxHashMap<String, Vec<String>>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Completion/codefix preference: import module specifier preference.
@@ -584,6 +586,7 @@ impl Server {
             checks_completed: 0,
             response_seq: 0,
             open_files: FxHashMap::default(),
+            external_project_files: FxHashMap::default(),
             completion_import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             organize_imports_type_order: None,
@@ -794,7 +797,7 @@ impl Server {
             "compilerOptionsForInferredProjects" => {
                 self.handle_compiler_options_for_inferred(seq, &request)
             }
-            "openExternalProject" | "closeExternalProject" => {
+            "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
                 self.handle_external_project(seq, &request)
             }
             "updateOpen" => self.handle_update_open(seq, &request),

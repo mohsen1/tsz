@@ -1726,6 +1726,36 @@ impl Project {
                 continue;
             }
 
+            for (module_specifier, export_match) in
+                self.matching_exports_in_ambient_modules(&file_name, missing_name)
+            {
+                if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                    continue;
+                }
+
+                let candidate = ImportCandidate {
+                    module_specifier,
+                    local_name: missing_name.to_string(),
+                    kind: export_match.kind.clone(),
+                    is_type_only: export_match.is_type_only,
+                };
+
+                let kind_key = match &candidate.kind {
+                    ImportCandidateKind::Named { export_name } => format!("named:{export_name}"),
+                    ImportCandidateKind::Default => "default".to_string(),
+                    ImportCandidateKind::Namespace => "namespace".to_string(),
+                };
+
+                if seen.insert((
+                    candidate.module_specifier.clone(),
+                    candidate.local_name.clone(),
+                    kind_key,
+                    candidate.is_type_only,
+                )) {
+                    output.push(candidate);
+                }
+            }
+
             let module_specifiers =
                 self.auto_import_module_specifiers_from_files(from_file.file_name(), &file_name);
             if module_specifiers.is_empty() {
@@ -1801,6 +1831,38 @@ impl Project {
             for file_name in files_to_check {
                 if file_name == from_file.file_name() {
                     continue;
+                }
+
+                for (module_specifier, export_match) in
+                    self.matching_exports_in_ambient_modules(&file_name, &symbol_name)
+                {
+                    if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                        continue;
+                    }
+
+                    let candidate = ImportCandidate {
+                        module_specifier,
+                        local_name: symbol_name.clone(),
+                        kind: export_match.kind.clone(),
+                        is_type_only: export_match.is_type_only,
+                    };
+
+                    let kind_key = match &candidate.kind {
+                        ImportCandidateKind::Named { export_name } => {
+                            format!("named:{export_name}")
+                        }
+                        ImportCandidateKind::Default => "default".to_string(),
+                        ImportCandidateKind::Namespace => "namespace".to_string(),
+                    };
+
+                    if seen.insert((
+                        candidate.module_specifier.clone(),
+                        candidate.local_name.clone(),
+                        kind_key,
+                        candidate.is_type_only,
+                    )) {
+                        output.push(candidate);
+                    }
                 }
 
                 let module_specifiers = self
@@ -2164,6 +2226,86 @@ impl Project {
                     },
                     is_type_only: export.is_type_only,
                 });
+            }
+        }
+
+        matches
+    }
+
+    fn matching_exports_in_ambient_modules(
+        &self,
+        file_name: &str,
+        export_name: &str,
+    ) -> Vec<(String, ExportMatch)> {
+        let Some(file) = self.files.get(file_name) else {
+            return Vec::new();
+        };
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return Vec::new();
+        };
+
+        let mut matches = Vec::new();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = arena.get_module(stmt_node) else {
+                continue;
+            };
+            let Some(module_specifier) = arena.get_literal_text(module_decl.name) else {
+                continue;
+            };
+            let Some(module_body_node) = arena.get(module_decl.body) else {
+                continue;
+            };
+            if module_body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(module_block) = arena.get_module_block(module_body_node) else {
+                continue;
+            };
+            let Some(statements) = module_block.statements.as_ref() else {
+                continue;
+            };
+
+            for &module_stmt_idx in &statements.nodes {
+                let Some(module_stmt_node) = arena.get(module_stmt_idx) else {
+                    continue;
+                };
+                if module_stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    continue;
+                }
+                let Some(export) = arena.get_export_decl(module_stmt_node) else {
+                    continue;
+                };
+                if export.module_specifier.is_some() {
+                    continue;
+                }
+                if export.is_default_export {
+                    matches.push((
+                        module_specifier.to_string(),
+                        ExportMatch {
+                            kind: ImportCandidateKind::Default,
+                            is_type_only: export.is_type_only,
+                        },
+                    ));
+                }
+                if file.declaration_has_name(export.export_clause, export_name) {
+                    matches.push((
+                        module_specifier.to_string(),
+                        ExportMatch {
+                            kind: ImportCandidateKind::Named {
+                                export_name: export_name.to_string(),
+                            },
+                            is_type_only: export.is_type_only,
+                        },
+                    ));
+                }
             }
         }
 
@@ -3791,5 +3933,49 @@ mod tests {
         );
 
         assert!(project.auto_imports_allowed_for_file("/index.ts"));
+    }
+
+    #[test]
+    fn auto_import_candidates_include_ambient_module_exports() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/lib/index.d.ts".to_string(),
+            "declare module \"ambient\" { export const x: number; }\ndeclare module \"ambient/utils\" { export const x: number; }\n".to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "x".to_string());
+
+        let mut specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/index.ts", "x")
+            .into_iter()
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+        specs.sort();
+        specs.dedup();
+
+        assert_eq!(
+            specs,
+            vec!["ambient".to_string(), "ambient/utils".to_string()]
+        );
+    }
+
+    #[test]
+    fn ambient_module_auto_import_candidates_respect_specifier_exclude_regexes() {
+        let mut project = Project::new();
+        project.set_auto_import_specifier_exclude_regexes(vec!["utils".to_string()]);
+        project.set_file(
+            "/node_modules/lib/index.d.ts".to_string(),
+            "declare module \"ambient\" { export const x: number; }\ndeclare module \"ambient/utils\" { export const x: number; }\n".to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "x".to_string());
+
+        let mut specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/index.ts", "x")
+            .into_iter()
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+        specs.sort();
+        specs.dedup();
+
+        assert_eq!(specs, vec!["ambient".to_string()]);
     }
 }

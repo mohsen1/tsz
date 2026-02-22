@@ -4139,6 +4139,7 @@ mod tests {
             checks_completed: 0,
             response_seq: 0,
             open_files: FxHashMap::default(),
+            external_project_files: FxHashMap::default(),
             _server_mode: ServerMode::Semantic,
             _log_config: LogConfig {
                 level: LogLevel::Off,
