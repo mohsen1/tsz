@@ -1,0 +1,50 @@
+<div id="playground-root">
+  <div class="playground-toolbar">
+    <div class="toolbar-left">
+      <span class="toolbar-title">Playground</span>
+      <select id="example-select">
+        <option value="hello">Hello World</option>
+        <option value="generics">Generics</option>
+        <option value="narrowing">Type Narrowing</option>
+        <option value="errors">Type Errors</option>
+      </select>
+      <label class="toolbar-check">
+        <input type="checkbox" id="strict-mode" checked>
+        <span>strict</span>
+      </label>
+    </div>
+    <div class="toolbar-right">
+      <span id="playground-status" class="status-loading">Loading...</span>
+    </div>
+  </div>
+
+  <div class="playground-panels">
+    <div id="editor-container"></div>
+    <div class="playground-divider"></div>
+    <div class="playground-output">
+      <div class="output-tabs">
+        <button class="output-tab active" data-panel="diagnostics">
+          Diagnostics <span id="diag-badge" class="tab-badge" style="display:none">0</span>
+        </button>
+        <button class="output-tab" data-panel="js-output">JS Output</button>
+      </div>
+      <div id="diagnostics-panel" class="output-panel active">
+        <div class="diagnostics-empty">Type-check results appear here</div>
+      </div>
+      <div id="js-output-panel" class="output-panel">
+        <div id="js-output-editor"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="playground-fallback" style="display: none;">
+  <div class="fallback-box">
+    <p><strong>WASM module not available.</strong></p>
+    <p>The playground requires the tsz WASM build. To try tsz locally:</p>
+    <div class="install-block" style="justify-content: center;">
+      <span class="prompt">$</span>
+      <span class="cmd">npm install -g @mohsen-azimi/tsz-dev</span>
+    </div>
+  </div>
+</div>
