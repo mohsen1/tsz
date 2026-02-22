@@ -115,7 +115,7 @@ impl Project {
             for (module_specifier, export_match) in
                 self.matching_exports_in_ambient_modules(&file_name, missing_name)
             {
-                if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                if self.is_ambient_module_candidate_excluded(&module_specifier) {
                     continue;
                 }
 
@@ -222,7 +222,7 @@ impl Project {
                 for (module_specifier, export_match) in
                     self.matching_exports_in_ambient_modules(&file_name, &symbol_name)
                 {
-                    if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                    if self.is_ambient_module_candidate_excluded(&module_specifier) {
                         continue;
                     }
 
@@ -351,6 +351,73 @@ impl Project {
                 .auto_import_path_is_excluded(synthetic_node_modules_path.trim_start_matches('/'))
     }
 
+    fn is_ambient_module_candidate_excluded(&self, module_specifier: &str) -> bool {
+        if self.auto_import_specifier_is_excluded(module_specifier) {
+            return true;
+        }
+
+        if module_specifier.starts_with('.') {
+            return false;
+        }
+
+        if self.auto_import_path_is_excluded(module_specifier) {
+            return true;
+        }
+
+        let synthetic_node_modules_path = format!("/node_modules/{module_specifier}");
+        if self.auto_import_path_is_excluded(&synthetic_node_modules_path)
+            || self
+                .auto_import_path_is_excluded(synthetic_node_modules_path.trim_start_matches('/'))
+        {
+            return true;
+        }
+
+        self.ambient_module_declarations_all_excluded(module_specifier)
+    }
+
+    fn ambient_module_declarations_all_excluded(&self, module_specifier: &str) -> bool {
+        let mut found_declaration = false;
+
+        for (file_name, file) in &self.files {
+            if !Self::file_declares_ambient_module(file, module_specifier) {
+                continue;
+            }
+            found_declaration = true;
+            if !self.auto_import_path_is_excluded(file_name) {
+                return false;
+            }
+        }
+
+        found_declaration
+    }
+
+    fn file_declares_ambient_module(file: &ProjectFile, module_specifier: &str) -> bool {
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = arena.get_module(stmt_node) else {
+                continue;
+            };
+            let Some(declared_name) = arena.get_literal_text(module_decl.name) else {
+                continue;
+            };
+            if declared_name == module_specifier {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn completion_from_import_candidate(
         &self,
         candidate: &ImportCandidate,
@@ -469,6 +536,21 @@ impl Project {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                let Some(export_assign) = arena.get_export_assignment(stmt_node) else {
+                    continue;
+                };
+                if export_assign.is_export_equals
+                    && let Some(expr_text) = arena.get_identifier_text(export_assign.expression)
+                    && expr_text == export_name
+                {
+                    matches.push(ExportMatch {
+                        kind: ImportCandidateKind::Default,
+                        is_type_only: false,
+                    });
+                }
+                continue;
+            }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                 continue;
             }
@@ -1093,5 +1175,90 @@ mod tests {
         specs.dedup();
 
         assert_eq!(specs, vec!["ambient".to_string()]);
+    }
+
+    #[test]
+    fn ambient_module_auto_import_file_exclude_patterns_are_all_or_nothing() {
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec!["/**/ambient1.d.ts".to_string()]);
+        project.set_file(
+            "/ambient1.d.ts".to_string(),
+            "declare module \"foo\" { export const x = 1; }\n".to_string(),
+        );
+        project.set_file(
+            "/ambient2.d.ts".to_string(),
+            "declare module \"foo\" { export const y = 2; }\n".to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "x".to_string());
+
+        let names: FxHashSet<String> = project
+            .get_import_candidates_for_prefix("/index.ts", "")
+            .into_iter()
+            .filter(|candidate| candidate.module_specifier == "foo")
+            .map(|candidate| candidate.local_name)
+            .collect();
+
+        assert!(
+            names.contains("x"),
+            "Expected ambient module symbol `x` to remain when only part of a merged ambient module is excluded"
+        );
+        assert!(
+            names.contains("y"),
+            "Expected ambient module symbol `y` to remain when only part of a merged ambient module is excluded"
+        );
+    }
+
+    #[test]
+    fn ambient_module_auto_import_file_exclude_patterns_hide_when_all_declarations_excluded() {
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec!["/**/ambient*".to_string()]);
+        project.set_file(
+            "/ambient1.d.ts".to_string(),
+            "declare module \"foo\" { export const x = 1; }\n".to_string(),
+        );
+        project.set_file(
+            "/ambient2.d.ts".to_string(),
+            "declare module \"foo\" { export const y = 2; }\n".to_string(),
+        );
+        project.set_file("/index.ts".to_string(), "x".to_string());
+
+        let candidates = project.get_import_candidates_for_prefix("/index.ts", "");
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate.module_specifier == "foo"),
+            "Expected ambient module `foo` to be excluded when all declaration files are excluded"
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_include_export_equals_identifier_default() {
+        let mut project = Project::new();
+        project.set_file(
+            "/ts.d.ts".to_string(),
+            r#"declare namespace ts {
+  interface SourceFile {
+    text: string;
+  }
+}
+export = ts;
+"#
+            .to_string(),
+        );
+        project.set_file("/types.ts".to_string(), "ts".to_string());
+
+        let has_ts_default = project
+            .get_import_candidates_for_prefix("/types.ts", "ts")
+            .into_iter()
+            .any(|candidate| {
+                candidate.local_name == "ts"
+                    && candidate.module_specifier == "./ts"
+                    && matches!(candidate.kind, ImportCandidateKind::Default)
+            });
+
+        assert!(
+            has_ts_default,
+            "expected default auto-import candidate `ts` from `./ts` for `export = ts` declarations"
+        );
     }
 }

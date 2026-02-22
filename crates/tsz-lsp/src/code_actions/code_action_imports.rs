@@ -549,19 +549,46 @@ impl<'a> CodeActionProvider<'a> {
     /// This is a public wrapper around `build_import_edit` specifically for
     /// use by the completion system when suggesting auto-imports.
     ///
-    /// # Arguments
-    /// * `root` - The root node of the AST
-    /// * `candidate` - The import candidate to generate edits for
-    ///
-    /// # Returns
-    /// * `Some(Vec<TextEdit>)` - Text edits to insert the import statement
-    /// * `None` - If the symbol is already imported or the edit cannot be generated
     pub fn build_auto_import_edit(
         &self,
         root: NodeIndex,
         candidate: &ImportCandidate,
     ) -> Option<Vec<TextEdit>> {
         self.build_import_edit(root, candidate)
+    }
+
+    /// Generate completion auto-import text edits with usage-aware `import type`
+    /// inference at the active cursor position.
+    pub fn build_auto_import_edit_for_completion(
+        &self,
+        root: NodeIndex,
+        candidate: &ImportCandidate,
+        position: Position,
+    ) -> Option<Vec<TextEdit>> {
+        let mut resolved = candidate.clone();
+        let usage = self
+            .line_map
+            .position_to_offset(position, self.source)
+            .and_then(|offset| {
+                let node_idx = find_node_at_offset(self.arena, offset);
+                if node_idx.is_none() {
+                    return None;
+                }
+                let node = self.arena.get(node_idx)?;
+                if node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                Some(self.import_usage_for_node(node_idx))
+            })
+            .or_else(|| self.find_identifier_usage_by_name(&candidate.local_name))
+            .unwrap_or(ImportUsage::Value);
+
+        if usage == ImportUsage::Value && candidate.is_type_only {
+            return None;
+        }
+        resolved.is_type_only = usage == ImportUsage::Type;
+
+        self.build_import_edit(root, &resolved)
     }
 
     fn try_merge_default_import(

@@ -221,3 +221,41 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still generate new local baselines in this run.
   Reason: remaining gaps are cross-file rename/definition/reference parity for arbitrary module namespace identifiers, which require broader project-wide symbol-resolution behavior beyond this targeted diagnostics fix.
+
+## 2026-02-22 (completion globals parity follow-up)
+
+Completed in this pass:
+- Tightened tsserver completion sorting to use TypeScript-style case-sensitive UI numeric ordering in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`.
+- Added focused tsserver completion sorting unit coverage for numeric segment ordering (`Int8Array` before `Int16Array`) in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`.
+- Added tsserver-level unit coverage for ambient merged-module `autoImportFileExcludePatterns` semantics in `crates/tsz-cli/src/bin/tsz_server/tests.rs`.
+- Added tsserver-level unit coverage to ensure synthetic CommonJS helper names (`exports`/`require`) are excluded from global completion lists in `crates/tsz-cli/src/bin/tsz_server/tests.rs`.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts`: still fails exact globals-plus completion parity.
+  Reason: local tsserver/unit scenarios now match expected ambient exclusion and sorting behavior, so the remaining mismatch appears to be in fourslash adapter/request-shaping parity (marker/options/context flow), not the core completion resolver.
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns3.ts`: still fails exact globals-plus completion parity.
+  Reason: same remaining adapter-level parity gap as above; project/handler-level logic reproduces expected `x`/`y` behavior in focused tests.
+- `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list parity.
+  Reason: likely tied to the same completion-list shaping/parity layer around exact globals-plus matching in fourslash, beyond the resolver/ordering fixes in this pass.
+
+## 2026-02-22 (autoImportTypeOnlyPreferred1 completion follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts` completion/code-action parity by:
+  - preserving tsserver-style completion entry `sourceDisplay` payload shape in `completionInfo`,
+  - serializing LSP completion item `sourceDisplay` with tsserver-compatible camelCase key,
+  - making completion auto-import edit synthesis usage-aware so type-position completions emit `import type` edits.
+- Added focused unit coverage:
+  - `crates/tsz-lsp/tests/completions_tests.rs` (`sourceDisplay` serialization key)
+  - `crates/tsz-lsp/tests/project_tests.rs` (`export =` auto-import completion presence)
+  - `crates/tsz-lsp/src/project_imports.rs` (export-assignment candidate collection)
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`completionInfo` + `completionEntryDetails` for type-only default auto-import from `export = ts`)
+- `./scripts/run-fourslash.sh --max=200` improved from `185/200` passing to `186/200` passing in this run.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns2.ts`: still fails exact `globalsPlus` completion-list equality (cardinality/content mismatch).
+  Reason: remaining mismatch appears to be broader completion list shaping parity in the fourslash adapter/global-surface layer, beyond this targeted type-only completion fix.
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns3.ts`: still fails exact `globalsPlus` completion-list equality.
+  Reason: same adapter/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion list source harmonization.
+- `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list equality.
+  Reason: tied to the same unresolved global completion surface/content parity path as the `autoImportFileExcludePatterns{2,3}` failures.
