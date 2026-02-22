@@ -111,7 +111,14 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::CONST_ENUM
                             | symbol_flags::ENUM_MEMBER;
 
-                        if (symbol.flags & valid_namespace_flags) == 0 {
+                        // Skip TS2713 for ALIAS symbols (imports) - they may target
+                        // namespaces in other files. Also skip when parse errors exist,
+                        // as the qualified name may be incomplete/malformed.
+                        let is_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
+                        if (symbol.flags & valid_namespace_flags) == 0
+                            && !is_alias
+                            && !self.ctx.has_parse_errors
+                        {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
                                 && let Some(id) = self.ctx.arena.get_identifier(right_node)
                             {

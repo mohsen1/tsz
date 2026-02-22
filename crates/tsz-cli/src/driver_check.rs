@@ -449,6 +449,7 @@ pub(super) fn collect_diagnostics(
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
         let check_js = options.check_js;
+        let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let lib_ctx_for_parallel = lib_contexts.to_vec();
 
@@ -480,6 +481,7 @@ pub(super) fn collect_diagnostics(
                             is_external_module_by_file: &is_external_module_by_file,
                             no_check,
                             check_js,
+                            skip_lib_check,
                         };
                         check_file_for_parallel(context)
                     })
@@ -505,6 +507,7 @@ pub(super) fn collect_diagnostics(
                             is_external_module_by_file: &is_external_module_by_file,
                             no_check,
                             check_js,
+                            skip_lib_check,
                         };
                         check_file_for_parallel(context)
                     })
@@ -532,6 +535,7 @@ pub(super) fn collect_diagnostics(
                     is_external_module_by_file: &is_external_module_by_file,
                     no_check,
                     check_js,
+                    skip_lib_check,
                 };
                 check_file_for_parallel(context)
             })
@@ -682,6 +686,12 @@ pub(super) fn collect_diagnostics(
                     parse_diagnostic,
                 ));
             }
+            // skipLibCheck: skip type checking of declaration files (.d.ts)
+            if options.skip_lib_check && file.file_name.ends_with(".d.ts") {
+                diagnostics.extend(file_diagnostics);
+                continue;
+            }
+
             // Note: We always run checking for all files (JS and TS).
             // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
             // even for JS files without checkJs. Only type-level errors are gated by checkJs.
@@ -889,6 +899,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     is_external_module_by_file: &'a Arc<FxHashMap<String, bool>>,
     no_check: bool,
     check_js: bool,
+    skip_lib_check: bool,
 }
 
 /// Check a single file for the parallel checking path.
@@ -914,8 +925,14 @@ pub(super) fn check_file_for_parallel<'a>(
         is_external_module_by_file,
         no_check,
         check_js,
+        skip_lib_check,
     } = context;
     let file = &program.files[file_idx];
+
+    // skipLibCheck: skip type checking of declaration files (.d.ts)
+    if skip_lib_check && file.file_name.ends_with(".d.ts") {
+        return Vec::new();
+    }
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
     // Build resolved_modules from the pre-computed resolved module maps
