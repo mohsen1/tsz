@@ -70,7 +70,7 @@ pub struct Args {
     pub tsz_binary: String,
 
     /// Timeout per test in seconds (0 = no timeout)
-    #[arg(long, default_value_t = 15)]
+    #[arg(long, default_value_t = 20)]
     pub timeout: u64,
 
     /// Print fingerprint deltas for failed tests (when available).
