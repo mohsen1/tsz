@@ -722,8 +722,14 @@ impl Server {
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
+            // TypeScript treats absolute position 0 as a source-file call hierarchy query.
+            // In tsserver protocol this is line:1/offset:1, and should not probe into
+            // adjacent offsets to resolve the first identifier token.
+            let is_file_start_query = line == 1 && offset == 1;
             let mut positions = vec![position];
-            if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
+            if !is_file_start_query
+                && let Some(base_offset) = line_map.position_to_offset(position, &source_text)
+            {
                 let len = source_text.len() as u32;
                 if base_offset < len {
                     positions.push(
@@ -739,6 +745,9 @@ impl Server {
             }
 
             if is_incoming {
+                if is_file_start_query {
+                    return Some(serde_json::json!([]));
+                }
                 let mut calls = Vec::new();
                 for probe in &positions {
                     calls = provider.incoming_calls(root, *probe);
@@ -786,6 +795,9 @@ impl Server {
                     .collect();
                 Some(serde_json::json!(body))
             } else {
+                if is_file_start_query {
+                    return Some(serde_json::json!([]));
+                }
                 // Prefer exact-position outgoing calls; if the cursor sits on a
                 // token boundary where prepare fails, probe adjacent offsets to
                 // recover the same behavior used by prepare/incoming handlers.
