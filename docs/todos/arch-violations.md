@@ -42,7 +42,7 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 |------|-------|----------|
 | `state_checking_members/ambient_signature_checks.rs` | 1,767 | 233 lines |
 | `types/type_node.rs` | 1,765 | 235 lines |
-| `flow/control_flow.rs` | 1,734 | 266 lines |
+| ~~`flow/control_flow.rs`~~ | ~~1,734~~ | ~~266 lines~~ | ✅ Split — extracted definite assignment traversal + variable declaration utilities (~370 LOC) into `control_flow_var_utils.rs`, reducing to 1,364 LOC |
 | `types/type_checking_utilities_jsdoc.rs` | 1,728 | 272 lines |
 | `types/type_checking_queries_class.rs` | 1,713 | 287 lines |
 

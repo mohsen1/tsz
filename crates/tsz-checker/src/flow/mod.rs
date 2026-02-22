@@ -4,6 +4,7 @@ pub(crate) mod control_flow_condition_narrowing;
 pub(crate) mod control_flow_narrowing;
 pub(crate) mod control_flow_references;
 pub(crate) mod control_flow_type_guards;
+pub(crate) mod control_flow_var_utils;
 pub mod flow_analysis;
 pub(crate) mod flow_analysis_definite;
 pub(crate) mod flow_analysis_usage;
