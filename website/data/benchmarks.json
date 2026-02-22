@@ -1,0 +1,200 @@
+{
+  "generated_at": "2026-02-22T06:24:36.179Z",
+  "benchmark_runner": "scripts/bench-vs-tsgo.sh",
+  "quick_mode": true,
+  "filter": null,
+  "binaries": {
+    "tsz": "/Users/mohsenazimi/code/tsz/.target-bench/dist/tsz",
+    "tsgo": "/Users/mohsenazimi/code/tsz/.target-bench/tools/tsgo/node_modules/.bin/tsgo",
+    "tsc": "/Users/mohsenazimi/code/tsz/.target-bench/tools/tsc/node_modules/.bin/tsc"
+  },
+  "totals": {
+    "benchmarks_run": 15,
+    "rows": 15,
+    "tsz_wins": 15,
+    "tsgo_wins": 0,
+    "error_cases": 0
+  },
+  "results": [
+    {
+      "name": "manyConstExports.ts",
+      "lines": 5003,
+      "kb": 150,
+      "tsz_ms": 41.07,
+      "tsgo_ms": 173.82,
+      "tsz_lps": 121830,
+      "tsgo_lps": 28783,
+      "winner": "tsz",
+      "factor": 4.23,
+      "status": null
+    },
+    {
+      "name": "enumLiteralsSubtypeReduction.ts",
+      "lines": 2055,
+      "kb": 39,
+      "tsz_ms": 37.3,
+      "tsgo_ms": 180.74,
+      "tsz_lps": 55090,
+      "tsgo_lps": 11370,
+      "winner": "tsz",
+      "factor": 4.85,
+      "status": null
+    },
+    {
+      "name": "utility-types/index.ts",
+      "lines": 69,
+      "kb": 1,
+      "tsz_ms": 41.87,
+      "tsgo_ms": 169.87,
+      "tsz_lps": 1648,
+      "tsgo_lps": 406,
+      "winner": "tsz",
+      "factor": 4.06,
+      "status": null
+    },
+    {
+      "name": "ts-toolbelt/Iteration/Iteration.ts",
+      "lines": 215,
+      "kb": 8,
+      "tsz_ms": 29.29,
+      "tsgo_ms": 170.85,
+      "tsz_lps": 7339,
+      "tsgo_lps": 1258,
+      "winner": "tsz",
+      "factor": 5.83,
+      "status": null
+    },
+    {
+      "name": "ts-essentials/paths.ts",
+      "lines": 101,
+      "kb": 3,
+      "tsz_ms": 76.25,
+      "tsgo_ms": 172.57,
+      "tsz_lps": 1325,
+      "tsgo_lps": 585,
+      "winner": "tsz",
+      "factor": 2.26,
+      "status": null
+    },
+    {
+      "name": "100 classes",
+      "lines": 4603,
+      "kb": 81,
+      "tsz_ms": 44.53,
+      "tsgo_ms": 172.38,
+      "tsz_lps": 103357,
+      "tsgo_lps": 26703,
+      "winner": "tsz",
+      "factor": 3.87,
+      "status": null
+    },
+    {
+      "name": "50 generic functions",
+      "lines": 1161,
+      "kb": 36,
+      "tsz_ms": 42.83,
+      "tsgo_ms": 173.75,
+      "tsz_lps": 27107,
+      "tsgo_lps": 6682,
+      "winner": "tsz",
+      "factor": 4.06,
+      "status": null
+    },
+    {
+      "name": "DeepPartial optional-chain N=50",
+      "lines": 2074,
+      "kb": 514,
+      "tsz_ms": 101.28,
+      "tsgo_ms": 224.49,
+      "tsz_lps": 20477,
+      "tsgo_lps": 9239,
+      "winner": "tsz",
+      "factor": 2.22,
+      "status": null
+    },
+    {
+      "name": "Shallow optional-chain N=50",
+      "lines": 2070,
+      "kb": 514,
+      "tsz_ms": 89.11,
+      "tsgo_ms": 224.52,
+      "tsz_lps": 23229,
+      "tsgo_lps": 9220,
+      "winner": "tsz",
+      "factor": 2.52,
+      "status": null
+    },
+    {
+      "name": "Recursive generic depth=25",
+      "lines": 44,
+      "kb": 1,
+      "tsz_ms": 33.05,
+      "tsgo_ms": 177.87,
+      "tsz_lps": 1331,
+      "tsgo_lps": 247,
+      "winner": "tsz",
+      "factor": 5.38,
+      "status": null
+    },
+    {
+      "name": "Conditional dist N=50",
+      "lines": 82,
+      "kb": 1,
+      "tsz_ms": 28.94,
+      "tsgo_ms": 198.37,
+      "tsz_lps": 2834,
+      "tsgo_lps": 413,
+      "winner": "tsz",
+      "factor": 6.86,
+      "status": null
+    },
+    {
+      "name": "Mapped type keys=100",
+      "lines": 131,
+      "kb": 2,
+      "tsz_ms": 29.5,
+      "tsgo_ms": 170.78,
+      "tsz_lps": 4441,
+      "tsgo_lps": 767,
+      "winner": "tsz",
+      "factor": 5.79,
+      "status": null
+    },
+    {
+      "name": "BCT candidates=50",
+      "lines": 128,
+      "kb": 9,
+      "tsz_ms": 33.64,
+      "tsgo_ms": 174.2,
+      "tsz_lps": 3805,
+      "tsgo_lps": 735,
+      "winner": "tsz",
+      "factor": 5.18,
+      "status": null
+    },
+    {
+      "name": "Constraint conflicts N=30",
+      "lines": 139,
+      "kb": 13,
+      "tsz_ms": 30.36,
+      "tsgo_ms": 173.09,
+      "tsz_lps": 4578,
+      "tsgo_lps": 803,
+      "winner": "tsz",
+      "factor": 5.7,
+      "status": null
+    },
+    {
+      "name": "Mapped complex template keys=50",
+      "lines": 102,
+      "kb": 3,
+      "tsz_ms": 40.83,
+      "tsgo_ms": 169.81,
+      "tsz_lps": 2498,
+      "tsgo_lps": 601,
+      "winner": "tsz",
+      "factor": 4.16,
+      "status": null
+    }
+  ]
+}
