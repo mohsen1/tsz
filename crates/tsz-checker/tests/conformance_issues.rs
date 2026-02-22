@@ -251,6 +251,39 @@ type BadPropertyType<T extends object, K> = T[K];
 }
 
 #[test]
+fn test_indexed_access_array_element_through_constrained_union_no_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Node =
+    | { name: 'a'; children: Node[] }
+    | { name: 'b'; children: Node[] };
+
+type ChildrenOf<T extends Node> = T['children'][number];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 for element access through constrained array property.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_indexed_access_scalar_property_then_number_index_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Boxed = { value: number };
+type Bad<T extends Boxed> = T['value'][number];
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536 when indexing a constrained scalar property with number.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
     if load_lib_files_for_test().is_empty() {
         return;

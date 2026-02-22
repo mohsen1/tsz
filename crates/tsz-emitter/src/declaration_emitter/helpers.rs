@@ -1630,6 +1630,76 @@ impl<'a> DeclarationEmitter<'a> {
         self.import_plan.auto_generated = modules;
     }
 
+    /// Emit type annotation (or literal initializer) for a single variable declaration.
+    ///
+    /// Handles: literal const initializers, explicit type annotations, unique symbol,
+    /// null/undefined → `any`, inferred type from cache, and fallback type inference.
+    ///
+    /// Used by both `emit_exported_variable` and `emit_variable_declaration_statement`
+    /// to avoid duplicated type emission logic.
+    pub(crate) fn emit_variable_decl_type_or_initializer(
+        &mut self,
+        keyword: &str,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+        type_annotation: NodeIndex,
+        initializer: NodeIndex,
+        has_type_annotation: bool,
+        has_initializer: bool,
+    ) {
+        // Determine if we should emit a literal initializer for const
+        let use_literal_initializer =
+            if keyword == "const" && !has_type_annotation && has_initializer {
+                // Check if initializer is a primitive literal
+                // Note: null is excluded — `const x = null` should emit `: any` in .d.ts
+                if let Some(init_node) = self.arena.get(initializer) {
+                    let k = init_node.kind;
+                    k == SyntaxKind::StringLiteral as u16
+                        || k == SyntaxKind::NumericLiteral as u16
+                        || k == SyntaxKind::TrueKeyword as u16
+                        || k == SyntaxKind::FalseKeyword as u16
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+        if use_literal_initializer {
+            self.write(" = ");
+            self.emit_expression(initializer);
+        } else {
+            let is_unique_symbol =
+                keyword == "const" && has_initializer && self.is_symbol_call(initializer);
+
+            let is_null_or_undefined = if has_initializer {
+                if let Some(init_node) = self.arena.get(initializer) {
+                    let k = init_node.kind;
+                    k == SyntaxKind::NullKeyword as u16 || k == SyntaxKind::UndefinedKeyword as u16
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if has_type_annotation {
+                self.write(": ");
+                self.emit_type(type_annotation);
+            } else if is_unique_symbol {
+                self.write(": unique symbol");
+            } else if is_null_or_undefined {
+                self.write(": any");
+            } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
+                self.write(": ");
+                self.write(&self.print_type_id(type_id));
+            } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
+                self.write(": ");
+                self.write(&type_text);
+            }
+        }
+    }
+
     /// Emit required imports at the beginning of the .d.ts file.
     ///
     /// This should be called before emitting other declarations.

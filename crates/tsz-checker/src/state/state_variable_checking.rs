@@ -1151,9 +1151,26 @@ impl<'a> CheckerState<'a> {
                         // TS7034 fires when the variable is captured by a nested function.
                         // Detection happens in get_type_of_identifier when a reference
                         // to this variable is found inside a nested function scope.
-                        self.ctx
-                            .pending_implicit_any_vars
-                            .insert(sym_id, var_decl.name);
+                        //
+                        // tsc only emits TS7034/TS7005 for function-scoped (var) declarations.
+                        // Block-scoped (let/const/using) declarations are NOT subject to
+                        // these diagnostics — tsc treats their implicit `any` as benign.
+                        let is_block_scoped_decl = if let Some(ext) =
+                            self.ctx.arena.get_extended(decl_idx)
+                            && let Some(parent) = self.ctx.arena.get(ext.parent)
+                            && parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        {
+                            let flags = parent.flags as u32;
+                            use tsz_parser::parser::node_flags;
+                            (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0
+                        } else {
+                            false
+                        };
+                        if !is_block_scoped_decl {
+                            self.ctx
+                                .pending_implicit_any_vars
+                                .insert(sym_id, var_decl.name);
+                        }
                     }
                 }
             }
