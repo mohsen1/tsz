@@ -350,11 +350,13 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            if let Some(usage_node) = self.ctx.arena.get(idx) {
-                // If usage is textually at or after declaration, it's assigned
-                if usage_node.pos >= decl_node.end {
-                    return false;
-                }
+            if let Some(_usage_node) = self.ctx.arena.get(idx) {
+                // Check if usage is textually inside the initializer expression of the variable.
+                // e.g. var x = f(() => x); // `x` inside is used before assignment completes!
+                // However, general usages after the declaration shouldn't be skipped just because of position,
+                // as they could be in a catch block or after a conditional return.
+                // The control flow graph should be the ultimate source of truth.
+
                 // If usage is inside a nested function relative to the declaration, skip
                 if self.find_enclosing_function_or_source_file(decl_id_to_check)
                     != self.find_enclosing_function_or_source_file(idx)

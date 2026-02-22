@@ -871,6 +871,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return expr_type;
         }
 
+        let name_opt = if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                self.ctx
+                    .arena
+                    .get_identifier(expr_node)
+                    .map(|id| id.escaped_text.as_str())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if name_opt == Some("default") {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let msg = format_message(diagnostic_messages::CANNOT_FIND_NAME, &["default"]);
+            self.ctx.error(
+                self.ctx.arena.get(type_query.expr_name).unwrap().pos,
+                self.ctx.arena.get(type_query.expr_name).unwrap().end
+                    - self.ctx.arena.get(type_query.expr_name).unwrap().pos,
+                msg,
+                diagnostic_codes::CANNOT_FIND_NAME,
+            );
+            return TypeId::ERROR;
+        }
+
         // Check typeof_param_scope — resolves `typeof paramName` in return type
         // annotations where the parameter isn't a file-level binding.
         if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
@@ -893,6 +919,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
+            if name == "default" {
+                return None;
+            }
             let sym_id = self.ctx.binder.file_locals.get(name)?;
             Some(sym_id.0)
         };
@@ -919,6 +948,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             let ident = self.ctx.arena.get_identifier(node)?;
             let name = ident.escaped_text.as_str();
+            if name == "default" {
+                return None;
+            }
             let sym_id = self.ctx.binder.file_locals.get(name)?;
             return Some(sym_id);
         }
