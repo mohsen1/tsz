@@ -521,10 +521,11 @@ impl<'a> Printer<'a> {
         }
 
         // Collect instance `accessor` fields to lower using WeakMap-backed
-        // getter/setter pairs on ES2015+ output targets.
+        // getter/setter pairs. Only needed when target < ES2022 (ES2022+ uses
+        // native private fields / accessor syntax).
         let mut auto_accessor_members: Vec<(NodeIndex, String, Option<NodeIndex>)> = Vec::new();
         let mut auto_accessor_inits: Vec<(String, Option<NodeIndex>)> = Vec::new();
-        if !class_name.is_empty() {
+        if !class_name.is_empty() && self.ctx.needs_es2022_lowering {
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;

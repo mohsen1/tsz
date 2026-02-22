@@ -70,6 +70,26 @@ fn test_lowering_pass_es2015_accessor_class_marks_auto_accessor_helpers() {
 }
 
 #[test]
+fn test_lowering_pass_es2022_accessor_class_skips_private_field_helpers() {
+    let (arena, root) = parse("class RegularClass { accessor shouldError: string; }");
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2022);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let helpers = transforms.helpers();
+    assert!(
+        !helpers.class_private_field_get,
+        "ES2022+ target should not emit private field helpers for auto-accessor class"
+    );
+    assert!(
+        !helpers.class_private_field_set,
+        "ES2022+ target should not emit private field helpers for auto-accessor class"
+    );
+}
+
+#[test]
 fn test_lowering_pass_commonjs_export() {
     let (arena, root) = parse("export class Foo {}");
     let mut ctx = EmitContext::default();
