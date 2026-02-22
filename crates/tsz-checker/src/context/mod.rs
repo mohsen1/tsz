@@ -432,6 +432,11 @@ pub struct CheckerContext<'a> {
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
     pub class_symbol_to_decl_cache: RefCell<FxHashMap<SymbolId, Option<NodeIndex>>>,
 
+    /// Cache heritage expression node -> resolved symbol lookups.
+    /// Stores misses as `None` to avoid repeating namespace/alias walks across
+    /// class and interface inheritance passes.
+    pub heritage_symbol_cache: RefCell<FxHashMap<NodeIndex, Option<SymbolId>>>,
+
     /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
     /// Avoids repeating private-brand scans on hot miss paths.
     pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,
