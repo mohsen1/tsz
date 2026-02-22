@@ -27,10 +27,10 @@
 //! assert!(output.contains("const x = 42"));
 //! ```
 
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
+use crate::context::transform::TransformContext;
 use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
 use crate::lowering::LoweringPass;
-use crate::transform_context::TransformContext;
 use std::io::{self, Write};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;

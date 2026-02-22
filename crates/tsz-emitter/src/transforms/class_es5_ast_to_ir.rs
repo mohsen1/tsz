@@ -995,7 +995,7 @@ impl<'a> AstToIr<'a> {
         if let Some(arrow) = self.arena.get_function(node) {
             // First check if there's a directive from LoweringPass
             let (captures_this, class_alias) = if let Some(ref transforms) = self.transforms {
-                if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
                     captures_this,
                     class_alias,
                     ..

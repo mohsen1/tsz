@@ -208,15 +208,11 @@ pub use tsz_emitter::source_writer;
 #[path = "../tests/source_writer_tests.rs"]
 mod source_writer_tests;
 
-// EmitContext - re-exported from tsz-emitter workspace crate
-pub use tsz_emitter::emit_context;
-
-// TransformContext - re-exported from tsz-emitter workspace crate
-pub use tsz_emitter::transform_context;
+// Context (EmitContext, TransformContext) - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::context;
 
 // LoweringPass - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::lowering;
-pub use tsz_emitter::lowering_pass;
 
 // Declaration file emitter - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::declaration_emitter;
@@ -287,10 +283,11 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
-use crate::emit_context::EmitContext;
+use crate::context::emit::EmitContext;
+use crate::context::transform::TransformContext;
 use crate::emitter::{Printer, PrinterOptions};
 use crate::lib_loader::LibFile;
-use crate::lowering_pass::LoweringPass;
+use crate::lowering::LoweringPass;
 use crate::lsp::diagnostics::convert_diagnostic;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::ScopeCache;
@@ -300,7 +297,6 @@ use crate::lsp::{
     RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::parser::ParserState;
-use crate::transform_context::TransformContext;
 use serde::Deserialize;
 use std::sync::Arc;
 use tsz_solver::TypeInterner;

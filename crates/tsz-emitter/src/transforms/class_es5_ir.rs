@@ -76,7 +76,7 @@ pub use ast_to_ir::AstToIr;
 #[path = "class_es5_ir_members.rs"]
 mod members;
 
-use crate::transform_context::TransformContext;
+use crate::context::transform::TransformContext;
 use crate::transforms::ir::{
     IRCatchClause, IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind, IRSwitchCase,
 };
@@ -1163,7 +1163,7 @@ impl<'a> ES5ClassTransformer<'a> {
             // Check if any arrow function has a class_alias directive
             for &arrow_idx in &arrow_indices {
                 if let Some(dir) = transforms.get(arrow_idx)
-                    && let crate::transform_context::TransformDirective::ES5ArrowFunction {
+                    && let crate::context::transform::TransformDirective::ES5ArrowFunction {
                         class_alias,
                         ..
                     } = dir
@@ -1197,7 +1197,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Check if any arrow function captures `this`
         for &arrow_idx in &arrow_indices {
             if let Some(ref transforms) = self.transforms {
-                if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
                     captures_this,
                     ..
                 }) = transforms.get(arrow_idx)
@@ -1234,7 +1234,7 @@ impl<'a> ES5ClassTransformer<'a> {
             self.collect_arrow_functions_in_node(prop_data.initializer, &mut arrows);
             for &arrow_idx in &arrows {
                 if let Some(ref transforms) = self.transforms {
-                    if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                    if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
                         captures_this,
                         ..
                     }) = transforms.get(arrow_idx)

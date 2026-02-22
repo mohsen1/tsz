@@ -5,10 +5,10 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 
+use tsz::context::emit::EmitContext;
 use tsz::declaration_emitter::DeclarationEmitter;
-use tsz::emit_context::EmitContext;
 use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
-use tsz::lowering_pass::LoweringPass;
+use tsz::lowering::LoweringPass;
 use tsz::parser::{NodeArena, NodeIndex, ParserState};
 
 /// Emit result containing output files and diagnostics

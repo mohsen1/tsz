@@ -1,6 +1,6 @@
 use super::is_valid_identifier_name;
 use super::{ModuleKind, Printer};
-use crate::transform_context::IdentifierId;
+use crate::context::transform::IdentifierId;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::emit_utils;
 use tsz_parser::parser::node::Node;

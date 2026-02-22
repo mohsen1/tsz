@@ -22,20 +22,20 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_module_wrapper(
         &mut self,
-        format: crate::transform_context::ModuleFormat,
+        format: crate::context::transform::ModuleFormat,
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
         source: &tsz_parser::parser::node::SourceFileData,
         source_idx: NodeIndex,
     ) {
         match format {
-            crate::transform_context::ModuleFormat::AMD => {
+            crate::context::transform::ModuleFormat::AMD => {
                 self.emit_amd_wrapper(dependencies, source_node, source_idx);
             }
-            crate::transform_context::ModuleFormat::UMD => {
+            crate::context::transform::ModuleFormat::UMD => {
                 self.emit_umd_wrapper(source_node, source_idx);
             }
-            crate::transform_context::ModuleFormat::System => {
+            crate::context::transform::ModuleFormat::System => {
                 self.emit_system_wrapper(dependencies, source_node, source_idx);
             }
             _ => {

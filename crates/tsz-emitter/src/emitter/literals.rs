@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use super::Printer;
-use crate::transform_context::IdentifierId;
+use crate::context::transform::IdentifierId;
 use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
