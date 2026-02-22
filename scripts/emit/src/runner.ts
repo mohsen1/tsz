@@ -401,7 +401,8 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.module ? parseModule(String(directives.module))
       : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
 
-    // TS6: alwaysStrict defaults to true unless explicitly set to false
+    // TS6: alwaysStrict defaults to true unless explicitly set to false.
+    // Note: @strict: false does NOT affect alwaysStrict in TS6 — they are independent.
     const alwaysStrict = variant.alwaysstrict !== undefined
       ? variant.alwaysstrict === 'true'
       : directives.alwaysstrict !== false;
