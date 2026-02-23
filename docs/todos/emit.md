@@ -3,6 +3,19 @@
 ## Pattern Analysis (JS+DTS mode, current ~9811/13623 = 72.0% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Non-block else body put on new indented line** (+3 JS):
+  tsc puts non-block, non-if else bodies on a new indented line (`else\n    return;`),
+  but tsz was emitting them on the same line (`else return;`). Root cause: the else branch
+  in `emit_if_statement` always wrote `"else "` (same-line) without checking if the else
+  body was a block statement. Fix: added `else_is_block` check alongside `else_is_if`. When
+  the else body is neither a block nor an `if` statement, emit `"else"` followed by a
+  `write_line()` and indented body — matching the pattern already used for `then` non-block
+  bodies. Three unit tests added.
+  Tests fixed: `blockScopedBindingsReassignedInLoop6`, `derivedClassConstructorWithExplicitReturns01`,
+  and 1 other multi-issue test.
+  JS: 1437→1440, DTS unchanged, zero regressions.
+
+### Previously Fixed (This Branch)
 - **Multi-line comment reindentation for JSDoc and block comments** (+7 JS):
   When emitting multi-line comments (e.g., `/** ... */` JSDoc blocks), continuation lines
   (lines after `/**`) retained their source-level indentation instead of being reindented

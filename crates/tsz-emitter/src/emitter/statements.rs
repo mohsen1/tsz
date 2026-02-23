@@ -609,12 +609,24 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind == syntax_kind_ext::IF_STATEMENT);
+            let else_is_block = self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
             if else_is_erased && !else_is_if {
                 self.write("else");
                 self.write_line();
                 self.increase_indent();
                 self.emit(if_stmt.else_statement);
                 self.write(";");
+                self.decrease_indent();
+            } else if !else_is_if && !else_is_block {
+                // Non-block, non-if else body: put on new indented line,
+                // e.g., `else\n    return;` — matching tsc behavior.
+                self.write("else");
+                self.write_line();
+                self.increase_indent();
+                self.emit(if_stmt.else_statement);
                 self.decrease_indent();
             } else {
                 self.write("else ");
@@ -1779,6 +1791,91 @@ mod tests {
         assert!(
             output.contains("/*\n * top level comment\n */"),
             "Top-level multi-line comment should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Non-block else body should be on a new indented line,
+    /// e.g., `else\n    return;` — matching tsc behavior.
+    #[test]
+    fn else_non_block_body_on_new_line() {
+        let source = r#"function f(x: number) {
+    if (x > 0)
+        x++;
+    else
+        return;
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("else\n        return;"),
+            "Non-block else body should be on a new indented line.\nOutput:\n{output}"
+        );
+        // Must NOT produce `else return;` on the same line
+        assert!(
+            !output.contains("else return;"),
+            "Non-block else body should NOT be on the same line as 'else'.\nOutput:\n{output}"
+        );
+    }
+
+    /// Block else body should remain on the same line as `else`.
+    #[test]
+    fn else_block_body_on_same_line() {
+        let source = r#"function f(x: number) {
+    if (x > 0) {
+        x++;
+    } else {
+        return;
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("else {"),
+            "Block else body should stay on the same line as 'else'.\nOutput:\n{output}"
+        );
+    }
+
+    /// `else if` should remain on the same line as `else`.
+    #[test]
+    fn else_if_on_same_line() {
+        let source = r#"function f(x: number) {
+    if (x > 0)
+        x++;
+    else if (x < 0)
+        x--;
+    else
+        return;
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("else if (x < 0)"),
+            "'else if' should stay on the same line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("else\n"),
+            "Final else with non-block body should be on new indented line.\nOutput:\n{output}"
         );
     }
 }
