@@ -370,8 +370,8 @@ impl<'a> InferenceContext<'a> {
             // Since we already checked source == target at the top and returned true,
             // reaching here means source != target. If both are unit tuples, they're disjoint.
             // This avoids O(N) structural recursion for each comparison.
-            if visitor::is_unit_type(self.interner, source)
-                && visitor::is_unit_type(self.interner, target)
+            if visitor::is_identity_comparable_type(self.interner, source)
+                && visitor::is_identity_comparable_type(self.interner, target)
             {
                 return false;
             }

@@ -172,14 +172,16 @@ pub fn compute_best_common_type<R: TypeResolver>(
 
     // OPTIMIZATION: Unit-type fast-path
     // If ALL types are unit types (tuples of literals/enums, or literals themselves),
-    // no single type can be a supertype of the others (unit types are disjoint).
+    // no single type can be a supertype of the others (identity-comparable types are disjoint).
     // Skip the O(N²) subtype loop and go directly to union creation.
     // This turns O(N²) into O(N) for cases like enumLiteralsSubtypeReduction.ts
     // which has 500 distinct enum-tuple return types.
     if widened.len() > 2 {
-        let all_unit = widened.iter().all(|&ty| interner.is_unit_type(ty));
+        let all_unit = widened
+            .iter()
+            .all(|&ty| interner.is_identity_comparable_type(ty));
         if all_unit {
-            // All unit types -> no common supertype exists, create union
+            // All identity-comparable types -> no common supertype exists, create union
             return interner.union(widened.to_vec());
         }
     }

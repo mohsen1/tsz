@@ -30,7 +30,7 @@ use crate::types::{
     PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
     TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Visibility,
 };
-use crate::visitor::is_unit_type;
+use crate::visitor::is_identity_comparable_type;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
@@ -283,8 +283,8 @@ pub struct TypeInterner {
     conditional_types: ConcurrentValueInterner<ConditionalType>,
     mapped_types: ConcurrentValueInterner<MappedType>,
     applications: ConcurrentValueInterner<TypeApplication>,
-    /// Cache for `is_unit_type` checks (memoized O(1) lookup after first computation)
-    unit_type_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
+    identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts)
     array_base_type: OnceLock<TypeId>,
     /// Type parameters for the Array base type
@@ -324,7 +324,7 @@ impl TypeInterner {
             conditional_types: ConcurrentValueInterner::new(),
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
-            unit_type_cache: DashMap::with_hasher(FxBuildHasher),
+            identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: OnceLock::new(),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
@@ -376,18 +376,18 @@ impl TypeInterner {
             .get_or_init(|| DashMap::with_hasher(FxBuildHasher))
     }
 
-    /// Check if a type is a "unit type" (represents exactly one value).
+    /// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
     /// Results are cached for O(1) lookup after first computation.
     /// This is used for optimization in BCT and subtype checking.
     #[inline]
-    pub fn is_unit_type(&self, type_id: TypeId) -> bool {
+    pub fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
         // Fast path: check cache first
-        if let Some(cached) = self.unit_type_cache.get(&type_id) {
+        if let Some(cached) = self.identity_comparable_cache.get(&type_id) {
             return *cached;
         }
         // Compute and cache
-        let result = is_unit_type(self, type_id);
-        self.unit_type_cache.insert(type_id, result);
+        let result = is_identity_comparable_type(self, type_id);
+        self.identity_comparable_cache.insert(type_id, result);
         result
     }
 

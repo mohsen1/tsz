@@ -555,8 +555,8 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_class_base_type(symbol_id)
     }
 
-    fn is_unit_type(&self, type_id: TypeId) -> bool {
-        self.interner.is_unit_type(type_id)
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
+        self.interner.is_identity_comparable_type(type_id)
     }
 }
 

@@ -176,33 +176,36 @@ pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool
     matches!(types.lookup(type_id), Some(TypeData::Application(_)))
 }
 
-/// Check if a type is a "unit type" - a type that represents exactly one value.
+/// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
 ///
-/// Unit types are types where subtyping reduces to identity: two different unit types
-/// are always disjoint (neither is a subtype of the other, except for identity).
+/// Identity-comparable types are types where subtyping reduces to identity: two different
+/// identity-comparable types are always disjoint (neither is a subtype of the other).
 ///
 /// This is used as an optimization to skip structural recursion in subtype checking.
 /// For example, comparing `[E.A, E.B]` vs `[E.C, E.D]` can return `source == target`
 /// in O(1) instead of walking into each tuple element.
 ///
-/// Unit types include:
+/// Identity-comparable types include:
 /// - Literal types (string, number, boolean, bigint literals)
 /// - Enum members (`TypeData::Enum`)
 /// - Unique symbols
-/// - null, undefined, void
-/// - Tuples where ALL elements are unit types (and no rest elements)
+/// - null, undefined, void, never
+/// - Tuples where ALL elements are identity-comparable (and no rest elements)
+///
+/// NOTE: This is NOT the same as tsc's `isUnitType` (which excludes void, never, and tuples).
+/// For tsc-compatible unit type semantics, use `type_queries::is_unit_type`.
 ///
 /// NOTE: This does NOT handle `ReadonlyType` - readonly tuples must be checked separately
 /// because `["a"]` is a subtype of `readonly ["a"]` even though they have different `TypeIds`.
-pub fn is_unit_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_unit_type_impl(types, type_id, 0)
+pub fn is_identity_comparable_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_identity_comparable_type_impl(types, type_id, 0)
 }
 
-const MAX_UNIT_TYPE_DEPTH: u32 = 10;
+const MAX_IDENTITY_COMPARABLE_DEPTH: u32 = 10;
 
-fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
     // Prevent stack overflow on pathological types
-    if depth > MAX_UNIT_TYPE_DEPTH {
+    if depth > MAX_IDENTITY_COMPARABLE_DEPTH {
         return false;
     }
 
@@ -216,26 +219,26 @@ fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> b
     }
 
     match types.lookup(type_id) {
-        // Unit-like scalar types are handled together.
+        // Identity-comparable scalar types.
         Some(TypeData::Literal(_))
         | Some(TypeData::Enum(_, _))
         | Some(TypeData::UniqueSymbol(_)) => true,
 
-        // Tuples are unit types if ALL elements are unit types (no rest elements)
+        // Tuples are identity-comparable if ALL elements are (no rest elements)
         Some(TypeData::Tuple(list_id)) => {
             let elements = types.tuple_list(list_id);
-            // Check for rest elements - if any, not a unit type
+            // Check for rest elements - if any, not identity-comparable
             if elements.iter().any(|e| e.rest) {
                 return false;
             }
-            // All elements must be unit types
+            // All elements must be identity-comparable
             elements
                 .iter()
-                .all(|e| is_unit_type_impl(types, e.type_id, depth + 1))
+                .all(|e| is_identity_comparable_type_impl(types, e.type_id, depth + 1))
         }
 
-        // Everything else is not a unit type
-        // ReadonlyType of a unit tuple is NOT considered a unit type for optimization purposes
+        // Everything else is not identity-comparable
+        // ReadonlyType of an identity-comparable tuple is NOT considered identity-comparable
         // because ["a"] <: readonly ["a"] but they have different TypeIds.
         _ => false,
     }

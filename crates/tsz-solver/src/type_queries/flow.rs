@@ -351,28 +351,32 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 
 /// Check if a type is a "unit type" — a type with exactly one inhabitant.
 ///
-/// Unit types: null, undefined, void, true, false, string/number/bigint literals.
-/// A union is a unit type if ALL its members are unit types (e.g. `"A" | "B" | null`).
+/// Matches tsc's `isUnitType`: `TypeFlags.Unit = Enum | Literal | UniqueESSymbol | Nullable`.
+/// Unit types: null, undefined, true, false, string/number/bigint literals, enum members,
+/// unique symbols. A union is a unit type if ALL its members are unit types.
+///
+/// NOTE: This intentionally excludes `void` and `never` to match tsc semantics.
+/// For solver-internal identity optimization (which includes void/never/tuples),
+/// use `is_identity_comparable_type` from `visitor_predicates`.
 pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NULL
         || type_id == TypeId::UNDEFINED
-        || type_id == TypeId::VOID
         || type_id == TypeId::BOOLEAN_TRUE
         || type_id == TypeId::BOOLEAN_FALSE
     {
         return true;
     }
 
-    if crate::visitor::is_literal_type_db(db, type_id) {
-        return true;
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_))
+        | Some(TypeData::Enum(_, _))
+        | Some(TypeData::UniqueSymbol(_)) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_unit_type(db, m))
+        }
+        _ => false,
     }
-
-    if let Some(list_id) = crate::visitor::union_list_id(db, type_id) {
-        let members = db.type_list(list_id);
-        return members.iter().all(|&m| is_unit_type(db, m));
-    }
-
-    false
 }
 
 /// Check if a union type contains a specific member type.

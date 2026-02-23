@@ -759,9 +759,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if members.iter().any(|&id| id.is_unknown()) {
             return;
         }
-        // Skip if all members are unit types — they're disjoint, so the O(n²) loop
+        // Skip if all members are identity-comparable — they're disjoint, so the O(n²) loop
         // would find nothing. The interner's reduce_union_subtypes handles shallow cases.
-        if members.iter().all(|&id| self.interner.is_unit_type(id)) {
+        if members
+            .iter()
+            .all(|&id| self.interner.is_identity_comparable_type(id))
+        {
             return;
         }
         // In a union, A <: B means A is redundant (B subsumes it).
