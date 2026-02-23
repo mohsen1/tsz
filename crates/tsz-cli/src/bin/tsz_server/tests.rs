@@ -2795,6 +2795,119 @@ fn test_completion_info_class_member_snippet_export_list_augmentation_shape() {
 }
 
 #[test]
+fn test_completion_info_class_member_snippet_method_trims_trailing_param_comma() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/vscode/index.d.ts".to_string(),
+        "declare module \"vscode\" {\n  export class Position {\n    readonly line: number;\n    readonly character: number;\n  }\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/motion.ts".to_string(),
+        "import { Position } from \"vscode\";\n\nexport abstract class MoveQuoteMatch {\n  public override async execActionWithCount(\n    position: Position,\n  ): Promise<void> {}\n}\n\ndeclare module \"vscode\" {\n  interface Position {\n    toString(): string;\n  }\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/smartQuotes.ts".to_string(),
+        "import { MoveQuoteMatch } from \"./motion\";\n\nexport class MoveInsideNextQuote extends MoveQuoteMatch {\n  /**/\n  keys = [\"i\", \"n\", \"q\"];\n}\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/src/smartQuotes.ts",
+            "line": 4,
+            "offset": 4,
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let method_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("execActionWithCount")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for `execActionWithCount`");
+    assert_eq!(
+        method_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("public execActionWithCount(position: Position): Promise<void> {\n}")
+    );
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/src/smartQuotes.ts",
+            "line": 4,
+            "offset": 4,
+            "entryNames": [{
+                "name": "execActionWithCount",
+                "source": "ClassMemberSnippet/"
+            }],
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let text_changes = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|actions| actions.first())
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("class member snippet details should include text changes");
+    let first_change = text_changes
+        .first()
+        .expect("class member snippet should include an import text change");
+    assert_eq!(
+        first_change
+            .get("span")
+            .and_then(|span| span.get("start"))
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        first_change
+            .get("span")
+            .and_then(|span| span.get("length"))
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        first_change
+            .get("newText")
+            .and_then(serde_json::Value::as_str),
+        Some("import { Position } from \"vscode\";\n")
+    );
+}
+
+#[test]
 fn test_completion_entry_details_mts_type_position_adds_import_type_named_clause() {
     let mut server = make_server();
     server.open_files.insert(

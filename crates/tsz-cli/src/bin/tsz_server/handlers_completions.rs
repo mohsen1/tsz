@@ -190,8 +190,8 @@ impl Server {
             }
             tsz::lsp::completions::CompletionItemKind::Method => {
                 let (params, return_type) = detail.split_once("=>")?;
-                let params = params.trim();
-                let return_type = return_type.trim();
+                let params = Self::normalize_method_snippet_params(params);
+                let return_type = Self::normalize_method_snippet_return_type(return_type);
                 if !params.starts_with('(') || !params.ends_with(')') || return_type.is_empty() {
                     return None;
                 }
@@ -202,6 +202,23 @@ impl Server {
             }
             _ => None,
         }
+    }
+
+    fn normalize_method_snippet_params(params: &str) -> String {
+        let params = params.trim();
+        if !params.starts_with('(') || !params.ends_with(')') {
+            return params.to_string();
+        }
+        let inner = &params[1..params.len().saturating_sub(1)];
+        let inner = inner.trim_end();
+        let inner = inner.strip_suffix(',').unwrap_or(inner).trim();
+        format!("({inner})")
+    }
+
+    fn normalize_method_snippet_return_type(return_type: &str) -> String {
+        let return_type = return_type.trim().trim_end_matches(';').trim_end();
+        let return_type = return_type.strip_suffix('{').unwrap_or(return_type).trim_end();
+        return_type.trim().to_string()
     }
 
     fn class_member_snippet_type_identifiers(
@@ -1650,16 +1667,19 @@ impl Server {
                                 })
                             })
                             .collect();
-                        if text_changes.is_empty()
-                            && item.source.as_deref() == Some("ClassMemberSnippet/")
+                        if item.source.as_deref() == Some("ClassMemberSnippet/")
                             && let Some(insert_text) = item.insert_text.as_deref()
                         {
-                            text_changes = Self::class_member_snippet_synthesized_text_changes(
-                                &source_text,
-                                insert_text,
-                                &item.label,
-                                &project_items,
-                            );
+                            let synthesized =
+                                Self::class_member_snippet_synthesized_text_changes(
+                                    &source_text,
+                                    insert_text,
+                                    &item.label,
+                                    &project_items,
+                                );
+                            if !synthesized.is_empty() {
+                                text_changes = synthesized;
+                            }
                         }
                         if !text_changes.is_empty() {
                             if file.ends_with(".mts") {
