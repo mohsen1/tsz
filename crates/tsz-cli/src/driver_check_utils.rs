@@ -1,0 +1,1030 @@
+//! Utility functions for the compilation driver's checking phase:
+//! export hash computation, tslib helper detection, binder construction,
+//! parse diagnostic conversion, and pragma detection.
+
+use super::*;
+
+pub(super) fn detect_missing_tslib_helper_diagnostics(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+) -> Vec<Diagnostic> {
+    if !options.import_helpers {
+        return Vec::new();
+    }
+
+    let tslib_file = program.files.iter().find(|file| {
+        let path = file.file_name.replace('\\', "/");
+        // Match tslib by directory or filename: the package's main declaration
+        // file may be `tslib.d.ts` or `index.d.ts` inside a `tslib/` directory.
+        path.contains("/tslib/")
+            || Path::new(&file.file_name)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
+    });
+
+    let mut result = Vec::new();
+
+    match tslib_file {
+        None => {
+            // tslib module not found at all → TS2354 for each file needing helpers
+            for file in &program.files {
+                if file.file_name.ends_with(".d.ts") {
+                    continue;
+                }
+                let helpers = required_helpers(file);
+                if let Some((_helper_name, start, length)) = helpers.first() {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        *start,
+                        *length,
+                        "This syntax requires an imported helper but module 'tslib' cannot be found.".to_string(),
+                        2354,
+                    ));
+                }
+            }
+        }
+        Some(tslib_file) => {
+            // tslib found but check if specific helper exists → TS2343
+            let tslib_exports_empty = program
+                .module_exports
+                .get(&tslib_file.file_name)
+                .is_none_or(tsz_binder::SymbolTable::is_empty);
+
+            if !tslib_exports_empty {
+                return Vec::new();
+            }
+
+            for file in &program.files {
+                if file.file_name == tslib_file.file_name || file.file_name.ends_with(".d.ts") {
+                    continue;
+                }
+
+                for (helper_name, start, length) in required_helpers(file) {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        start,
+                        length,
+                        format!(
+                            "This syntax requires an imported helper named '{helper_name}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'."
+                        ),
+                        2343,
+                    ));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+pub(super) fn required_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
+    let mut saw_await: Option<(u32, u32)> = None;
+    let mut saw_yield: Option<(u32, u32)> = None;
+    let mut first_decorator: Option<(u32, u32)> = None;
+    let mut first_private_id: Option<(u32, u32)> = None;
+
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 && first_private_id.is_none() {
+            first_private_id = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if node.kind == syntax_kind_ext::DECORATOR && first_decorator.is_none() {
+            first_decorator = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_data) = file.arena.get_class(node)
+            && class_data.heritage_clauses.is_some()
+            && first_decorator.is_none()
+            && first_private_id.is_none()
+        {
+            return vec![("__extends", node.pos, node.end.saturating_sub(node.pos))];
+        }
+
+        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+            saw_await = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+        if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            saw_yield = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+    }
+
+    // Decorators take priority (ES decorators handle private fields internally)
+    if let Some((start, length)) = first_decorator {
+        return es_decorator_helpers(file, start, length);
+    }
+
+    if let Some((start, length)) = first_private_id {
+        return vec![("__classPrivateFieldSet", start, length)];
+    }
+
+    if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
+        return vec![("__asyncGenerator", start, length)];
+    }
+
+    Vec::new()
+}
+
+/// Determine which ES decorator helpers are needed for a file.
+///
+/// tsc emits all needed helper diagnostics at the position of the first decorated
+/// node. The helpers depend on the class structure:
+/// - `__esDecorate` + `__runInitializers`: always needed
+/// - `__setFunctionName`: needed when class is anonymous, has private members
+///   (static or non-static) with decorators, or is a default export
+/// - `__propKey`: needed when a decorated member has a static computed property name
+fn es_decorator_helpers(
+    file: &BoundFile,
+    first_dec_start: u32,
+    first_dec_length: u32,
+) -> Vec<(&'static str, u32, u32)> {
+    let mut needs_set_function_name = false;
+    let mut needs_prop_key = false;
+
+    // Helper: check if a modifiers list contains a DECORATOR node
+    let has_decorator_in_modifiers = |modifiers: &Option<tsz::parser::NodeList>| -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                file.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+            })
+        })
+    };
+
+    // Helper: check if modifiers contain DefaultKeyword
+    let has_default_keyword = |modifiers: &Option<tsz::parser::NodeList>| -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                file.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
+            })
+        })
+    };
+
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        let is_class = node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION;
+        if !is_class {
+            continue;
+        }
+        let Some(class_data) = file.arena.get_class(node) else {
+            continue;
+        };
+
+        let class_has_decorator = has_decorator_in_modifiers(&class_data.modifiers);
+
+        // Anonymous class expression → needs __setFunctionName
+        let name_node = file.arena.get(class_data.name);
+        let class_is_anonymous = name_node.is_none()
+            || name_node.is_some_and(|n| n.kind == SyntaxKind::Unknown as u16 || n.pos == n.end);
+
+        // export default @dec class → needs __setFunctionName
+        let is_default_export = class_has_decorator && has_default_keyword(&class_data.modifiers);
+
+        if class_is_anonymous || is_default_export {
+            needs_set_function_name = true;
+        }
+
+        // Walk class members for private identifiers or static computed property names
+        for &member_idx in &class_data.members.nodes {
+            let Some(member) = file.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Scan all arena nodes within the member's span for relevant node kinds.
+            // Arena stores nodes bottom-up (children before parents), so we scan all nodes.
+            let is_field = member.kind == syntax_kind_ext::PROPERTY_DECLARATION;
+            let mut member_has_decorator = false;
+            let mut member_is_static = false;
+
+            for child_idx_raw in 0..file.arena.len() {
+                let child_idx = NodeIndex(child_idx_raw as u32);
+                let Some(child) = file.arena.get(child_idx) else {
+                    continue;
+                };
+                // Only consider nodes within the member's span
+                if child.pos < member.pos || child.pos >= member.end {
+                    continue;
+                }
+                if child.kind == syntax_kind_ext::DECORATOR {
+                    member_has_decorator = true;
+                }
+                if child.kind == SyntaxKind::StaticKeyword as u16 {
+                    member_is_static = true;
+                }
+                if child.kind == SyntaxKind::PrivateIdentifier as u16
+                    && !is_field
+                    && (member_has_decorator || class_has_decorator)
+                {
+                    needs_set_function_name = true;
+                }
+                if child.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    && member_has_decorator
+                    && member_is_static
+                {
+                    needs_prop_key = true;
+                }
+            }
+        }
+    }
+
+    // Build helper list in alphabetical order (matching tsc output)
+    let mut helpers = vec![("__esDecorate", first_dec_start, first_dec_length)];
+    if needs_prop_key {
+        helpers.push(("__propKey", first_dec_start, first_dec_length));
+    }
+    helpers.push(("__runInitializers", first_dec_start, first_dec_length));
+    if needs_set_function_name {
+        helpers.push(("__setFunctionName", first_dec_start, first_dec_length));
+    }
+    helpers
+}
+
+pub(super) fn compute_export_hash(
+    program: &MergedProgram,
+    file: &BoundFile,
+    file_idx: usize,
+    checker: &mut CheckerState,
+) -> u64 {
+    let mut formatter = TypeFormatter::with_symbols(&program.type_interner, &program.symbols);
+    let mut hasher = FxHasher::default();
+    let mut type_str_cache: FxHashMap<TypeId, String> = FxHashMap::default();
+
+    if let Some(file_locals) = program.file_locals.get(file_idx) {
+        let mut exports: Vec<(&String, SymbolId)> = file_locals
+            .iter()
+            .filter_map(|(name, &sym_id)| {
+                is_exported_symbol(&program.symbols, sym_id).then_some((name, sym_id))
+            })
+            .collect();
+        exports.sort_by(|left, right| left.0.cmp(right.0));
+
+        for (name, sym_id) in exports {
+            name.hash(&mut hasher);
+            let type_id = checker.get_type_of_symbol(sym_id);
+            let type_str = type_str_cache
+                .entry(type_id)
+                .or_insert_with(|| formatter.format(type_id));
+            type_str.hash(&mut hasher);
+        }
+    }
+
+    let mut export_signatures = Vec::new();
+    collect_export_signatures(file, checker, &mut formatter, &mut export_signatures);
+    export_signatures.sort();
+    for signature in export_signatures {
+        signature.hash(&mut hasher);
+    }
+
+    hasher.finish()
+}
+
+pub(super) fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
+    let Some(source) = file.arena.get_source_file_at(file.source_file) else {
+        return false;
+    };
+    let text = source.text.as_ref().to_ascii_lowercase();
+    let ts_check = text.rfind("@ts-check");
+    let ts_no_check = text.rfind("@ts-nocheck");
+    match (ts_check, ts_no_check) {
+        (Some(check_idx), Some(no_check_idx)) => check_idx > no_check_idx,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+pub(super) fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
+    let Some(source) = file.arena.get_source_file_at(file.source_file) else {
+        return false;
+    };
+    source
+        .text
+        .as_ref()
+        .to_ascii_lowercase()
+        .contains("@ts-nocheck")
+}
+
+pub(super) fn is_exported_symbol(symbols: &tsz::binder::SymbolArena, sym_id: SymbolId) -> bool {
+    let Some(symbol) = symbols.get(sym_id) else {
+        return false;
+    };
+    symbol.is_exported || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0
+}
+
+pub(super) fn collect_export_signatures(
+    file: &BoundFile,
+    checker: &mut CheckerState,
+    formatter: &mut TypeFormatter,
+    signatures: &mut Vec<String>,
+) {
+    let arena = &file.arena;
+    let Some(source) = arena.get_source_file_at(file.source_file) else {
+        return;
+    };
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(stmt) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if let Some(export_decl) = arena.get_export_decl(stmt) {
+            if export_decl.is_default_export {
+                if let Some(signature) =
+                    export_default_signature(export_decl.export_clause, checker, formatter)
+                {
+                    signatures.push(signature);
+                }
+                continue;
+            }
+
+            if export_decl.module_specifier.is_none() {
+                if export_decl.export_clause.is_some() {
+                    let clause_node = export_decl.export_clause;
+                    if arena.get_named_imports_at(clause_node).is_some() {
+                        collect_local_named_export_signatures(
+                            arena,
+                            file.source_file,
+                            clause_node,
+                            checker,
+                            formatter,
+                            export_type_prefix(export_decl.is_type_only),
+                            signatures,
+                        );
+                    } else {
+                        collect_exported_declaration_signatures(
+                            arena,
+                            clause_node,
+                            checker,
+                            formatter,
+                            export_type_prefix(export_decl.is_type_only),
+                            signatures,
+                        );
+                    }
+                }
+                continue;
+            }
+
+            let module_spec = arena
+                .get_literal_text(export_decl.module_specifier)
+                .unwrap_or("")
+                .to_string();
+            if export_decl.export_clause.is_none() {
+                signatures.push(format!(
+                    "{}*|{}",
+                    export_type_prefix(export_decl.is_type_only),
+                    module_spec
+                ));
+                continue;
+            }
+
+            let clause_node = export_decl.export_clause;
+            if let Some(named) = arena.get_named_imports_at(clause_node) {
+                let mut specifiers = Vec::new();
+                for &spec_idx in &named.elements.nodes {
+                    let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                        continue;
+                    };
+                    let name = arena.get_identifier_text(spec.name).unwrap_or("");
+                    if spec.property_name.is_none() {
+                        specifiers.push(name.to_string());
+                    } else {
+                        let property = arena.get_identifier_text(spec.property_name).unwrap_or("");
+                        specifiers.push(format!("{property} as {name}"));
+                    }
+                }
+                specifiers.sort();
+                signatures.push(format!(
+                    "{}{{{}}}|{}",
+                    export_type_prefix(export_decl.is_type_only),
+                    specifiers.join(","),
+                    module_spec
+                ));
+            } else if let Some(name) = arena.get_identifier_text(clause_node) {
+                signatures.push(format!(
+                    "{}* as {}|{}",
+                    export_type_prefix(export_decl.is_type_only),
+                    name,
+                    module_spec
+                ));
+            }
+
+            continue;
+        }
+
+        if let Some(export_assignment) = arena.get_export_assignment(stmt)
+            && export_assignment.expression.is_some()
+        {
+            let type_id = checker.get_type_of_node(export_assignment.expression);
+            let type_str = formatter.format(type_id);
+            signatures.push(format!("export=:{type_str}"));
+        }
+    }
+}
+
+fn collect_local_named_export_signatures(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    named_idx: NodeIndex,
+    checker: &mut CheckerState,
+    formatter: &mut TypeFormatter,
+    type_prefix: &str,
+    signatures: &mut Vec<String>,
+) {
+    let Some(named) = arena.get_named_imports_at(named_idx) else {
+        return;
+    };
+
+    for &spec_idx in &named.elements.nodes {
+        let Some(spec) = arena.get_specifier_at(spec_idx) else {
+            continue;
+        };
+        let exported_name = if spec.name.is_some() {
+            arena.get_identifier_text(spec.name).unwrap_or("")
+        } else {
+            arena.get_identifier_text(spec.property_name).unwrap_or("")
+        };
+        if exported_name.is_empty() {
+            continue;
+        }
+        let local_name = if spec.property_name.is_some() {
+            arena.get_identifier_text(spec.property_name).unwrap_or("")
+        } else {
+            exported_name
+        };
+        let type_id = find_local_declaration(arena, source_file, local_name)
+            .map_or(TypeId::ANY, |decl_idx| checker.get_type_of_node(decl_idx));
+        let type_str = formatter.format(type_id);
+        signatures.push(format!("{type_prefix}{exported_name}:{type_str}"));
+    }
+}
+
+fn collect_exported_declaration_signatures(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+    checker: &mut CheckerState,
+    formatter: &mut TypeFormatter,
+    type_prefix: &str,
+    signatures: &mut Vec<String>,
+) {
+    let Some(node) = arena.get(decl_idx) else {
+        return;
+    };
+
+    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+        if let Some(var_stmt) = arena.get_variable(node) {
+            for &list_idx in &var_stmt.declarations.nodes {
+                collect_exported_declaration_signatures(
+                    arena,
+                    list_idx,
+                    checker,
+                    formatter,
+                    type_prefix,
+                    signatures,
+                );
+            }
+        }
+        return;
+    }
+
+    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+        if let Some(list) = arena.get_variable(node) {
+            for &decl_idx in &list.declarations.nodes {
+                collect_exported_declaration_signatures(
+                    arena,
+                    decl_idx,
+                    checker,
+                    formatter,
+                    type_prefix,
+                    signatures,
+                );
+            }
+        }
+        return;
+    }
+
+    if let Some(var_decl) = arena.get_variable_declaration(node) {
+        if let Some(name) = arena.get_identifier_text(var_decl.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(func) = arena.get_function(node) {
+        if let Some(name) = arena.get_identifier_text(func.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(class) = arena.get_class(node) {
+        if let Some(name) = arena.get_identifier_text(class.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(interface) = arena.get_interface(node) {
+        if let Some(name) = arena.get_identifier_text(interface.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(type_alias) = arena.get_type_alias(node) {
+        if let Some(name) = arena.get_identifier_text(type_alias.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(enum_decl) = arena.get_enum(node) {
+        if let Some(name) = arena.get_identifier_text(enum_decl.name) {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+        return;
+    }
+
+    if let Some(module_decl) = arena.get_module(node) {
+        let name = arena
+            .get_identifier_text(module_decl.name)
+            .or_else(|| arena.get_literal_text(module_decl.name));
+        if let Some(name) = name {
+            push_exported_signature(name, decl_idx, checker, formatter, type_prefix, signatures);
+        }
+    }
+}
+
+fn push_exported_signature(
+    name: &str,
+    decl_idx: NodeIndex,
+    checker: &mut CheckerState,
+    formatter: &mut TypeFormatter,
+    type_prefix: &str,
+    signatures: &mut Vec<String>,
+) {
+    let type_id = checker.get_type_of_node(decl_idx);
+    let type_str = formatter.format(type_id);
+    signatures.push(format!("{type_prefix}{name}:{type_str}"));
+}
+
+pub(super) fn find_local_declaration(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    name: &str,
+) -> Option<NodeIndex> {
+    let source = arena.get_source_file_at(source_file)?;
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(stmt) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if let Some(export_decl) = arena.get_export_decl(stmt) {
+            if export_decl.export_clause.is_none() {
+                continue;
+            }
+            let clause_idx = export_decl.export_clause;
+            if arena.get_named_imports_at(clause_idx).is_some() {
+                continue;
+            }
+            if let Some(found) = find_local_declaration_in_node(arena, clause_idx, name) {
+                return Some(found);
+            }
+            continue;
+        }
+
+        if let Some(found) = find_local_declaration_in_node(arena, stmt_idx, name) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+fn find_local_declaration_in_node(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    name: &str,
+) -> Option<NodeIndex> {
+    let node = arena.get(node_idx)?;
+
+    if let Some(var_decl) = arena.get_variable_declaration(node) {
+        if let Some(decl_name) = arena.get_identifier_text(var_decl.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+        if let Some(var_stmt) = arena.get_variable(node) {
+            for &list_idx in &var_stmt.declarations.nodes {
+                if let Some(found) = find_local_declaration_in_node(arena, list_idx, name) {
+                    return Some(found);
+                }
+            }
+        }
+        return None;
+    }
+
+    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+        if let Some(list) = arena.get_variable(node) {
+            for &decl_idx in &list.declarations.nodes {
+                if let Some(found) = find_local_declaration_in_node(arena, decl_idx, name) {
+                    return Some(found);
+                }
+            }
+        }
+        return None;
+    }
+
+    if let Some(func) = arena.get_function(node) {
+        if let Some(decl_name) = arena.get_identifier_text(func.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if let Some(class) = arena.get_class(node) {
+        if let Some(decl_name) = arena.get_identifier_text(class.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if let Some(interface) = arena.get_interface(node) {
+        if let Some(decl_name) = arena.get_identifier_text(interface.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if let Some(type_alias) = arena.get_type_alias(node) {
+        if let Some(decl_name) = arena.get_identifier_text(type_alias.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if let Some(enum_decl) = arena.get_enum(node) {
+        if let Some(decl_name) = arena.get_identifier_text(enum_decl.name)
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+        return None;
+    }
+
+    if let Some(module_decl) = arena.get_module(node) {
+        let decl_name = arena
+            .get_identifier_text(module_decl.name)
+            .or_else(|| arena.get_literal_text(module_decl.name));
+        if let Some(decl_name) = decl_name
+            && decl_name == name
+        {
+            return Some(node_idx);
+        }
+    }
+
+    None
+}
+
+fn export_default_signature(
+    export_clause: NodeIndex,
+    checker: &mut CheckerState,
+    formatter: &mut TypeFormatter,
+) -> Option<String> {
+    if export_clause.is_none() {
+        return None;
+    }
+    let type_id = if let Some(sym_id) = checker.ctx.binder.get_node_symbol(export_clause) {
+        checker.get_type_of_symbol(sym_id)
+    } else {
+        checker.get_type_of_node(export_clause)
+    };
+    let type_str = formatter.format(type_id);
+    Some(format!("default:{type_str}"))
+}
+
+pub(super) const fn export_type_prefix(is_type_only: bool) -> &'static str {
+    if is_type_only { "type:" } else { "" }
+}
+
+pub(super) fn parse_diagnostic_to_checker(
+    file_name: &str,
+    diagnostic: &ParseDiagnostic,
+) -> Diagnostic {
+    Diagnostic::error(
+        file_name.to_string(),
+        diagnostic.start,
+        diagnostic.length,
+        diagnostic.message.clone(),
+        diagnostic.code,
+    )
+}
+
+pub(super) fn create_binder_from_bound_file(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+) -> BinderState {
+    let mut file_locals = SymbolTable::new();
+
+    if file_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    // Merge module augmentations from all files
+    // When checking a file, we need access to augmentations from all other files
+    let mut merged_module_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<tsz::binder::ModuleAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (spec, augs) in &other_file.module_augmentations {
+            merged_module_augmentations
+                .entry(spec.clone())
+                .or_default()
+                .extend(augs.clone());
+        }
+    }
+
+    // Merge global augmentations from all files
+    // Each augmentation is tagged with its source arena for cross-file resolution.
+    let mut merged_global_augmentations: rustc_hash::FxHashMap<
+        String,
+        Vec<tsz::binder::GlobalAugmentation>,
+    > = rustc_hash::FxHashMap::default();
+
+    for other_file in &program.files {
+        for (name, decls) in &other_file.global_augmentations {
+            merged_global_augmentations
+                .entry(name.clone())
+                .or_default()
+                .extend(decls.iter().map(|aug| {
+                    tsz::binder::GlobalAugmentation::with_arena(
+                        aug.node,
+                        Arc::clone(&other_file.arena),
+                    )
+                }));
+        }
+    }
+
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
+        BinderOptions::default(),
+        program.symbols.clone(),
+        file_locals,
+        file.node_symbols.clone(),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: merged_global_augmentations,
+            module_augmentations: merged_module_augmentations,
+            module_exports: program.module_exports.clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            symbol_arenas: program.symbol_arenas.clone(),
+            declaration_arenas: program.declaration_arenas.clone(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: Default::default(),
+            flow_nodes: file.flow_nodes.clone(),
+            node_flow: file.node_flow.clone(),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
+        },
+    );
+
+    binder.declared_modules = program.declared_modules.clone();
+    // Restore is_external_module from BoundFile to preserve per-file state
+    binder.is_external_module = file.is_external_module;
+    // Track lib-originating symbols so unused checking can skip them
+    binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder
+}
+
+/// Build a lightweight binder for cross-file symbol/export lookups.
+///
+/// This avoids cloning per-file node/scope/flow structures when populating
+/// `CheckerContext::all_binders`, which only needs symbol/file-local/module-export data.
+pub(super) fn create_cross_file_lookup_binder(
+    file: &BoundFile,
+    program: &MergedProgram,
+    file_idx: usize,
+) -> BinderState {
+    let mut file_locals = SymbolTable::new();
+
+    if file_idx < program.file_locals.len() {
+        for (name, &sym_id) in program.file_locals[file_idx].iter() {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    for (name, &sym_id) in program.globals.iter() {
+        if !file_locals.has(name) {
+            file_locals.set(name.clone(), sym_id);
+        }
+    }
+
+    // Keep cross-file binders intentionally tiny: they are only used to map
+    // import targets to that file's locals/exports.
+    let mut binder = BinderState::new();
+    binder.file_locals = file_locals;
+    binder.node_symbols = file.node_symbols.clone();
+    binder.scopes = file.scopes.clone();
+    binder.node_scope_ids = file.node_scope_ids.clone();
+    binder.declared_modules = program.declared_modules.clone();
+    binder.shorthand_ambient_modules = program.shorthand_ambient_modules.clone();
+    if let Some(exports) = program.module_exports.get(&file.file_name) {
+        binder
+            .module_exports
+            .insert(file.file_name.clone(), exports.clone());
+    }
+    for module_name in program
+        .declared_modules
+        .iter()
+        .chain(program.shorthand_ambient_modules.iter())
+    {
+        if let Some(exports) = program.module_exports.get(module_name) {
+            binder
+                .module_exports
+                .insert(module_name.clone(), exports.clone());
+        }
+    }
+    // Copy re-export data for cross-file import validation.
+    // Without this, `resolve_import_in_file` can't follow wildcard/named
+    // re-export chains across binder boundaries.
+    if let Some(wildcards) = program.wildcard_reexports.get(&file.file_name) {
+        binder
+            .wildcard_reexports
+            .insert(file.file_name.clone(), wildcards.clone());
+    }
+    if let Some(reexports) = program.reexports.get(&file.file_name) {
+        binder
+            .reexports
+            .insert(file.file_name.clone(), reexports.clone());
+    }
+    binder.is_external_module = file.is_external_module;
+    binder
+}
+
+/// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
+/// vs a grammar/semantic check emitted during parsing.
+///
+/// Real syntax errors indicate that the parser couldn't parse the source normally
+/// and had to recover. tsc propagates `ThisNodeHasError` flags from these errors
+/// to suppress cascading semantic errors like TS2304.
+///
+/// Grammar checks (e.g., strict mode violations, decorator errors) are emitted
+/// during parsing but don't indicate parse failure — tsc still emits TS2304 for
+/// undeclared names in these files.
+pub(super) fn is_real_syntax_error(code: u32) -> bool {
+    matches!(
+        code,
+        1005  // '{0}' expected
+        | 1009 // Trailing comma not allowed (sometimes real syntax error)
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1036 // Statements are not allowed in ambient contexts
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1126 // Unexpected end of text
+        | 1127 // Invalid character
+        | 1128 // Declaration or statement expected
+        | 1129 // '{' or ';' expected
+        | 1130 // '}' expected
+        | 1131 // Property assignment expected
+        | 1134 // Variable declaration expected
+        | 1135 // Argument expression expected
+        | 1136 // Property or signature expected
+        | 1137 // Expression or comma expected
+        | 1138 // Parameter declaration expected
+        | 1141 // Type parameter declaration expected
+        | 1146 // Declaration expected
+        | 1155 // 'const' declarations must be initialized
+        | 1160 // Unterminated template literal
+        | 1161 // Unterminated regular expression literal
+        | 1002 // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1006 // A file cannot have a reference to itself
+        | 1007 // The parser expected to find a '}'
+        | 1010 // 'while' expected
+        | 1011 // '(' or '<' expected
+        | 1012 // '{' expected
+        | 1035 // Only ambient modules can use quoted names
+        | 1101 // 'with' statements are not allowed in strict mode
+        | 1103 // A character literal must contain exactly one character
+        | 1121 // Octal literals are not allowed in strict mode
+        | 1124 // Digit expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1147 // Import declarations in a namespace cannot reference a module
+        | 1164 // Computed property names are not allowed in enums
+        | 1185 // Merge conflict marker encountered
+        | 1191 // An import declaration cannot have modifiers
+        | 1313 // 'else' is not allowed after rest element
+        | 1351 // An identifier or keyword cannot immediately follow a numeric literal
+        | 1357 // A default clause cannot appear more than once
+        | 1378 // Top-level 'for await' loops are only allowed...
+        | 1432 // 'await' expressions are only allowed within async functions
+        | 1434 // Top-level 'await' expressions are only allowed...
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse source text and return the BoundFile from a merged program.
+    fn bound_file(source: &str) -> BoundFile {
+        let bind_result =
+            parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());
+        let program = parallel::merge_bind_results(vec![bind_result]);
+        program.files.into_iter().next().unwrap()
+    }
+
+    /// Extract helper names from `required_helpers`.
+    fn helper_names(source: &str) -> Vec<&'static str> {
+        let file = bound_file(source);
+        required_helpers(&file)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn plain_class_needs_no_helpers() {
+        assert!(helper_names("class C { method() {} }").is_empty());
+    }
+
+    #[test]
+    fn private_field_emits_class_private_field_set() {
+        let helpers = helper_names("class C { #foo = 1; }");
+        assert_eq!(helpers, vec!["__classPrivateFieldSet"]);
+    }
+
+    #[test]
+    fn decorated_class_emits_es_decorate_and_run_initializers() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { method() {} }");
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(helpers.contains(&"__runInitializers"), "got: {helpers:?}");
+        // Named non-default class should not need __setFunctionName
+        assert!(!helpers.contains(&"__setFunctionName"), "got: {helpers:?}");
+    }
+
+    #[test]
+    fn decorated_class_with_private_method_emits_set_function_name() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { #privateMethod() {} }");
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(helpers.contains(&"__runInitializers"), "got: {helpers:?}");
+        assert!(
+            helpers.contains(&"__setFunctionName"),
+            "private method should trigger __setFunctionName, got: {helpers:?}"
+        );
+    }
+
+    #[test]
+    fn decorator_takes_priority_over_private_field() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { #foo = 1; }");
+        // ES decorators handle private fields internally
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(
+            !helpers.contains(&"__classPrivateFieldSet"),
+            "decorator should take priority, got: {helpers:?}"
+        );
+    }
+
+    #[test]
+    fn class_with_extends_emits_extends_helper() {
+        let helpers = helper_names("class Base {} class Derived extends Base {}");
+        assert_eq!(helpers, vec!["__extends"]);
+    }
+}
