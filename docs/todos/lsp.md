@@ -1011,3 +1011,17 @@ Investigated but punted:
   Reason: requires fuller tsserver `references-full` parity for multi-symbol alias-chain grouping (separate def/ref buckets for exported quoted alias + imported aliases), which is broader than this small metadata/fallback gate patch.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still creates a local baseline (same alias-chain references/definitions parity gap).
   Reason: blocked by the same `references-full` multi-symbol alias-chain modeling gap as `_types`.
+
+## 2026-02-23 (arbitrary module namespace identifiers references-full shape follow-up)
+
+Completed in this pass:
+- Normalized `references-full` quoted-alias fallback definition payloads in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` so fallback definitions emitted in referenced-symbol responses use tsserver `fileName` + numeric `textSpan` shape.
+- Tightened alias canonical-definition locality normalization in `crates/tsz-cli/src/bin/tsz_server/handlers_info_alias.rs` so non-ambient canonical targets are marked local in this alias fallback path.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_references_full_quoted_alias_definition_uses_file_name_and_text_span_shape`
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`: still creates a local baseline.
+  Reason: remaining gap is deeper `findAllReferences` alias-chain grouping/details parity (`defId`/`contextId` fan-out + alias detail rendering), beyond this payload-shape correction.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still creates a local baseline.
+  Reason: same remaining alias-chain referenced-symbol grouping/detail parity gap as `_types`; requires broader modeling than this targeted fix.
