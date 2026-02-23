@@ -388,7 +388,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Get the contextual signature for a type, optionally filtering by argument count.
     /// When `arg_count` is provided, selects the first overload whose arity matches.
-    pub fn get_contextual_signature_for_arity(
+    fn get_contextual_signature_for_arity(
         db: &dyn TypeDatabase,
         type_id: TypeId,
         arg_count: Option<usize>,

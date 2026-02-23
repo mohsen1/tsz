@@ -99,30 +99,6 @@ impl PropertyAccessResult {
         }
     }
 
-    /// Maps the `type_id` in a Success result, leaving other variants unchanged.
-    pub fn map_success_type<F>(self, f: F) -> Self
-    where
-        F: FnOnce(TypeId) -> TypeId,
-    {
-        match self {
-            Self::Success {
-                type_id,
-                write_type,
-                from_index_signature,
-            } => Self::Success {
-                type_id: f(type_id),
-                write_type,
-                from_index_signature,
-            },
-            other => other,
-        }
-    }
-
-    /// Returns the type if Success, otherwise returns the default value.
-    pub fn success_type_or(&self, default: TypeId) -> TypeId {
-        self.success_type().unwrap_or(default)
-    }
-
     /// Extracts the `property_type` from a `PossiblyNullOrUndefined` result.
     pub const fn nullable_property_type(&self) -> Option<TypeId> {
         match self {

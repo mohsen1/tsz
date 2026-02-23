@@ -785,18 +785,6 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    /// Check if a type parameter is invariant at a given position.
-    pub fn is_invariant_position(&self, ty: TypeId, target_param: Atom) -> bool {
-        let (_, _, invariant, _) = self.compute_variance(ty, target_param);
-        invariant > 0
-    }
-
-    /// Check if a type parameter is bivariant at a given position.
-    pub fn is_bivariant_position(&self, ty: TypeId, target_param: Atom) -> bool {
-        let (_, _, _, bivariant) = self.compute_variance(ty, target_param);
-        bivariant > 0
-    }
-
     /// Get the variance of a type parameter as a string.
     pub fn get_variance(&self, ty: TypeId, target_param: Atom) -> &'static str {
         let (covariant, contravariant, invariant, bivariant) =
@@ -1060,34 +1048,6 @@ impl<'a> InferenceContext<'a> {
 
         self.add_candidate(var, ty, priority);
         true
-    }
-
-    /// Validate that resolved types respect variance constraints.
-    pub fn validate_variance(&mut self) -> Result<(), InferenceError> {
-        let type_params: Vec<_> = self.type_params.clone();
-        for (_name, var, _) in &type_params {
-            let resolved = match self.probe(*var) {
-                Some(ty) => ty,
-                None => continue,
-            };
-
-            // Check if this type parameter appears in its own resolved type
-            // We use the occurs_in method which already exists and handles this
-            if self.occurs_in(*var, resolved) {
-                let root = self.table.find(*var);
-                // This would be a circular reference
-                return Err(InferenceError::OccursCheck {
-                    var: root,
-                    ty: resolved,
-                });
-            }
-
-            // For more advanced variance checking, we would need to know
-            // the declared variance of each type parameter in its generic type
-            // This is a placeholder for future enhancement
-        }
-
-        Ok(())
     }
 
     /// Fix (resolve) inference variables that have candidates from Round 1.

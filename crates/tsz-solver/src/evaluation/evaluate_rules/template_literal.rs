@@ -119,54 +119,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Maximum recursion depth for counting literal members to prevent stack overflow
-    const MAX_LITERAL_COUNT_DEPTH: u32 = 50;
-
-    /// Count the number of literal members that can be converted to strings.
-    /// Returns 0 if the type contains non-literal types that cannot be stringified.
-    pub fn count_literal_members(&self, type_id: TypeId) -> usize {
-        self.count_literal_members_impl(type_id, 0)
-    }
-
-    /// Internal implementation with depth tracking.
-    fn count_literal_members_impl(&self, type_id: TypeId, depth: u32) -> usize {
-        // Prevent infinite recursion in deeply nested union types
-        if depth > Self::MAX_LITERAL_COUNT_DEPTH {
-            return 0; // Abort - too deep
-        }
-
-        if let Some(TypeData::Union(members)) = self.interner().lookup(type_id) {
-            let members = self.interner().type_list(members);
-            let mut count = 0;
-            for &member in members.iter() {
-                let member_count = self.count_literal_members_impl(member, depth + 1);
-                if member_count == 0 {
-                    return 0;
-                }
-                count += member_count;
-            }
-            count
-        } else if let Some(TypeData::Literal(_)) = self.interner().lookup(type_id) {
-            1
-        } else if let Some(TypeData::Enum(_, structural_type)) = self.interner().lookup(type_id) {
-            // Enum member types wrap a literal - delegate to the structural type
-            self.count_literal_members_impl(structural_type, depth + 1)
-        } else if type_id == TypeId::STRING
-            || type_id == TypeId::NUMBER
-            || type_id == TypeId::BOOLEAN
-            || type_id == TypeId::BIGINT
-        {
-            // Primitive types can't be fully enumerated
-            0
-        } else {
-            0
-        }
-    }
-
     /// Extract string representations from a type.
     /// Handles string, number, boolean, and bigint literals, converting them to their string form.
     /// For unions, extracts all members recursively.
-    pub fn extract_literal_strings(&self, type_id: TypeId) -> Vec<String> {
+    /// Maximum recursion depth for template literal evaluation to prevent stack overflow.
+    const MAX_LITERAL_COUNT_DEPTH: u32 = 50;
+
+    fn extract_literal_strings(&self, type_id: TypeId) -> Vec<String> {
         self.extract_literal_strings_impl(type_id, 0)
     }
 
