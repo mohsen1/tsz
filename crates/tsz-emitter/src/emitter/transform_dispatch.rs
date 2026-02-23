@@ -423,6 +423,36 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
+                    } else if !is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                        // For non-default class declarations, use the deferred export
+                        // mechanism so exports.X = X; is emitted right after the class
+                        // body but BEFORE any lowered static block IIFEs or static field
+                        // initializers. emit_class_es6_with_options consumes this field
+                        // at the class-body boundary.
+                        if let Some(name_id) = names.first()
+                            && let Some(ident) = self.arena.identifiers.get(*name_id as usize) {
+                                self.pending_commonjs_class_export_name =
+                                    Some(ident.escaped_text.clone());
+                            }
+                        let prev_module = self.ctx.options.module;
+                        self.ctx.options.module = ModuleKind::None;
+                        let export_name = names.first().copied();
+                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                        self.ctx.options.module = prev_module;
+                        // If the deferred export was NOT consumed (e.g. the class had no
+                        // static blocks/fields, so emit_class_es6_with_options was not
+                        // reached, or the class was ambient), emit it now as a fallback.
+                        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                            if !self.writer.is_at_line_start() {
+                                self.write_line();
+                            }
+                            self.write("exports.");
+                            self.write(&class_name);
+                            self.write(" = ");
+                            self.write(&class_name);
+                            self.write(";");
+                            self.write_line();
+                        }
                     } else {
                         let export_name = names.first().copied();
                         // Function declarations are hoisted, so tsc emits
@@ -889,20 +919,51 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
-                let export_name = names.first().copied();
-                let is_hoisted = *is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-                self.emit_commonjs_export_with_hoisting(
-                    names.as_ref(),
-                    *is_default,
-                    is_hoisted,
-                    &mut |this| {
-                        if index == 0 {
-                            this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
-                        } else {
-                            this.emit_chained_directive(node, idx, directives, index - 1);
+                if !*is_default && node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    // Use deferred export mechanism for class declarations so
+                    // exports.X = X; appears before lowered static blocks/IIFEs.
+                    if let Some(name_id) = names.first()
+                        && let Some(ident) = self.arena.identifiers.get(*name_id as usize) {
+                            self.pending_commonjs_class_export_name =
+                                Some(ident.escaped_text.clone());
                         }
-                    },
-                );
+                    let prev_module = self.ctx.options.module;
+                    self.ctx.options.module = ModuleKind::None;
+                    let export_name = names.first().copied();
+                    if index == 0 {
+                        self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                    } else {
+                        self.emit_chained_directive(node, idx, directives, index - 1);
+                    }
+                    self.ctx.options.module = prev_module;
+                    if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
+                        }
+                        self.write("exports.");
+                        self.write(&class_name);
+                        self.write(" = ");
+                        self.write(&class_name);
+                        self.write(";");
+                        self.write_line();
+                    }
+                } else {
+                    let export_name = names.first().copied();
+                    let is_hoisted =
+                        *is_default && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                    self.emit_commonjs_export_with_hoisting(
+                        names.as_ref(),
+                        *is_default,
+                        is_hoisted,
+                        &mut |this| {
+                            if index == 0 {
+                                this.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
+                            } else {
+                                this.emit_chained_directive(node, idx, directives, index - 1);
+                            }
+                        },
+                    );
+                }
             }
             EmitDirective::CommonJSExportDefaultExpr => {
                 // Check if this is an anonymous class/function

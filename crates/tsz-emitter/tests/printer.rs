@@ -699,3 +699,36 @@ class C1 extends A?.B {}
         "Lowered optional chain in extends clause should be parenthesized, got: {output}"
     );
 }
+
+#[test]
+fn test_commonjs_class_export_before_static_block_iife() {
+    // Regression test: exports.C = C; must appear between the class body
+    // and the lowered static block IIFE, matching tsc behavior.
+    let source =
+        "export class C {\n    static x: number;\n    static {\n        C.x = 1;\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    // exports.C = C; must come before the static block IIFE
+    let export_pos = output.find("exports.C = C;");
+    let iife_pos = output.find("(() => {");
+    assert!(
+        export_pos.is_some() && iife_pos.is_some(),
+        "Expected both exports.C = C; and IIFE in output, got: {output}"
+    );
+    assert!(
+        export_pos.unwrap() < iife_pos.unwrap(),
+        "exports.C = C; must appear before the static block IIFE, got: {output}"
+    );
+}
