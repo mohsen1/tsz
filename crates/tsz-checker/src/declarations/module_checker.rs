@@ -60,6 +60,25 @@ impl<'a> CheckerState<'a> {
 
         let module_name = &literal.text;
 
+        // TS5097: Check for .ts/.tsx/.mts/.cts extensions in dynamic imports
+        if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && let Some(ext) = super::import_declaration_checker::ts_extension_suffix(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                    diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                    &[ext],
+                );
+            let arg_start = arg_node.pos;
+            let arg_length = arg_node.end.saturating_sub(arg_node.pos);
+            self.error_at_position(
+                    arg_start,
+                    arg_length,
+                    &message,
+                    diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                );
+        }
+
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)

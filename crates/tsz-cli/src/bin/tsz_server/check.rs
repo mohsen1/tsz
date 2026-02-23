@@ -833,6 +833,7 @@ impl Server {
             module_explicitly_set: options.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
+            allow_importing_ts_extensions: false,
         }
     }
 }
