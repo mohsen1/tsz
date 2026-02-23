@@ -483,3 +483,50 @@ Investigated but punted:
   Reason: requires export-equals/default-merged inheritance-aware class-member snippet text generation, which is broader than this targeted completion-shape/code-action fallback patch.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{2,4}.ts`: still fail `verifyFileContent` on completion-applied edits.
   Reason: remaining divergence is in exact import-edit text shaping/order for class-member snippet code actions under augmentation variants; needs a dedicated edit-synthesis parity pass.
+
+## 2026-02-23 (call hierarchy decorator incoming follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/callHierarchyDecorator.ts` incoming-call parity by treating decorator references (`@bar`, `@bar()`, `@ns.bar`) as call-hierarchy references in `crates/tsz-lsp/src/hierarchy/call_hierarchy.rs`.
+- Added decorator caller recovery so top-level decorator usages contribute a declaration caller item (e.g. class `Foo`) instead of collapsing to script-level caller only.
+- Added focused unit coverage in `crates/tsz-lsp/tests/call_hierarchy_tests.rs`:
+  - `test_incoming_calls_include_decorator_references`.
+- Verification:
+  - `./scripts/run-fourslash.sh --filter=callHierarchyDecorator --verbose` now passes.
+  - `cargo nextest run -p tsz-lsp` passes.
+  - `./scripts/run-fourslash.sh --skip-build --max=200` remains `191/200` (no sampled regression).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/callHierarchyFunctionAmbiguity.{1,2,3,4,5}.ts`: still fail with single-file declaration fallback behavior.
+  Reason: requires project-wide/multi-file symbol resolution in tsserver call hierarchy requests (current `parse_and_bind_file` flow binds one file at a time), which is broader than this targeted decorator incoming fix.
+
+## 2026-02-23 (class-member snippet ambient merged-module follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts` by improving class-member snippet method text/code-action parity in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`:
+  - normalize fallback method parameter lists by trimming trailing commas,
+  - normalize fallback method return types by stripping trailing `{`/`;` bleed from parser text spans,
+  - prioritize synthesized class-member snippet import text changes over borrowed project auto-import edits for tsserver-like import placement.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_completion_info_class_member_snippet_method_trims_trailing_param_comma` (completion entry `insertText` + `completionEntryDetails` code-action text change shape).
+- Verification:
+  - `cargo nextest run -p tsz-cli` passes (`408` tests).
+  - `./scripts/run-fourslash.sh --skip-ts-build --max=200 --workers=4` improved from `191/200` to `192/200` passing.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: still requires project-wide symbol grouping in tsserver `references-full`/rename/definition paths (current handlers remain single-file `parse_and_bind_file` based for these flows).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same cross-file alias/re-export grouping gap as `_types` in tsserver navigation handlers.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation2.ts`
+  Reason: remaining failure is exact completion-applied import-edit shaping/order for class-member snippets under augmentation variants.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation4.ts`
+  Reason: same augmentation-variant import-edit shaping/order parity gap as `...ExportListAugmentation2.ts`.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`
+  Reason: still needs export-equals/default-merged inheritance-aware class-member snippet insert-text synthesis (`parent` entry).
+- `TypeScript/tests/cases/fourslash/autoImportPnpm.ts`
+  Reason: still blocked on pnpm/symlinked package topology candidate surfacing for auto-import code fixes.
+- `TypeScript/tests/cases/fourslash/autoImportSymlinkCaseSensitive.ts`
+  Reason: still blocked on case-sensitive symlink/module-resolution parity in auto-import candidate discovery.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
+  Reason: still needs deeper CommonJS/export-equals completion + code-fix modeling (`import = require(...)` style edits/candidates).
