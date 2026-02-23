@@ -580,6 +580,9 @@ impl<'a> CheckerState<'a> {
                 );
             } else if is_equality_op
                 && (left_is_object_or_array_literal || right_is_object_or_array_literal)
+                && (!self.is_js_file()
+                    || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let condition_result = match op_kind {
