@@ -3882,6 +3882,140 @@ fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
 }
 
 #[test]
+fn test_definition_and_bound_span_quoted_local_export_alias_has_token_span() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "definitionAndBoundSpan",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 19
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("definitionAndBoundSpan should return body");
+    let text_span = body.get("textSpan").expect("textSpan must be present");
+    assert_valid_span(text_span, "quoted export alias textSpan");
+    let start = text_span["start"]["offset"]
+        .as_u64()
+        .expect("textSpan.start.offset should be numeric");
+    let end = text_span["end"]["offset"]
+        .as_u64()
+        .expect("textSpan.end.offset should be numeric");
+    assert!(
+        end > start,
+        "quoted export alias textSpan must be non-empty (start={start}, end={end})"
+    );
+}
+
+#[test]
+fn test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+        ]
+        .join("\n"),
+    );
+
+    let refs_req = make_request(
+        "references",
+        serde_json::json!({
+            "file": "/bar.ts",
+            "line": 2,
+            "offset": 12
+        }),
+    );
+    let refs_resp = server.handle_tsserver_request(refs_req);
+    assert!(refs_resp.success);
+    let refs = refs_resp
+        .body
+        .expect("references should return body")
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("references should include refs array");
+    assert!(
+        refs.len() >= 3,
+        "expected multiple quoted alias refs across files, got: {refs:?}"
+    );
+    assert!(
+        refs.iter()
+            .filter_map(|entry| entry.get("file").and_then(serde_json::Value::as_str))
+            .any(|file| file == "/foo.ts"),
+        "expected quoted alias refs to include /foo.ts"
+    );
+    assert!(
+        refs.iter().all(|entry| {
+            entry
+                .get("lineText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|line| line.contains("import") || line.contains("export"))
+        }),
+        "quoted alias refs should stay on import/export specifiers only: {refs:?}"
+    );
+
+    let rename_req = make_request(
+        "rename",
+        serde_json::json!({
+            "file": "/bar.ts",
+            "line": 2,
+            "offset": 12
+        }),
+    );
+    let rename_resp = server.handle_tsserver_request(rename_req);
+    assert!(rename_resp.success);
+    let locs = rename_resp
+        .body
+        .expect("rename should return body")
+        .get("locs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("rename should include locs array");
+    assert!(
+        locs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")
+        }),
+        "expected rename locations to include /foo.ts: {locs:?}"
+    );
+    assert!(
+        locs.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/bar.ts")
+        }),
+        "expected rename locations to include /bar.ts: {locs:?}"
+    );
+}
+
+#[test]
 fn test_check_options_experimental_decorators_deserialize() {
     // Verify that experimentalDecorators in JSON is correctly deserialized
     let json = r#"{"experimentalDecorators": true}"#;
