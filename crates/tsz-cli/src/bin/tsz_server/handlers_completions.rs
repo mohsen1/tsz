@@ -3,11 +3,13 @@
 use super::{Server, TsServerRequest, TsServerResponse};
 use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, Completions};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
+use tsz::parser::node::NodeAccess;
 use tsz_solver::TypeInterner;
 
 impl Server {
@@ -95,6 +97,39 @@ impl Server {
         merged
     }
 
+    fn prioritize_class_member_snippet_items(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
+        let snippet_labels: FxHashSet<String> = items
+            .iter()
+            .filter(|item| item.source.as_deref() == Some("ClassMemberSnippet/"))
+            .map(|item| item.label.clone())
+            .collect();
+        if snippet_labels.is_empty() {
+            return items;
+        }
+
+        items
+            .into_iter()
+            .filter(|item| {
+                !snippet_labels.contains(&item.label)
+                    || item.source.as_deref() == Some("ClassMemberSnippet/")
+            })
+            .collect()
+    }
+
+    fn normalize_class_member_snippet_items(mut items: Vec<CompletionItem>) -> Vec<CompletionItem> {
+        for item in &mut items {
+            if item.source.as_deref() != Some("ClassMemberSnippet/") {
+                continue;
+            }
+            item.has_action = true;
+            item.is_snippet = true;
+            if item.insert_text.is_none() {
+                item.insert_text = Self::class_member_snippet_insert_text(item);
+            }
+        }
+        items
+    }
+
     fn string_pref(preferences: Option<&serde_json::Value>, key: &str) -> Option<String> {
         preferences
             .and_then(|p| p.get(key))
@@ -114,6 +149,641 @@ impl Server {
                     .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                     .collect()
             })
+    }
+
+    fn bool_pref_or_default(
+        preferences: Option<&serde_json::Value>,
+        key: &str,
+        default: bool,
+    ) -> bool {
+        preferences
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(default)
+    }
+
+    fn class_member_snippet_insert_text(item: &CompletionItem) -> Option<String> {
+        let detail = item.detail.as_deref().unwrap_or("").trim();
+        let is_getter = item
+            .kind_modifiers
+            .as_deref()
+            .is_some_and(|mods| mods.split(',').any(|m| m.trim() == "getter"));
+        match item.kind {
+            tsz::lsp::completions::CompletionItemKind::Property => {
+                if is_getter {
+                    let ty = if detail.is_empty() { "any" } else { detail };
+                    return Some(format!(
+                        "get {}(): {} {{\n}}",
+                        item.label,
+                        ty.trim_end_matches(';').trim()
+                    ));
+                }
+                if detail.is_empty() {
+                    Some(format!("{};", item.label))
+                } else {
+                    Some(format!("{}: {};", item.label, detail.trim_end_matches(';').trim()))
+                }
+            }
+            tsz::lsp::completions::CompletionItemKind::Method => {
+                let (params, return_type) = detail.split_once("=>")?;
+                let params = params.trim();
+                let return_type = return_type.trim();
+                if !params.starts_with('(') || !params.ends_with(')') || return_type.is_empty() {
+                    return None;
+                }
+                Some(format!(
+                    "public {}{}: {} {{\n}}",
+                    item.label, params, return_type
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn class_member_snippet_type_identifiers(insert_text: &str, member_name: &str) -> BTreeSet<String> {
+        const IGNORED: &[&str] = &[
+            "public",
+            "private",
+            "protected",
+            "readonly",
+            "async",
+            "abstract",
+            "override",
+            "static",
+            "declare",
+            "string",
+            "number",
+            "boolean",
+            "bigint",
+            "symbol",
+            "object",
+            "unknown",
+            "never",
+            "any",
+            "void",
+            "undefined",
+            "null",
+            "true",
+            "false",
+            "this",
+            "Promise",
+            "Array",
+        ];
+
+        let mut out = BTreeSet::new();
+        let mut token = String::new();
+        let flush = |token: &mut String, out: &mut BTreeSet<String>| {
+            if token.is_empty() {
+                return;
+            }
+            let candidate = token.clone();
+            token.clear();
+            let first = candidate.chars().next();
+            let looks_like_type = first.is_some_and(|ch| ch == '_' || ch.is_ascii_uppercase());
+            if !looks_like_type {
+                return;
+            }
+            if candidate == member_name || IGNORED.iter().any(|ignored| *ignored == candidate) {
+                return;
+            }
+            out.insert(candidate);
+        };
+
+        for ch in insert_text.chars() {
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                token.push(ch);
+            } else {
+                flush(&mut token, &mut out);
+            }
+        }
+        flush(&mut token, &mut out);
+        out
+    }
+
+    fn class_member_snippet_additional_edits(
+        insert_text: &str,
+        member_name: &str,
+        project_items: &[CompletionItem],
+    ) -> Vec<tsz::lsp::rename::TextEdit> {
+        let required_names = Self::class_member_snippet_type_identifiers(insert_text, member_name);
+        if required_names.is_empty() {
+            return Vec::new();
+        }
+
+        let mut best_item_by_name: BTreeMap<String, &CompletionItem> = BTreeMap::new();
+        for item in project_items {
+            if !item.has_action {
+                continue;
+            }
+            if !required_names.contains(&item.label) {
+                continue;
+            }
+            if item.additional_text_edits.is_none() {
+                continue;
+            }
+            best_item_by_name
+                .entry(item.label.clone())
+                .and_modify(|current| {
+                    let current_source = current.source.as_deref().unwrap_or_default();
+                    let item_source = item.source.as_deref().unwrap_or_default();
+                    let current_depth = current_source.matches('/').count();
+                    let item_depth = item_source.matches('/').count();
+                    if (item_depth, item_source.len()) < (current_depth, current_source.len()) {
+                        *current = item;
+                    }
+                })
+                .or_insert(item);
+        }
+
+        let mut edits = Vec::new();
+        let mut seen = BTreeSet::new();
+        for item in best_item_by_name.into_values() {
+            for edit in item.additional_text_edits.as_ref().into_iter().flatten() {
+                let key = (
+                    edit.range.start.line,
+                    edit.range.start.character,
+                    edit.range.end.line,
+                    edit.range.end.character,
+                    edit.new_text.clone(),
+                );
+                if seen.insert(key) {
+                    edits.push(edit.clone());
+                }
+            }
+        }
+        edits
+    }
+
+    fn class_member_snippet_items(
+        &self,
+        provider: &Completions<'_>,
+        root: tsz::parser::NodeIndex,
+        position: tsz::lsp::position::Position,
+        file_name: &str,
+        project_items: &[CompletionItem],
+    ) -> Vec<CompletionItem> {
+        let mut candidates = provider.get_class_member_snippet_candidates(root, position);
+        let fallback_candidates = self.class_member_snippet_fallback_candidates(file_name, position);
+        if candidates.is_empty() {
+            candidates = fallback_candidates;
+        } else {
+            for fallback in fallback_candidates {
+                if !candidates.iter().any(|candidate| candidate.label == fallback.label) {
+                    candidates.push(fallback);
+                }
+            }
+        }
+
+        let mut items = Vec::new();
+        for candidate in candidates {
+            let Some(insert_text) = Self::class_member_snippet_insert_text(&candidate) else {
+                continue;
+            };
+            let edits =
+                Self::class_member_snippet_additional_edits(&insert_text, &candidate.label, project_items);
+            let mut item = CompletionItem::new(candidate.label.clone(), candidate.kind)
+                .with_sort_text(tsz::lsp::completions::sort_priority::SUGGESTED_CLASS_MEMBERS)
+                .with_insert_text(insert_text)
+                .as_snippet()
+                .with_has_action()
+                .with_source("ClassMemberSnippet/".to_string());
+            if let Some(detail) = candidate.detail.as_ref() {
+                item = item.with_detail(detail.clone());
+            }
+            if let Some(mods) = candidate.kind_modifiers.as_ref() {
+                item = item.with_kind_modifiers(mods.clone());
+            }
+            if !edits.is_empty() {
+                item = item.with_additional_edits(edits);
+            }
+            items.push(item);
+        }
+        items
+    }
+
+    fn class_member_snippet_fallback_candidates(
+        &self,
+        file_name: &str,
+        position: tsz::lsp::position::Position,
+    ) -> Vec<CompletionItem> {
+        let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(file_name) else {
+            return Vec::new();
+        };
+        let line_map = LineMap::build(&source_text);
+        let Some(offset) = line_map.position_to_offset(position, &source_text) else {
+            return Vec::new();
+        };
+        let prefix = Self::identifier_prefix_before_offset(&source_text, offset as usize);
+        let mut scan_paths =
+            Self::fallback_class_member_scan_paths(&self.open_files, &self.external_project_files);
+        for resolved_path in Self::resolve_imported_module_files(
+            file_name,
+            &source_text,
+            &self.open_files,
+        ) {
+            if !scan_paths.iter().any(|path| path == &resolved_path) {
+                scan_paths.push(resolved_path);
+            }
+        }
+
+        let mut out = Vec::new();
+        let mut base_names = Self::enclosing_class_extends_names(&arena, offset);
+        if base_names.is_empty() {
+            self.collect_fallback_base_members_recursive(
+                "",
+                &scan_paths,
+                &mut BTreeSet::new(),
+                &mut out,
+            );
+        } else {
+            let mut visited = BTreeSet::new();
+            for base_name in base_names.drain(..) {
+                self.collect_fallback_base_members_recursive(
+                    &base_name,
+                    &scan_paths,
+                    &mut visited,
+                    &mut out,
+                );
+            }
+        }
+        if !prefix.is_empty() {
+            out.retain(|item| item.label.starts_with(&prefix));
+        }
+        out.sort_by(|a, b| a.label.cmp(&b.label));
+        out
+    }
+
+    fn enclosing_class_extends_names(
+        arena: &tsz::parser::node::NodeArena,
+        offset: u32,
+    ) -> Vec<String> {
+        let mut best_class: Option<(u32, u32, &tsz::parser::node::ClassData)> = None;
+        for node in &arena.nodes {
+            if node.kind != tsz::parser::syntax_kind_ext::CLASS_DECLARATION
+                && node.kind != tsz::parser::syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            if node.pos > offset || node.end < offset {
+                continue;
+            }
+            let Some(class_data) = arena.get_class(node) else {
+                continue;
+            };
+            match best_class {
+                Some((best_start, best_end, _))
+                    if (best_end - best_start) <= (node.end - node.pos) =>
+                {
+                    continue;
+                }
+                _ => best_class = Some((node.pos, node.end, class_data)),
+            }
+        }
+
+        best_class
+            .map(|(_, _, class_data)| Self::class_extends_names(arena, class_data))
+            .unwrap_or_default()
+    }
+
+    fn identifier_prefix_before_offset(source_text: &str, offset: usize) -> String {
+        let bytes = source_text.as_bytes();
+        let mut i = offset.min(bytes.len());
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        let end = i;
+        while i > 0 {
+            let ch = bytes[i - 1] as char;
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                i -= 1;
+            } else {
+                break;
+            }
+        }
+        if i < end {
+            source_text[i..end].to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    fn class_extends_names(
+        arena: &tsz::parser::node::NodeArena,
+        class_data: &tsz::parser::node::ClassData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let Some(clauses) = class_data.heritage_clauses.as_ref() else {
+            return names;
+        };
+        for &clause_idx in &clauses.nodes {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
+                    continue;
+                };
+                let Some(expr) = arena.get_expr_type_args(type_node).map(|t| t.expression) else {
+                    continue;
+                };
+                if let Some(name) = arena.get_identifier_text(expr) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+        names
+    }
+
+    fn node_text(
+        source_text: &str,
+        node: &tsz::parser::node::Node,
+    ) -> String {
+        let start = node.pos.min(source_text.len() as u32) as usize;
+        let end = node.end.min(source_text.len() as u32) as usize;
+        if start >= end {
+            String::new()
+        } else {
+            source_text[start..end].trim().to_string()
+        }
+    }
+
+    fn collect_fallback_base_members_recursive(
+        &self,
+        class_name: &str,
+        scan_paths: &[String],
+        visited: &mut BTreeSet<String>,
+        out: &mut Vec<CompletionItem>,
+    ) {
+        if !class_name.is_empty() && !visited.insert(class_name.to_string()) {
+            return;
+        }
+
+        for path in scan_paths {
+            let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(&path) else {
+                continue;
+            };
+            for node in &arena.nodes {
+                if node.kind != tsz::parser::syntax_kind_ext::CLASS_DECLARATION
+                    && node.kind != tsz::parser::syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    continue;
+                }
+                let Some(class_data) = arena.get_class(node) else {
+                    continue;
+                };
+                let Some(name) = arena.get_identifier_text(class_data.name) else {
+                    continue;
+                };
+                if !class_name.is_empty() && name != class_name {
+                    continue;
+                }
+
+                for &member_idx in &class_data.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
+                    match member_node.kind {
+                        k if k == tsz::parser::syntax_kind_ext::PROPERTY_DECLARATION => {
+                            let Some(prop) = arena.get_property_decl(member_node) else {
+                                continue;
+                            };
+                            let Some(member_name) = arena.get_identifier_text(prop.name) else {
+                                continue;
+                            };
+                            let detail = if prop.type_annotation.is_some() {
+                                arena
+                                    .get(prop.type_annotation)
+                                    .map(|n| Self::node_text(&source_text, n))
+                                    .unwrap_or_else(|| "any".to_string())
+                            } else {
+                                "any".to_string()
+                            };
+                            let item = CompletionItem::new(
+                                member_name.to_string(),
+                                tsz::lsp::completions::CompletionItemKind::Property,
+                            )
+                            .with_detail(detail);
+                            if !out.iter().any(|i| i.label == item.label) {
+                                out.push(item);
+                            }
+                        }
+                        k if k == tsz::parser::syntax_kind_ext::GET_ACCESSOR => {
+                            let Some(accessor) = arena.get_accessor(member_node) else {
+                                continue;
+                            };
+                            let Some(member_name) = arena.get_identifier_text(accessor.name) else {
+                                continue;
+                            };
+                            let detail = if accessor.type_annotation.is_some() {
+                                arena
+                                    .get(accessor.type_annotation)
+                                    .map(|n| Self::node_text(&source_text, n))
+                                    .unwrap_or_else(|| "any".to_string())
+                            } else {
+                                "any".to_string()
+                            };
+                            let item = CompletionItem::new(
+                                member_name.to_string(),
+                                tsz::lsp::completions::CompletionItemKind::Property,
+                            )
+                            .with_detail(detail)
+                            .with_kind_modifiers("getter".to_string());
+                            if !out.iter().any(|i| i.label == item.label) {
+                                out.push(item);
+                            }
+                        }
+                        k if k == tsz::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                            let Some(method) = arena.get_method_decl(member_node) else {
+                                continue;
+                            };
+                            let Some(member_name) = arena.get_identifier_text(method.name) else {
+                                continue;
+                            };
+                            let mut params = Vec::new();
+                            for &param_idx in &method.parameters.nodes {
+                                let Some(param_node) = arena.get(param_idx) else {
+                                    continue;
+                                };
+                                let text = Self::node_text(&source_text, param_node);
+                                if !text.is_empty() {
+                                    params.push(text);
+                                }
+                            }
+                            let return_type = if method.type_annotation.is_some() {
+                                arena
+                                    .get(method.type_annotation)
+                                    .map(|n| Self::node_text(&source_text, n))
+                                    .unwrap_or_else(|| "void".to_string())
+                            } else {
+                                "void".to_string()
+                            };
+                            let detail = format!("({}) => {}", params.join(", "), return_type);
+                            let item = CompletionItem::new(
+                                member_name.to_string(),
+                                tsz::lsp::completions::CompletionItemKind::Method,
+                            )
+                            .with_detail(detail);
+                            if !out.iter().any(|i| i.label == item.label) {
+                                out.push(item);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if !class_name.is_empty() {
+                    for base in Self::class_extends_names(&arena, class_data) {
+                        self.collect_fallback_base_members_recursive(&base, scan_paths, visited, out);
+                    }
+                }
+            }
+        }
+    }
+
+    fn fallback_class_member_scan_paths(
+        open_files: &rustc_hash::FxHashMap<String, String>,
+        external_project_files: &rustc_hash::FxHashMap<String, Vec<String>>,
+    ) -> Vec<String> {
+        let mut paths: Vec<String> = open_files.keys().cloned().collect();
+        for project_files in external_project_files.values() {
+            for file_path in project_files {
+                if !paths.iter().any(|path| path == file_path) {
+                    paths.push(file_path.clone());
+                }
+            }
+        }
+        paths
+    }
+
+    fn resolve_imported_module_files(
+        file_name: &str,
+        source_text: &str,
+        open_files: &rustc_hash::FxHashMap<String, String>,
+    ) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        let Some(file_parent) = std::path::Path::new(file_name).parent() else {
+            return out;
+        };
+        for specifier in Self::module_specifiers_in_source(source_text) {
+            if specifier.is_empty() {
+                continue;
+            }
+            let resolved = Self::resolve_module_specifier_for_fallback(
+                file_parent,
+                &specifier,
+                open_files,
+            );
+            for path in resolved {
+                if seen.insert(path.clone()) {
+                    out.push(path);
+                }
+            }
+        }
+        out
+    }
+
+    fn module_specifiers_in_source(source_text: &str) -> Vec<String> {
+        const MARKERS: [&str; 4] = [" from \"", " from '", "import \"", "import '"];
+        let mut specifiers = Vec::new();
+        for marker in MARKERS {
+            let Some(quote) = marker.chars().last() else {
+                continue;
+            };
+            let mut start = 0;
+            while let Some(idx) = source_text[start..].find(marker) {
+                let spec_start = start + idx + marker.len();
+                let rest = &source_text[spec_start..];
+                let Some(end) = rest.find(quote) else {
+                    break;
+                };
+                specifiers.push(rest[..end].to_string());
+                start = spec_start + end + 1;
+            }
+        }
+        specifiers
+    }
+
+    fn resolve_module_specifier_for_fallback(
+        file_parent: &Path,
+        specifier: &str,
+        open_files: &rustc_hash::FxHashMap<String, String>,
+    ) -> Vec<String> {
+        let mut candidates = Vec::new();
+        let mut push_candidate = |path: std::path::PathBuf| {
+            candidates.push(path.to_string_lossy().to_string());
+        };
+        if specifier.starts_with('.') || specifier.starts_with('/') {
+            let base = if specifier.starts_with('/') {
+                Path::new(specifier).to_path_buf()
+            } else {
+                file_parent.join(specifier)
+            };
+            let normalized = Self::normalize_fallback_path(base);
+            Self::push_module_file_candidates(&mut push_candidate, &normalized);
+        } else {
+            let mut current = Some(file_parent.to_path_buf());
+            while let Some(dir) = current {
+                let base = dir.join("node_modules").join(specifier);
+                let normalized = Self::normalize_fallback_path(base);
+                Self::push_module_file_candidates(&mut push_candidate, &normalized);
+                current = dir.parent().map(std::path::Path::to_path_buf);
+            }
+        }
+
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                open_files.contains_key(candidate) || std::path::Path::new(candidate).exists()
+            })
+            .collect()
+    }
+
+    fn normalize_fallback_path(path: std::path::PathBuf) -> std::path::PathBuf {
+        use std::path::Component;
+
+        let mut normalized = std::path::PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::Normal(part) => normalized.push(part),
+                Component::RootDir => normalized.push(Component::RootDir.as_os_str()),
+                Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            }
+        }
+        normalized
+    }
+
+    fn push_module_file_candidates<F>(push: &mut F, base: &Path)
+    where
+        F: FnMut(std::path::PathBuf),
+    {
+        for ext in [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"] {
+            let mut with_ext = base.as_os_str().to_os_string();
+            with_ext.push(ext);
+            push(std::path::PathBuf::from(with_ext));
+        }
+        push(base.to_path_buf());
+        for leaf in [
+            "index.d.ts",
+            "index.ts",
+            "index.tsx",
+            "index.js",
+            "index.jsx",
+            "index.mts",
+            "index.cts",
+        ] {
+            push(base.join(leaf));
+        }
     }
 
     fn extract_module_specifier_from_import_text(new_text: &str) -> Option<&str> {
@@ -524,6 +1194,7 @@ impl Server {
             }
             if item.is_snippet {
                 entry["isSnippet"] = serde_json::json!(true);
+                entry["filterText"] = serde_json::json!(item.label.clone());
             }
         }
         if let Some(source) = item.source.as_ref() {
@@ -578,12 +1249,27 @@ impl Server {
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
+            let include_class_member_snippets = Self::bool_pref_or_default(
+                request.arguments.get("preferences"),
+                "includeCompletionsWithClassMemberSnippets",
+                self.include_completions_with_class_member_snippets,
+            );
+            let snippet_items = if include_class_member_snippets && !is_member_completion {
+                self.class_member_snippet_items(&provider, root, position, &file, &project_items)
+            } else {
+                Vec::new()
+            };
             let items = if is_member_completion {
                 provider_items
             } else {
                 Self::merge_non_member_completion_items(provider_items, project_items)
             };
             let mut items = items;
+            if !snippet_items.is_empty() {
+                items = Self::merge_non_member_completion_items(items, snippet_items);
+                items = Self::prioritize_class_member_snippet_items(items);
+                items = Self::normalize_class_member_snippet_items(items);
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
 
@@ -643,12 +1329,27 @@ impl Server {
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
+            let include_class_member_snippets = Self::bool_pref_or_default(
+                request.arguments.get("preferences"),
+                "includeCompletionsWithClassMemberSnippets",
+                self.include_completions_with_class_member_snippets,
+            );
+            let snippet_items = if include_class_member_snippets && !is_member_completion {
+                self.class_member_snippet_items(&provider, root, position, file, &project_items)
+            } else {
+                Vec::new()
+            };
             let items = if is_member_completion {
                 provider_items
             } else {
                 Self::merge_non_member_completion_items(provider_items, project_items)
             };
             let mut items = items;
+            if !snippet_items.is_empty() {
+                items = Self::merge_non_member_completion_items(items, snippet_items);
+                items = Self::prioritize_class_member_snippet_items(items);
+                items = Self::normalize_class_member_snippet_items(items);
+            }
             Self::sort_tsserver_completion_items(&mut items);
             let member_parent = completion_result
                 .as_ref()
@@ -811,13 +1512,21 @@ impl Server {
                             }
                         }
 
-                        let description = Self::auto_import_code_action_description(
-                            &source_text,
-                            &file,
-                            item.source.as_deref(),
-                            edits,
-                            &item.label,
-                        );
+                        let description = if item.source.as_deref() == Some("ClassMemberSnippet/")
+                        {
+                            format!(
+                                "Includes imports of types referenced by '{}'",
+                                item.label
+                            )
+                        } else {
+                            Self::auto_import_code_action_description(
+                                &source_text,
+                                &file,
+                                item.source.as_deref(),
+                                edits,
+                                &item.label,
+                            )
+                        };
 
                         detail.insert(
                             "codeActions".to_string(),
@@ -1541,6 +2250,7 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustc_hash::FxHashMap;
     use tsz::lsp::completions::CompletionItemKind;
 
     #[test]
@@ -1624,6 +2334,51 @@ mod tests {
     }
 
     #[test]
+    fn prioritize_class_member_snippet_items_keeps_snippet_variant_for_same_label() {
+        let items = vec![
+            CompletionItem::new("container".to_string(), CompletionItemKind::Property)
+                .with_source("@sapphire/pieces".to_string()),
+            CompletionItem::new("container".to_string(), CompletionItemKind::Property)
+                .with_source("ClassMemberSnippet/".to_string())
+                .with_has_action()
+                .as_snippet()
+                .with_insert_text("container: Container;".to_string()),
+            CompletionItem::new("other".to_string(), CompletionItemKind::Property),
+        ];
+
+        let prioritized = Server::prioritize_class_member_snippet_items(items);
+
+        let container_sources: Vec<Option<&str>> = prioritized
+            .iter()
+            .filter(|item| item.label == "container")
+            .map(|item| item.source.as_deref())
+            .collect();
+        assert_eq!(container_sources, vec![Some("ClassMemberSnippet/")]);
+        assert!(
+            prioritized.iter().any(|item| item.label == "other"),
+            "non-colliding entries should be preserved"
+        );
+    }
+
+    #[test]
+    fn normalize_class_member_snippet_items_sets_snippet_flags_and_insert_text() {
+        let items = vec![
+            CompletionItem::new("container".to_string(), CompletionItemKind::Property)
+                .with_detail("Container".to_string())
+                .with_source("ClassMemberSnippet/".to_string()),
+        ];
+
+        let normalized = Server::normalize_class_member_snippet_items(items);
+        let item = normalized
+            .first()
+            .expect("expected normalized class member snippet item");
+
+        assert!(item.has_action);
+        assert!(item.is_snippet);
+        assert_eq!(item.insert_text.as_deref(), Some("container: Container;"));
+    }
+
+    #[test]
     fn normalize_mts_auto_import_edit_text_appends_existing_type_only_members() {
         let source_text = "import type { I } from \"./mod.js\";\n\nconst x: I = new ";
         let normalized = Server::normalize_mts_auto_import_edit_text(
@@ -1638,4 +2393,53 @@ mod tests {
             "expected normalize_mts_auto_import_edit_text to keep existing type-only imports, got: {normalized}"
         );
     }
+
+    #[test]
+    fn fallback_class_member_scan_paths_include_external_project_file_paths() {
+        let mut open_files = FxHashMap::default();
+        open_files.insert("/src/current.ts".to_string(), "class C {}".to_string());
+        let mut external_project_files = FxHashMap::default();
+        external_project_files.insert(
+            "project:/virtual".to_string(),
+            vec!["/src/base.ts".to_string(), "/src/current.ts".to_string()],
+        );
+
+        let paths = Server::fallback_class_member_scan_paths(&open_files, &external_project_files);
+
+        assert!(paths.iter().any(|path| path == "/src/current.ts"));
+        assert!(paths.iter().any(|path| path == "/src/base.ts"));
+        assert!(
+            !paths.iter().any(|path| path == "project:/virtual"),
+            "project names should not be treated as source file paths"
+        );
+    }
+
+    #[test]
+    fn resolve_imported_module_files_finds_relative_and_package_targets_from_open_files() {
+        let mut open_files = FxHashMap::default();
+        open_files.insert(
+            "/workspace/src/base.ts".to_string(),
+            "export class Base {}".to_string(),
+        );
+        open_files.insert(
+            "/workspace/node_modules/@scope/pkg/index.d.ts".to_string(),
+            "export declare class Piece {}".to_string(),
+        );
+        let source = "import { Base } from \"./base\";\nimport { Piece } from \"@scope/pkg\";\n";
+
+        let resolved =
+            Server::resolve_imported_module_files("/workspace/src/current.ts", source, &open_files);
+
+        assert!(
+            resolved.iter().any(|path| path == "/workspace/src/base.ts"),
+            "expected relative module candidate to resolve from open files: {resolved:?}"
+        );
+        assert!(
+            resolved
+                .iter()
+                .any(|path| path == "/workspace/node_modules/@scope/pkg/index.d.ts"),
+            "expected package module candidate to resolve from open files: {resolved:?}"
+        );
+    }
+
 }

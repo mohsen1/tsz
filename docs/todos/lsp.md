@@ -260,6 +260,14 @@ Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list equality.
   Reason: tied to the same unresolved global completion surface/content parity path as the `autoImportFileExcludePatterns{2,3}` failures.
 
+## 2026-02-23 (fourslash 200 follow-up)
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`, `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`, and `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: still missing class-member snippet completions (`execActionWithCount`/`container`/`parent`).
+  Reason: current tsserver bridge still lacks full fourslash parity for class-member snippet candidate surfacing in this adapter path (including request-shape/context propagation used by the harness), and a robust fix needs deeper handler+project completion integration.
+- `TypeScript/tests/cases/fourslash/autoImportPnpm.ts` and `TypeScript/tests/cases/fourslash/autoImportSymlinkCaseSensitive.ts`: still return `No codefixes returned`.
+  Reason: adding external-project file participation and pnpm-path fallback helpers was not sufficient in the fourslash harness path; remaining gap appears tied to symlink/link topology parity (`@link` handling + module resolution surface) beyond a small local code-fix candidate patch.
+
 ## 2026-02-22 (call hierarchy file-start incoming parity follow-up)
 
 Completed in this pass:
@@ -403,3 +411,34 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `36` (`(parameter) i: any` vs expected `number`).
   Reason: requires additional contextual parameter typing parity for function expressions assigned through class property declarations in tsserver quickinfo recovery beyond this targeted property-type fallback.
+
+## 2026-02-23 (class-member snippet fallback scan follow-up)
+
+Completed in this pass:
+- Hardened class-member snippet fallback file discovery in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` by:
+  - fixing external-project scan path collection to use tracked file paths (not project-name keys),
+  - merging fallback snippet candidates even when provider returns partial member results,
+  - adding import-specifier-based fallback module resolution for relative and `node_modules` paths used during snippet member discovery.
+- Added focused handler unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` for:
+  - external project file path scan selection,
+  - fallback import-specifier file resolution from open-file maps.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`, `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`, and `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: still missing class-member snippet completions (`execActionWithCount`/`container`/`parent`).
+  Reason: remaining gap appears to be deeper tsserver/fourslash adapter parity in class-member snippet candidate surfacing context (request/project state hydration), beyond local fallback scan-path and module-specifier discovery fixes.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`: still creates a local baseline with empty completion/codefix auto-import payloads.
+  Reason: requires broader CommonJS auto-import candidate/edit parity for `module.exports = { ... }` and `export =`/`import = require(...)` completion + code-action shaping beyond this focused snippet fallback patch.
+
+## 2026-02-23 (class-member snippet configure + accessor follow-up)
+
+Completed in this pass:
+- Wired tsserver `configure` preference persistence for `includeCompletionsWithClassMemberSnippets` so completion requests without inline `preferences` can still enable class-member snippet paths.
+- Added getter accessor support to class-member snippet fallback candidate extraction (`GET_ACCESSOR` -> `get name(): T {}` shape).
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` and `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` for:
+  - configure-driven snippet preference behavior,
+  - augmented alias-chain inherited getter snippet candidate recovery,
+  - snippet-priority/normalization behavior for `ClassMemberSnippet/` entries.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`, `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`, and `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: still fail in fourslash with snippet-shape mismatches (`isSnippet`/`insertText`) despite passing focused tsserver unit coverage.
+  Reason: remaining divergence appears in the fourslash harness/session bridge completion-entry matching/selection path (not reproducible in direct `tsz-server` unit tests), and needs dedicated adapter-level trace instrumentation to locate where snippet entry metadata is lost or a non-snippet duplicate entry is selected first.
