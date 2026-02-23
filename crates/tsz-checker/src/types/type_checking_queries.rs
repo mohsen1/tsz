@@ -3,10 +3,44 @@
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Extract a property name from a non-computed property name node.
+///
+/// Handles identifiers, string literals, no-substitution template literals,
+/// and numeric literals (canonicalized via `canonicalize_numeric_name`).
+/// Does NOT handle computed property names — callers must handle those separately
+/// when symbol resolution or special formatting is needed.
+pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
+    let name_node = arena.get(name_idx)?;
+
+    // Identifier
+    if let Some(ident) = arena.get_identifier(name_node) {
+        return Some(ident.escaped_text.clone());
+    }
+
+    // String literal, no-substitution template literal, or numeric literal
+    if matches!(
+        name_node.kind,
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == SyntaxKind::NumericLiteral as u16
+    ) && let Some(lit) = arena.get_literal(name_node)
+    {
+        // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
+        if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+        {
+            return Some(canonical);
+        }
+        return Some(lit.text.clone());
+    }
+
+    None
+}
 
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,30 +583,16 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Get property name as string from a property name node (identifier, string literal, etc.)
+    ///
+    /// Also handles computed property names with literal or symbol expressions.
     pub(crate) fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
+        // Try non-computed property name first
+        if let Some(name) = get_literal_property_name(self.ctx.arena, name_idx) {
+            return Some(name);
+        }
+
+        // Handle computed property names
         let name_node = self.ctx.arena.get(name_idx)?;
-
-        // Identifier
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
-        }
-
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-        {
-            // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
-            if name_node.kind == SyntaxKind::NumericLiteral as u16
-                && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-            {
-                return Some(canonical);
-            }
-            return Some(lit.text.clone());
-        }
-
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
         {
@@ -580,31 +600,10 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(symbol_name);
             }
-            if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
-                // NOTE: Do NOT return the identifier text for computed property names
-                // like `[e]`. The identifier `e` must go through the computed property
-                // checking path so its expression is type-checked (emitting TS2304 if
-                // undeclared). Returning the identifier text here would skip that check
-                // and produce the wrong property name (the variable name instead of its
-                // value). Only statically-known values (string/number literals, unique
-                // symbols) can be resolved here.
-
-                if matches!(
-                    expr_node.kind,
-                    k if k == SyntaxKind::StringLiteral as u16
-                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                        || k == SyntaxKind::NumericLiteral as u16
-                ) && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-                {
-                    if expr_node.kind == SyntaxKind::NumericLiteral as u16
-                        && let Some(canonical) =
-                            tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-                    {
-                        return Some(canonical);
-                    }
-                    return Some(lit.text.clone());
-                }
-            }
+            // NOTE: Do NOT return the identifier text for computed property names
+            // like `[e]`. Only statically-known values (string/number literals, unique
+            // symbols) can be resolved here.
+            return get_literal_property_name(self.ctx.arena, computed.expression);
         }
 
         None

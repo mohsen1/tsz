@@ -1329,33 +1329,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get property name from a property name node.
     fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
-        use tsz_scanner::SyntaxKind;
-
-        let name_node = self.ctx.arena.get(name_idx)?;
-
-        // Identifier
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
-        }
-
-        // String literal, no-substitution template literal, or numeric literal
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-        {
-            // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
-            if name_node.kind == SyntaxKind::NumericLiteral as u16
-                && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-            {
-                return Some(canonical);
-            }
-            return Some(lit.text.clone());
-        }
-
-        None
+        crate::types_domain::type_checking_queries::get_literal_property_name(
+            self.ctx.arena,
+            name_idx,
+        )
     }
 
     /// Check if a modifier list contains the readonly modifier.

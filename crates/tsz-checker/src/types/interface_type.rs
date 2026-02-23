@@ -1215,23 +1215,10 @@ impl<'a> CheckerState<'a> {
     /// Get the interned Atom for a member name node, handling identifiers,
     /// string literals, and numeric literals (with canonical normalization).
     fn get_member_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
-        let name_node = self.ctx.arena.get(name_idx)?;
-
-        // Identifier
-        if let Some(id_data) = self.ctx.arena.get_identifier(name_node) {
-            return Some(self.ctx.types.intern_string(&id_data.escaped_text));
-        }
-
-        // String literal or numeric literal
-        if let Some(lit) = self.ctx.arena.get_literal(name_node) {
-            if name_node.kind == SyntaxKind::NumericLiteral as u16
-                && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-            {
-                return Some(self.ctx.types.intern_string(&canonical));
-            }
-            return Some(self.ctx.types.intern_string(&lit.text));
-        }
-
-        None
+        let name = crate::types_domain::type_checking_queries::get_literal_property_name(
+            self.ctx.arena,
+            name_idx,
+        )?;
+        Some(self.ctx.types.intern_string(&name))
     }
 }
