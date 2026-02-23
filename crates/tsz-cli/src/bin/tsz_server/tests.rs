@@ -3979,9 +3979,13 @@ fn test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers() {
             entry
                 .get("lineText")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|line| line.contains("import") || line.contains("export"))
+                .is_none_or(|line| {
+                    !line.contains("if (bar")
+                        && !line.contains("if (first")
+                        && !line.contains("if (second")
+                })
         }),
-        "quoted alias refs should stay on import/export specifiers only: {refs:?}"
+        "expected quoted alias refs to stay on quoted import/export specifiers: {refs:?}"
     );
 
     let rename_req = make_request(
@@ -4012,6 +4016,262 @@ fn test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers() {
             entry.get("file").and_then(serde_json::Value::as_str) == Some("/bar.ts")
         }),
         "expected rename locations to include /bar.ts: {locs:?}"
+    );
+}
+
+#[test]
+fn test_rename_from_export_quoted_alias_filters_non_specifier_locations() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+        ]
+        .join("\n"),
+    );
+
+    let rename_req = make_request(
+        "rename",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 21
+        }),
+    );
+    let rename_resp = server.handle_tsserver_request(rename_req);
+    assert!(rename_resp.success);
+    let body = rename_resp.body.expect("rename should return body");
+    let loc_groups = body
+        .get("locs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("rename should include locs array");
+    assert!(
+        loc_groups.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")
+        }),
+        "expected rename locations to include /foo.ts: {loc_groups:?}"
+    );
+    assert!(
+        loc_groups.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/bar.ts")
+        }),
+        "expected rename locations to include /bar.ts: {loc_groups:?}"
+    );
+
+    for group in &loc_groups {
+        let file = group
+            .get("file")
+            .and_then(serde_json::Value::as_str)
+            .expect("loc group should contain file");
+        let source = server
+            .open_files
+            .get(file)
+            .expect("test source should be present in open files");
+        let lines: Vec<&str> = source.lines().collect();
+        let locs = group
+            .get("locs")
+            .and_then(serde_json::Value::as_array)
+            .expect("loc group should contain locs");
+        for loc in locs {
+            let line_one_based = loc
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64)
+                .expect("loc start.line should be numeric");
+            let line_idx = line_one_based.saturating_sub(1) as usize;
+            let line_text = lines.get(line_idx).copied().unwrap_or("");
+            assert!(
+                line_text.contains("import {") || line_text.contains("export {"),
+                "rename on quoted alias should stay on import/export specifiers, got line: {line_text}"
+            );
+            assert!(
+                !line_text.contains("const foo")
+                    && !line_text.contains("if (bar")
+                    && !line_text.contains("if (first")
+                    && !line_text.contains("if (second"),
+                "rename on quoted alias should not include identifier usage lines, got line: {line_text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references-full",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 24
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references-full should return body");
+    let entries = body
+        .as_array()
+        .cloned()
+        .expect("references-full response should be array");
+    assert!(!entries.is_empty(), "expected at least one referenced symbol");
+    let refs = entries[0]["references"]
+        .as_array()
+        .cloned()
+        .expect("referenced symbol should include references");
+    assert!(
+        refs.iter().any(|entry| {
+            entry.get("fileName").and_then(serde_json::Value::as_str) == Some("/bar.ts")
+        }),
+        "expected cross-file references to include /bar.ts: {refs:?}"
+    );
+    let foo_source = server
+        .open_files
+        .get("/foo.ts")
+        .cloned()
+        .expect("missing /foo.ts");
+    let has_inner_alias_span = refs.iter().any(|entry| {
+        if entry.get("fileName").and_then(serde_json::Value::as_str) != Some("/foo.ts") {
+            return false;
+        }
+        let start = entry["textSpan"]["start"].as_u64().unwrap_or(0) as usize;
+        let len = entry["textSpan"]["length"].as_u64().unwrap_or(0) as usize;
+        let end = start.saturating_add(len);
+        foo_source.get(start..end) == Some("__<alias>")
+    });
+    assert!(
+        has_inner_alias_span,
+        "expected at least one /foo.ts reference span to map to inner alias text"
+    );
+}
+
+#[test]
+fn test_type_only_quoted_alias_references_work_from_type_keyword_offset() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    // Place the query on `type`, not on the quoted string literal token.
+    let refs_req = make_request(
+        "references",
+        serde_json::json!({
+            "file": "/bar.ts",
+            "line": 1,
+            "offset": 10
+        }),
+    );
+    let refs_resp = server.handle_tsserver_request(refs_req);
+    assert!(refs_resp.success);
+    let refs = refs_resp
+        .body
+        .expect("references should return body")
+        .get("refs")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .expect("references should include refs array");
+    assert!(
+        refs.iter()
+            .filter_map(|entry| entry.get("file").and_then(serde_json::Value::as_str))
+            .any(|file| file == "/foo.ts"),
+        "expected type-only quoted alias refs to include /foo.ts: {refs:?}"
+    );
+    assert!(
+        refs.iter()
+            .filter_map(|entry| entry.get("file").and_then(serde_json::Value::as_str))
+            .any(|file| file == "/bar.ts"),
+        "expected type-only quoted alias refs to include /bar.ts: {refs:?}"
+    );
+}
+
+#[test]
+fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "definition",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 3,
+            "offset": 18
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let defs = resp
+        .body
+        .expect("definition should return body")
+        .as_array()
+        .cloned()
+        .expect("definition response should be an array");
+    assert!(
+        defs.iter()
+            .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
+        "expected type-only quoted alias definition to resolve to exported symbol `foo`, got: {defs:?}"
     );
 }
 

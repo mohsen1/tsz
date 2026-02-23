@@ -167,44 +167,71 @@ impl Server {
         source_text: &str,
         offset: u32,
     ) -> Option<(String, String)> {
-        let node_idx = tsz::lsp::utils::find_node_at_or_before_offset(arena, offset, source_text);
-        if node_idx.is_none() {
-            return None;
+        let mut specifier_idx = tsz::parser::NodeIndex::NONE;
+        let mut candidates = Vec::with_capacity(4);
+        candidates.push(tsz::lsp::utils::find_node_at_offset(arena, offset));
+        candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
+            arena, offset, source_text,
+        ));
+        if offset > 0 {
+            candidates.push(tsz::lsp::utils::find_node_at_offset(
+                arena,
+                offset.saturating_sub(1),
+            ));
         }
-        let mut specifier_idx = Self::find_ancestor_of_kind(
-            arena,
-            node_idx,
-            tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
-        );
-        if specifier_idx.is_none() {
-            specifier_idx = Self::find_ancestor_of_kind(
+        if (offset as usize) < source_text.len() {
+            candidates.push(tsz::lsp::utils::find_node_at_offset(
+                arena,
+                offset.saturating_add(1),
+            ));
+        }
+        for node_idx in candidates {
+            if node_idx.is_none() {
+                continue;
+            }
+            let import_spec = Self::find_ancestor_of_kind(
+                arena,
+                node_idx,
+                tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+            );
+            if import_spec.is_some() {
+                specifier_idx = import_spec;
+                break;
+            }
+            let export_spec = Self::find_ancestor_of_kind(
                 arena,
                 node_idx,
                 tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
             );
+            if export_spec.is_some() {
+                specifier_idx = export_spec;
+                break;
+            }
         }
         if specifier_idx.is_none() {
-            return None;
+            return Self::alias_query_target_textual(source_text, offset);
         }
         let specifier_node = arena.get(specifier_idx)?;
         let spec_data = arena.get_specifier(specifier_node)?;
-        let alias_name = if spec_data.property_name.is_some() {
-            let property_node = arena.get(spec_data.property_name)?;
-            if property_node.kind == SyntaxKind::StringLiteral as u16 {
-                Self::unquote(&Self::node_text_opt(source_text, property_node)?)
-            } else {
-                let name_node = arena.get(spec_data.name)?;
-                if name_node.kind != SyntaxKind::StringLiteral as u16 {
-                    return None;
+        let alias_name = {
+            let mut selected: Option<String> = None;
+            for symbol_idx in [spec_data.property_name, spec_data.name] {
+                let Some(symbol_node) = arena.get(symbol_idx) else {
+                    continue;
+                };
+                if symbol_node.kind != SyntaxKind::StringLiteral as u16 {
+                    continue;
                 }
-                Self::unquote(&Self::node_text_opt(source_text, name_node)?)
+                let text = Self::unquote(&Self::node_text_opt(source_text, symbol_node)?);
+                if offset >= symbol_node.pos && offset <= symbol_node.end {
+                    selected = Some(text);
+                    break;
+                }
+                if selected.is_none() {
+                    selected = Some(text);
+                }
             }
-        } else {
-            let name_node = arena.get(spec_data.name)?;
-            if name_node.kind != SyntaxKind::StringLiteral as u16 {
-                return None;
-            }
-            Self::unquote(&Self::node_text_opt(source_text, name_node)?)
+            selected?
         };
         let ext = arena.get_extended(specifier_idx)?;
         if ext.parent.is_none() {
@@ -237,7 +264,82 @@ impl Server {
         {
             return Some((Self::unquote(&module_text), alias_name));
         }
-        None
+        Self::alias_query_target_textual(source_text, offset)
+    }
+
+    fn alias_query_target_textual(source_text: &str, offset: u32) -> Option<(String, String)> {
+        let bytes = source_text.as_bytes();
+        let mut line_start = offset as usize;
+        while line_start > 0 && bytes.get(line_start.wrapping_sub(1)) != Some(&b'\n') {
+            line_start -= 1;
+        }
+        let mut line_end = offset as usize;
+        while line_end < bytes.len() && bytes.get(line_end) != Some(&b'\n') {
+            line_end += 1;
+        }
+        if line_start >= line_end || line_end > source_text.len() {
+            return None;
+        }
+        let line = &source_text[line_start..line_end];
+        let line_trim = line.trim();
+        if !(line_trim.starts_with("import ") || line_trim.starts_with("export ")) {
+            return None;
+        }
+        let mut quoted = Vec::new();
+        let mut i = 0usize;
+        let line_bytes = line.as_bytes();
+        while i < line_bytes.len() {
+            let ch = line_bytes[i];
+            if ch != b'"' && ch != b'\'' {
+                i += 1;
+                continue;
+            }
+            let quote = ch;
+            let start = i;
+            i += 1;
+            while i < line_bytes.len() && line_bytes[i] != quote {
+                i += 1;
+            }
+            if i >= line_bytes.len() {
+                break;
+            }
+            let end = i;
+            let text = &line[start + 1..end];
+            quoted.push((start, end + 1, text.to_string()));
+            i += 1;
+        }
+        if quoted.is_empty() {
+            return None;
+        }
+        let line_offset = offset as usize;
+        let rel_offset = line_offset.saturating_sub(line_start);
+        let alias_name = quoted
+            .iter()
+            .find(|(start, end, _)| rel_offset >= *start && rel_offset <= *end)
+            .or_else(|| quoted.first())
+            .map(|(_, _, text)| text.clone())?;
+
+        let module_specifier = line
+            .rfind(" from ")
+            .and_then(|from_idx| {
+                let after = &line[from_idx + 6..];
+                after
+                    .trim()
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .or_else(|| {
+                        after
+                            .trim()
+                            .strip_prefix('\'')
+                            .and_then(|s| s.strip_suffix('\''))
+                    })
+                    .map(std::string::ToString::to_string)
+            })
+            .unwrap_or_default();
+        if module_specifier.is_empty() {
+            return None;
+        }
+        Some((module_specifier, alias_name))
     }
 
     fn is_quoted_import_or_export_specifier_offset(
@@ -245,6 +347,65 @@ impl Server {
         source_text: &str,
         offset: u32,
     ) -> bool {
+        Self::quoted_specifier_literal_at_offset(arena, source_text, offset).is_some()
+    }
+
+    fn is_quoted_import_or_export_specifier_location(
+        &self,
+        loc: &tsz_common::position::Location,
+    ) -> bool {
+        let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(&loc.file_path)
+        else {
+            return false;
+        };
+        let line_map = LineMap::build(&source_text);
+        let Some(offset) = line_map.position_to_offset(loc.range.start, &source_text) else {
+            return false;
+        };
+        if Self::quoted_specifier_inner_range_at_offset(&arena, &source_text, offset).is_some() {
+            return true;
+        }
+        let mut candidates = Vec::with_capacity(2);
+        candidates.push(tsz::lsp::utils::find_node_at_offset(&arena, offset));
+        candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
+            &arena,
+            offset,
+            &source_text,
+        ));
+        for node_idx in candidates {
+            if node_idx.is_none() {
+                continue;
+            }
+            let Some(node) = arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind != SyntaxKind::StringLiteral as u16 {
+                continue;
+            }
+            let in_import = Self::find_ancestor_of_kind(
+                &arena,
+                node_idx,
+                tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+            )
+            .is_some();
+            let in_export = Self::find_ancestor_of_kind(
+                &arena,
+                node_idx,
+                tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
+            )
+            .is_some();
+            if in_import || in_export {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn quoted_specifier_inner_range_at_offset(
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        offset: u32,
+    ) -> Option<tsz_common::position::Range> {
         let mut candidates = Vec::with_capacity(4);
         candidates.push(tsz::lsp::utils::find_node_at_offset(arena, offset));
         if (offset as usize) < source_text.len() {
@@ -264,6 +425,7 @@ impl Server {
             offset,
             source_text,
         ));
+        let line_map = LineMap::build(source_text);
         for node_idx in candidates {
             if node_idx.is_none() {
                 continue;
@@ -274,39 +436,86 @@ impl Server {
             if node.kind != SyntaxKind::StringLiteral as u16 {
                 continue;
             }
-            let import_spec = Self::find_ancestor_of_kind(
+            if node.end <= node.pos.saturating_add(1) {
+                continue;
+            }
+            let in_import = Self::find_ancestor_of_kind(
                 arena,
                 node_idx,
                 tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
-            );
-            if import_spec.is_some() {
-                return true;
-            }
-            let export_spec = Self::find_ancestor_of_kind(
+            )
+            .is_some();
+            let in_export = Self::find_ancestor_of_kind(
                 arena,
                 node_idx,
                 tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
-            );
-            if export_spec.is_some() {
-                return true;
+            )
+            .is_some();
+            if !(in_import || in_export) {
+                continue;
             }
+            let inner_start = node.pos.saturating_add(1);
+            let inner_end = node.end.saturating_sub(1);
+            if inner_end <= inner_start {
+                continue;
+            }
+            return Some(tsz_common::position::Range::new(
+                line_map.offset_to_position(inner_start, source_text),
+                line_map.offset_to_position(inner_end, source_text),
+            ));
         }
-        false
+        None
     }
 
-    fn is_quoted_import_or_export_specifier_location(
-        &self,
-        loc: &tsz_common::position::Location,
-    ) -> bool {
-        let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(&loc.file_path)
-        else {
-            return false;
-        };
-        let line_map = LineMap::build(&source_text);
-        let Some(offset) = line_map.position_to_offset(loc.range.start, &source_text) else {
-            return false;
-        };
-        Self::is_quoted_import_or_export_specifier_offset(&arena, &source_text, offset)
+    fn quoted_specifier_literal_from_specifier(
+        arena: &tsz::parser::node::NodeArena,
+        specifier_idx: tsz::parser::NodeIndex,
+        offset: u32,
+    ) -> Option<String> {
+        let specifier_node = arena.get(specifier_idx)?;
+        let spec = arena.get_specifier(specifier_node)?;
+        let mut fallback: Option<String> = None;
+        for symbol_idx in [spec.property_name, spec.name] {
+            let node = arena.get(symbol_idx)?;
+            if node.kind != SyntaxKind::StringLiteral as u16 {
+                continue;
+            }
+            let text = arena.get_literal_text(symbol_idx)?.to_string();
+            if offset >= node.pos && offset <= node.end {
+                return Some(text);
+            }
+            if fallback.is_none() {
+                fallback = Some(text);
+            }
+        }
+        fallback
+    }
+
+    fn quoted_specifier_literal_from_ancestor(
+        arena: &tsz::parser::node::NodeArena,
+        node_idx: tsz::parser::NodeIndex,
+        offset: u32,
+    ) -> Option<String> {
+        let import_spec = Self::find_ancestor_of_kind(
+            arena,
+            node_idx,
+            tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+        );
+        if import_spec.is_some()
+            && let Some(text) =
+                Self::quoted_specifier_literal_from_specifier(arena, import_spec, offset)
+        {
+            return Some(text);
+        }
+        let export_spec = Self::find_ancestor_of_kind(
+            arena,
+            node_idx,
+            tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
+        );
+        if export_spec.is_some() {
+            return Self::quoted_specifier_literal_from_specifier(arena, export_spec, offset);
+        }
+        None
     }
 
     fn quoted_specifier_literal_at_offset(
@@ -334,29 +543,13 @@ impl Server {
             source_text,
         ));
         for node_idx in candidates {
-            let Some(node) = arena.get(node_idx) else {
-                continue;
-            };
-            if node.kind != SyntaxKind::StringLiteral as u16 {
+            if node_idx.is_none() {
                 continue;
             }
-            let in_import = Self::find_ancestor_of_kind(
-                arena,
-                node_idx,
-                tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
-            )
-            .is_some();
-            let in_export = Self::find_ancestor_of_kind(
-                arena,
-                node_idx,
-                tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
-            )
-            .is_some();
-            if !(in_import || in_export) {
-                continue;
-            }
-            if let Some(text) = arena.get_literal_text(node_idx) {
-                return Some(text.to_string());
+            if let Some(text) =
+                Self::quoted_specifier_literal_from_ancestor(arena, node_idx, offset)
+            {
+                return Some(text);
             }
         }
         None
@@ -455,11 +648,16 @@ impl Server {
                         if !names.contains(text) {
                             continue;
                         }
+                        let inner_start = symbol_node.pos.saturating_add(1);
+                        let inner_end = symbol_node.end.saturating_sub(1);
+                        if inner_end <= inner_start {
+                            continue;
+                        }
                         out.push(tsz_common::position::Location::new(
                             file_path.clone(),
                             tsz_common::position::Range::new(
-                                line_map.offset_to_position(symbol_node.pos, &source_text),
-                                line_map.offset_to_position(symbol_node.end, &source_text),
+                                line_map.offset_to_position(inner_start, &source_text),
+                                line_map.offset_to_position(inner_end, &source_text),
                             ),
                         ));
                     }
@@ -490,11 +688,16 @@ impl Server {
                             if !names.contains(text) {
                                 continue;
                             }
+                            let inner_start = symbol_node.pos.saturating_add(1);
+                            let inner_end = symbol_node.end.saturating_sub(1);
+                            if inner_end <= inner_start {
+                                continue;
+                            }
                             out.push(tsz_common::position::Location::new(
                                 file_path.clone(),
                                 tsz_common::position::Range::new(
-                                    line_map.offset_to_position(symbol_node.pos, &source_text),
-                                    line_map.offset_to_position(symbol_node.end, &source_text),
+                                    line_map.offset_to_position(inner_start, &source_text),
+                                    line_map.offset_to_position(inner_end, &source_text),
                                 ),
                             ));
                         }
@@ -578,6 +781,7 @@ impl Server {
         source_text: &str,
         query_offset: u32,
         query_position: tsz_common::position::Position,
+        quoted_only: bool,
     ) -> Option<Vec<tsz_common::position::Location>> {
         if !Self::is_quoted_import_or_export_specifier_offset(arena, source_text, query_offset) {
             return None;
@@ -612,6 +816,9 @@ impl Server {
                     .cmp(&(b.range.end.line, b.range.end.character))
             });
             only_textual.dedup_by(|a, b| a.file_path == b.file_path && a.range == b.range);
+            if quoted_only {
+                return (!only_textual.is_empty()).then_some(only_textual);
+            }
             return (!only_textual.is_empty()).then_some(only_textual);
         }
         if let Some(seed_name) =
@@ -620,6 +827,28 @@ impl Server {
             let names = self.quoted_specifier_alias_closure(&seed_name);
             merged_refs.extend(self.quoted_specifier_symbol_locations_for_names(&names));
         }
+        let normalized: Vec<_> = merged_refs
+            .into_iter()
+            .map(|mut loc| {
+                if let Some((loc_arena, _binder, _root, loc_source)) =
+                    self.parse_and_bind_file(&loc.file_path)
+                {
+                    let loc_line_map = LineMap::build(&loc_source);
+                    if let Some(start_off) =
+                        loc_line_map.position_to_offset(loc.range.start, &loc_source)
+                        && let Some(inner_range) = Self::quoted_specifier_inner_range_at_offset(
+                            &loc_arena,
+                            &loc_source,
+                            start_off,
+                        )
+                    {
+                        loc.range = inner_range;
+                    }
+                }
+                loc
+            })
+            .collect();
+        merged_refs = normalized;
         merged_refs.sort_by(|a, b| {
             let file_cmp = a.file_path.cmp(&b.file_path);
             if file_cmp != std::cmp::Ordering::Equal {
@@ -634,11 +863,38 @@ impl Server {
                 .cmp(&(b.range.end.line, b.range.end.character))
         });
         merged_refs.dedup_by(|a, b| a.file_path == b.file_path && a.range == b.range);
-        let filtered: Vec<_> = merged_refs
-            .into_iter()
-            .filter(|loc| self.is_quoted_import_or_export_specifier_location(loc))
-            .collect();
-        (!filtered.is_empty()).then_some(filtered)
+        if quoted_only {
+            let filtered: Vec<_> = merged_refs
+                .into_iter()
+                .filter(|loc| self.is_quoted_import_or_export_specifier_location(loc))
+                .collect();
+            if !filtered.is_empty() {
+                return Some(filtered);
+            }
+            if let Some(seed_name) =
+                Self::quoted_specifier_literal_at_offset(arena, source_text, query_offset)
+            {
+                let names = self.quoted_specifier_alias_closure(&seed_name);
+                let mut only_textual = self.quoted_specifier_symbol_locations_for_names(&names);
+                only_textual.sort_by(|a, b| {
+                    let file_cmp = a.file_path.cmp(&b.file_path);
+                    if file_cmp != std::cmp::Ordering::Equal {
+                        return file_cmp;
+                    }
+                    let start_cmp = (a.range.start.line, a.range.start.character)
+                        .cmp(&(b.range.start.line, b.range.start.character));
+                    if start_cmp != std::cmp::Ordering::Equal {
+                        return start_cmp;
+                    }
+                    (a.range.end.line, a.range.end.character)
+                        .cmp(&(b.range.end.line, b.range.end.character))
+                });
+                only_textual.dedup_by(|a, b| a.file_path == b.file_path && a.range == b.range);
+                return (!only_textual.is_empty()).then_some(only_textual);
+            }
+            return None;
+        }
+        (!merged_refs.is_empty()).then_some(merged_refs)
     }
 
     #[cfg(test)]
@@ -663,7 +919,7 @@ impl Server {
             return None;
         }
         let target_file = self.resolve_module_to_file(from_file, module_specifier)?;
-        let (arena, binder, root, source_text) = self.parse_and_bind_file(&target_file)?;
+        let (_arena, _binder, _root, source_text) = self.parse_and_bind_file(&target_file)?;
         let line_map = LineMap::build(&source_text);
 
         let mut line_start = 0usize;
@@ -712,20 +968,6 @@ impl Server {
                 let token_pos_in_line = line.find(left)?;
                 let token_start = (line_start + token_pos_in_line) as u32;
                 let token_end = token_start + left.len() as u32;
-                let token_position = line_map.offset_to_position(token_start, &source_text);
-                let provider = GoToDefinition::new(
-                    &arena,
-                    &binder,
-                    &line_map,
-                    target_file.clone(),
-                    &source_text,
-                );
-                if let Some(defs) = provider.get_definition(root, token_position)
-                    && let Some(first) = defs.first()
-                {
-                    return Some(first.clone());
-                }
-
                 let range = tsz_common::position::Range::new(
                     line_map.offset_to_position(token_start, &source_text),
                     line_map.offset_to_position(token_end, &source_text),
@@ -834,12 +1076,39 @@ impl Server {
             loc.file_path.clone(),
             &source_text,
         );
-        let infos = provider
-            .get_definition_info(root, loc.range.start)
-            .unwrap_or_default();
+        let mut probe_positions = Vec::with_capacity(4);
+        probe_positions.push(loc.range.start);
+        if loc.range.start != loc.range.end {
+            probe_positions.push(loc.range.end);
+            if loc.range.end.character > 0 {
+                probe_positions.push(tsz_common::position::Position::new(
+                    loc.range.end.line,
+                    loc.range.end.character - 1,
+                ));
+            }
+        }
+        let mut infos = Vec::new();
+        for probe in probe_positions {
+            infos = provider.get_definition_info(root, probe).unwrap_or_default();
+            if !infos.is_empty() {
+                break;
+            }
+        }
         let picked = infos
             .iter()
             .find(|info| info.location.range == loc.range)
+            .or_else(|| {
+                infos.iter().find(|info| {
+                    let start = info.location.range.start;
+                    let end = info.location.range.end;
+                    (start.line < loc.range.start.line
+                        || (start.line == loc.range.start.line
+                            && start.character <= loc.range.start.character))
+                        && (end.line > loc.range.start.line
+                            || (end.line == loc.range.start.line
+                                && end.character >= loc.range.start.character))
+                })
+            })
             .or_else(|| infos.first())?;
         Some(Self::definition_info_to_json(picked, &loc.file_path))
     }
@@ -1343,6 +1612,7 @@ impl Server {
                     &source_text,
                     query_offset,
                     position,
+                    true,
                 )
             {
                 let definition_locs = project.get_definition(&file, position).unwrap_or_default();
@@ -1554,6 +1824,7 @@ impl Server {
                     &source_text,
                     query_offset,
                     position,
+                    true,
                 )
             {
                 let mut grouped: rustc_hash::FxHashMap<String, Vec<serde_json::Value>> =
@@ -1723,7 +1994,66 @@ impl Server {
             let (file, line, offset) = Self::extract_file_position(&request.arguments)?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
-            let position = Self::tsserver_to_lsp_position(line, offset);
+            let raw_query_position = Self::tsserver_to_lsp_position(line, offset);
+            let raw_query_offset = line_map.position_to_offset(raw_query_position, &source_text)?;
+            let query_offset =
+                Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_query_offset);
+            let position = line_map.offset_to_position(query_offset, &source_text);
+
+            if let Some(mut project) = self.build_project_for_file(&file)
+                && let Some(locs) = self.quoted_alias_chain_references(
+                    &mut project,
+                    &file,
+                    &arena,
+                    &source_text,
+                    query_offset,
+                    position,
+                    false,
+                )
+            {
+                let canonical_loc = self
+                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset);
+                let definition = canonical_loc
+                    .as_ref()
+                    .and_then(|loc| self.definition_info_from_location(loc))
+                    .unwrap_or_else(|| Self::build_fallback_definition(&file, "alias", ""));
+                let cursor_offset = line_map.position_to_offset(position, &source_text).unwrap_or(0);
+                let references: Vec<serde_json::Value> = locs
+                    .iter()
+                    .map(|loc| {
+                        let source = self
+                            .open_files
+                            .get(&loc.file_path)
+                            .cloned()
+                            .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
+                            .unwrap_or_default();
+                        let lm = LineMap::build(&source);
+                        let start = lm.position_to_offset(loc.range.start, &source).unwrap_or(0);
+                        let end = lm.position_to_offset(loc.range.end, &source).unwrap_or(start);
+                        let is_definition = canonical_loc
+                            .as_ref()
+                            .is_some_and(|def| {
+                                loc.file_path == def.file_path
+                                    && loc.range == def.range
+                                    && cursor_offset >= start
+                                    && cursor_offset < end
+                            });
+                        serde_json::json!({
+                            "fileName": loc.file_path,
+                            "textSpan": {
+                                "start": start,
+                                "length": end.saturating_sub(start),
+                            },
+                            "isWriteAccess": false,
+                            "isDefinition": is_definition,
+                        })
+                    })
+                    .collect();
+                return Some(serde_json::json!([{
+                    "definition": definition,
+                    "references": references,
+                }]));
+            }
 
             // Get references with the resolved symbol
             let ref_provider =
