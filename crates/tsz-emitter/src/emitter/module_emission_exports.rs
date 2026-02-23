@@ -289,6 +289,10 @@ impl<'a> Printer<'a> {
                         if !legacy_decorators.is_empty()
                             && let Some(name) = self.get_identifier_text_opt(class.name)
                         {
+                            // Clear pending_commonjs_class_export_name to avoid duplicate
+                            // exports.X = X; — the decorator assignment path handles the
+                            // pre-assignment itself via emit_commonjs_pre_assignment=true.
+                            self.pending_commonjs_class_export_name = None;
                             if self.ctx.target_es5 {
                                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                                 es5_emitter.set_indent_level(self.writer.indent_level());

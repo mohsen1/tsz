@@ -1306,4 +1306,97 @@ export namespace F {
             "Merged namespace IIFE should not be preceded by `export`.\nOutput:\n{output}"
         );
     }
+
+    /// When a class has legacy decorators and is exported in CJS, the
+    /// `exports.X = X;` pre-assignment should appear exactly once — from
+    /// `emit_legacy_class_decorator_assignment`, NOT also from the
+    /// `pending_commonjs_class_export_name` path.
+    #[test]
+    fn decorated_class_export_no_duplicate_exports() {
+        let source = "declare var dec: any;\n@dec export class A {}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            legacy_decorators: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // Count occurrences of `exports.A = A;`
+        let count = output.matches("exports.A = A;").count();
+        assert_eq!(
+            count, 1,
+            "exports.A = A; should appear exactly once (pre-assignment before __decorate), \
+             not duplicated.\nOutput:\n{output}"
+        );
+        // The __decorate assignment should also reference exports.A
+        assert!(
+            output.contains("exports.A = A = __decorate("),
+            "Should contain the decorator assignment.\nOutput:\n{output}"
+        );
+    }
+
+    /// When `export = f` is present with `export function f()`, the hoisted
+    /// `exports.f = f;` preamble should be suppressed because `module.exports = f`
+    /// replaces the entire exports object.
+    #[test]
+    fn export_assignment_suppresses_hoisted_func_export() {
+        let source = "export function f() { }\nexport = f;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("exports.f = f;"),
+            "Hoisted exports.f = f; should be suppressed when export = is present.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("module.exports = f;"),
+            "module.exports = f; should be present for export =.\nOutput:\n{output}"
+        );
+    }
+
+    /// When `export = B` is present alongside `export class C {}`, the
+    /// `exports.C = void 0;` initialization should still be emitted (tsc behavior),
+    /// but hoisted function exports should be suppressed.
+    #[test]
+    fn export_assignment_keeps_void_zero_init_for_classes() {
+        let source = "export class C {}\nexport = B;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("exports.C = void 0;"),
+            "exports.C = void 0; should be emitted even with export =.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("module.exports = B;"),
+            "module.exports = B; should be present.\nOutput:\n{output}"
+        );
+    }
 }

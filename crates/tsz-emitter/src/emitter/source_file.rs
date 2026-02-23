@@ -400,6 +400,14 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
             );
+            // When `export =` is present, suppress hoisted function exports
+            // (exports.f = f;) since module.exports replaces them, but keep
+            // void 0 initialization for non-function exports (tsc behavior).
+            let func_exports = if self.ctx.module_state.has_export_assignment {
+                Vec::new()
+            } else {
+                func_exports
+            };
             // Track non-hoisted exports (vars/classes/enums/modules) so default export
             // assignments can preserve live bindings (`exports.default = exports.x`).
             self.ctx.module_state.pending_exports = other_exports.clone();
