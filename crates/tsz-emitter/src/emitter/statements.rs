@@ -428,11 +428,13 @@ impl<'a> Printer<'a> {
                 // If the declaration has a type annotation but no initializer,
                 // use the name's end as the effective boundary (the type annotation
                 // is erased and its semicolons should not be scanned).
-                if decl.type_annotation.is_some() && decl.initializer.is_none()
-                    && let Some(name_node) = self.arena.get(decl.name) {
-                        // Use the name's end, not the full declaration end
-                        effective_end = name_node.end;
-                    }
+                if decl.type_annotation.is_some()
+                    && decl.initializer.is_none()
+                    && let Some(name_node) = self.arena.get(decl.name)
+                {
+                    // Use the name's end, not the full declaration end
+                    effective_end = name_node.end;
+                }
             }
         }
         effective_end

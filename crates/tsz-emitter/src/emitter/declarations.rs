@@ -108,10 +108,12 @@ impl<'a> Printer<'a> {
         self.write(")");
 
         // No return type for JavaScript — skip comments inside erased return type
-        if !self.ctx.flags.in_declaration_emit && func.type_annotation.is_some()
-            && let Some(type_node) = self.arena.get(func.type_annotation) {
-                self.skip_comments_in_range(type_node.pos, type_node.end);
-            }
+        if !self.ctx.flags.in_declaration_emit
+            && func.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(func.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
 
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
@@ -189,10 +191,12 @@ impl<'a> Printer<'a> {
 
         // Skip type annotation for JavaScript emit — consume any comments
         // inside the erased type annotation so they don't leak into output.
-        if !self.ctx.flags.in_declaration_emit && decl.type_annotation.is_some()
-            && let Some(type_node) = self.arena.get(decl.type_annotation) {
-                self.skip_comments_in_range(type_node.pos, type_node.end);
-            }
+        if !self.ctx.flags.in_declaration_emit
+            && decl.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(decl.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
 
         if decl.initializer.is_none() {
             if self.emit_missing_initializer_as_void_0 {
