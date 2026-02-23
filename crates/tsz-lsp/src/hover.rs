@@ -137,6 +137,11 @@ impl<'a> HoverProvider<'a> {
         let symbol_id = match symbol_id {
             Some(symbol_id) => symbol_id,
             None => {
+                if let Some(member_hover) =
+                    self.hover_for_property_access_member_name(node_idx, type_cache)
+                {
+                    return Some(member_hover);
+                }
                 if let Some(contextual_property_hover) =
                     self.hover_for_contextual_object_property(node_idx, type_cache)
                 {
@@ -238,6 +243,90 @@ impl<'a> HoverProvider<'a> {
             kind,
             kind_modifiers,
             documentation: documentation_text,
+            tags: Vec::new(),
+        })
+    }
+
+    fn hover_for_property_access_member_name(
+        &self,
+        node_idx: NodeIndex,
+        type_cache: &mut Option<tsz_checker::TypeCache>,
+    ) -> Option<HoverInfo> {
+        use tsz_parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let node = self.arena.get(node_idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let parent_idx = self.arena.get_extended(node_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(parent_node)?;
+        if access.name_or_argument != node_idx {
+            return None;
+        }
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+
+        let mut checker = if let Some(cache) = type_cache.take() {
+            CheckerState::with_cache(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            )
+        };
+
+        let name = self
+            .arena
+            .get_identifier(node)
+            .map(|id| id.escaped_text.clone())
+            .filter(|s| !s.is_empty())?;
+
+        let expr_type_id = checker.get_type_of_node(access.expression);
+        let type_id = self.contextual_property_type_from_type(expr_type_id, &name)?;
+        let type_string = checker.format_type(type_id);
+        *type_cache = Some(checker.extract_cache());
+        if type_string.is_empty() || type_string == "error" {
+            return None;
+        }
+
+        let display_string = format!("(property) {name}: {type_string}");
+        let start = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(Range::new(start, end)),
+            display_string,
+            kind: "property".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
             tags: Vec::new(),
         })
     }

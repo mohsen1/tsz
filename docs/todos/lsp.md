@@ -258,6 +258,19 @@ Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns3.ts`: still fails exact `globalsPlus` completion-list equality.
   Reason: same adapter/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion list source harmonization.
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list equality.
+
+## 2026-02-23 (quick info property-access follow-up)
+
+Completed in this pass:
+- Improved quick-info hover fallback for unresolved property-access member names (`obj.prop`) to derive member type from the left-expression type instead of returning empty hover.
+- Improved contextual parameter hover typing for function expressions assigned through property access (`obj.prop = function(param) {}`) by reading callable parameter types from the assigned member’s type.
+- Added focused unit coverage in `crates/tsz-lsp/tests/hover_tests.rs`:
+  - `test_hover_property_access_member_name_uses_member_type`
+  - `test_hover_property_assignment_function_parameter_uses_member_signature`
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure moved to marker `61`: expected `(parameter) n: number`, got `(parameter) n: any`).
+  Reason: remaining gap is contextual parameter typing for inline function expressions inside array-literal elements under property-assignment scenarios (`objc8.t11 = [function(n, s) ...]`), which needs broader array-element contextual typing parity for assignment paths beyond this targeted property-access fix.
   Reason: tied to the same unresolved global completion surface/content parity path as the `autoImportFileExcludePatterns{2,3}` failures.
 
 ## 2026-02-23 (fourslash 200 follow-up)
