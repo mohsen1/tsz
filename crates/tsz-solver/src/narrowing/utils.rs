@@ -301,10 +301,6 @@ fn top_level_union_members(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
     union_list_id(types, type_id).map(|list_id| types.type_list(list_id).to_vec())
 }
 
-const fn is_nullish_intrinsic(type_id: TypeId) -> bool {
-    matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
-}
-
 const fn is_undefined_intrinsic(type_id: TypeId) -> bool {
     matches!(type_id, TypeId::UNDEFINED | TypeId::VOID)
 }
@@ -319,18 +315,13 @@ fn normalize_nullish(type_id: TypeId) -> TypeId {
 
 /// Check if a type is nullish (null/undefined/void or union containing them).
 pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if is_nullish_intrinsic(type_id) {
+    if type_id.is_nullable() {
         return true;
     }
     if let Some(members) = top_level_union_members(types, type_id) {
         return members.iter().any(|&member| is_nullish_type(types, member));
     }
     false
-}
-
-/// Check if a type (possibly a union) contains null or undefined.
-pub fn type_contains_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_nullish_type(types, type_id)
 }
 
 /// Check if a type contains undefined (or void).
@@ -348,7 +339,7 @@ pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 /// Check if a type is definitely nullish (only null/undefined/void).
 pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if is_nullish_intrinsic(type_id) {
+    if type_id.is_nullable() {
         return true;
     }
     if let Some(members) = top_level_union_members(types, type_id) {
@@ -359,18 +350,13 @@ pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool 
     false
 }
 
-/// Check if a type can be nullish (contains null/undefined/void).
-pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_nullish_type(types, type_id)
-}
-
 fn split_nullish_members(
     types: &dyn TypeDatabase,
     type_id: TypeId,
     non_nullish: &mut Vec<TypeId>,
     nullish: &mut Vec<TypeId>,
 ) {
-    if is_nullish_intrinsic(type_id) {
+    if type_id.is_nullable() {
         nullish.push(normalize_nullish(type_id));
         return;
     }

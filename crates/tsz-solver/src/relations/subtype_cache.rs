@@ -269,7 +269,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object)
                 });
             if is_object_interface_target {
-                let is_nullable = matches!(source, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID);
+                let is_nullable = source.is_nullable();
                 if !is_nullable {
                     let result = self.check_object_contract(source, target);
                     if let Some(dp) = def_entered {

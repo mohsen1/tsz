@@ -207,7 +207,7 @@ impl<'a> NarrowingContext<'a> {
         let resolved = self.resolve_type(type_id);
 
         // 1. Check intrinsics that are always falsy
-        if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+        if resolved.is_nullable() {
             return true;
         }
 
@@ -376,7 +376,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // null, undefined, void are always falsy
-        if matches!(resolved, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
+        if resolved.is_nullable() {
             return resolved;
         }
 

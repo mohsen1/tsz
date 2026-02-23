@@ -107,7 +107,7 @@ fn test_nullish_helpers_basic() {
     assert!(is_nullish_type(&interner, TypeId::NULL));
     assert!(is_nullish_type(&interner, TypeId::UNDEFINED));
     assert!(!is_nullish_type(&interner, TypeId::STRING));
-    assert!(can_be_nullish(&interner, union));
+    assert!(is_nullish_type(&interner, union));
     assert!(type_contains_undefined(&interner, union));
 
     let removed = remove_nullish(&interner, union);
