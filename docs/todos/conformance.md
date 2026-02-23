@@ -848,3 +848,31 @@ TS1194 only fires in non-ambient namespaces.
 - **TS7017, TS7041, TS2702, TS2308**: Too complex or low impact.
 - **TS2585**: Symbol/Iterator in ES5 — medium difficulty, needs lib target awareness.
 - **TS2303**: Circular imports in multi-file scenarios.
+
+## Session 2026-02-23 — Second half (offset 6000)
+
+**Score**: 3952/6577 (60.1%) — offset 6000, fingerprint level
+**Full suite after fix**: 7959/12574 (+12 from baseline 7947)
+
+### Fixed
+
+- **TS2589 (+12 tests)**: "Type instantiation is excessively deep and possibly infinite."
+  Infrastructure was 80% complete (solver depth tracking, `depth_exceeded` flag, emission from
+  subtype checking) but type alias instantiation paths never triggered it. Root cause: Application
+  types created by type lowering were never eagerly evaluated during type reference resolution,
+  so `instantiation_depth` never hit the limit. Fix: added eager `evaluate_application_type()`
+  call in `get_type_from_type_reference` for type alias references, with `depth_exceeded` reset
+  before evaluation so only fresh exceedance triggers emission at the usage site (not definition).
+  Changed: `state_type_resolution.rs`. 4 unit tests in `ts2589_tests.rs`.
+
+### Investigated but deferred
+
+- **TS2550 (9 tests)**: "Property X does not exist on type Y. Do you need to change your target
+  library?" Requires lib-awareness to suggest `--lib es2015` etc. MEDIUM-HIGH difficulty.
+- **TS1382 (7 tests)**: Unexpected token at start of expression in decorator context. Parser-level
+  fix needed. MEDIUM difficulty.
+- **TS17019 (6 tests)**: "Resolving expression in computed property" limitation. MEDIUM difficulty.
+- **TS2875 (14 tests)**: JSX runtime module resolution. HIGH difficulty.
+- **TS2497 (13 tests)**: "This module can only be referenced with ECMAScript imports/exports."
+  Requires CommonJS module detection. HIGH difficulty.
+- **TS2433 (10 tests)**: "A namespace-style import cannot be called or constructed." MEDIUM.
