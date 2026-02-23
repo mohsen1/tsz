@@ -398,23 +398,7 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     fn emit_operator(&self, op: u16) -> String {
-        match op {
-            k if k == SyntaxKind::PlusToken as u16 => "+",
-            k if k == SyntaxKind::MinusToken as u16 => "-",
-            k if k == SyntaxKind::AsteriskToken as u16 => "*",
-            k if k == SyntaxKind::SlashToken as u16 => "/",
-            k if k == SyntaxKind::PercentToken as u16 => "%",
-            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
-            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
-            k if k == SyntaxKind::AmpersandToken as u16 => "&",
-            k if k == SyntaxKind::BarToken as u16 => "|",
-            k if k == SyntaxKind::CaretToken as u16 => "^",
-            k if k == SyntaxKind::TildeToken as u16 => "~",
-            k if k == SyntaxKind::ExclamationToken as u16 => "!",
-            _ => "+",
-        }
-        .to_string()
+        crate::transforms::emit_utils::operator_to_str(op).to_string()
     }
 
     /// Try to evaluate a constant expression to its numeric value

@@ -362,23 +362,8 @@ impl<'a> EnumTransformer<'a> {
     }
 
     const fn operator_to_string(&self, op: u16) -> &'static str {
-        match op {
-            k if k == SyntaxKind::PlusToken as u16 => "+",
-            k if k == SyntaxKind::MinusToken as u16 => "-",
-            k if k == SyntaxKind::AsteriskToken as u16 => "*",
-            k if k == SyntaxKind::SlashToken as u16 => "/",
-            k if k == SyntaxKind::PercentToken as u16 => "%",
-            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
-            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
-            k if k == SyntaxKind::AmpersandToken as u16 => "&",
-            k if k == SyntaxKind::BarToken as u16 => "|",
-            k if k == SyntaxKind::CaretToken as u16 => "^",
-            k if k == SyntaxKind::TildeToken as u16 => "~",
-            k if k == SyntaxKind::ExclamationToken as u16 => "!",
-            k if k == SyntaxKind::AsteriskAsteriskToken as u16 => "**",
-            _ => "/* op */",
-        }
+        let s = crate::transforms::emit_utils::operator_to_str(op);
+        if s.is_empty() { "/* op */" } else { s }
     }
 
     /// Check if an identifier refers to a const enum

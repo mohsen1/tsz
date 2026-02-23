@@ -849,28 +849,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn get_operator_string(&self, op: u16) -> String {
-        match op {
-            k if k == SyntaxKind::PlusToken as u16 => "+",
-            k if k == SyntaxKind::MinusToken as u16 => "-",
-            k if k == SyntaxKind::AsteriskToken as u16 => "*",
-            k if k == SyntaxKind::SlashToken as u16 => "/",
-            k if k == SyntaxKind::PercentToken as u16 => "%",
-            k if k == SyntaxKind::EqualsToken as u16 => "=",
-            k if k == SyntaxKind::PlusEqualsToken as u16 => "+=",
-            k if k == SyntaxKind::MinusEqualsToken as u16 => "-=",
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => "==",
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===",
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=",
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==",
-            k if k == SyntaxKind::LessThanToken as u16 => "<",
-            k if k == SyntaxKind::GreaterThanToken as u16 => ">",
-            k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=",
-            k if k == SyntaxKind::GreaterThanEqualsToken as u16 => ">=",
-            k if k == SyntaxKind::AmpersandAmpersandToken as u16 => "&&",
-            k if k == SyntaxKind::BarBarToken as u16 => "||",
-            _ => "?",
-        }
-        .to_string()
+        crate::transforms::emit_utils::operator_to_str(op).to_string()
     }
 
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {
