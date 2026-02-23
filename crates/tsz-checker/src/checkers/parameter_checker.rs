@@ -92,42 +92,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_immediately_invoked_function_like(&self, node_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-
-        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
-            && let Some(call) = self.ctx.arena.get_call_expr(parent_node)
-            && call.expression == node_idx
-        {
-            return true;
-        }
-
-        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(grand_ext) = self.ctx.arena.get_extended(parent_idx)
-        {
-            let grand_idx = grand_ext.parent;
-            if grand_idx.is_some()
-                && let Some(grand_node) = self.ctx.arena.get(grand_idx)
-                && grand_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
-                && let Some(call) = self.ctx.arena.get_call_expr(grand_node)
-                && call.expression == parent_idx
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn collect_parameter_forward_references_recursive(
         &self,
         node_idx: NodeIndex,
@@ -158,7 +122,7 @@ impl<'a> CheckerState<'a> {
         // Deferred function/class evaluation does not trigger TS2373.
         if (node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || node.kind == syntax_kind_ext::ARROW_FUNCTION)
-            && !self.is_immediately_invoked_function_like(node_idx)
+            && !self.ctx.arena.is_immediately_invoked(node_idx)
         {
             return;
         }
