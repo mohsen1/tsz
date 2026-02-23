@@ -3812,12 +3812,11 @@ fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
         .position_to_offset(probe_pos, &source_text)
         .expect("offset at marker");
     let alias_query = server.debug_alias_query_target(&arena, &source_text, probe_off);
-    let direct_resolve = server.debug_resolve_export_alias_definition("/bar.ts", "./foo", "__<alias>");
-    let probe_node = tsz::lsp::utils::find_node_at_or_before_offset(&arena, probe_off, &source_text);
-    let probe_kind = arena
-        .get(probe_node)
-        .map(|n| n.kind)
-        .unwrap_or_default();
+    let direct_resolve =
+        server.debug_resolve_export_alias_definition("/bar.ts", "./foo", "__<alias>");
+    let probe_node =
+        tsz::lsp::utils::find_node_at_or_before_offset(&arena, probe_off, &source_text);
+    let probe_kind = arena.get(probe_node).map(|n| n.kind).unwrap_or_default();
     let mut chain = Vec::new();
     let mut walk = probe_node;
     while walk.is_some() {
@@ -3829,12 +3828,8 @@ fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
         };
         walk = ext.parent;
     }
-    let canonical = server.canonical_definition_for_alias_position(
-        "/bar.ts",
-        &arena,
-        &source_text,
-        probe_off,
-    );
+    let canonical =
+        server.canonical_definition_for_alias_position("/bar.ts", &arena, &source_text, probe_off);
     assert!(
         canonical.is_some(),
         "expected canonical definition for alias specifier (off={probe_off}, kind={probe_kind}, chain={chain:?}, alias_query={alias_query:?}, direct_resolve={direct_resolve:?})"
@@ -3873,9 +3868,7 @@ fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
     );
     let references_resp = server.handle_tsserver_request(references_req);
     assert!(references_resp.success);
-    let references_body = references_resp
-        .body
-        .expect("references should return body");
+    let references_body = references_resp.body.expect("references should return body");
     let refs = references_body["refs"]
         .as_array()
         .cloned()

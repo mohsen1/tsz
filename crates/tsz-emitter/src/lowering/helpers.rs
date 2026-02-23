@@ -419,17 +419,6 @@ impl<'a> LoweringPass<'a> {
         Some(&ident.escaped_text)
     }
 
-    pub(super) fn is_valid_identifier_name(name: &str) -> bool {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if !(first == '_' || first == '$' || first.is_alphabetic()) {
-            return false;
-        }
-        chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
-    }
-
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {
         self.get_module_root_name_inner(name_idx, 0)
     }

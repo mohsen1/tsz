@@ -440,7 +440,7 @@ impl<'a> LoweringPass<'a> {
             {
                 let is_anonymous = {
                     let func_name = self.get_identifier_text_ref(func.name).unwrap_or("");
-                    func_name == "function" || !Self::is_valid_identifier_name(func_name)
+                    func_name == "function" || !emit_utils::is_valid_identifier_name(func_name)
                 };
                 if is_anonymous {
                     let directive = self.commonjs_default_export_function_directive(
@@ -472,7 +472,7 @@ impl<'a> LoweringPass<'a> {
             {
                 let is_anonymous = {
                     let class_name = self.get_identifier_text_ref(class.name).unwrap_or("");
-                    !Self::is_valid_identifier_name(class_name)
+                    !emit_utils::is_valid_identifier_name(class_name)
                 };
                 if is_anonymous {
                     let directive = if self.ctx.target_es5 {

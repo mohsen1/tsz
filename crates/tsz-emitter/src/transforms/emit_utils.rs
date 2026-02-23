@@ -331,6 +331,21 @@ pub(crate) fn is_await_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
         .is_some_and(|n| n.kind == syntax_kind_ext::AWAIT_EXPRESSION)
 }
 
+/// Check whether `name` is a valid JavaScript identifier name.
+///
+/// Returns `true` if `name` starts with `_`, `$`, or an alphabetic char
+/// and continues with `_`, `$`, or alphanumeric chars.
+pub(crate) fn is_valid_identifier_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first == '$' || first.is_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
+}
+
 /// Convert an operator token kind (`u16`) to its string representation.
 ///
 /// Covers all binary, unary, assignment, and compound-assignment operators.
