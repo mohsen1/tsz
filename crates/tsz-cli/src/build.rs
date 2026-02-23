@@ -1,118 +1,12 @@
 // Copyright 2025 tsz authors. All rights reserved.
 // MIT License.
 
-use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::{info, warn};
 
 use crate::args::CliArgs;
 use crate::incremental::BuildInfo;
-use crate::project_refs::{ProjectReferenceGraph, ResolvedProject};
-use tsz::checker::diagnostics::DiagnosticCategory;
-
-/// Build mode orchestrator for TypeScript project references.
-///
-/// This is the entry point for `--build` mode, which:
-/// 1. Loads the project reference graph
-/// 2. Determines build order via topological sort
-/// 3. Checks up-to-date status for each project
-/// 4. Compiles dirty projects in dependency order
-pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Result<bool> {
-    // Determine root tsconfig path
-    let root_config = if let Some(project) = args.project.as_deref() {
-        cwd.join(project)
-    } else {
-        // Find tsconfig.json in current directory
-        find_tsconfig(cwd)
-            .ok_or_else(|| anyhow::anyhow!("No tsconfig.json found in {}", cwd.display()))?
-    };
-
-    info!(
-        "Loading project reference graph from: {}",
-        root_config.display()
-    );
-
-    // Load project reference graph
-    let graph = ProjectReferenceGraph::load(&root_config)
-        .context("Failed to load project reference graph")?;
-
-    // Get build order (topological sort)
-    let build_order = graph
-        .build_order()
-        .context("Failed to determine build order (circular dependencies?)")?;
-
-    info!("Build order: {} projects", build_order.len());
-
-    // Track overall success
-    let mut all_success = true;
-    let mut all_diagnostics = Vec::new();
-
-    // Build projects in dependency order
-    for project_id in build_order {
-        let project = graph
-            .get_project(project_id)
-            .ok_or_else(|| anyhow::anyhow!("Project not found: {project_id:?}"))?;
-
-        // Check if project is up-to-date
-        if !args.force && is_project_up_to_date(project, args) {
-            info!("✓ Project is up to date: {}", project.config_path.display());
-            continue;
-        }
-
-        info!("Building project: {}", project.config_path.display());
-
-        // Compile this project
-        let result = crate::driver::compile_project(args, &project.root_dir, &project.config_path)
-            .with_context(|| {
-                format!("Failed to build project: {}", project.config_path.display())
-            })?;
-
-        // Collect diagnostics
-        if !result.diagnostics.is_empty() {
-            all_diagnostics.extend(result.diagnostics.clone());
-
-            // Check for errors
-            let has_errors = result
-                .diagnostics
-                .iter()
-                .any(|d| d.category == DiagnosticCategory::Error);
-
-            if has_errors {
-                all_success = false;
-                warn!("✗ Project has errors: {}", project.config_path.display());
-
-                // Stop on first error unless --force
-                if !args.force {
-                    // Print diagnostics
-                    for diag in &result.diagnostics {
-                        warn!("  {:?}", diag);
-                    }
-                    return Ok(false);
-                }
-            } else {
-                info!(
-                    "✓ Project built with warnings: {}",
-                    project.config_path.display()
-                );
-            }
-        } else {
-            info!(
-                "✓ Project built successfully: {}",
-                project.config_path.display()
-            );
-        }
-    }
-
-    // Print all diagnostics at the end
-    if !all_diagnostics.is_empty() {
-        warn!("\n=== Diagnostics ===");
-        for diag in &all_diagnostics {
-            warn!("{:?}", diag);
-        }
-    }
-
-    Ok(all_success)
-}
+use crate::project_refs::ResolvedProject;
 
 /// Check if a project is up-to-date by examining its .tsbuildinfo file
 /// and the outputs of its referenced projects.
@@ -312,10 +206,4 @@ fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
     // Use the same logic as incremental.rs
     let out_dir = project.out_dir.as_deref();
     Some(default_build_info_path(&project.config_path, out_dir))
-}
-
-/// Find a tsconfig.json file in the given directory
-fn find_tsconfig(dir: &Path) -> Option<PathBuf> {
-    let config = dir.join("tsconfig.json");
-    config.exists().then_some(config)
 }
