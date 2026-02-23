@@ -937,7 +937,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Unwrap type assertion chain and return the kind of the underlying expression.
-    fn unwrap_type_assertion_kind(&self, mut idx: NodeIndex) -> Option<u16> {
+    pub(super) fn unwrap_type_assertion_kind(&self, mut idx: NodeIndex) -> Option<u16> {
         loop {
             let node = self.arena.get(idx)?;
             match node.kind {
