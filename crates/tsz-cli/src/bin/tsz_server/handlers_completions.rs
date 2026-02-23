@@ -422,9 +422,7 @@ impl Server {
             let source = candidate_sources
                 .iter()
                 .copied()
-                .find(|candidate| {
-                    Self::has_side_effect_import_for_module(source_text, candidate)
-                })
+                .find(|candidate| Self::has_side_effect_import_for_module(source_text, candidate))
                 .or_else(|| {
                     (side_effect_sources.len() == 1).then(|| side_effect_sources[0].as_str())
                 })
@@ -434,9 +432,10 @@ impl Server {
                     })
                 })
                 .or_else(|| {
-                    candidate_sources.iter().copied().min_by_key(|candidate| {
-                        (candidate.matches('/').count(), candidate.len())
-                    })
+                    candidate_sources
+                        .iter()
+                        .copied()
+                        .min_by_key(|candidate| (candidate.matches('/').count(), candidate.len()))
                 })
                 .or(fallback_source.as_deref());
             let Some(source) = source else {
@@ -461,12 +460,12 @@ impl Server {
                     "newText": format!("import {{ {} }} from \"{}\";\n", merged.join(", "), source),
                 }));
             } else {
-                let insert_offset =
-                    if Self::has_side_effect_import_for_module(source_text, source) {
-                        Self::import_insertion_offset_after_import_block(source_text)
-                    } else {
-                        0
-                    };
+                let insert_offset = if Self::has_side_effect_import_for_module(source_text, source)
+                {
+                    Self::import_insertion_offset_after_import_block(source_text)
+                } else {
+                    0
+                };
                 changes.push(serde_json::json!({
                     "span": {
                         "start": insert_offset,
