@@ -802,21 +802,33 @@ impl<'a> CheckerState<'a> {
                     } else {
                         getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
                     };
-                    // TS1117: duplicate properties are an error in object literals.
+                    // Duplicate properties are an error in object literals.
+                    // TS1118 for duplicate get/set accessors, TS1117 for other duplicates.
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !is_complementary_pair
                         && !self.ctx.has_parse_errors
                     {
-                        let message = format_message(
-                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                            &[&name],
-                        );
-                        self.error_at_node(
-                            accessor.name,
-                            &message,
-                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                        );
+                        let is_duplicate_accessor = (is_getter
+                            && getter_names.contains(&name_atom))
+                            || (!is_getter && setter_names.contains(&name_atom));
+                        if is_duplicate_accessor {
+                            self.error_at_node(
+                                accessor.name,
+                                "An object literal cannot have multiple get/set accessors with the same name.",
+                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_GET_SET_ACCESSORS_WITH_THE_SAME_NAME,
+                            );
+                        } else {
+                            let message = format_message(
+                                diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                &[&name],
+                            );
+                            self.error_at_node(
+                                accessor.name,
+                                &message,
+                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                            );
+                        }
                     }
                     explicit_property_names.insert(name_atom);
 
