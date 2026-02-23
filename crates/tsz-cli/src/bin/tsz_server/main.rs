@@ -36,8 +36,8 @@ mod handlers_diagnostics;
 mod handlers_editing;
 mod handlers_files;
 mod handlers_info;
-mod handlers_quickinfo;
 mod handlers_legacy;
+mod handlers_quickinfo;
 mod handlers_structure;
 
 use anyhow::{Context, Result};

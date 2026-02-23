@@ -291,7 +291,6 @@ impl Server {
             .map(|info| vec![info])
     }
 
-
     pub(crate) fn handle_definition(
         &mut self,
         seq: u64,
