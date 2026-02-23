@@ -3660,7 +3660,9 @@ impl Server {
         let rest = tail.strip_prefix(&package).unwrap_or_default();
 
         let mut normalized_rest = rest.to_string();
-        for ext in [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"] {
+        for ext in [
+            ".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
+        ] {
             if normalized_rest.ends_with(ext) {
                 let new_len = normalized_rest.len().saturating_sub(ext.len());
                 normalized_rest.truncate(new_len);
@@ -4957,12 +4959,10 @@ mod tests {
             reports_deprecated: None,
         }];
 
-        let candidates =
-            server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None);
+        let candidates = server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None);
         assert!(
             candidates.iter().any(|candidate| {
-                candidate.local_name == "externalValue"
-                    && candidate.module_specifier == "./dep"
+                candidate.local_name == "externalValue" && candidate.module_specifier == "./dep"
             }),
             "expected import candidate from external project files, got: {candidates:?}"
         );
