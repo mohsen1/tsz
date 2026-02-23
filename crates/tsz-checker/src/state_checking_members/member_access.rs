@@ -1113,89 +1113,59 @@ impl<'a> CheckerState<'a> {
 
     /// Get property information needed for index signature checking.
     /// Returns (`property_name`, `property_type`, `name_node_index`).
-    /// Get the name text from a member name node (identifier, string literal, or computed).
-    /// Normalize a numeric literal string to its canonical JS property name form.
-    /// In JavaScript, `0` and `0.0` are the same property (both `ToString(ToNumber(...))` → `"0"`).
-    /// This is used for duplicate member detection, where different numeric literal spellings
-    /// must be recognized as referring to the same property.
-    fn normalize_numeric_name(text: &str) -> String {
-        // Handle hex, octal, binary prefixes that f64::parse doesn't handle
-        let parsed = if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
-        {
-            u64::from_str_radix(hex, 16).ok().map(|n| n as f64)
-        } else if let Some(oct) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            u64::from_str_radix(oct, 8).ok().map(|n| n as f64)
-        } else if let Some(bin) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            u64::from_str_radix(bin, 2).ok().map(|n| n as f64)
-        } else {
-            // Strip numeric separators (e.g., 1_000 → 1000)
-            let cleaned = text.replace('_', "");
-            cleaned.parse::<f64>().ok()
-        };
-
-        match parsed {
-            Some(n) if n.is_finite() => format!("{n}"),
-            _ => text.to_string(),
-        }
-    }
-
+    /// Get the name text from a member name node for duplicate member detection.
+    ///
+    /// Delegates to `get_literal_property_name` for non-computed names, then handles
+    /// computed property names specially: string literals are wrapped as `["text"]`
+    /// (matching tsc's diagnostic format), numeric literals are canonicalized, and
+    /// well-known symbols like `Symbol.hasInstance` are formatted as `[Symbol.xxx]`.
     fn get_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
-        use tsz_scanner::SyntaxKind;
-
         if name_idx.is_none() {
             return None;
         }
 
-        let name_node = self.ctx.arena.get(name_idx)?;
-
-        match name_node.kind {
-            k if k == SyntaxKind::Identifier as u16 => self
-                .ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|id| id.escaped_text.to_string()),
-            k if k == SyntaxKind::StringLiteral as u16 => self
-                .ctx
-                .arena
-                .get_literal(name_node)
-                .map(|lit| lit.text.to_string()),
-            k if k == SyntaxKind::NumericLiteral as u16 => self
-                .ctx
-                .arena
-                .get_literal(name_node)
-                .map(|lit| Self::normalize_numeric_name(&lit.text)),
-            k if k == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
-                // For computed property names with string/numeric literal expressions like ["a"],
-                // extract the value for duplicate checking. tsc formats these as ["a"] in diagnostics.
-                let computed = self.ctx.arena.get_computed_property(name_node)?;
-                let expr_node = self.ctx.arena.get(computed.expression)?;
-                match expr_node.kind {
-                    ek if ek == SyntaxKind::StringLiteral as u16 => {
-                        let lit = self.ctx.arena.get_literal(expr_node)?;
-                        Some(format!("[\"{}\"]", lit.text))
-                    }
-                    ek if ek == SyntaxKind::NumericLiteral as u16 => {
-                        let lit = self.ctx.arena.get_literal(expr_node)?;
-                        Some(Self::normalize_numeric_name(&lit.text))
-                    }
-                    ek if ek == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                        // Handle well-known symbols like Symbol.hasInstance
-                        let access = self.ctx.arena.get_access_expr(expr_node)?;
-                        let obj_node = self.ctx.arena.get(access.expression)?;
-                        let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
-                        if obj_ident.escaped_text.as_str() == "Symbol" {
-                            let prop_node = self.ctx.arena.get(access.name_or_argument)?;
-                            let prop_ident = self.ctx.arena.get_identifier(prop_node)?;
-                            Some(format!("[Symbol.{}]", prop_ident.escaped_text))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
+        // Try non-computed property name first
+        if let Some(name) = crate::types_domain::type_checking_queries::get_literal_property_name(
+            self.ctx.arena,
+            name_idx,
+        ) {
+            return Some(name);
         }
+
+        // Handle computed property names with diagnostic-specific formatting
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.ctx.arena.get_computed_property(name_node)?;
+            let expr_node = self.ctx.arena.get(computed.expression)?;
+            match expr_node.kind {
+                ek if ek == tsz_scanner::SyntaxKind::StringLiteral as u16 => {
+                    // tsc formats computed string literals as ["a"] in diagnostics
+                    let lit = self.ctx.arena.get_literal(expr_node)?;
+                    return Some(format!("[\"{}\"]", lit.text));
+                }
+                ek if ek == tsz_scanner::SyntaxKind::NumericLiteral as u16 => {
+                    let lit = self.ctx.arena.get_literal(expr_node)?;
+                    return Some(
+                        tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                            .unwrap_or_else(|| lit.text.clone()),
+                    );
+                }
+                ek if ek == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    // Handle well-known symbols like Symbol.hasInstance
+                    let access = self.ctx.arena.get_access_expr(expr_node)?;
+                    let obj_node = self.ctx.arena.get(access.expression)?;
+                    let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
+                    if obj_ident.escaped_text.as_str() == "Symbol" {
+                        let prop_node = self.ctx.arena.get(access.name_or_argument)?;
+                        let prop_ident = self.ctx.arena.get_identifier(prop_node)?;
+                        return Some(format!("[Symbol.{}]", prop_ident.escaped_text));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Get the name node from an interface member for error reporting.
