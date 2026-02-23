@@ -530,3 +530,29 @@ Investigated but punted:
   Reason: still blocked on case-sensitive symlink/module-resolution parity in auto-import candidate discovery.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
   Reason: still needs deeper CommonJS/export-equals completion + code-fix modeling (`import = require(...)` style edits/candidates).
+
+## 2026-02-23 (call hierarchy static block follow-up)
+
+Completed in this pass:
+- Fixed call hierarchy static-block parity for:
+  - `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock.ts`
+  - `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock2.ts`
+- Added static-block callable modeling in `crates/tsz-lsp/src/hierarchy/call_hierarchy.rs` so `prepare/incoming/outgoing` treat `static {}` as a constructor-like callable (`name: static {}`) with correct selection span.
+- Prevented class `containerName` leakage for functions nested inside class static blocks.
+- Scoped outgoing-call collection to the current callable boundary (excluding nested callable bodies), and added static-block local function declaration fallback resolution for unresolved sibling calls.
+- Added focused unit coverage in `crates/tsz-lsp/tests/call_hierarchy_tests.rs` for:
+  - static block prepare shape,
+  - no class container on nested static-block functions,
+  - incoming caller mapping to static block,
+  - direct static-block outgoing calls,
+  - sibling function resolution inside static blocks.
+- Validation:
+  - `cargo nextest run -p tsz-lsp` => 732 passed.
+  - `./scripts/run-fourslash.sh --skip-ts-build --filter=callHierarchyClassStaticBlock --sequential --verbose` => 2/2 passed.
+  - `./scripts/run-fourslash.sh --skip-ts-build --max=200` => 192/200 passed.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still generate local baseline mismatches in this run.
+  Reason: appears to require broader cross-file project-backed rename/definition/reference protocol parity in the tsserver bridge; deferred to keep this pass tightly scoped to static-block call hierarchy correctness.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{2,4}.ts`: still fail `verifyFileContent` in this run.
+  Reason: completion snippet/code-action shaping for export-list augmentation remains a larger completion pipeline parity task; out of scope for this targeted call-hierarchy fix.
