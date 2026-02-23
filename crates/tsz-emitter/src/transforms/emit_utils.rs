@@ -346,6 +346,78 @@ pub(crate) fn is_valid_identifier_name(name: &str) -> bool {
     chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
+/// Extract a property key from an AST node, using `convert_computed` to transform
+/// computed property expressions into IR nodes.
+///
+/// Handles identifiers, string/numeric literals, and computed property names.
+/// The `convert_computed` closure is only called for `ComputedPropertyName` nodes,
+/// allowing each caller to use its own expression converter.
+pub(crate) fn get_property_key(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    convert_computed: impl FnOnce(NodeIndex) -> Option<crate::transforms::ir::IRNode>,
+) -> Option<crate::transforms::ir::IRPropertyKey> {
+    use crate::transforms::ir::IRPropertyKey;
+
+    let node = arena.get(idx)?;
+
+    if node.kind == SyntaxKind::Identifier as u16 {
+        let ident = arena.get_identifier(node)?;
+        return Some(IRPropertyKey::Identifier(ident.escaped_text.clone()));
+    }
+    if node.kind == SyntaxKind::StringLiteral as u16 {
+        let lit = arena.get_literal(node)?;
+        return Some(IRPropertyKey::StringLiteral(lit.text.clone()));
+    }
+    if node.kind == SyntaxKind::NumericLiteral as u16 {
+        let lit = arena.get_literal(node)?;
+        return Some(IRPropertyKey::NumericLiteral(lit.text.clone()));
+    }
+    if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+        let computed = arena.get_computed_property(node)?;
+        let expr = convert_computed(computed.expression)?;
+        return Some(IRPropertyKey::Computed(Box::new(expr)));
+    }
+
+    None
+}
+
+/// Extract the expression `NodeIndex` of the base class from heritage clauses.
+///
+/// Walks the heritage clause list, finds the `extends` clause, and returns the
+/// expression index of the first type. Callers then convert the expression using
+/// their own expression-to-IR conversion method.
+///
+/// Returns `None` if no `extends` clause is present.
+pub(crate) fn get_extends_expression_index(
+    arena: &NodeArena,
+    heritage_clauses: &Option<tsz_parser::parser::NodeList>,
+) -> Option<NodeIndex> {
+    let clauses = heritage_clauses.as_ref()?;
+
+    for &clause_idx in &clauses.nodes {
+        let clause_node = arena.get(clause_idx)?;
+        if clause_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
+            continue;
+        }
+        let heritage_data = arena.get_heritage_clause(clause_node)?;
+        if heritage_data.token != SyntaxKind::ExtendsKeyword as u16 {
+            continue;
+        }
+        let first_type_idx = *heritage_data.types.nodes.first()?;
+        let type_node = arena.get(first_type_idx)?;
+
+        // Try as ExpressionWithTypeArguments (e.g., `extends Base` or `extends Base<T>`)
+        if let Some(expr_data) = arena.get_expr_type_args(type_node) {
+            return Some(expr_data.expression);
+        }
+        // Fall back to the type node itself (e.g., a plain identifier)
+        return Some(first_type_idx);
+    }
+
+    None
+}
+
 /// Convert an operator token kind (`u16`) to its string representation.
 ///
 /// Covers all binary, unary, assignment, and compound-assignment operators.

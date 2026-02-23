@@ -1119,39 +1119,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Get the extends clause base class
     fn get_extends_class(&self, heritage_clauses: &Option<NodeList>) -> Option<IRNode> {
-        let clauses = heritage_clauses.as_ref()?;
-
-        for &clause_idx in &clauses.nodes {
-            let clause_node = self.arena.get(clause_idx)?;
-            let heritage_data = self.arena.get_heritage(clause_node)?;
-
-            // Check if this is an extends clause (not implements)
-            if heritage_data.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-
-            // Get the first type in the extends clause (the base class)
-            let first_type_idx = heritage_data.types.nodes.first()?;
-            let type_node = self.arena.get(*first_type_idx)?;
-
-            // The type could be:
-            // 1. A simple identifier (B in `extends B`)
-            // 2. An ExpressionWithTypeArguments (B<T> in `extends B<T>`)
-            // 3. A PropertyAccessExpression (A.B in `extends A.B`)
-
-            // Try as simple identifier first
-            if let Some(ident) = self.arena.get_identifier(type_node) {
-                return Some(IRNode::id(&ident.escaped_text));
-            }
-
-            // Try as ExpressionWithTypeArguments (for generics)
-            if let Some(expr_data) = self.arena.get_expr_type_args(type_node) {
-                // Return the expression converted to IR
-                return Some(self.convert_expression(expr_data.expression));
-            }
-        }
-
-        None
+        let expr_idx = crate::transforms::emit_utils::get_extends_expression_index(
+            self.arena,
+            heritage_clauses,
+        )?;
+        Some(self.convert_expression(expr_idx))
     }
 
     /// Check if a static method body contains arrow functions with `class_alias`,

@@ -868,24 +868,9 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn get_extends_class(&self, heritage: &Option<NodeList>) -> Option<IRNode> {
-        let heritage_list = heritage.as_ref()?;
-        for &clause_idx in &heritage_list.nodes {
-            let clause_node = self.arena.get(clause_idx)?;
-            if clause_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
-                continue;
-            }
-            let heritage_clause = self.arena.get_heritage_clause(clause_node)?;
-            if heritage_clause.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-            // Get the first type in the extends clause
-            let first_type_idx = heritage_clause.types.nodes.first()?;
-            let type_node = self.arena.get(*first_type_idx)?;
-            if let Some(expr_type) = self.arena.get_expr_type_args(type_node) {
-                return self.transform_expression(expr_type.expression);
-            }
-        }
-        None
+        let expr_idx =
+            crate::transforms::emit_utils::get_extends_expression_index(self.arena, heritage)?;
+        self.transform_expression(expr_idx)
     }
 }
 

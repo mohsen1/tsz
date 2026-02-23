@@ -515,27 +515,9 @@ impl<'a> ES5SpreadTransformer<'a> {
     }
 
     fn get_property_key(&self, idx: NodeIndex) -> Option<IRPropertyKey> {
-        let node = self.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            let ident = self.arena.get_identifier(node)?;
-            return Some(IRPropertyKey::Identifier(ident.escaped_text.clone()));
-        }
-        if node.kind == SyntaxKind::StringLiteral as u16 {
-            let lit = self.arena.get_literal(node)?;
-            return Some(IRPropertyKey::StringLiteral(lit.text.clone()));
-        }
-        if node.kind == SyntaxKind::NumericLiteral as u16 {
-            let lit = self.arena.get_literal(node)?;
-            return Some(IRPropertyKey::NumericLiteral(lit.text.clone()));
-        }
-        if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            let computed = self.arena.get_computed_property(node)?;
-            let expr = self.transform_expression(computed.expression)?;
-            return Some(IRPropertyKey::Computed(Box::new(expr)));
-        }
-
-        None
+        crate::transforms::emit_utils::get_property_key(self.arena, idx, |expr_idx| {
+            self.transform_expression(expr_idx)
+        })
     }
 
     fn transform_parameters(&self, params: &NodeList) -> Vec<IRParam> {
