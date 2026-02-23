@@ -1,11 +1,10 @@
-use super::*;
-use crate::TypeInterner;
-use crate::types::Visibility;
+use super::merge::merge_properties;
+use crate::types::{PropertyInfo, TypeId, Visibility};
+use tsz_binder::SymbolId;
 
 #[test]
 fn test_merge_properties() {
-    let interner = TypeInterner::new();
-    let builder = ClassTypeBuilder::new(&interner);
+    let interner = crate::TypeInterner::new();
 
     let name_atom = interner.intern_string("name");
     let age_atom = interner.intern_string("age");
@@ -45,7 +44,7 @@ fn test_merge_properties() {
     ];
 
     let dummy_symbol = SymbolId(999);
-    let merged = builder.merge_properties(base_props, own_props, dummy_symbol);
+    let merged = merge_properties(base_props, own_props, dummy_symbol);
 
     assert_eq!(merged.len(), 2);
     // name should be overridden
