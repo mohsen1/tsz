@@ -6293,3 +6293,35 @@ fn ts2688_resolved_types_no_error() {
         ts2688_diags
     );
 }
+
+#[test]
+fn ts2307_emitted_for_commonjs_module() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "module": "commonjs" }, "files": ["test.ts"] }"#,
+    );
+    write_file(
+        &base.join("test.ts"),
+        "import { thing } from \"non-existent-module\";\nthing();\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    // Should emit TS2307 (not TS2792) for CommonJS module kind
+    let ts2307 = result.diagnostics.iter().any(|d| {
+        d.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+    });
+    assert!(
+        ts2307,
+        "Expected TS2307 for bare specifier with module: commonjs, got codes: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}

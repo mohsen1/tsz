@@ -364,6 +364,23 @@ matching tsc behavior. Triple-slash `/// <reference types="..." />` TS2688 was a
 
 ## Deferred from this session (not fixed)
 
+- **TS2792 (41 single-code tests, investigated)**: TS2792 "Cannot find module... Did you mean
+  to set 'moduleResolution' to 'nodenext'?" should be emitted instead of TS2307 when module kind
+  is ES2015/ES2020/ESNext and moduleResolution was not explicitly set. Root cause:
+  `effective_module_resolution()` in `src/config.rs` maps ES2015/ES2020/ESNext → Bundler,
+  but tsc defaults these to Classic. The fix in `driver_check.rs` (checking
+  `options.module_resolution.is_none()` instead of `effective_module_resolution() != Bundler`)
+  works for the specific tests but causes -31 regressions in tests that explicitly set
+  moduleResolution to node/bundler via variant expansion. Proper fix requires either:
+  (a) fixing `effective_module_resolution()` to match tsc's defaults (ES2015→Classic), which
+  has 13 callers and broad impact on module resolution, or (b) adding a separate
+  `tsc_diagnostic_module_resolution()` helper just for the TS2792 decision.
+  MEDIUM-HIGH difficulty, +10-40 tests if done correctly.
+- **TS2430 (62 false positive tests, all from react16.d.ts)**: Our conformance wrapper
+  successfully resolves `.lib/react16.d.ts` test libraries, while tsc reports TS6053 (file not
+  found). This causes us to type-check react16.d.ts and emit TS2430 interface extension errors
+  that tsc never sees. Fix: either match tsc's behavior of not loading the test lib files, or
+  suppress TS2430 for lib-originated diagnostics. MEDIUM difficulty.
 - **TS2451 (7 false positive tests)**: Two patterns: (a) wrong code choice (TS2451 vs TS2300)
   for var/let redeclaration conflicts — needs `type_checking_global.rs` fix. (b) JS file
   declarations with `@typedef` and late-bound assignments incorrectly flagged in multi-file
