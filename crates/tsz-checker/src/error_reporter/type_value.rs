@@ -161,25 +161,9 @@ impl<'a> CheckerState<'a> {
 
             // In syntax-error files, TS2693 often cascades from parser recovery and
             // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
-            // Exception: recovered primitive array type literals in value position
-            // (`number[]` in expression context) should still emit TS2693.
-            let allow_keyword_array_recovery = self
-                .ctx
-                .arena
-                .source_files
-                .first()
-                .and_then(|sf| {
-                    let start = usize::try_from(loc.start).ok()?;
-                    let src = sf.text.as_ref();
-                    let pattern = format!("{name}[]");
-                    src.get(start..)
-                        .map(|tail: &str| tail.starts_with(pattern.as_str()))
-                })
-                .unwrap_or(false);
             let allow_any_in_parse_recovery = name == "any";
             if self.has_parse_errors()
                 && !is_es2015_type
-                && !allow_keyword_array_recovery
                 && !allow_any_in_parse_recovery
                 && !allow_in_parse_recovery
             {
@@ -526,6 +510,21 @@ class C1 {}
         assert!(
             diagnostics.iter().any(|diag| diag.code == 2693),
             "Expected TS2693 for recovered computed type keyword, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn suppresses_ts2693_for_new_primitive_array_recovery() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+const x = new number[];
+"#,
+        );
+
+        let ts2693_count = diagnostics.iter().filter(|diag| diag.code == 2693).count();
+        assert_eq!(
+            ts2693_count, 0,
+            "Expected no TS2693 for `new number[]` parse recovery, got: {diagnostics:?}",
         );
     }
 }

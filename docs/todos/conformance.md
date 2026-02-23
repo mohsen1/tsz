@@ -17,6 +17,21 @@
   - Fix: Either stop adding strict defaults to tsconfig (let tsz handle internally) or
     match the cache generator's exact tsconfig format including strict defaults placement.
 
+## TS2693 — suppress parse-recovery cascades for `new number[]` (Fixed)
+
+**Status**: Fixed.
+**Error code:** TS2693 ("'{0}' only refers to a type, but is being used as a value here.")
+**Root cause:** `error_type_only_value_at` force-enabled TS2693 in parse-error files when
+the source text at the diagnostic location matched `name[]`. This overrode parse-error
+suppression and produced false TS2693 for malformed constructor forms like `new number[]`,
+where tsc keeps the parser error and does not add TS2693.
+**Fix:** Removed the `allow_keyword_array_recovery` bypass from
+`crates/tsz-checker/src/error_reporter/type_value.rs`. Parse-recovery exceptions now stay
+limited to explicit AST contexts (`has_type_only_value_in_parse_recovery_context`) and `any`.
+**Validation:** Added unit test
+`error_reporter::type_value::tests::suppresses_ts2693_for_new_primitive_array_recovery`.
+Focused conformance run: `./scripts/conformance.sh run --filter "createArray"` now reports `1/1 passed`.
+
 ## TS5025: Canonical option name mapping (Fixed)
 
 **Status**: Fixed. Added 53 missing entries to `canonical_option_name()` across
