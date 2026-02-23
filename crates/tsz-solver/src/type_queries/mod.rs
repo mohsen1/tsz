@@ -41,7 +41,7 @@ use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 // These are the canonical implementations; type_queries re-exports them so
 // callers can use a single `type_queries::*` import.
 pub use crate::visitors::visitor_predicates::{
-    is_array_type, is_conditional_type, is_empty_object_type, is_function_type,
+    contains_any_type, is_array_type, is_conditional_type, is_empty_object_type, is_function_type,
     is_index_access_type, is_intersection_type, is_literal_type, is_mapped_type,
     is_object_like_type, is_primitive_type, is_template_literal_type, is_tuple_type, is_union_type,
 };

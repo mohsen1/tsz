@@ -15,6 +15,14 @@ pub(crate) fn is_relation_cacheable(db: &dyn TypeDatabase, source: TypeId, targe
         && !tsz_solver::type_queries::contains_infer_types_db(db, target)
 }
 
+pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_infer_types_db(db, type_id)
+}
+
+pub(crate) fn contains_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_any_type(db, type_id)
+}
+
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
