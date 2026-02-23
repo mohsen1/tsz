@@ -798,6 +798,11 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        if assign_query::contains_type_parameters(self.ctx.types, expected)
+            && assign_query::contains_any_type(self.ctx.types, actual)
+        {
+            return true;
+        }
         assign_query::contains_any_type(self.ctx.types, expected)
     }
 }
