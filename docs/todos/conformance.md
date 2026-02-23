@@ -419,7 +419,22 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: ~7935/12574 (63.1%) — full suite (estimated from first-6000 +3)
+## Current score: 7939/12574 (63.1%) — full suite
+
+### Session progress (7935 → 7939, +4 tests):
+- **TS2721/TS2722/TS2723**: Implemented "Cannot invoke an object which is possibly
+  null/undefined" errors when strictNullChecks is on. In the NotCallable handler,
+  split_nullish_type detects nullish parts of the callee type and emits the specific
+  error code (2721 for null, 2722 for undefined, 2723 for both) instead of generic TS2349.
+  - Tests passing: `nullableFunctionError.ts` + 3 others where correcting TS2349→TS2722
+    aligned with expected error codes
+  - Added 5 unit tests: null call, undefined call, null|undefined call, optional method call,
+    and non-strict-null fallback to TS2349
+  - **Deferred**: `moduleExportDuplicateAlias.ts` — multi-file salsa test where TS2722 is
+    expected in a `.js` file; our JS/salsa module resolution doesn't match the test harness
+    file naming
+
+## Previous score: ~7935/12574 (63.1%) — full suite (estimated from first-6000 +3)
 
 ### Session progress (~7932 → ~7935, +3 tests):
 - **TS2300 (interface duplicate reporting)**: Fixed `check_duplicate_interface_members` to report
@@ -630,3 +645,18 @@ expression name (when available via `expression_text()`) or TS2571 fallback.
 - **TS2322/TS2339/TS2345 (high-volume)**: `TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts` (representative) — highest-impact mismatches remain assignability/property access core logic and require broader solver relation work, not a safe minimal patch in this session.
 - **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of8.ts` — still missing TS2454 (`v; for (var v of [0]) {}`); unresolved identifier fallback in single-file/no-import mode bypasses flow-based definite assignment for bare expression statements.
 - **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of22.ts` — same root cause as above for pre-loop read of `var` from for-of header.
+
+## Deferred from this run (2026-02-23, offset 6000)
+
+- **TS2722 remaining (8 tests)**: 7 tests that need TS2722 also require other missing codes
+  (TS2322, TS2339, TS2454, TS2532, TS18048, etc.). `moduleExportDuplicateAlias.ts` needs
+  TS2722 in a multi-file JS/salsa context that our runner doesn't reproduce correctly.
+- **TS6046 (8 tests, not implemented)**: "Argument for option must be: ..." — config
+  validation for invalid `--target`, `--module`, `--lib`, `--moduleResolution` values.
+  Infrastructure exists (parse functions + diagnostic codes defined) but parse errors use
+  `bail!()` instead of structured diagnostics with tsconfig source locations. MEDIUM difficulty.
+- **TS2875 (14 tests)**: JSX runtime module not found. Requires JSX pragma parsing and
+  module resolution validation. MEDIUM difficulty (previously deferred).
+- **TS2497 (13 tests)**: Module ESM import compat. MEDIUM difficulty (previously deferred).
+- **TS2550 (9 tests)**: Property needs newer lib target. MEDIUM-HIGH (needs lib version tracking).
+- **TS2589 (9 tests)**: Excessive instantiation depth. Infrastructure 80% done, needs wiring. MEDIUM.
