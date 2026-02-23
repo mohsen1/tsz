@@ -322,26 +322,30 @@ pub(super) fn build_discovery_options(
     Ok(options)
 }
 
+/// Returns (resolved files, unresolved type names from tsconfig `types` array).
 pub(super) fn collect_type_root_files(
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
-) -> Vec<PathBuf> {
+) -> (Vec<PathBuf>, Vec<String>) {
     let roots = match options.type_roots.as_ref() {
         Some(roots) => roots.clone(),
         None => default_type_roots(base_dir),
     };
     if roots.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     let mut files = std::collections::BTreeSet::new();
     if let Some(types) = options.types.as_ref() {
+        let mut unresolved = Vec::new();
         for name in types {
             if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
                 files.insert(entry);
+            } else {
+                unresolved.push(name.clone());
             }
         }
-        return files.into_iter().collect();
+        return (files.into_iter().collect(), unresolved);
     }
 
     for root in roots {
@@ -352,7 +356,7 @@ pub(super) fn collect_type_root_files(
         }
     }
 
-    files.into_iter().collect()
+    (files.into_iter().collect(), Vec::new())
 }
 
 pub(super) fn read_source_files(
