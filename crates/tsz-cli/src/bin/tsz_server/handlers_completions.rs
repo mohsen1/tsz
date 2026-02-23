@@ -3,7 +3,7 @@
 use super::{Server, TsServerRequest, TsServerResponse};
 use rustc_hash::FxHashSet;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, Completions};
@@ -297,35 +297,23 @@ impl Server {
             return Vec::new();
         }
 
-        let mut best_item_by_name: BTreeMap<String, &CompletionItem> = BTreeMap::new();
-        for item in project_items {
-            if !item.has_action {
-                continue;
-            }
-            if !required_names.contains(&item.label) {
-                continue;
-            }
-            if item.additional_text_edits.is_none() {
-                continue;
-            }
-            best_item_by_name
-                .entry(item.label.clone())
-                .and_modify(|current| {
-                    let current_source = current.source.as_deref().unwrap_or_default();
-                    let item_source = item.source.as_deref().unwrap_or_default();
-                    let current_depth = current_source.matches('/').count();
-                    let item_depth = item_source.matches('/').count();
-                    if (item_depth, item_source.len()) < (current_depth, current_source.len()) {
-                        *current = item;
-                    }
-                })
-                .or_insert(item);
-        }
-
         let mut edits = Vec::new();
         let mut seen = BTreeSet::new();
-        for item in best_item_by_name.into_values() {
+        for required_name in required_names {
+            let Some((matched_label, item)) =
+                Self::best_project_item_for_required_name(&required_name, project_items)
+            else {
+                continue;
+            };
             for edit in item.additional_text_edits.as_ref().into_iter().flatten() {
+                let mut edit = edit.clone();
+                if matched_label != required_name {
+                    edit.new_text = Self::rewrite_import_name_in_edit(
+                        &edit.new_text,
+                        &matched_label,
+                        &required_name,
+                    );
+                }
                 let key = (
                     edit.range.start.line,
                     edit.range.start.character,
@@ -334,11 +322,66 @@ impl Server {
                     edit.new_text.clone(),
                 );
                 if seen.insert(key) {
-                    edits.push(edit.clone());
+                    edits.push(edit);
                 }
             }
         }
         edits
+    }
+
+    fn best_project_item_for_required_name<'a>(
+        required_name: &str,
+        project_items: &'a [CompletionItem],
+    ) -> Option<(String, &'a CompletionItem)> {
+        let base_name = required_name.strip_suffix('_');
+        let mut best: Option<(String, &CompletionItem)> = None;
+        for item in project_items {
+            if !item.has_action || item.additional_text_edits.is_none() {
+                continue;
+            }
+            let matched_label = if item.label == required_name {
+                Some(item.label.clone())
+            } else if let Some(base_name) = base_name {
+                (item.label == base_name).then_some(item.label.clone())
+            } else {
+                None
+            };
+            let Some(matched_label) = matched_label else {
+                continue;
+            };
+            match best {
+                Some((_, current)) => {
+                    let current_source = current.source.as_deref().unwrap_or_default();
+                    let item_source = item.source.as_deref().unwrap_or_default();
+                    let current_depth = current_source.matches('/').count();
+                    let item_depth = item_source.matches('/').count();
+                    if (item_depth, item_source.len()) < (current_depth, current_source.len()) {
+                        best = Some((matched_label, item));
+                    }
+                }
+                None => best = Some((matched_label, item)),
+            }
+        }
+        best
+    }
+
+    fn rewrite_import_name_in_edit(new_text: &str, from: &str, to: &str) -> String {
+        if from == to {
+            return new_text.to_string();
+        }
+        if let Some(rest) = new_text.strip_prefix(&format!("import {from} from ")) {
+            return format!("import {to} from {rest}");
+        }
+        if let Some(rest) = new_text.strip_prefix(&format!("import type {from} from ")) {
+            return format!("import type {to} from {rest}");
+        }
+        if new_text.contains("import {") || new_text.contains("import type {") {
+            return new_text
+                .replace(&format!("{{ {from} }}"), &format!("{{ {to} }}"))
+                .replace(&format!(", {from}"), &format!(", {to}"))
+                .replace(&format!("{from}, "), &format!("{to}, "));
+        }
+        new_text.to_string()
     }
 
     fn class_member_snippet_synthesized_text_changes(
@@ -396,6 +439,116 @@ impl Server {
             }
         }
         changes
+    }
+
+    fn class_member_snippet_transitive_default_import_text_changes(
+        &self,
+        file_name: &str,
+        source_text: &str,
+        insert_text: &str,
+        member_name: &str,
+    ) -> Vec<serde_json::Value> {
+        let required_names = Self::class_member_snippet_type_identifiers(insert_text, member_name);
+        if required_names.is_empty() {
+            return Vec::new();
+        }
+        let local_underscored = self.class_member_snippet_underscored_type_names(file_name, source_text, &[]);
+        let alias_sources = self.recursive_default_import_alias_sources(file_name, source_text);
+        let mut changes = Vec::new();
+        for required_name in required_names {
+            if local_underscored.contains(&required_name) && source_text.contains(&required_name) {
+                continue;
+            }
+            let source = alias_sources
+                .get(&required_name)
+                .cloned()
+                .or_else(|| {
+                    required_name
+                        .strip_suffix('_')
+                        .and_then(|base| alias_sources.get(base).cloned())
+                });
+            let Some(source) = source else {
+                continue;
+            };
+            let existing_import = format!("import {required_name} from \"{source}\";");
+            if source_text.contains(&existing_import) {
+                continue;
+            }
+            changes.push(serde_json::json!({
+                "span": { "start": 0, "length": 0 },
+                "newText": format!("import {required_name} from \"{source}\";\n"),
+            }));
+        }
+        changes
+    }
+
+    fn recursive_default_import_alias_sources(
+        &self,
+        file_name: &str,
+        source_text: &str,
+    ) -> std::collections::BTreeMap<String, String> {
+        let mut out = std::collections::BTreeMap::new();
+        let mut queue =
+            std::collections::VecDeque::from([(file_name.to_string(), source_text.to_string())]);
+        let mut visited = BTreeSet::new();
+        while let Some((current_path, current_source)) = queue.pop_front() {
+            if !visited.insert(current_path.clone()) {
+                continue;
+            }
+            for (alias, source) in Self::default_import_aliases_in_source(&current_source) {
+                out.entry(alias).or_insert(source);
+            }
+            for path in
+                Self::resolve_imported_module_files(&current_path, &current_source, &self.open_files)
+            {
+                if visited.contains(&path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(&path) {
+                    queue.push_back((path, text.clone()));
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    queue.push_back((path, text));
+                }
+            }
+        }
+        out
+    }
+
+    fn default_import_aliases_in_source(source_text: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("import ") || !trimmed.contains(" from ") {
+                continue;
+            }
+            if trimmed.starts_with("import {") || trimmed.starts_with("import type {") {
+                continue;
+            }
+            let Some(import_start) = trimmed.strip_prefix("import ") else {
+                continue;
+            };
+            let Some((alias, rest)) = import_start.split_once(" from ") else {
+                continue;
+            };
+            let alias = alias.trim();
+            if alias.is_empty() || alias.contains(',') || alias.contains('{') {
+                continue;
+            }
+            let source = rest.trim().trim_end_matches(';').trim();
+            let source = source
+                .trim_start_matches('"')
+                .trim_end_matches('"')
+                .trim_start_matches('\'')
+                .trim_end_matches('\'')
+                .to_string();
+            if source.is_empty() {
+                continue;
+            }
+            out.push((alias.to_string(), source));
+        }
+        out
     }
 
     fn infer_extends_import_source(source_text: &str) -> Option<String> {
@@ -466,6 +619,7 @@ impl Server {
         root: tsz::parser::NodeIndex,
         position: tsz::lsp::position::Position,
         file_name: &str,
+        source_text: &str,
         project_items: &[CompletionItem],
     ) -> Vec<CompletionItem> {
         let provider_candidates = provider.get_class_member_snippet_candidates(root, position);
@@ -477,12 +631,18 @@ impl Server {
             Self::synthesized_class_member_snippet_candidates_from_project_items(project_items);
         candidates =
             Self::merge_class_member_snippet_candidates(candidates, synthesized_candidates);
+        let underscored_type_names =
+            self.class_member_snippet_underscored_type_names(file_name, source_text, project_items);
 
         let mut items = Vec::new();
         for candidate in candidates {
             let Some(insert_text) = Self::class_member_snippet_insert_text(&candidate) else {
                 continue;
             };
+            let insert_text = Self::normalize_property_snippet_type_alias_names(
+                &insert_text,
+                &underscored_type_names,
+            );
             let edits = Self::class_member_snippet_additional_edits(
                 &insert_text,
                 &candidate.label,
@@ -506,6 +666,107 @@ impl Server {
             items.push(item);
         }
         items
+    }
+
+    fn class_member_snippet_underscored_type_names(
+        &self,
+        file_name: &str,
+        source_text: &str,
+        project_items: &[CompletionItem],
+    ) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for item in project_items {
+            if item.has_action && item.label.ends_with('_') {
+                out.insert(item.label.clone());
+            }
+        }
+        let mut queue = std::collections::VecDeque::from([(
+            file_name.to_string(),
+            source_text.to_string(),
+        )]);
+        let mut visited = BTreeSet::new();
+        while let Some((current_path, current_source)) = queue.pop_front() {
+            if !visited.insert(current_path.clone()) {
+                continue;
+            }
+            Self::collect_underscored_type_names_from_source(&current_source, &mut out);
+            for path in
+                Self::resolve_imported_module_files(&current_path, &current_source, &self.open_files)
+            {
+                if visited.contains(&path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(&path) {
+                    queue.push_back((path, text.clone()));
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    queue.push_back((path, text));
+                }
+            }
+        }
+        out
+    }
+
+    fn collect_underscored_type_names_from_source(source_text: &str, out: &mut BTreeSet<String>) {
+        let mut token = String::new();
+        for ch in source_text.chars() {
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                token.push(ch);
+                continue;
+            }
+            if token.ends_with('_') {
+                out.insert(token.clone());
+            }
+            token.clear();
+        }
+        if token.ends_with('_') {
+            out.insert(token);
+        }
+    }
+
+    fn normalize_property_snippet_type_alias_names(
+        insert_text: &str,
+        underscored: &BTreeSet<String>,
+    ) -> String {
+        if !insert_text.ends_with(';') || insert_text.contains('{') {
+            return insert_text.to_string();
+        }
+        let Some(colon_idx) = insert_text.find(':') else {
+            return insert_text.to_string();
+        };
+        if underscored.is_empty() {
+            return insert_text.to_string();
+        }
+
+        let mut out = String::with_capacity(insert_text.len() + 16);
+        out.push_str(&insert_text[..=colon_idx]);
+        let rhs = &insert_text[colon_idx + 1..];
+        let mut current = String::new();
+        let flush = |current: &mut String, out: &mut String, underscored: &BTreeSet<String>| {
+            if current.is_empty() {
+                return;
+            }
+            let token = std::mem::take(current);
+            if !token.ends_with('_') {
+                let candidate = format!("{token}_");
+                if underscored.contains(&candidate) {
+                    out.push_str(&candidate);
+                    return;
+                }
+            }
+            out.push_str(&token);
+        };
+        for ch in rhs.chars() {
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                current.push(ch);
+            } else {
+                flush(&mut current, &mut out, &underscored);
+                out.push(ch);
+            }
+        }
+        flush(&mut current, &mut out, &underscored);
+        out
     }
 
     fn merge_class_member_snippet_candidates(
@@ -969,21 +1230,28 @@ impl Server {
     where
         F: FnMut(std::path::PathBuf),
     {
+        push(base.to_path_buf());
+        let ext = base.extension().and_then(std::ffi::OsStr::to_str);
+        if ext.is_some() {
+            // Handle TS sources imported via runtime extensions (e.g. "./node.js" -> "./node.ts").
+            if matches!(ext, Some("js" | "jsx" | "mjs" | "cjs")) {
+                let stem = base.with_extension("");
+                for ts_ext in [".d.ts", ".ts", ".tsx", ".mts", ".cts"] {
+                    let mut with_ext = stem.as_os_str().to_os_string();
+                    with_ext.push(ts_ext);
+                    push(std::path::PathBuf::from(with_ext));
+                }
+                push(stem);
+            }
+            return;
+        }
+
         for ext in [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"] {
             let mut with_ext = base.as_os_str().to_os_string();
             with_ext.push(ext);
             push(std::path::PathBuf::from(with_ext));
         }
-        push(base.to_path_buf());
-        for leaf in [
-            "index.d.ts",
-            "index.ts",
-            "index.tsx",
-            "index.js",
-            "index.jsx",
-            "index.mts",
-            "index.cts",
-        ] {
+        for leaf in ["index.d.ts", "index.ts", "index.tsx", "index.js", "index.jsx", "index.mts", "index.cts"] {
             push(base.join(leaf));
         }
     }
@@ -1460,7 +1728,14 @@ impl Server {
                 self.include_completions_with_class_member_snippets,
             );
             let snippet_items = if include_class_member_snippets && !is_member_completion {
-                self.class_member_snippet_items(&provider, root, position, &file, &project_items)
+                self.class_member_snippet_items(
+                    &provider,
+                    root,
+                    position,
+                    &file,
+                    &source_text,
+                    &project_items,
+                )
             } else {
                 Vec::new()
             };
@@ -1533,7 +1808,7 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items = self.project_completion_items(file, position, Some(preferences));
+            let mut project_items = self.project_completion_items(file, position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
@@ -1542,8 +1817,30 @@ impl Server {
                 "includeCompletionsWithClassMemberSnippets",
                 self.include_completions_with_class_member_snippets,
             );
-            let snippet_items = if include_class_member_snippets && !is_member_completion {
-                self.class_member_snippet_items(&provider, root, position, file, &project_items)
+            let requested_class_member_snippet = entry_names.iter().any(|entry_name| {
+                entry_name
+                    .as_object()
+                    .and_then(|obj| obj.get("source"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+            });
+            if requested_class_member_snippet && project_items.is_empty() {
+                let forced_auto_import_prefs =
+                    serde_json::json!({ "includeCompletionsForModuleExports": true });
+                project_items =
+                    self.project_completion_items(file, position, Some(&forced_auto_import_prefs));
+            }
+            let snippet_items = if (include_class_member_snippets || requested_class_member_snippet)
+                && (!is_member_completion || requested_class_member_snippet)
+            {
+                self.class_member_snippet_items(
+                    &provider,
+                    root,
+                    position,
+                    file,
+                    &source_text,
+                    &project_items,
+                )
             } else {
                 Vec::new()
             };
@@ -1673,12 +1970,21 @@ impl Server {
                         if item.source.as_deref() == Some("ClassMemberSnippet/")
                             && let Some(insert_text) = item.insert_text.as_deref()
                         {
-                            let synthesized = Self::class_member_snippet_synthesized_text_changes(
+                            let mut synthesized = Self::class_member_snippet_synthesized_text_changes(
                                 &source_text,
                                 insert_text,
                                 &item.label,
                                 &project_items,
                             );
+                            if synthesized.is_empty() {
+                                synthesized = self
+                                    .class_member_snippet_transitive_default_import_text_changes(
+                                        &file,
+                                        &source_text,
+                                        insert_text,
+                                        &item.label,
+                                    );
+                            }
                             if !synthesized.is_empty() {
                                 text_changes = synthesized;
                             }
@@ -2683,6 +2989,30 @@ mod tests {
     }
 
     #[test]
+    fn class_member_snippet_additional_edits_rewrite_default_import_for_underscored_alias() {
+        let project_items = vec![
+            CompletionItem::new("Document".to_string(), CompletionItemKind::Class)
+                .with_has_action()
+                .with_source("./document.js".to_string())
+                .with_additional_edits(vec![tsz::lsp::rename::TextEdit::new(
+                    tsz::lsp::position::Range::new(
+                        tsz::lsp::position::Position::new(0, 0),
+                        tsz::lsp::position::Position::new(0, 0),
+                    ),
+                    "import Document from \"./document.js\";\n".to_string(),
+                )]),
+        ];
+
+        let edits = Server::class_member_snippet_additional_edits(
+            "parent: Document_ | undefined;",
+            "parent",
+            &project_items,
+        );
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, "import Document_ from \"./document.js\";\n");
+    }
+
+    #[test]
     fn normalize_mts_auto_import_edit_text_appends_existing_type_only_members() {
         let source_text = "import type { I } from \"./mod.js\";\n\nconst x: I = new ";
         let normalized = Server::normalize_mts_auto_import_edit_text(
@@ -2743,6 +3073,24 @@ mod tests {
                 .iter()
                 .any(|path| path == "/workspace/node_modules/@scope/pkg/index.d.ts"),
             "expected package module candidate to resolve from open files: {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_imported_module_files_maps_js_specifier_to_ts_source() {
+        let mut open_files = FxHashMap::default();
+        open_files.insert(
+            "/workspace/src/node.ts".to_string(),
+            "export class Node {}".to_string(),
+        );
+        let source = "import Node from \"./node.js\";\n";
+
+        let resolved =
+            Server::resolve_imported_module_files("/workspace/src/container.ts", source, &open_files);
+
+        assert!(
+            resolved.iter().any(|path| path == "/workspace/src/node.ts"),
+            "expected explicit .js import to resolve sibling TypeScript source: {resolved:?}"
         );
     }
 }
