@@ -83,6 +83,12 @@ impl Server {
             Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
         self.auto_import_specifier_exclude_regexes =
             Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+        self.include_completions_with_class_member_snippets = request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("includeCompletionsWithClassMemberSnippets"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
 
         // Accept configuration; selected completion preferences are wired.
         TsServerResponse {

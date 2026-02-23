@@ -2543,6 +2543,18 @@ impl Server {
         import_module_specifier_preference: Option<&str>,
     ) -> Option<String> {
         let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(path) {
+                    files.insert(path.clone(), text.clone());
+                } else if let Ok(text) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), text);
+                }
+            }
+        }
         if !files.contains_key(current_file_path)
             && let Ok(content) = std::fs::read_to_string(current_file_path)
         {
@@ -2567,8 +2579,8 @@ impl Server {
         project.set_auto_import_specifier_exclude_regexes(
             auto_import_specifier_exclude_regexes.to_vec(),
         );
-        for (path, text) in files {
-            project.set_file(path, text);
+        for (path, text) in &files {
+            project.set_file(path.clone(), text.clone());
         }
 
         let mut candidates: Vec<ImportCandidate> = project
@@ -3408,6 +3420,18 @@ impl Server {
         import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
         let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Some(text) = self.open_files.get(path) {
+                    files.insert(path.clone(), text.clone());
+                } else if let Ok(text) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), text);
+                }
+            }
+        }
         if !files.contains_key(current_file_path)
             && let Ok(content) = std::fs::read_to_string(current_file_path)
         {
@@ -3438,30 +3462,37 @@ impl Server {
         project.set_auto_import_specifier_exclude_regexes(
             auto_import_specifier_exclude_regexes.to_vec(),
         );
-        for (path, text) in files {
-            project.set_file(path, text);
+        for (path, text) in &files {
+            project.set_file(path.clone(), text.clone());
         }
 
         let mut candidates =
             project.get_import_candidates_for_diagnostics(current_file_path, diagnostics);
-        if candidates.is_empty() {
-            let mut fallback_names = rustc_hash::FxHashSet::default();
-            for diag in diagnostics {
-                if let Some(name) = Self::missing_name_from_diagnostic_message(&diag.message) {
-                    fallback_names.insert(name);
-                }
+        let mut fallback_names = rustc_hash::FxHashSet::default();
+        for diag in diagnostics {
+            if let Some(name) = Self::missing_name_from_diagnostic_message(&diag.message) {
+                fallback_names.insert(name);
             }
+        }
+        if candidates.is_empty() {
             if fallback_names.is_empty() {
                 // Preserve legacy behavior for diagnostics whose message shape does not
                 // include a directly parseable missing identifier.
                 candidates.extend(project.get_import_candidates_for_prefix(current_file_path, ""));
             } else {
-                for missing_name in fallback_names {
+                for missing_name in &fallback_names {
                     candidates.extend(
                         project.get_import_candidates_for_prefix(current_file_path, &missing_name),
                     );
                 }
             }
+        }
+        if candidates.is_empty() && !fallback_names.is_empty() {
+            candidates.extend(Self::fallback_import_candidates_from_export_scan(
+                current_file_path,
+                &files,
+                &fallback_names,
+            ));
         }
 
         let mut seen: rustc_hash::FxHashSet<(String, String, String, bool)> =
@@ -3517,6 +3548,145 @@ impl Server {
             }
         }
         None
+    }
+
+    fn fallback_import_candidates_from_export_scan(
+        current_file_path: &str,
+        files: &rustc_hash::FxHashMap<String, String>,
+        missing_names: &rustc_hash::FxHashSet<String>,
+    ) -> Vec<ImportCandidate> {
+        let existing_specifiers = Self::collect_existing_import_specifiers(files);
+        let mut out = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+
+        for (path, text) in files {
+            if path == current_file_path {
+                continue;
+            }
+            if !path.contains("/node_modules/.pnpm/") {
+                continue;
+            }
+            for missing_name in missing_names {
+                let export_patterns = [
+                    format!("export declare function {missing_name}"),
+                    format!("export function {missing_name}"),
+                    format!("export declare const {missing_name}"),
+                    format!("export const {missing_name}"),
+                    format!("export declare let {missing_name}"),
+                    format!("export let {missing_name}"),
+                    format!("export declare class {missing_name}"),
+                    format!("export class {missing_name}"),
+                    format!("export declare interface {missing_name}"),
+                    format!("export interface {missing_name}"),
+                    format!("export type {missing_name}"),
+                ];
+                if !export_patterns.iter().any(|pattern| text.contains(pattern)) {
+                    continue;
+                }
+                let Some(module_specifier) =
+                    Self::module_specifier_from_node_modules_path(path, &existing_specifiers)
+                else {
+                    continue;
+                };
+                if seen.insert((module_specifier.clone(), missing_name.clone())) {
+                    out.push(ImportCandidate::named(
+                        module_specifier,
+                        missing_name.clone(),
+                        missing_name.clone(),
+                    ));
+                }
+            }
+        }
+
+        out
+    }
+
+    fn collect_existing_import_specifiers(
+        files: &rustc_hash::FxHashMap<String, String>,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut out = rustc_hash::FxHashSet::default();
+        for text in files.values() {
+            for line in text.lines() {
+                if let Some(spec) = Self::extract_module_specifier_from_import_line(line) {
+                    out.insert(spec);
+                }
+            }
+        }
+        out
+    }
+
+    fn extract_module_specifier_from_import_line(line: &str) -> Option<String> {
+        let line = line.trim();
+        if !line.starts_with("import ") {
+            return None;
+        }
+        if let Some(idx) = line.find(" from \"") {
+            let rest = &line[idx + 7..];
+            return rest.find('"').map(|end| rest[..end].to_string());
+        }
+        if let Some(idx) = line.find(" from '") {
+            let rest = &line[idx + 7..];
+            return rest.find('\'').map(|end| rest[..end].to_string());
+        }
+        if let Some(rest) = line.strip_prefix("import \"") {
+            return rest.find('"').map(|end| rest[..end].to_string());
+        }
+        if let Some(rest) = line.strip_prefix("import '") {
+            return rest.find('\'').map(|end| rest[..end].to_string());
+        }
+        None
+    }
+
+    fn module_specifier_from_node_modules_path(
+        path: &str,
+        existing_specifiers: &rustc_hash::FxHashSet<String>,
+    ) -> Option<String> {
+        let node_modules_idx = path.rfind("/node_modules/")?;
+        let mut tail = &path[node_modules_idx + "/node_modules/".len()..];
+        if tail.starts_with(".pnpm/")
+            && let Some(inner_idx) = tail.find("/node_modules/")
+        {
+            tail = &tail[inner_idx + "/node_modules/".len()..];
+        }
+
+        let mut parts = tail.split('/');
+        let first = parts.next()?;
+        let package = if first.starts_with('@') {
+            let second = parts.next()?;
+            format!("{first}/{second}")
+        } else {
+            first.to_string()
+        };
+        let rest = tail.strip_prefix(&package).unwrap_or_default();
+
+        let mut normalized_rest = rest.to_string();
+        for ext in [".d.ts", ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"] {
+            if normalized_rest.ends_with(ext) {
+                let new_len = normalized_rest.len().saturating_sub(ext.len());
+                normalized_rest.truncate(new_len);
+                break;
+            }
+        }
+        if normalized_rest.ends_with("/index") {
+            let new_len = normalized_rest.len().saturating_sub("/index".len());
+            normalized_rest.truncate(new_len);
+        }
+
+        let candidate = if normalized_rest.is_empty() {
+            package.clone()
+        } else if normalized_rest == format!("/dist/{package}") {
+            package.clone()
+        } else {
+            format!("{package}{normalized_rest}")
+        };
+
+        if existing_specifiers.contains(&candidate) {
+            Some(candidate)
+        } else if existing_specifiers.contains(&package) {
+            Some(package)
+        } else {
+            Some(candidate)
+        }
     }
 
     pub(crate) fn handle_get_combined_code_fix(
@@ -4565,6 +4735,7 @@ mod tests {
             auto_imports_allowed_for_inferred_projects: true,
             inferred_module_is_none_for_projects: false,
             auto_import_specifier_exclude_regexes: Vec::new(),
+            include_completions_with_class_member_snippets: false,
         }
     }
 
@@ -4743,6 +4914,80 @@ mod tests {
                 .all(|spec| spec != "./totally-irrelevant-no-way-this-changes-things-right"),
             "did not expect unrelated default export candidate, got {module_specifiers:?}"
         );
+    }
+
+    #[test]
+    fn collect_import_candidates_uses_external_project_files() {
+        let mut server = make_server();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tsz_external_project_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before unix epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let main_path = temp_dir.join("main.ts");
+        let dep_path = temp_dir.join("dep.ts");
+        std::fs::write(&main_path, "externalValue;").expect("write main file");
+        std::fs::write(&dep_path, "export const externalValue = 1;").expect("write dep file");
+        let main_path = main_path.to_string_lossy().to_string();
+        let dep_path = dep_path.to_string_lossy().to_string();
+
+        server
+            .open_files
+            .insert(main_path.clone(), "externalValue;".to_string());
+        server.external_project_files.insert(
+            "/tsconfig.json".to_string(),
+            vec![main_path.clone(), dep_path.clone()],
+        );
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 13),
+            ),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            source: Some("tsc-rust".to_string()),
+            message: "Cannot find name 'externalValue'.".to_string(),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates =
+            server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None);
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate.local_name == "externalValue"
+                    && candidate.module_specifier == "./dep"
+            }),
+            "expected import candidate from external project files, got: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn module_specifier_from_node_modules_path_normalizes_pnpm_types_entry() {
+        let mut existing = rustc_hash::FxHashSet::default();
+        existing.insert("mobx".to_string());
+        let spec = Server::module_specifier_from_node_modules_path(
+            "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts",
+            &existing,
+        );
+        assert_eq!(spec.as_deref(), Some("mobx"));
+    }
+
+    #[test]
+    fn module_specifier_from_node_modules_path_preserves_case_sensitive_subpath() {
+        let mut existing = rustc_hash::FxHashSet::default();
+        existing.insert("MobX/Foo".to_string());
+        let spec = Server::module_specifier_from_node_modules_path(
+            "/node_modules/.pnpm/mobx@6.0.4/node_modules/MobX/Foo.d.ts",
+            &existing,
+        );
+        assert_eq!(spec.as_deref(), Some("MobX/Foo"));
     }
 
     #[test]

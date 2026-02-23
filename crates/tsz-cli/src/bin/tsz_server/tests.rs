@@ -26,6 +26,7 @@ fn make_server() -> Server {
         auto_imports_allowed_for_inferred_projects: true,
         inferred_module_is_none_for_projects: false,
         auto_import_specifier_exclude_regexes: Vec::new(),
+        include_completions_with_class_member_snippets: false,
     }
 }
 
@@ -2467,6 +2468,249 @@ fn test_completion_entry_details_upgrades_type_only_named_import_for_value_usage
     assert!(
         !updated_text.contains("import type { I } from \"./mod.js\";"),
         "expected applied edits to remove prior type-only import line, got: {updated_text}"
+    );
+}
+
+#[test]
+fn test_completion_info_class_member_snippet_includes_import_code_action() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@sapphire/pieces/index.d.ts".to_string(),
+        "interface Container {\n  stores: unknown;\n}\n\ndeclare class Piece {\n  container: Container;\n}\n\nexport { Piece, type Container };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { Piece } from \"@sapphire/pieces\";\nclass FullPiece extends Piece {\n  c/**/\n}\n"
+            .to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 4,
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let container_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("container")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for `container`");
+    assert_eq!(
+        container_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("container: Container;")
+    );
+    assert_eq!(
+        container_entry
+            .get("filterText")
+            .and_then(serde_json::Value::as_str),
+        Some("container")
+    );
+    assert_eq!(
+        container_entry
+            .get("hasAction")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+}
+
+#[test]
+fn test_completion_info_class_member_snippet_includes_getter_from_augmented_alias_chain() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@sapphire/pieces/index.d.ts".to_string(),
+        "interface Container {\n  stores: unknown;\n}\n\ndeclare class Piece {\n  get container(): Container;\n}\n\ndeclare class AliasPiece extends Piece {}\n\nexport { AliasPiece, type Container };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/@sapphire/framework/index.d.ts".to_string(),
+        "import { AliasPiece } from \"@sapphire/pieces\";\n\ndeclare class Command extends AliasPiece {}\n\ndeclare module \"@sapphire/pieces\" {\n  interface Container {\n    client: unknown;\n  }\n}\n\nexport { Command };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import \"@sapphire/pieces\";\nimport { Command } from \"@sapphire/framework\";\nclass PingCommand extends Command {\n  /**/\n}\n"
+            .to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 4,
+            "offset": 3,
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let container_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("container")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for inherited getter `container`");
+    assert_eq!(
+        container_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("get container(): Container {\n}")
+    );
+}
+
+#[test]
+fn test_completion_info_uses_configure_class_member_snippet_preference() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@sapphire/pieces/index.d.ts".to_string(),
+        "interface Container {\n  stores: unknown;\n}\n\ndeclare class Piece {\n  container: Container;\n}\n\nexport { Piece, type Container };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { Piece } from \"@sapphire/pieces\";\nclass FullPiece extends Piece {\n  /**/\n}\n"
+            .to_string(),
+    );
+
+    let configure_req = make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true
+            }
+        }),
+    );
+    let configure_resp = server.handle_tsserver_request(configure_req);
+    assert!(configure_resp.success);
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 3
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let container_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("container")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion after configure preference");
+    assert_eq!(
+        container_entry
+            .get("isSnippet")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        container_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("container: Container;")
+    );
+}
+
+#[test]
+fn test_completion_info_class_member_snippet_export_list_augmentation_shape() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@sapphire/pieces/index.d.ts".to_string(),
+        "interface Container {\n  stores: unknown;\n}\n\ndeclare class Piece {\n  container: Container;\n}\n\nexport { Piece, type Container };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/augmentation.ts".to_string(),
+        "declare module \"@sapphire/pieces\" {\n  interface Container {\n    client: unknown;\n  }\n  export { Container };\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { Piece } from \"@sapphire/pieces\";\nclass FullPiece extends Piece {\n  /**/\n}\n"
+            .to_string(),
+    );
+
+    let configure_req = make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let configure_resp = server.handle_tsserver_request(configure_req);
+    assert!(configure_resp.success);
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 4
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let container_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("container")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for container");
+    assert_eq!(
+        container_entry
+            .get("isSnippet")
+            .and_then(serde_json::Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        container_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("container: Container;")
     );
 }
 

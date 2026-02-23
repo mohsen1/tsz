@@ -527,6 +527,8 @@ pub(crate) struct Server {
     pub(crate) auto_import_file_exclude_patterns: Vec<String>,
     /// Module-specifier regex exclusions (tsserver preference: autoImportSpecifierExcludeRegexes)
     pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
+    /// Completion preference: include class member snippet completions.
+    pub(crate) include_completions_with_class_member_snippets: bool,
     /// Compiler option propagated by `compilerOptionsForInferredProjects`.
     pub(crate) allow_importing_ts_extensions: bool,
     /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
@@ -596,6 +598,7 @@ impl Server {
             organize_imports_ignore_case: true,
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
+            include_completions_with_class_member_snippets: false,
             allow_importing_ts_extensions: false,
             auto_imports_allowed_for_inferred_projects: true,
             inferred_module_is_none_for_projects: false,
