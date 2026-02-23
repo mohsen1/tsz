@@ -526,7 +526,8 @@ impl<'a> Printer<'a> {
         self.write(" }");
     }
 
-    pub(super) fn emit_export_specifier(&mut self, node: &Node) {
+    /// Emit a named import/export specifier: `[propertyName as] name`
+    pub(super) fn emit_specifier(&mut self, node: &Node) {
         let Some(spec) = self.arena.get_specifier(node) else {
             return;
         };

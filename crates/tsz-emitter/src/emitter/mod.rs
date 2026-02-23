@@ -1067,7 +1067,7 @@ impl<'a> Printer<'a> {
                 self.emit_named_imports(node);
             }
             k if k == syntax_kind_ext::IMPORT_SPECIFIER => {
-                self.emit_import_specifier(node);
+                self.emit_specifier(node);
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 self.emit_export_declaration(node);
@@ -1083,7 +1083,7 @@ impl<'a> Printer<'a> {
                 self.emit_named_exports(node);
             }
             k if k == syntax_kind_ext::EXPORT_SPECIFIER => {
-                self.emit_export_specifier(node);
+                self.emit_specifier(node);
             }
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                 self.emit_export_assignment(node);
