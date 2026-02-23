@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5108/7163 = 71.3% JS, 415/1035 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 5113/7163 = 71.4% JS, 416/1035 = 40.2% DTS)
 
 ### Fixed This Session
+- **Preserve multiline conditional expression formatting** (+5 JS, +1 DTS):
+  tsc preserves line breaks in ternary expressions (e.g., `a ? b :\n    c;` or `a\n    ? b\n    : c;`).
+  tsz was collapsing all conditional expressions to single-line `a ? b : c` format. Fix: in
+  `emit_conditional()`, detect newlines between operands in the source text (between condition and `?`,
+  between consequent and `:`) and preserve the original line break positions with proper indentation.
+  Also detects whether the `:` token starts a new line vs. trails the previous line to choose between
+  `a ? b\n    : c` and `a ? b :\n    c` formatting. Three helper methods added:
+  `detect_conditional_newlines()`, `colon_starts_new_line()`. Three unit tests added.
+  Tests fixed: `conditionalExpressionNewLine4`, `conditionalExpressionNewLine5`,
+  `conditionalExpressionNewLine6`, and 2 additional multi-issue tests where this was the last mismatch.
+  JS: 5108→5113, DTS: 415→416, zero regressions.
+
+### Previously Fixed
 - **Suppress trailing comments on function body opening braces** (+15 JS):
   tsc does NOT emit trailing comments on the opening `{` of function/method/constructor/arrow bodies
   (e.g., `function foo(x: number) { // comment` → `function foo(x) {`), but DOES preserve them on
