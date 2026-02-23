@@ -26,6 +26,26 @@ fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
 }
 
+/// Lazily compute and cache array member types (length + apparent methods).
+/// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
+fn get_or_init_array_member_types(
+    cache: &mut Option<Vec<TypeId>>,
+    db: &dyn TypeDatabase,
+) -> Vec<TypeId> {
+    cache
+        .get_or_insert_with(|| {
+            vec![
+                TypeId::NUMBER,
+                make_apparent_method_type(db, TypeId::ANY),
+                make_apparent_method_type(db, TypeId::BOOLEAN),
+                make_apparent_method_type(db, TypeId::NUMBER),
+                make_apparent_method_type(db, TypeId::VOID),
+                make_apparent_method_type(db, TypeId::STRING),
+            ]
+        })
+        .clone()
+}
+
 /// Standalone helper to get array member kind.
 /// Extracted from `TypeEvaluator` to be usable by visitors.
 pub(crate) fn get_array_member_kind(name: &str) -> Option<ApparentMemberKind> {
@@ -370,18 +390,7 @@ impl<'a> ArrayKeyVisitor<'a> {
     }
 
     fn get_array_member_types(&mut self) -> Vec<TypeId> {
-        self.array_member_types_cache
-            .get_or_insert_with(|| {
-                vec![
-                    TypeId::NUMBER,
-                    make_apparent_method_type(self.db, TypeId::ANY),
-                    make_apparent_method_type(self.db, TypeId::BOOLEAN),
-                    make_apparent_method_type(self.db, TypeId::NUMBER),
-                    make_apparent_method_type(self.db, TypeId::VOID),
-                    make_apparent_method_type(self.db, TypeId::STRING),
-                ]
-            })
-            .clone()
+        get_or_init_array_member_types(&mut self.array_member_types_cache, self.db)
     }
 }
 
@@ -535,18 +544,7 @@ impl<'a> TupleKeyVisitor<'a> {
 
     /// Get array member types (cached)
     fn get_array_member_types(&mut self) -> Vec<TypeId> {
-        self.array_member_types_cache
-            .get_or_insert_with(|| {
-                vec![
-                    TypeId::NUMBER,
-                    make_apparent_method_type(self.db, TypeId::ANY),
-                    make_apparent_method_type(self.db, TypeId::BOOLEAN),
-                    make_apparent_method_type(self.db, TypeId::NUMBER),
-                    make_apparent_method_type(self.db, TypeId::VOID),
-                    make_apparent_method_type(self.db, TypeId::STRING),
-                ]
-            })
-            .clone()
+        get_or_init_array_member_types(&mut self.array_member_types_cache, self.db)
     }
 
     /// Check for known array members (length, methods)
