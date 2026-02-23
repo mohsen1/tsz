@@ -362,7 +362,7 @@ matching tsc behavior. Triple-slash `/// <reference types="..." />` TS2688 was a
 ### Remaining TS2688 issues (3 tests)
 - 3 tests have TS2688 + other codes (TS2307, etc.) that we don't emit yet.
 
-## Deferred from this session (not fixed)
+## Deferred (not fixed)
 
 - **TS2792 (41 single-code tests, investigated)**: TS2792 "Cannot find module... Did you mean
   to set 'moduleResolution' to 'nodenext'?" should be emitted instead of TS2307 when module kind
@@ -376,19 +376,40 @@ matching tsc behavior. Triple-slash `/// <reference types="..." />` TS2688 was a
   has 13 callers and broad impact on module resolution, or (b) adding a separate
   `tsc_diagnostic_module_resolution()` helper just for the TS2792 decision.
   MEDIUM-HIGH difficulty, +10-40 tests if done correctly.
-- **TS2430 (62 false positive tests, all from react16.d.ts)**: Our conformance wrapper
-  successfully resolves `.lib/react16.d.ts` test libraries, while tsc reports TS6053 (file not
-  found). This causes us to type-check react16.d.ts and emit TS2430 interface extension errors
-  that tsc never sees. Fix: either match tsc's behavior of not loading the test lib files, or
-  suppress TS2430 for lib-originated diagnostics. MEDIUM difficulty.
+- **TS2430 false positives (38 tests from react16.d.ts)**: `resolve_type_symbol` scope
+  resolution bug. Inside `declare module "react"`, type aliases resolve to module-local
+  interfaces instead of global DOM types because `file_locals` is flat (no scope awareness).
+  Attempted fix using `resolve_identifier()` caused +1/-1 regression. HARD difficulty.
+- **TS6133 quick wins (9 tests)**: Each requires a different fix pattern. MEDIUM difficulty each.
 - **TS2451 (7 false positive tests)**: Two patterns: (a) wrong code choice (TS2451 vs TS2300)
   for var/let redeclaration conflicts — needs `type_checking_global.rs` fix. (b) JS file
   declarations with `@typedef` and late-bound assignments incorrectly flagged in multi-file
   scripts. MEDIUM difficulty.
 
-## Current score: 7871/12574 (62.6%) — full suite
+## Current score: 7873/12574 (62.6%) — full suite
 
-### Session progress (7836 → 7871, +35 tests):
+### Session: TS2430 investigation (no conformance change, +tests/knowledge)
+- **TS2430 false positives (38 tests from react16.d.ts)**: Root cause identified.
+  `resolve_type_symbol()` in `type_node.rs` uses flat `file_locals` map without scope
+  awareness. Inside `declare module "react"`, `type NativeClipboardEvent = ClipboardEvent`
+  resolves to module-local `ClipboardEvent<T>` instead of global DOM `ClipboardEvent`
+  because the binder's shadowing path (`declare_symbol` line 1086) unconditionally adds
+  module-scoped symbols to `file_locals`.
+  - **Attempted fix**: Use binder's scope-aware `resolve_identifier()` first. Result: +1/-1
+    (gained `inlineConditionalHasSimilarAssignability`, lost `mergeMultipleInterfacesReexported`).
+    Reverted due to regression — the binder's scope chain has edge cases for multi-file
+    module augmentation patterns.
+  - **Proper fix needed**: Either (a) fix `declare_symbol` to not add module-scoped shadows
+    to `file_locals`, or (b) implement scope-aware type reference resolution that handles
+    both ambient module scopes and multi-file concatenation correctly. HARD difficulty.
+  - Added TS2430 unit tests with the known-issue pattern marked `#[ignore]`.
+- **TS6133 quick-win analysis**: 9 tests need only TS6133 to pass. Patterns include
+  unused destructuring parameters, self-referencing functions in block scope, unused infer
+  type parameters, type parameter merged with value parameter, write-only dynamic properties,
+  and unused private class names. Each requires a different checker fix — no single change
+  covers multiple patterns. Deferred.
+
+### Previous session progress (7836 → 7871, +35 tests):
 - **TS2688**: Emit TS2688 for unresolved entries in tsconfig `types` array (+35)
 
 ### Previous session progress (7687 → 7836, +149 tests):

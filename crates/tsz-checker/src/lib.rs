@@ -138,6 +138,9 @@ mod ts2323_tests;
 #[path = "../tests/ts2411_tests.rs"]
 mod ts2411_tests;
 #[cfg(test)]
+#[path = "../tests/ts2430_tests.rs"]
+mod ts2430_tests;
+#[cfg(test)]
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
