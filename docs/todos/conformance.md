@@ -457,3 +457,8 @@ Main value: removes TS2430/TS6053 noise from analysis output.
 - **checkJs**: Removed redundant checker.check_js propagation that broke JSDoc (+11)
 - **TS2524→TS1109**: Emit TS1109 instead of TS2524 for bare await in parameter defaults (+38)
 - **TS2304 suppression**: File-level real syntax error detection replaces dead node flags (+66)
+
+## Deferred from this run (2026-02-23)
+
+- **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — still missing TS2454 on catch destructuring paths; needs CFG assignment edges for catch-binding destructures.
+- **TS2454**: `TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2.ts` — still missing TS2454 for nested destructuring defaults; requires deeper flow joins for destructuring initializers.
