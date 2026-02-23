@@ -759,3 +759,15 @@ Investigated but punted:
   Reason: remaining gap is contextual typing for nested returned function expressions (`return function(n) { ... }`) and needs a broader contextual-call-signature propagation path than this targeted assignment/call-argument fix.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still fail in `--max=200` run.
   Reason: requires project-wide go-to-definition/references/rename parity for quoted import/export names across files; current tsserver handler path remains file-local for these operations.
+
+## 2026-02-23 (namespace alias definition follow-up)
+
+Completed in this pass:
+- Added a targeted tsserver alias-definition fallback in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` that resolves quoted import/export alias markers through export alias chains to canonical declaration locations before rendering `definition`/`definitionAndBoundSpan` responses.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_alias_string_literal_navigation_uses_project_wide_resolution`) for canonical alias resolution and cross-file definition response expectations.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: remaining mismatch is in `baselineRename`/`baselineFindAllReferences` fan-out for quoted alias chains; full parity needs alias-aware cross-file reference/rename symbol unification beyond this definition-targeted fix.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same remaining cross-file alias reference/rename aggregation gap as `_types`; current run still reports a local baseline diff even after canonical definition resolution improvements.
