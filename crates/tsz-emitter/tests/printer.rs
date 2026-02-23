@@ -732,3 +732,56 @@ fn test_commonjs_class_export_before_static_block_iife() {
         "exports.C = C; must appear before the static block IIFE, got: {output}"
     );
 }
+
+// =========================================================================
+// Comment skipping for erased type annotations
+// =========================================================================
+
+#[test]
+fn test_var_type_annotation_comments_not_leaked() {
+    // Comments inside a multi-line type annotation should be consumed when
+    // the type is erased, not leaked to the emitted variable statement.
+    let source = r#"var v: {
+    (x: number); // inside type
+    foo(): void; // also inside type
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert_eq!(
+        output.trim(),
+        "var v;",
+        "Comments from inside erased type annotation should not appear in output, got: {output}"
+    );
+}
+
+#[test]
+fn test_var_simple_type_annotation_trailing_comment_preserved() {
+    // A trailing comment on a simple type annotation line should stay on
+    // the emitted variable statement (it's on the same line as `var`).
+    let source = "var v: number; // keep this\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("var v; // keep this"),
+        "Trailing comment on same line should be preserved, got: {output}"
+    );
+}
+
+#[test]
+fn test_function_param_type_annotation_comments_not_leaked() {
+    // Comments inside erased parameter type annotations should not appear.
+    let source = r#"function foo(
+    x: {
+        a: number; // type member comment
+    }
+) { }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        !output.contains("type member comment"),
+        "Comments from inside erased param type should not appear, got: {output}"
+    );
+}

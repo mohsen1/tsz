@@ -371,8 +371,12 @@ impl<'a> Printer<'a> {
         self.map_trailing_semicolon(node);
         self.write_semicolon();
 
-        // Emit trailing comments (e.g., var x = 1; // comment)
-        self.emit_trailing_comment_after_semicolon(node);
+        // Emit trailing comments (e.g., var x = 1; // comment).
+        // Use a bounded scan range that excludes erased type annotations.
+        // For `var v: { (...); // comment }`, the backward `;` scan must
+        // not find semicolons inside the erased type annotation.
+        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+        self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
 
         // CommonJS: emit exports.X = X; after the declaration
         if is_exported && !export_names.is_empty() {
@@ -394,6 +398,44 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// Compute the source position at the end of the last emitted content for
+    /// a variable statement, excluding erased type annotations. This prevents
+    /// `emit_trailing_comment_after_semicolon` from finding semicolons inside
+    /// erased type annotations (e.g., `var v: { (x: number); // comment }`).
+    fn variable_statement_effective_end(&self, declarations: &NodeList) -> u32 {
+        // Walk the declaration list to find the last variable declaration's
+        // name or initializer end position.
+        let mut effective_end = 0u32;
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            // Use the full node end as baseline
+            effective_end = effective_end.max(decl_list_node.end);
+
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                // If the declaration has a type annotation but no initializer,
+                // use the name's end as the effective boundary (the type annotation
+                // is erased and its semicolons should not be scanned).
+                if decl.type_annotation.is_some() && decl.initializer.is_none()
+                    && let Some(name_node) = self.arena.get(decl.name) {
+                        // Use the name's end, not the full declaration end
+                        effective_end = name_node.end;
+                    }
+            }
+        }
+        effective_end
     }
 
     /// Check if all variable declarations in a declaration list lack initializers
@@ -554,6 +596,17 @@ impl<'a> Printer<'a> {
     /// entire node range to find the semicolon, allowing it to work even when
     /// node.end is past the newline (at the start of the next statement).
     pub(super) fn emit_trailing_comment_after_semicolon(&mut self, node: &Node) {
+        self.emit_trailing_comment_after_semicolon_in_range(node.pos, node.end);
+    }
+
+    /// Like `emit_trailing_comment_after_semicolon` but with an explicit scan range.
+    /// Use this when the node's full range includes erased content (e.g., type
+    /// annotations with semicolons inside) that should not be scanned.
+    pub(super) fn emit_trailing_comment_after_semicolon_in_range(
+        &mut self,
+        range_start: u32,
+        range_end: u32,
+    ) {
         if self.ctx.options.remove_comments {
             return;
         }
@@ -563,8 +616,8 @@ impl<'a> Printer<'a> {
         };
 
         let bytes = text.as_bytes();
-        let stmt_end = std::cmp::min(node.end as usize, bytes.len());
-        let stmt_start = node.pos as usize;
+        let stmt_end = std::cmp::min(range_end as usize, bytes.len());
+        let stmt_start = range_start as usize;
 
         // Scan backwards to find the semicolon within this node's range
         let mut semi_pos = None;
