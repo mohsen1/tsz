@@ -538,6 +538,9 @@ impl<'a> Printer<'a> {
                 }
                 self.emit(prop);
             }
+            if has_trailing_comma {
+                self.write(",");
+            }
             self.write(" }");
         } else {
             // Multi-line format: preserve original line layout from source
@@ -786,5 +789,73 @@ impl<'a> Printer<'a> {
         {
             self.emit_expression(spread.expression);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::Printer;
+    use tsz_parser::ParserState;
+
+    /// tsc preserves trailing commas in single-line object literals.
+    /// `{ a: 1, b: 2, }` must stay as `{ a: 1, b: 2, }`, not `{ a: 1, b: 2 }`.
+    #[test]
+    fn trailing_comma_preserved_in_single_line_object_literal() {
+        let source = "var o = { a: 1, b: 2, };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("{ a: 1, b: 2, }"),
+            "Trailing comma should be preserved in single-line object literal.\nOutput:\n{output}"
+        );
+    }
+
+    /// Without a trailing comma in source, no trailing comma should be emitted.
+    #[test]
+    fn no_trailing_comma_when_source_has_none() {
+        let source = "var o = { a: 1, b: 2 };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("{ a: 1, b: 2 }"),
+            "No trailing comma should be added when source has none.\nOutput:\n{output}"
+        );
+    }
+
+    /// Trailing comma in object binding pattern: `{ b1, } = expr`.
+    #[test]
+    fn trailing_comma_preserved_in_object_binding_pattern() {
+        let source = "var { b1, } = { b1: 1, };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("{ b1, }"),
+            "Trailing comma should be preserved in object binding pattern.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("{ b1: 1, }"),
+            "Trailing comma should be preserved in object literal initializer.\nOutput:\n{output}"
+        );
     }
 }
