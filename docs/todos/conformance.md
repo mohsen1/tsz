@@ -419,12 +419,27 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 4004/5997 (66.8%) — first-6000 fingerprint-level; 7939/12574 (63.1%) — full suite error-code-level
+## Current score: 4005/5997 (66.8%) — first-6000 fingerprint-level; 7940/12574 (63.1%) — full suite error-code-level
 
 **Note**: Conformance runner now uses fingerprint-level comparison (code + file + line + column
 + message) instead of error-code-level. This is stricter and reduced the apparent pass rate.
 The actual compiler behavior has not regressed — previous sessions' scores (~66%) were at
 error-code level only.
+
+### Session progress (2026-02-23, TS5097):
+- **TS5097 (implemented)**: Emit "An import path can only end with a '{ext}' extension when
+  'allowImportingTsExtensions' is enabled" for static imports and dynamic `import()` calls
+  with .ts/.tsx/.mts/.cts extensions when the option is disabled. Type-only imports excluded.
+  .d.ts/.d.mts/.d.cts excluded (handled by TS2846). Added `allow_importing_ts_extensions`
+  to CheckerOptions and wired from driver. +1 conformance test (`bundlerRelative1.ts`,
+  `moduleResolutionNoTsCJS.ts` now pass), 0 regressions. 10 unit tests for extension detection.
+- **TS5097 remaining (5 tests)**: `allowsImportingTsExtension.ts` — TS2846 message text
+  mismatch (our suggestion says `'./a'` instead of `'./a.js'`). `moduleResolutionNoTsESM.ts` —
+  same TS2846 message text mismatch. `decoratorOnClassConstructor2.ts` — also needs TS1239.
+  `bundlerImportTsExtensions.ts` — needs TS5056/TS6054/TS2846 as well. `resolutionCandidateFromPackageJsonField2.ts` — needs bundler path mapping resolution.
+- **TS2846 message text (deferred)**: Our TS2846 "Did you mean to import './a'?" should say
+  "Did you mean to import './a.js'?" — tsc rewrites the suggestion to the .js extension.
+  Affects several TS5097 and TS2846 tests. EASY difficulty.
 
 ### Session progress (2026-02-23, TS2839):
 - **TS2839 (implemented)**: Emit "This condition will always return 'false'/'true' since
