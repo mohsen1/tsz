@@ -15,6 +15,9 @@ impl<'a> Printer<'a> {
             return;
         };
         let is_function_body_block = self.emitting_function_body_block;
+        // Reset the flag so nested blocks (for/if/while inside this function)
+        // are not treated as function body blocks.
+        self.emitting_function_body_block = false;
 
         // Check if this block needs `var _this = this;` injection
         let this_capture_name: Option<String> = self
@@ -98,6 +101,10 @@ impl<'a> Printer<'a> {
         self.write_with_end_marker("{");
         // Emit trailing comments on the same line as `{` before moving to the next line.
         // For example: `if (cond) { // comment` should keep `// comment` on the brace line.
+        // tsc does NOT emit trailing comments on function/method/arrow body opening braces —
+        // only on control-flow blocks (if/for/while/try/catch). Function body comments are
+        // conceptually part of the signature (which may include erased type annotations), so
+        // they are dropped to match tsc behavior.
         if !self.ctx.options.remove_comments
             && let Some(text) = self.source_text
         {
@@ -106,7 +113,14 @@ impl<'a> Printer<'a> {
             let end = (node.end as usize).min(bytes.len());
             if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
                 let brace_end = (start + offset + 1) as u32;
-                self.emit_trailing_comments(brace_end);
+                if is_function_body_block {
+                    // Suppress (skip) same-line comments on function body `{` without
+                    // emitting them. Advance comment_emit_idx past these comments so
+                    // they don't leak as leading comments on the first statement.
+                    self.skip_trailing_same_line_comments(brace_end, node.end);
+                } else {
+                    self.emit_trailing_comments(brace_end);
+                }
             }
         }
         self.write_line();
@@ -1320,6 +1334,83 @@ mod tests {
         assert!(
             output.contains("{ // iterate"),
             "Trailing comment should stay on the same line as opening brace.\nOutput:\n{output}"
+        );
+    }
+
+    /// tsc drops trailing comments on function body opening `{`.
+    /// `function foo(x: number) { // comment` should emit `function foo(x) {` (no comment).
+    #[test]
+    fn function_body_brace_comment_suppressed() {
+        let source = r#"function foo(x: number) { // param comment
+    return x;
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// param comment"),
+            "Trailing comment on function body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return x;"),
+            "Function body should still be emitted.\nOutput:\n{output}"
+        );
+    }
+
+    /// tsc drops trailing comments on method body opening `{`, but preserves
+    /// trailing comments on control-flow blocks inside the method.
+    #[test]
+    fn method_body_brace_comment_suppressed_but_inner_block_preserved() {
+        let source = r#"class C {
+    foo(_i: number, ...rest) { // error
+        if (true) { // ok
+            var _i = 10;
+        }
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("{ // error"),
+            "Trailing comment on method body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("{ // ok"),
+            "Trailing comment on if-block `{{` should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// tsc drops trailing comments on arrow function body opening `{`.
+    #[test]
+    fn arrow_function_body_brace_comment_suppressed() {
+        let source = r#"const fn = (x: number) => { // arrow comment
+    return x;
+};"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// arrow comment"),
+            "Trailing comment on arrow function body `{{` should be suppressed.\nOutput:\n{output}"
         );
     }
 }

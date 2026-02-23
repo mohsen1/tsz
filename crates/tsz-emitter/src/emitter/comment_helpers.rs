@@ -85,6 +85,50 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Advance `comment_emit_idx` past same-line trailing comments after `end_pos`
+    /// without emitting them. Used to suppress comments on function body opening
+    /// braces — tsc drops these but preserves them on control-flow blocks.
+    pub(super) fn skip_trailing_same_line_comments(&mut self, end_pos: u32, max_pos: u32) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+
+            // Comment before end_pos on the same line — skip it
+            if c_pos < end_pos {
+                let gap_end = std::cmp::min(end_pos as usize, bytes.len());
+                if bytes[c_pos as usize..gap_end]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            // Don't consume comments past the max position boundary
+            if c_pos >= max_pos {
+                break;
+            }
+
+            // Check for line break between end_pos and comment
+            let gap_start = end_pos as usize;
+            let gap_end = std::cmp::min(c_pos as usize, bytes.len());
+            let has_line_break = bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r');
+            if has_line_break {
+                break;
+            }
+
+            // Same-line trailing comment — skip without emitting
+            self.comment_emit_idx += 1;
+        }
+    }
+
     /// Find the position right after the node's actual code content ends.
     /// This gives us the position where trailing comments begin. Our parser's
     /// node.end extends past trailing trivia into the next token's position,
