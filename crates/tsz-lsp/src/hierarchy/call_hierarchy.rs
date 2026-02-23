@@ -1027,7 +1027,7 @@ impl<'a> CallHierarchyProvider<'a> {
     /// Check if a node is used in a call-like reference context.
     ///
     /// Includes:
-    /// - `CallExpression`/`NewExpression` references
+    /// - `CallExpression`/`NewExpression`/`TaggedTemplateExpression` references
     /// - Decorator references (`@foo`, `@foo()`, `@ns.foo`)
     fn is_inside_call_or_decorator_reference(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
@@ -1044,6 +1044,9 @@ impl<'a> CallHierarchyProvider<'a> {
                     }
                     // Also count NewExpression as a "call"
                     if parent_node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                        return true;
+                    }
+                    if parent_node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
                         return true;
                     }
                     if parent_node.kind == syntax_kind_ext::DECORATOR {

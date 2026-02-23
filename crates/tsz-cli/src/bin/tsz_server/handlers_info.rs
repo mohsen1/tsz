@@ -171,7 +171,9 @@ impl Server {
         let mut candidates = Vec::with_capacity(4);
         candidates.push(tsz::lsp::utils::find_node_at_offset(arena, offset));
         candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
-            arena, offset, source_text,
+            arena,
+            offset,
+            source_text,
         ));
         if offset > 0 {
             candidates.push(tsz::lsp::utils::find_node_at_offset(
@@ -1089,7 +1091,9 @@ impl Server {
         }
         let mut infos = Vec::new();
         for probe in probe_positions {
-            infos = provider.get_definition_info(root, probe).unwrap_or_default();
+            infos = provider
+                .get_definition_info(root, probe)
+                .unwrap_or_default();
             if !infos.is_empty() {
                 break;
             }
@@ -2011,13 +2015,19 @@ impl Server {
                     false,
                 )
             {
-                let canonical_loc = self
-                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset);
+                let canonical_loc = self.canonical_definition_for_alias_position(
+                    &file,
+                    &arena,
+                    &source_text,
+                    query_offset,
+                );
                 let definition = canonical_loc
                     .as_ref()
                     .and_then(|loc| self.definition_info_from_location(loc))
                     .unwrap_or_else(|| Self::build_fallback_definition(&file, "alias", ""));
-                let cursor_offset = line_map.position_to_offset(position, &source_text).unwrap_or(0);
+                let cursor_offset = line_map
+                    .position_to_offset(position, &source_text)
+                    .unwrap_or(0);
                 let references: Vec<serde_json::Value> = locs
                     .iter()
                     .map(|loc| {
@@ -2029,15 +2039,15 @@ impl Server {
                             .unwrap_or_default();
                         let lm = LineMap::build(&source);
                         let start = lm.position_to_offset(loc.range.start, &source).unwrap_or(0);
-                        let end = lm.position_to_offset(loc.range.end, &source).unwrap_or(start);
-                        let is_definition = canonical_loc
-                            .as_ref()
-                            .is_some_and(|def| {
-                                loc.file_path == def.file_path
-                                    && loc.range == def.range
-                                    && cursor_offset >= start
-                                    && cursor_offset < end
-                            });
+                        let end = lm
+                            .position_to_offset(loc.range.end, &source)
+                            .unwrap_or(start);
+                        let is_definition = canonical_loc.as_ref().is_some_and(|def| {
+                            loc.file_path == def.file_path
+                                && loc.range == def.range
+                                && cursor_offset >= start
+                                && cursor_offset < end
+                        });
                         serde_json::json!({
                             "fileName": loc.file_path,
                             "textSpan": {

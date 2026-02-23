@@ -448,6 +448,30 @@ fn test_incoming_calls_include_decorator_references() {
 }
 
 #[test]
+fn test_incoming_calls_include_tagged_template_references() {
+    let source = "function foo() {\n  bar`a${1}b`;\n}\n\nfunction bar(array: TemplateStringsArray, ...args: any[]) {\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "bar" declaration name.
+    let pos = Position::new(4, 9);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|call| call.from.name == "foo"),
+        "Expected tagged-template incoming call from 'foo', got: {calls:?}"
+    );
+}
+
+#[test]
 fn test_incoming_calls_inside_static_block_report_static_block_caller() {
     let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {}\n    foo();\n  }\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

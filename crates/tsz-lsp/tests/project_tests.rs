@@ -135,6 +135,48 @@ fn test_project_cross_file_references_tsx_import() {
 }
 
 #[test]
+fn test_project_cross_file_references_quoted_export_name() {
+    let mut project = Project::new();
+
+    project.set_file(
+        "foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+            "",
+        ]
+        .join("\n"),
+    );
+    project.set_file(
+        "bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+            "",
+        ]
+        .join("\n"),
+    );
+
+    let refs = project
+        .find_references("bar.ts", Position::new(0, 10))
+        .expect("Should find references for quoted export name");
+
+    assert!(
+        refs.iter().any(|loc| loc.file_path == "foo.ts"),
+        "Should include references from foo.ts"
+    );
+    assert!(
+        refs.iter().any(|loc| loc.file_path == "bar.ts"),
+        "Should include references from bar.ts"
+    );
+}
+
+#[test]
 fn test_project_rename_cross_file() {
     let mut project = Project::new();
 

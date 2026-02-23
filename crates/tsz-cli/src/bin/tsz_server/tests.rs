@@ -4150,7 +4150,10 @@ fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs
         .as_array()
         .cloned()
         .expect("references-full response should be array");
-    assert!(!entries.is_empty(), "expected at least one referenced symbol");
+    assert!(
+        !entries.is_empty(),
+        "expected at least one referenced symbol"
+    );
     let refs = entries[0]["references"]
         .as_array()
         .cloned()
