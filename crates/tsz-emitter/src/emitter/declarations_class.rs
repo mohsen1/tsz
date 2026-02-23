@@ -742,21 +742,21 @@ impl<'a> Printer<'a> {
                     // Simple identifiers and literals are NOT emitted (no side effects).
                     if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                         && let Some(p) = self.arena.get_property_decl(member_node)
-                            && let Some(name_node) = self.arena.get(p.name)
-                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                            && let Some(computed) = self.arena.get_computed_property(name_node)
-                            && let Some(expr_node) = self.arena.get(computed.expression)
-                        {
-                            let k = expr_node.kind;
-                            let is_side_effect_free = k == SyntaxKind::Identifier as u16
-                                || k == SyntaxKind::StringLiteral as u16
-                                || k == SyntaxKind::NumericLiteral as u16
-                                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                                || k == SyntaxKind::PrivateIdentifier as u16;
-                            if !is_side_effect_free {
-                                computed_property_side_effects.push(computed.expression);
-                            }
+                        && let Some(name_node) = self.arena.get(p.name)
+                        && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.arena.get_computed_property(name_node)
+                        && let Some(expr_node) = self.arena.get(computed.expression)
+                    {
+                        let k = expr_node.kind;
+                        let is_side_effect_free = k == SyntaxKind::Identifier as u16
+                            || k == SyntaxKind::StringLiteral as u16
+                            || k == SyntaxKind::NumericLiteral as u16
+                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                            || k == SyntaxKind::PrivateIdentifier as u16;
+                        if !is_side_effect_free {
+                            computed_property_side_effects.push(computed.expression);
                         }
+                    }
                     self.skip_comments_for_erased_node(member_node);
                     continue;
                 }

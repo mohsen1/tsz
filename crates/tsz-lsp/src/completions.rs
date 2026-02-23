@@ -1114,6 +1114,19 @@ impl<'a> Completions<'a> {
         }
     }
 
+    /// Get class member snippet candidates at the given position.
+    ///
+    /// Returns completion items for members that the enclosing class should
+    /// implement (e.g. from a base class). Currently returns an empty list;
+    /// the tsserver fallback provides candidates via raw file scanning.
+    pub const fn get_class_member_snippet_candidates(
+        &self,
+        _root: NodeIndex,
+        _position: Position,
+    ) -> Vec<CompletionItem> {
+        Vec::new()
+    }
+
     pub fn get_member_completion_parent_type_name(
         &self,
         root: NodeIndex,

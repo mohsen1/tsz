@@ -181,7 +181,11 @@ impl Server {
                 if detail.is_empty() {
                     Some(format!("{};", item.label))
                 } else {
-                    Some(format!("{}: {};", item.label, detail.trim_end_matches(';').trim()))
+                    Some(format!(
+                        "{}: {};",
+                        item.label,
+                        detail.trim_end_matches(';').trim()
+                    ))
                 }
             }
             tsz::lsp::completions::CompletionItemKind::Method => {
@@ -200,7 +204,10 @@ impl Server {
         }
     }
 
-    fn class_member_snippet_type_identifiers(insert_text: &str, member_name: &str) -> BTreeSet<String> {
+    fn class_member_snippet_type_identifiers(
+        insert_text: &str,
+        member_name: &str,
+    ) -> BTreeSet<String> {
         const IGNORED: &[&str] = &[
             "public",
             "private",
@@ -323,12 +330,16 @@ impl Server {
         project_items: &[CompletionItem],
     ) -> Vec<CompletionItem> {
         let mut candidates = provider.get_class_member_snippet_candidates(root, position);
-        let fallback_candidates = self.class_member_snippet_fallback_candidates(file_name, position);
+        let fallback_candidates =
+            self.class_member_snippet_fallback_candidates(file_name, position);
         if candidates.is_empty() {
             candidates = fallback_candidates;
         } else {
             for fallback in fallback_candidates {
-                if !candidates.iter().any(|candidate| candidate.label == fallback.label) {
+                if !candidates
+                    .iter()
+                    .any(|candidate| candidate.label == fallback.label)
+                {
                     candidates.push(fallback);
                 }
             }
@@ -339,8 +350,11 @@ impl Server {
             let Some(insert_text) = Self::class_member_snippet_insert_text(&candidate) else {
                 continue;
             };
-            let edits =
-                Self::class_member_snippet_additional_edits(&insert_text, &candidate.label, project_items);
+            let edits = Self::class_member_snippet_additional_edits(
+                &insert_text,
+                &candidate.label,
+                project_items,
+            );
             let mut item = CompletionItem::new(candidate.label.clone(), candidate.kind)
                 .with_sort_text(tsz::lsp::completions::sort_priority::SUGGESTED_CLASS_MEMBERS)
                 .with_insert_text(insert_text)
@@ -376,11 +390,9 @@ impl Server {
         let prefix = Self::identifier_prefix_before_offset(&source_text, offset as usize);
         let mut scan_paths =
             Self::fallback_class_member_scan_paths(&self.open_files, &self.external_project_files);
-        for resolved_path in Self::resolve_imported_module_files(
-            file_name,
-            &source_text,
-            &self.open_files,
-        ) {
+        for resolved_path in
+            Self::resolve_imported_module_files(file_name, &source_text, &self.open_files)
+        {
             if !scan_paths.iter().any(|path| path == &resolved_path) {
                 scan_paths.push(resolved_path);
             }
@@ -500,10 +512,7 @@ impl Server {
         names
     }
 
-    fn node_text(
-        source_text: &str,
-        node: &tsz::parser::node::Node,
-    ) -> String {
+    fn node_text(source_text: &str, node: &tsz::parser::node::Node) -> String {
         let start = node.pos.min(source_text.len() as u32) as usize;
         let end = node.end.min(source_text.len() as u32) as usize;
         if start >= end {
@@ -639,7 +648,9 @@ impl Server {
 
                 if !class_name.is_empty() {
                     for base in Self::class_extends_names(&arena, class_data) {
-                        self.collect_fallback_base_members_recursive(&base, scan_paths, visited, out);
+                        self.collect_fallback_base_members_recursive(
+                            &base, scan_paths, visited, out,
+                        );
                     }
                 }
             }
@@ -675,11 +686,8 @@ impl Server {
             if specifier.is_empty() {
                 continue;
             }
-            let resolved = Self::resolve_module_specifier_for_fallback(
-                file_parent,
-                &specifier,
-                open_files,
-            );
+            let resolved =
+                Self::resolve_module_specifier_for_fallback(file_parent, &specifier, open_files);
             for path in resolved {
                 if seen.insert(path.clone()) {
                     out.push(path);
@@ -1512,12 +1520,8 @@ impl Server {
                             }
                         }
 
-                        let description = if item.source.as_deref() == Some("ClassMemberSnippet/")
-                        {
-                            format!(
-                                "Includes imports of types referenced by '{}'",
-                                item.label
-                            )
+                        let description = if item.source.as_deref() == Some("ClassMemberSnippet/") {
+                            format!("Includes imports of types referenced by '{}'", item.label)
                         } else {
                             Self::auto_import_code_action_description(
                                 &source_text,
@@ -2441,5 +2445,4 @@ mod tests {
             "expected package module candidate to resolve from open files: {resolved:?}"
         );
     }
-
 }
