@@ -610,12 +610,6 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
         self.interner.callable(new_shape)
     }
-
-    /// Clear the cache (useful for testing or bulk operations).
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
-        self.guard.reset();
-    }
 }
 
 #[cfg(test)]
