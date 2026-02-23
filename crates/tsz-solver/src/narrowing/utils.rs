@@ -6,7 +6,7 @@
 use super::{DiscriminantInfo, NarrowingContext};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
-use crate::visitor::{TypeVisitor, is_object_like_type_db, literal_value, union_list_id};
+use crate::visitor::{TypeVisitor, is_object_like_type_db, union_list_id};
 use crate::{QueryDatabase, TypeDatabase};
 use tsz_common::interner::Atom;
 
@@ -414,50 +414,4 @@ pub fn split_nullish_type(
 pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let (non_nullish, _) = split_nullish_type(types, type_id);
     non_nullish.unwrap_or(TypeId::NEVER)
-}
-
-/// Remove types that are *definitely* falsy from a union, without narrowing
-/// non-falsy types. This matches TypeScript's `removeDefinitelyFalsyTypes`:
-/// removes `null`, `undefined`, `void`, `false`, `0`, `""`, `0n` but keeps
-/// `boolean`, `string`, `number`, `bigint`, and object types unchanged.
-pub fn remove_definitely_falsy_types(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    if is_always_falsy(types, type_id) {
-        return TypeId::NEVER;
-    }
-    if let Some(members_id) = union_list_id(types, type_id) {
-        let members = types.type_list(members_id);
-        let remaining: Vec<TypeId> = members
-            .iter()
-            .copied()
-            .filter(|&m| !is_always_falsy(types, m))
-            .collect();
-        if remaining.is_empty() {
-            return TypeId::NEVER;
-        }
-        if remaining.len() == 1 {
-            return remaining[0];
-        }
-        if remaining.len() == members.len() {
-            return type_id;
-        }
-        return types.union(remaining);
-    }
-    type_id
-}
-
-/// Check if a type is always falsy (null, undefined, void, false, 0, "", 0n).
-fn is_always_falsy(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID) {
-        return true;
-    }
-    if let Some(lit) = literal_value(types, type_id) {
-        return match lit {
-            LiteralValue::Boolean(false) => true,
-            LiteralValue::Number(n) => n.0 == 0.0 || n.0.is_nan(),
-            LiteralValue::String(atom) => types.resolve_atom_ref(atom).is_empty(),
-            LiteralValue::BigInt(atom) => types.resolve_atom_ref(atom).as_ref() == "0",
-            _ => false,
-        };
-    }
-    false
 }

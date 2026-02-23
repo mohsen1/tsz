@@ -1135,28 +1135,4 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         None
     }
-
-    /// Check if two types are structurally identical using De Bruijn indices for cycles.
-    ///
-    /// This is the O(1) alternative to bidirectional subtyping for identity checks.
-    /// It transforms cyclic graphs into trees to solve the Graph Isomorphism problem.
-    pub fn are_types_structurally_identical(&self, a: TypeId, b: TypeId) -> bool {
-        if a == b {
-            return true;
-        }
-
-        // Task #49: Use cached canonical_id when query_db is available (O(1) path)
-        if let Some(db) = self.query_db {
-            return db.canonical_id(a) == db.canonical_id(b);
-        }
-
-        // Fallback for cases without query_db: compute directly (O(N) path)
-        let mut canonicalizer =
-            crate::canonicalize::Canonicalizer::new(self.interner, self.resolver);
-        let canon_a = canonicalizer.canonicalize(a);
-        let canon_b = canonicalizer.canonicalize(b);
-
-        // After canonicalization, structural identity reduces to TypeId equality
-        canon_a == canon_b
-    }
 }
