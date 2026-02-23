@@ -1,8 +1,30 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9827/13623 = 72.1% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9834/13623 = 72.2% JS, ~775/1995 = 38.8% DTS)
 
 ### Fixed This Session
+- **`let` emitted instead of `var` in namespace IIFE bodies at ES5 target** (+5 JS):
+  When `target: "es5"`, nested namespace/enum declarations inside IIFE bodies were
+  emitting `let` instead of `var`, producing invalid ES5 JavaScript. Root cause: the
+  `in_namespace_iife` flag in `should_use_let_for_enum` early-returned `true` without
+  checking `target_es5`, and `IRPrinter` keyword selection sites similarly ignored the
+  ES5 target. Fix: added `target_es5` field to `IRPrinter` and `NamespaceES5Emitter`,
+  threaded it through all 6 creation sites in `transform_dispatch.rs` and
+  `declarations_namespace.rs`, and gated `let` usage with `&& !target_es5` at all 4
+  keyword selection sites in `ir_printer.rs` plus `declarations.rs` and
+  `declarations_namespace.rs`. Two unit tests added.
+  JS: 9829→9834, DTS unchanged, zero regressions.
+
+- **Missing space before block comments after commas in object literals** (+1 JS):
+  Multi-line object literals with `/* ... */` block comments after property commas were
+  emitting the comma and comment without a space: `1,/* comment */` instead of `1, /* comment */`.
+  Root cause: the `has_same_line_comment` detection in `expressions_literals.rs` only
+  checked for `//` line comments, not `/*` block comments. Fix: added an `else if` branch
+  for `/*` detection in the gap text between properties. One unit test added.
+  Test fixed: `commentsOnObjectLiteral5` (both es2015 and es5 variants).
+  JS: 9828→9829, DTS unchanged, zero regressions.
+
+### Previously Fixed (Prior Session)
 - **Comments between last statement and closing brace displaced outside block** (+1 JS):
   Comments on lines after the last statement but before the block's closing `}` were being
   emitted after the `}` instead of inside the block. For example, `function foo() { return;\n

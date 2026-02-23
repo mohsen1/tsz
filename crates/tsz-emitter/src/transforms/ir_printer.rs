@@ -64,6 +64,8 @@ pub struct IRPrinter<'a> {
     /// When true, we are inside a namespace IIFE body.
     /// Nested namespace variable declarations use `let` instead of `var` in ES2015+ targets.
     in_namespace_iife_body: bool,
+    /// When true, the target is ES5 and `let`/`const` should not be emitted.
+    target_es5: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -99,7 +101,8 @@ impl<'a> IRPrinter<'a> {
         namespace: &str,
     ) {
         // Inside namespace body, use `let` (ES2015+ block scoping).
-        let keyword = if self.in_namespace_iife_body {
+        // ES5 doesn't support `let`, so must always use `var`.
+        let keyword = if self.in_namespace_iife_body && !self.target_es5 {
             "let"
         } else {
             "var"
@@ -200,6 +203,7 @@ impl<'a> IRPrinter<'a> {
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
+            target_es5: false,
         }
     }
 
@@ -216,6 +220,7 @@ impl<'a> IRPrinter<'a> {
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
+            target_es5: false,
         }
     }
 
@@ -232,6 +237,7 @@ impl<'a> IRPrinter<'a> {
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
+            target_es5: false,
         }
     }
 
@@ -248,6 +254,11 @@ impl<'a> IRPrinter<'a> {
     /// Set the indentation level
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+    }
+
+    /// Mark this printer as targeting ES5 (disables `let`/`const` emission).
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.target_es5 = es5;
     }
 
     /// Get the output
@@ -1423,7 +1434,7 @@ impl<'a> IRPrinter<'a> {
                     self.emit_namespace_bound_enum_iife(name, members, ns);
                 } else {
                     // var E; (top-level) or let E; (inside namespace/function body at ES2015+)
-                    let keyword = if self.in_namespace_iife_body {
+                    let keyword = if self.in_namespace_iife_body && !self.target_es5 {
                         "let"
                     } else {
                         "var"
@@ -1557,7 +1568,7 @@ impl<'a> IRPrinter<'a> {
         // Inside a namespace IIFE body, use `let` (ES2015+ semantics for nested namespaces).
         // At the outermost level, use `var` (needed for declaration merging across files).
         if index == 0 && context.should_declare_var {
-            let decl_keyword = if self.in_namespace_iife_body {
+            let decl_keyword = if self.in_namespace_iife_body && !self.target_es5 {
                 "let"
             } else {
                 "var"
@@ -1624,7 +1635,7 @@ impl<'a> IRPrinter<'a> {
             // Use `let` inside namespace bodies (ES2015+ semantics).
             let next_name = &name_parts[index + 1];
             self.write_indent();
-            let nested_decl_keyword = if self.in_namespace_iife_body {
+            let nested_decl_keyword = if self.in_namespace_iife_body && !self.target_es5 {
                 "let"
             } else {
                 "var"

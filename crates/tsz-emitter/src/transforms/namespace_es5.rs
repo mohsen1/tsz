@@ -55,6 +55,7 @@ pub struct NamespaceES5Emitter<'a> {
     source_text: Option<&'a str>,
     indent_level: u32,
     should_declare_var: bool,
+    target_es5: bool,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -65,6 +66,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             source_text: None,
             indent_level: 0,
             should_declare_var: true, // Default to true for backward compatibility
+            target_es5: false,
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -76,6 +78,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             source_text: None,
             indent_level: 0,
             should_declare_var: true, // Default to true for backward compatibility
+            target_es5: false,
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -90,6 +93,11 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// When false (e.g., when merging with a class/enum/function), the 'var' is omitted
     pub const fn set_should_declare_var(&mut self, value: bool) {
         self.should_declare_var = value;
+    }
+
+    /// Mark this emitter as targeting ES5 (disables `let` in namespace IIFE bodies).
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.target_es5 = es5;
     }
 
     /// Emit a namespace declaration
@@ -108,6 +116,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             IRPrinter::with_arena(self.arena)
         };
         printer.set_indent_level(self.indent_level);
+        printer.set_target_es5(self.target_es5);
         printer.emit(&ir).to_string()
     }
 
@@ -125,6 +134,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             IRPrinter::with_arena(self.arena)
         };
         printer.set_indent_level(self.indent_level);
+        printer.set_target_es5(self.target_es5);
         printer.emit(&ir).to_string()
     }
 
