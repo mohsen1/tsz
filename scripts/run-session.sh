@@ -442,7 +442,7 @@ try_runner() {
 
   echo "${C_GREEN}${C_BOLD}▶ Starting runner: $label${C_RESET}" >&2
   [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] Starting runner: $label" >> "$LOG_FILE" || true
-  log "Prompt (first 200 chars): ${prompt:0:200}..."
+  log "Using prompt: ${SESSION_NAME:-session.sh}"
 
   local output_tmp
   output_tmp="$(mktmp)"
@@ -451,10 +451,9 @@ try_runner() {
 
   if [[ "$type" == "claude" ]]; then
     local cmd=(claude --dangerously-skip-permissions -p "$prompt")
-    log "Command: CLAUDE_CONFIG_DIR=$path ${cmd[*]}"
 
     if $DRY_RUN; then
-      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path ${cmd[*]}"
+      log "[DRY-RUN] Would execute: CLAUDE_CONFIG_DIR=$path claude --dangerously-skip-permissions -p <${SESSION_NAME:-session.sh}>"
       return 0
     fi
 
@@ -472,10 +471,9 @@ try_runner() {
       effort="xhigh"
     fi
     local cmd=(codex exec --model="$model" --config "model_reasoning_effort=$effort" --dangerously-bypass-approvals-and-sandbox "$prompt")
-    log "Command: ${cmd[*]}"
 
     if $DRY_RUN; then
-      log "[DRY-RUN] Would execute: ${cmd[*]}"
+      log "[DRY-RUN] Would execute: codex exec --model=$model ... -p <${SESSION_NAME:-session.sh}>"
       return 0
     fi
 
@@ -610,8 +608,7 @@ main() {
     log "=== DRY RUN MODE ==="
     local prompt
     prompt="$(load_prompt)"
-    log "Prompt from session.sh:"
-    log "$prompt"
+    log "Using prompt: ${SESSION_NAME:-session.sh}"
     log ""
     for runner in "${RUNNERS[@]}"; do
       try_runner "$runner" "$prompt"
