@@ -51,10 +51,10 @@ impl<'a> FlowAnalyzer<'a> {
         }
         if check_property_access
             && let Some(base) = self.reference_base(target)
-                && self.assignment_matches_reference_core(left, base, true)
-            {
-                return true;
-            }
+            && self.assignment_matches_reference_core(left, base, true)
+        {
+            return true;
+        }
 
         let Some(node) = self.arena.get(left) else {
             return false;

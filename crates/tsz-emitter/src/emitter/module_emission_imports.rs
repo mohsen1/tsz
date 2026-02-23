@@ -668,16 +668,4 @@ impl<'a> Printer<'a> {
         }
         self.write(" }");
     }
-
-    pub(super) fn emit_import_specifier(&mut self, node: &Node) {
-        let Some(spec) = self.arena.get_specifier(node) else {
-            return;
-        };
-
-        if spec.property_name.is_some() {
-            self.emit(spec.property_name);
-            self.write(" as ");
-        }
-        self.emit(spec.name);
-    }
 }

@@ -307,12 +307,13 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(", ");
             }
             first = false;
-            self.emit_export_specifier(spec_idx, allow_type_prefix);
+            self.emit_specifier(spec_idx, allow_type_prefix);
         }
         self.write(" }");
     }
 
-    pub(crate) fn emit_export_specifier(&mut self, spec_idx: NodeIndex, allow_type_prefix: bool) {
+    /// Emit a named import/export specifier: `[type] [propertyName as] name`
+    pub(crate) fn emit_specifier(&mut self, spec_idx: NodeIndex, allow_type_prefix: bool) {
         let Some(spec_node) = self.arena.get(spec_idx) else {
             return;
         };
@@ -803,28 +804,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(", ");
             }
             first = false;
-            self.emit_import_specifier(spec_idx, allow_type_prefix);
+            self.emit_specifier(spec_idx, allow_type_prefix);
         }
         self.write(" }");
-    }
-
-    pub(crate) fn emit_import_specifier(&mut self, spec_idx: NodeIndex, allow_type_prefix: bool) {
-        let Some(spec_node) = self.arena.get(spec_idx) else {
-            return;
-        };
-        let Some(spec) = self.arena.get_specifier(spec_node) else {
-            return;
-        };
-
-        if allow_type_prefix && spec.is_type_only {
-            self.write("type ");
-        }
-
-        if spec.property_name.is_some() {
-            self.emit_node(spec.property_name);
-            self.write(" as ");
-        }
-        self.emit_node(spec.name);
     }
 
     pub(crate) fn emit_module_declaration(&mut self, module_idx: NodeIndex) {
