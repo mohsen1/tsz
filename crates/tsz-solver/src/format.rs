@@ -192,45 +192,15 @@ impl<'a> TypeFormatter<'a> {
             TypeData::Literal(lit) => self.format_literal(lit),
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-
-                // First, check if this is a class instance type with a symbol
-                // Class instance types have their symbol set for nominal typing
-                if let Some(sym_id) = shape.symbol
-                    && let Some(name) = self.format_symbol_name(sym_id)
-                {
-                    // Use the class name instead of expanding all properties
+                if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name;
-                }
-
-                // If not a class or symbol not available, try definition store
-                if let Some(def_store) = self.def_store
-                    && let Some(def_id) = def_store.find_def_by_shape(&shape)
-                    && let Some(def) = def_store.get(def_id)
-                {
-                    // Use the definition name if available
-                    return self.format_def_name(&def);
                 }
                 self.format_object(shape.properties.as_slice())
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-
-                // First, check if this is a class instance type with a symbol
-                // Class instance types have their symbol set for nominal typing
-                if let Some(sym_id) = shape.symbol
-                    && let Some(name) = self.format_symbol_name(sym_id)
-                {
-                    // Use the class name instead of expanding all properties
+                if let Some(name) = self.resolve_object_shape_name(&shape) {
                     return name;
-                }
-
-                // If not a class or symbol not available, try definition store
-                if let Some(def_store) = self.def_store
-                    && let Some(def_id) = def_store.find_def_by_shape(&shape)
-                    && let Some(def) = def_store.get(def_id)
-                {
-                    // Use the definition name if available
-                    return self.format_def_name(&def);
                 }
                 self.format_object_with_index(shape.as_ref())
             }
@@ -506,13 +476,15 @@ impl<'a> TypeFormatter<'a> {
         rendered
     }
 
-    fn format_signature_arrow(
+    /// Format a signature with the given separator between params and return type.
+    fn format_signature(
         &mut self,
         type_params: &[TypeParamInfo],
         params: &[ParamInfo],
         this_type: Option<TypeId>,
         return_type: TypeId,
         is_construct: bool,
+        separator: &str,
     ) -> String {
         let prefix = if is_construct { "new " } else { "" };
         let type_params = self.format_type_params(type_params);
@@ -523,10 +495,11 @@ impl<'a> TypeFormatter<'a> {
             self.format(return_type)
         };
         format!(
-            "{}{}({}) => {}",
+            "{}{}({}) {} {}",
             prefix,
             type_params,
             params.join(", "),
+            separator,
             return_str
         )
     }
@@ -584,12 +557,13 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_function(&mut self, shape: &FunctionShape) -> String {
-        self.format_signature_arrow(
+        self.format_signature(
             &shape.type_params,
             &shape.params,
             shape.this_type,
             shape.return_type,
             shape.is_constructor,
+            "=>",
         )
     }
 
@@ -605,22 +579,24 @@ impl<'a> TypeFormatter<'a> {
         if !has_index && shape.properties.is_empty() {
             if shape.call_signatures.len() == 1 && shape.construct_signatures.is_empty() {
                 let sig = &shape.call_signatures[0];
-                return self.format_signature_arrow(
+                return self.format_signature(
                     &sig.type_params,
                     &sig.params,
                     sig.this_type,
                     sig.return_type,
                     false,
+                    "=>",
                 );
             }
             if shape.construct_signatures.len() == 1 && shape.call_signatures.is_empty() {
                 let sig = &shape.construct_signatures[0];
-                return self.format_signature_arrow(
+                return self.format_signature(
                     &sig.type_params,
                     &sig.params,
                     sig.this_type,
                     sig.return_type,
                     true,
+                    "=>",
                 );
             }
         }
@@ -656,20 +632,13 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_call_signature(&mut self, sig: &CallSignature, is_construct: bool) -> String {
-        let prefix = if is_construct { "new " } else { "" };
-        let type_params = self.format_type_params(&sig.type_params);
-        let params = self.format_params(&sig.params, sig.this_type);
-        let return_str = if is_construct && sig.return_type == TypeId::UNKNOWN {
-            "any".to_string()
-        } else {
-            self.format(sig.return_type)
-        };
-        format!(
-            "{}{}({}): {}",
-            prefix,
-            type_params,
-            params.join(", "),
-            return_str
+        self.format_signature(
+            &sig.type_params,
+            &sig.params,
+            sig.this_type,
+            sig.return_type,
+            is_construct,
+            ":",
         )
     }
 
@@ -708,6 +677,22 @@ impl<'a> TypeFormatter<'a> {
         }
         result.push('`');
         result
+    }
+
+    /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
+    fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
+        if let Some(sym_id) = shape.symbol
+            && let Some(name) = self.format_symbol_name(sym_id)
+        {
+            return Some(name);
+        }
+        if let Some(def_store) = self.def_store
+            && let Some(def_id) = def_store.find_def_by_shape(shape)
+            && let Some(def) = def_store.get(def_id)
+        {
+            return Some(self.format_def_name(&def));
+        }
+        None
     }
 
     fn format_symbol_name(&mut self, sym_id: SymbolId) -> Option<String> {
