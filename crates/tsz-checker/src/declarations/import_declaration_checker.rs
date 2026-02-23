@@ -503,8 +503,7 @@ impl<'a> CheckerState<'a> {
         // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
         // Only emit when module was explicitly set to an ESM kind. When module is a
         // computed default (derived from target), tsc does not emit TS1202.
-        let is_ambient_context =
-            self.ctx.file_name.ends_with(".d.ts") || self.is_ambient_declaration(stmt_idx);
+        let is_ambient_context = self.is_ambient_declaration(stmt_idx);
         if self.ctx.compiler_options.module.is_es_module()
             && self.ctx.compiler_options.module_explicitly_set
             && !is_ambient_context

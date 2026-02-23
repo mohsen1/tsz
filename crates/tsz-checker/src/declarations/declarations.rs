@@ -24,7 +24,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if a declaration is ambient (has declare keyword, AMBIENT node flag,
     /// or is inside an ambient context like `declare module` or a `.d.ts` file).
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
-        self.ctx.file_name.ends_with(".d.ts") || self.ctx.arena.is_in_ambient_context(var_idx)
+        self.ctx.is_ambient_declaration(var_idx)
     }
 
     /// Check a declaration node.
