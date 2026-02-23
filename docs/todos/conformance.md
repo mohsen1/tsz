@@ -399,9 +399,16 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7886/12574 (62.7%) — full suite
+## Current score: 7892/12574 (62.8%) — full suite
 
-### Session progress (7869 → 7886, +17 tests):
+### Session progress (7886 → 7892, +6 tests):
+- **TS7057**: Emit TS7057 ("yield expression implicitly results in an 'any' type...") when
+  noImplicitAny is enabled, generator lacks return type, and yield result is consumed.
+  Implemented `expression_result_is_unused` helper mirroring tsc's utility — walks up through
+  parens, checks expression statement/void/for-init/comma-left contexts. Also fixed build error
+  from removed `type_contains_nullish` (replaced with `is_nullish_type`). (+6)
+
+### Previous session progress (7869 → 7886, +17 tests):
 - **TS6082**: Emit TS6082 when --outFile is set with a module kind other than amd or system.
   Diagnostics emitted at both the "module" and "outFile" tsconfig keys, matching tsc behavior. (+17)
 
@@ -482,6 +489,22 @@ behavior via `createDiagnosticForOptionName`.
 - When `module` is NOT explicitly set but there are external modules, tsc emits TS6089
   ("Cannot compile modules using option '{0}' unless the '--module' flag is 'amd' or 'system'.")
   instead of TS6082. This case is not yet implemented.
+
+## TS7057 — Yield implicit any (Implemented, partial)
+
+**Status**: Implemented. +6 tests passing (7886→7892, 62.8%).
+**Error code:** TS7057 ("'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.")
+**Fix**: Added TS7057 emission in `dispatch.rs::get_type_of_yield_expression()` at the fallback
+path (after `get_expected_yield_type` and `get_expected_generator_type` both return None).
+Emits when: noImplicitAny enabled, yield result is consumed (not unused), and no contextual
+type covers the implicit any. `expression_result_is_unused()` helper mirrors tsc's
+`expressionResultIsUnused` — walks parens, checks expr-stmt/void/for-init/comma-left.
+
+### Remaining TS7057 issues
+- Tests where TS7057 co-occurs with other missing error codes don't flip to passing.
+- Contextual type from variable declarations (e.g., `const value: string = yield;`) should
+  suppress TS7057, but our checker's contextual type propagation may not reach the yield
+  expression in all cases. The conformance tests pass, suggesting the common paths work.
 
 ## Deferred from this run (2026-02-23)
 

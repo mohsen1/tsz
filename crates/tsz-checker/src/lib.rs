@@ -153,6 +153,9 @@ mod ts2774_tests;
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
+#[path = "../tests/ts7057_yield_implicit_any.rs"]
+mod ts7057_yield_implicit_any;
+#[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 // Tests kept in root test harness where shared fixtures live.

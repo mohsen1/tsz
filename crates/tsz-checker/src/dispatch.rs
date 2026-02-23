@@ -389,8 +389,86 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
         }
 
-        // Fallback to `any` if no generator context is available
+        // Fallback to `any` if no generator context is available.
+        // Emit TS7057 when noImplicitAny is enabled, the generator lacks a return type,
+        // and the yield result is consumed (not discarded).
+        if self.checker.ctx.no_implicit_any() && !self.expression_result_is_unused(idx) {
+            // Check if there is a contextual type that would prevent the implicit any
+            let contextual = self.checker.ctx.contextual_type;
+            if contextual.is_none() || contextual == Some(TypeId::ANY) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.checker.error_at_node(
+                    idx,
+                    diagnostic_messages::YIELD_EXPRESSION_IMPLICITLY_RESULTS_IN_AN_ANY_TYPE_BECAUSE_ITS_CONTAINING_GENERA,
+                    diagnostic_codes::YIELD_EXPRESSION_IMPLICITLY_RESULTS_IN_AN_ANY_TYPE_BECAUSE_ITS_CONTAINING_GENERA,
+                );
+            }
+        }
         TypeId::ANY
+    }
+
+    /// Check if an expression's result value is unused (discarded).
+    /// Mirrors TypeScript's `expressionResultIsUnused` from utilities.ts.
+    fn expression_result_is_unused(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.checker.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.checker.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            // Walk up through parenthesized expressions
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent_idx;
+                continue;
+            }
+
+            // Expression statement: result is unused
+            if parent.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                return true;
+            }
+
+            // Void expression: result is unused.
+            // Our parser models `void expr` as PREFIX_UNARY_EXPRESSION with VoidKeyword operator.
+            if parent.kind == syntax_kind_ext::VOID_EXPRESSION {
+                return true;
+            }
+            if parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && let Some(unary) = self.checker.ctx.arena.get_unary_expr(parent)
+                && unary.operator == SyntaxKind::VoidKeyword as u16
+            {
+                return true;
+            }
+
+            // For statement: initializer and incrementor results are unused
+            if parent.kind == syntax_kind_ext::FOR_STATEMENT {
+                if let Some(loop_data) = self.checker.ctx.arena.get_loop(parent)
+                    && (loop_data.initializer == current || loop_data.incrementor == current)
+                {
+                    return true;
+                }
+                return false;
+            }
+
+            // Binary comma expression: left side is always unused;
+            // right side is unused if the parent comma expression is unused
+            if parent.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.checker.ctx.arena.get_binary_expr(parent)
+                && bin.operator_token == SyntaxKind::CommaToken as u16
+            {
+                if current == bin.left {
+                    return true;
+                }
+                // Right side: walk up to check if parent is unused
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        }
     }
 
     /// Dispatch type computation based on node kind.
