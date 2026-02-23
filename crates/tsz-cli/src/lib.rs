@@ -8,6 +8,7 @@ pub mod args;
 pub mod build;
 pub use tsz::config;
 pub mod driver;
+pub mod driver_emit;
 pub mod driver_resolution;
 pub mod fs;
 pub mod incremental;
