@@ -310,7 +310,7 @@ impl<'a> CheckerState<'a> {
             // Example: x: ({ a: 1 }) should be checked for excess properties.
             // We need to unwrap parentheses before checking the kind.
             // =============================================================
-            let effective_value_idx = self.skip_parentheses(value_idx);
+            let effective_value_idx = self.ctx.arena.skip_parenthesized(value_idx);
             let Some(value_node) = self.ctx.arena.get(effective_value_idx) else {
                 continue;
             };
@@ -366,14 +366,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Skip parentheses to get the effective expression node.
-    ///
-    /// This unwraps parenthesized expressions to get the underlying expression.
-    /// Example: `({ a: 1 })` -> `{ a: 1 }` (`OBJECT_LITERAL_EXPRESSION`)
-    fn skip_parentheses(&self, node_idx: NodeIndex) -> NodeIndex {
-        self.skip_parenthesized_expression(node_idx)
-    }
-
     /// TS2353 guard for object destructuring from object literals with computed keys.
     ///
     /// TypeScript reports excess-property errors for computed properties in object
@@ -418,7 +410,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let effective_init = self.skip_parentheses(initializer_idx);
+        let effective_init = self.ctx.arena.skip_parenthesized(initializer_idx);
         let Some(init_node) = self.ctx.arena.get(effective_init) else {
             return;
         };
@@ -986,7 +978,7 @@ impl<'a> CheckerState<'a> {
     fn is_namespace_import_binding(&self, object_expr: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
-        let object_expr = self.skip_parentheses(object_expr);
+        let object_expr = self.ctx.arena.skip_parenthesized(object_expr);
         let Some(sym_id) = self.resolve_identifier_symbol(object_expr) else {
             return false;
         };

@@ -222,37 +222,8 @@ impl<'a> CheckerState<'a> {
     /// - `x!` -> `x`
     /// - `(x as T)` -> `x`
     /// - `(x satisfies T)` -> `x`
-    fn unwrap_assignment_target_for_symbol(&self, mut idx: NodeIndex) -> NodeIndex {
-        loop {
-            let Some(node) = self.ctx.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    idx = paren.expression;
-                    continue;
-                }
-                return idx;
-            }
-            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
-                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
-                    idx = unary.expression;
-                    continue;
-                }
-                return idx;
-            }
-            if node.kind == syntax_kind_ext::TYPE_ASSERTION
-                || node.kind == syntax_kind_ext::AS_EXPRESSION
-                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-            {
-                if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
-                    idx = assertion.expression;
-                    continue;
-                }
-                return idx;
-            }
-            return idx;
-        }
+    fn unwrap_assignment_target_for_symbol(&self, idx: NodeIndex) -> NodeIndex {
+        self.ctx.arena.skip_parenthesized_and_assertions(idx)
     }
 
     /// Check if the operand of an increment/decrement operator is a valid l-value (TS2357).
@@ -288,33 +259,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Skips: parenthesized, non-null assertion (`!`), type assertion (`as`/angle-bracket),
     /// and `satisfies` expressions.
-    fn skip_assignment_transparent_wrappers(&self, mut idx: NodeIndex) -> NodeIndex {
-        loop {
-            let Some(node) = self.ctx.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-            {
-                idx = paren.expression;
-                continue;
-            }
-            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
-                && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node)
-            {
-                idx = unary.expression;
-                continue;
-            }
-            if (node.kind == syntax_kind_ext::TYPE_ASSERTION
-                || node.kind == syntax_kind_ext::AS_EXPRESSION
-                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
-            {
-                idx = assertion.expression;
-                continue;
-            }
-            return idx;
-        }
+    fn skip_assignment_transparent_wrappers(&self, idx: NodeIndex) -> NodeIndex {
+        self.ctx.arena.skip_parenthesized_and_assertions(idx)
     }
 
     /// Check if the assignment target (LHS) is a const variable and emit TS2588 if so.

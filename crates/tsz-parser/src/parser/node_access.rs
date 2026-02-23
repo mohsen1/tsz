@@ -199,6 +199,61 @@ impl NodeArena {
         false
     }
 
+    /// Skip through parenthesized expressions to the underlying expression.
+    ///
+    /// Unwraps any number of `(expr)` wrappers.
+    /// Uses a bounded loop (max 100 iterations) to guard against pathological input.
+    #[must_use]
+    pub fn skip_parenthesized(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            let Some(node) = self.get(idx) else {
+                return idx;
+            };
+            if node.kind == PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.get_parenthesized(node) {
+                    idx = paren.expression;
+                    continue;
+                }
+            return idx;
+        }
+        idx
+    }
+
+    /// Skip through parenthesized, non-null assertion, and type assertion expressions.
+    ///
+    /// Unwraps `(expr)`, `expr!`, `expr as T`, `<T>expr`, and `expr satisfies T` wrappers.
+    /// Uses a bounded loop (max 100 iterations) to guard against pathological input.
+    #[must_use]
+    pub fn skip_parenthesized_and_assertions(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            let Some(node) = self.get(idx) else {
+                return idx;
+            };
+            if node.kind == PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.get_parenthesized(node)
+            {
+                idx = paren.expression;
+                continue;
+            }
+            if node.kind == NON_NULL_EXPRESSION
+                && let Some(unary) = self.get_unary_expr_ex(node)
+            {
+                idx = unary.expression;
+                continue;
+            }
+            if (node.kind == TYPE_ASSERTION
+                || node.kind == AS_EXPRESSION
+                || node.kind == SATISFIES_EXPRESSION)
+                && let Some(assertion) = self.get_type_assertion(node)
+            {
+                idx = assertion.expression;
+                continue;
+            }
+            return idx;
+        }
+        idx
+    }
+
     /// Check whether a namespace/module declaration is instantiated (has runtime value declarations).
     ///
     /// Returns `true` if the namespace contains value declarations (variables, functions,

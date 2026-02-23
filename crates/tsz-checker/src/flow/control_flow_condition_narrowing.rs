@@ -459,22 +459,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Skip parentheses (non-recursive to avoid issues with circular references).
-    fn skip_parenthesized_non_recursive(&self, mut idx: NodeIndex) -> NodeIndex {
-        for _ in 0..100 {
-            // Limit iterations to prevent infinite loops
-            let Some(node) = self.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                let Some(paren) = self.arena.get_parenthesized(node) else {
-                    return idx;
-                };
-                idx = paren.expression;
-            } else {
-                return idx;
-            }
-        }
-        idx
+    fn skip_parenthesized_non_recursive(&self, idx: NodeIndex) -> NodeIndex {
+        self.arena.skip_parenthesized(idx)
     }
 
     pub(crate) fn const_condition_initializer(
