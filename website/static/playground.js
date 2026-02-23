@@ -64,6 +64,34 @@ function processValue(value: string | number | null) {
   return value.toFixed(2);
 }
 `,
+  dts: `export type Id = string | number;
+
+export interface User {
+  id: Id;
+  name: string;
+  tags?: readonly string[];
+}
+
+export class UserStore<T extends User> {
+  #items: T[] = [];
+
+  add(user: T): void {
+    this.#items.push(user);
+  }
+
+  getById(id: Id): T | undefined {
+    return this.#items.find(item => item.id === id);
+  }
+
+  all(): readonly T[] {
+    return this.#items;
+  }
+}
+
+export function createUser(name: string): User {
+  return { id: name.toLowerCase(), name };
+}
+`,
   sound_mode: `// ⚠️ Sound mode is experimental.
 // Uncheck "sound" to see these errors disappear!
 
@@ -128,6 +156,27 @@ const strictCheck = document.getElementById("strict-mode");
 const soundCheck = document.getElementById("sound-mode");
 const diagPanel = document.getElementById("diagnostics-panel");
 const diagBadge = document.getElementById("diag-badge");
+
+function getValidExampleKey(key) {
+  if (!key || typeof key !== "string") return null;
+  return Object.prototype.hasOwnProperty.call(EXAMPLES, key) ? key : null;
+}
+
+function getExampleFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return getValidExampleKey(params.get("example"));
+}
+
+function setExampleInUrl(key) {
+  const valid = getValidExampleKey(key);
+  const url = new URL(window.location.href);
+  if (valid) {
+    url.searchParams.set("example", valid);
+  } else {
+    url.searchParams.delete("example");
+  }
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
 
 // ── Tab switching ──
 
@@ -213,22 +262,25 @@ async function loadMonaco() {
           smoothScrolling: true,
         });
 
-        dtsEditor = monaco.editor.create(document.getElementById("dts-output-editor"), {
-          value: "",
-          language: "typescript",
-          theme: isDark ? "vs-dark" : "vs",
-          minimap: { enabled: false },
-          fontSize: 14,
-          fontFamily: "'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
-          lineNumbers: "on",
-          scrollBeyondLastLine: false,
-          automaticLayout: true,
-          tabSize: 2,
-          readOnly: true,
-          renderLineHighlight: "none",
-          padding: { top: 12 },
-          smoothScrolling: true,
-        });
+        const dtsContainer = document.getElementById("dts-output-editor");
+        if (dtsContainer) {
+          dtsEditor = monaco.editor.create(dtsContainer, {
+            value: "",
+            language: "typescript",
+            theme: isDark ? "vs-dark" : "vs",
+            minimap: { enabled: false },
+            fontSize: 14,
+            fontFamily: "'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
+            lineNumbers: "on",
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 2,
+            readOnly: true,
+            renderLineHighlight: "none",
+            padding: { top: 12 },
+            smoothScrolling: true,
+          });
+        }
 
         editor.onDidChangeModelContent(() => scheduleCheck());
 
@@ -268,6 +320,7 @@ function getCurrentCompilerOptions() {
   return {
     strict: strictCheck.checked,
     soundMode: soundCheck.checked,
+    module: 99,
   };
 }
 
@@ -506,8 +559,7 @@ function runCheck() {
   if (!wasm || !editor) return;
 
   const code = editor.getValue();
-  const strict = strictCheck.checked;
-  const soundMode = soundCheck.checked;
+  const options = getCurrentCompilerOptions();
 
   statusEl.textContent = "checking...";
   statusEl.className = "status-checking";
@@ -518,7 +570,7 @@ function runCheck() {
     ensureLspParser();
 
     const program = new wasm.TsProgram();
-    program.setCompilerOptions(JSON.stringify({ strict, soundMode }));
+    program.setCompilerOptions(JSON.stringify(options));
 
     for (const [name, content] of Object.entries(libFiles)) {
       program.addLibFile(name, content);
@@ -589,15 +641,19 @@ function runCheck() {
     }
 
     // Emit .d.ts output
-    try {
-      const transpileResultJson = wasm.transpileModule(code, JSON.stringify({ declaration: true }));
-      const transpileResult = JSON.parse(transpileResultJson || "{}");
-      const dtsOutput = transpileResult && typeof transpileResult.declaration_text === "string"
-        ? transpileResult.declaration_text
-        : "";
-      dtsEditor.setValue(dtsOutput || "// (no declaration output)");
-    } catch (e) {
-      dtsEditor.setValue(`// DTS emit error: ${e.message}`);
+    if (dtsEditor) {
+      try {
+        const transpileResultJson = wasm.transpileModule(code, JSON.stringify({ declaration: true }));
+        const transpileResult = JSON.parse(transpileResultJson || "{}");
+        const dtsOutput = transpileResult && typeof transpileResult.declarationText === "string"
+          ? transpileResult.declarationText
+          : transpileResult && typeof transpileResult.declaration_text === "string"
+            ? transpileResult.declaration_text
+          : "";
+        dtsEditor.setValue(dtsOutput || "// (no declaration output)");
+      } catch (e) {
+        dtsEditor.setValue(`// DTS emit error: ${e.message}`);
+      }
     }
 
     program.dispose();
@@ -647,6 +703,7 @@ exampleSelect.addEventListener("change", () => {
   const val = exampleSelect.value;
   const code = EXAMPLES[val];
   if (code && editor) {
+    setExampleInUrl(val);
     // Auto-toggle sound mode checkbox for the sound_mode example
     if (val === "sound_mode") {
       soundCheck.checked = true;
@@ -679,6 +736,19 @@ async function init() {
 
     statusEl.textContent = "ready";
     statusEl.className = "status-ready";
+
+    const urlExample = getExampleFromUrl();
+    if (urlExample) {
+      exampleSelect.value = urlExample;
+      editor.setValue(EXAMPLES[urlExample]);
+      if (urlExample === "sound_mode") {
+        soundCheck.checked = true;
+      } else {
+        soundCheck.checked = false;
+      }
+    } else {
+      setExampleInUrl(exampleSelect.value);
+    }
 
     runCheck();
   } catch (e) {

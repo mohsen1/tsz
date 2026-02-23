@@ -67,6 +67,22 @@ pub struct TsCompilerOptions {
 }
 
 impl TsCompilerOptions {
+    const fn resolve_module(&self) -> tsz::common::ModuleKind {
+        match self.module {
+            Some(1) => tsz::common::ModuleKind::CommonJS,
+            Some(2) => tsz::common::ModuleKind::AMD,
+            Some(3) => tsz::common::ModuleKind::UMD,
+            Some(4) => tsz::common::ModuleKind::System,
+            Some(5) => tsz::common::ModuleKind::ES2015,
+            Some(6) => tsz::common::ModuleKind::ES2020,
+            Some(7) => tsz::common::ModuleKind::ES2022,
+            Some(99) => tsz::common::ModuleKind::ESNext,
+            Some(100) => tsz::common::ModuleKind::Node16,
+            Some(199) => tsz::common::ModuleKind::NodeNext,
+            _ => tsz::common::ModuleKind::None,
+        }
+    }
+
     /// Convert to internal `CheckerOptions`
     pub fn to_checker_options(&self) -> CheckerOptions {
         let strict = self.strict.unwrap_or(false);
@@ -87,7 +103,7 @@ impl TsCompilerOptions {
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
             target: tsz::checker::context::ScriptTarget::default(),
-            module: tsz::common::ModuleKind::None,
+            module: self.resolve_module(),
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
