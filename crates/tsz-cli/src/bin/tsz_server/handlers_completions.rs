@@ -217,7 +217,10 @@ impl Server {
 
     fn normalize_method_snippet_return_type(return_type: &str) -> String {
         let return_type = return_type.trim().trim_end_matches(';').trim_end();
-        let return_type = return_type.strip_suffix('{').unwrap_or(return_type).trim_end();
+        let return_type = return_type
+            .strip_suffix('{')
+            .unwrap_or(return_type)
+            .trim_end();
         return_type.trim().to_string()
     }
 
@@ -1670,13 +1673,12 @@ impl Server {
                         if item.source.as_deref() == Some("ClassMemberSnippet/")
                             && let Some(insert_text) = item.insert_text.as_deref()
                         {
-                            let synthesized =
-                                Self::class_member_snippet_synthesized_text_changes(
-                                    &source_text,
-                                    insert_text,
-                                    &item.label,
-                                    &project_items,
-                                );
+                            let synthesized = Self::class_member_snippet_synthesized_text_changes(
+                                &source_text,
+                                insert_text,
+                                &item.label,
+                                &project_items,
+                            );
                             if !synthesized.is_empty() {
                                 text_changes = synthesized;
                             }
