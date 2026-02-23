@@ -1277,66 +1277,6 @@ impl Server {
         })
     }
 
-    pub(crate) fn normalize_references_full_definition(
-        &self,
-        definition: serde_json::Value,
-    ) -> serde_json::Value {
-        if definition.get("fileName").is_some() && definition.get("textSpan").is_some() {
-            return definition;
-        }
-        let Some(file) = definition
-            .get("file")
-            .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string)
-        else {
-            return definition;
-        };
-        let start = definition.get("start");
-        let end = definition.get("end");
-        let (Some(start), Some(end)) = (start, end) else {
-            return definition;
-        };
-        let start_line = start.get("line").and_then(serde_json::Value::as_u64);
-        let start_offset = start.get("offset").and_then(serde_json::Value::as_u64);
-        let end_line = end.get("line").and_then(serde_json::Value::as_u64);
-        let end_offset = end.get("offset").and_then(serde_json::Value::as_u64);
-        let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) =
-            (start_line, start_offset, end_line, end_offset)
-        else {
-            return definition;
-        };
-        let file_source = self
-            .open_files
-            .get(&file)
-            .cloned()
-            .or_else(|| std::fs::read_to_string(&file).ok());
-        let Some(file_source) = file_source else {
-            return definition;
-        };
-        let line_map = LineMap::build(&file_source);
-        let start_pos = Self::tsserver_to_lsp_position(start_line as u32, start_offset as u32);
-        let end_pos = Self::tsserver_to_lsp_position(end_line as u32, end_offset as u32);
-        let Some(start_off) = line_map.position_to_offset(start_pos, &file_source) else {
-            return definition;
-        };
-        let Some(end_off) = line_map.position_to_offset(end_pos, &file_source) else {
-            return definition;
-        };
-
-        let mut normalized = definition;
-        normalized["fileName"] = serde_json::json!(file);
-        normalized["textSpan"] = serde_json::json!({
-            "start": start_off,
-            "length": end_off.saturating_sub(start_off),
-        });
-        normalized.as_object_mut().map(|obj| {
-            obj.remove("file");
-            obj.remove("start");
-            obj.remove("end");
-        });
-        normalized
-    }
-
     pub(crate) fn build_simple_display_parts(kind: &str, name: &str) -> Vec<serde_json::Value> {
         let mut parts = vec![];
         if !kind.is_empty() {

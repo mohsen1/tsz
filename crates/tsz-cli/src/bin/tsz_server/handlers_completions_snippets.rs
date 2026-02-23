@@ -1239,6 +1239,7 @@ mod tests {
     use rustc_hash::FxHashMap;
     use tsz::lsp::completions::CompletionItemKind;
 
+    #[test]
     fn prioritize_class_member_snippet_items_keeps_snippet_variant_for_same_label() {
         let items = vec![
             CompletionItem::new("container".to_string(), CompletionItemKind::Property)
