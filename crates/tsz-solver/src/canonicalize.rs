@@ -430,6 +430,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         None
     }
 
+    /// Canonicalize an index signature by recursively canonicalizing its key and value types.
+    fn canonicalize_index_signature(
+        &mut self,
+        idx: &Option<IndexSignature>,
+    ) -> Option<IndexSignature> {
+        idx.as_ref().map(|idx| IndexSignature {
+            key_type: self.canonicalize(idx.key_type),
+            value_type: self.canonicalize(idx.value_type),
+            readonly: idx.readonly,
+        })
+    }
+
     /// Canonicalize an object type by recursively canonicalizing property types.
     ///
     /// Preserves all metadata (names, optional, readonly, visibility, `parent_id`)
@@ -456,17 +468,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         }
 
         // Canonicalize index signatures if present
-        let new_string_index = shape.string_index.as_ref().map(|idx| IndexSignature {
-            key_type: self.canonicalize(idx.key_type),
-            value_type: self.canonicalize(idx.value_type),
-            readonly: idx.readonly,
-        });
-
-        let new_number_index = shape.number_index.as_ref().map(|idx| IndexSignature {
-            key_type: self.canonicalize(idx.key_type),
-            value_type: self.canonicalize(idx.value_type),
-            readonly: idx.readonly,
-        });
+        let new_string_index = self.canonicalize_index_signature(&shape.string_index);
+        let new_number_index = self.canonicalize_index_signature(&shape.number_index);
 
         // Preserve the symbol field for nominal types (class instances)
         // This ensures that class A and class B with same properties remain distinct
@@ -593,25 +596,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         }
 
         // Canonicalize index signatures
-        let new_string_index =
-            shape
-                .string_index
-                .as_ref()
-                .map(|idx| crate::types::IndexSignature {
-                    key_type: self.canonicalize(idx.key_type),
-                    value_type: self.canonicalize(idx.value_type),
-                    readonly: idx.readonly,
-                });
-
-        let new_number_index =
-            shape
-                .number_index
-                .as_ref()
-                .map(|idx| crate::types::IndexSignature {
-                    key_type: self.canonicalize(idx.key_type),
-                    value_type: self.canonicalize(idx.value_type),
-                    readonly: idx.readonly,
-                });
+        let new_string_index = self.canonicalize_index_signature(&shape.string_index);
+        let new_number_index = self.canonicalize_index_signature(&shape.number_index);
 
         let new_shape = crate::types::CallableShape {
             call_signatures: c_call_signatures,
