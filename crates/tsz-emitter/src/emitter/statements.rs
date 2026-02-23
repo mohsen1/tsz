@@ -762,6 +762,7 @@ impl<'a> Printer<'a> {
             self.write("return");
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_trailing_comment_after_semicolon(node);
             return;
         };
 
@@ -772,6 +773,7 @@ impl<'a> Printer<'a> {
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     // =========================================================================
@@ -784,6 +786,7 @@ impl<'a> Printer<'a> {
             self.write("throw");
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_trailing_comment_after_semicolon(node);
             return;
         };
 
@@ -791,6 +794,7 @@ impl<'a> Printer<'a> {
         self.emit(throw_data.expression);
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     pub(super) fn emit_try_statement(&mut self, node: &Node) {
@@ -976,6 +980,7 @@ impl<'a> Printer<'a> {
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     pub(super) fn emit_continue_statement(&mut self, node: &Node) {
@@ -988,6 +993,7 @@ impl<'a> Printer<'a> {
         }
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     pub(super) fn emit_labeled_statement(&mut self, node: &Node) {
@@ -1028,12 +1034,14 @@ impl<'a> Printer<'a> {
         self.write(")");
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     pub(super) fn emit_debugger_statement(&mut self, node: &Node) {
         self.write("debugger");
         self.map_trailing_semicolon(node);
         self.write_semicolon();
+        self.emit_trailing_comment_after_semicolon(node);
     }
 
     pub(super) fn emit_with_statement(&mut self, node: &Node) {
@@ -1565,6 +1573,150 @@ mod tests {
             !output.contains("WScript"),
             "Same-line block comment in single-line empty method body should be \
              suppressed (tsc drops these).\nOutput:\n{output}"
+        );
+    }
+
+    // =========================================================================
+    // Trailing comments after semicolons on statement types
+    // =========================================================================
+
+    #[test]
+    fn trailing_comment_on_return_statement() {
+        let source = "function f() {\n    return 42; // the answer\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("return 42; // the answer"),
+            "Trailing comment on return should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_bare_return() {
+        let source = "function f() {\n    return; // early exit\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("return; // early exit"),
+            "Trailing comment on bare return should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_throw_statement() {
+        let source = "function f() {\n    throw new Error(); // kaboom\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("throw new Error(); // kaboom"),
+            "Trailing comment on throw should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_break_statement() {
+        let source = r#"function f(x: number) {
+    switch (x) {
+        case 0:
+            break; // done
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("break; // done"),
+            "Trailing comment on break should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_continue_statement() {
+        let source = r#"function f() {
+    for (var i = 0; i < 10; i++) {
+        continue; // skip
+    }
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("continue; // skip"),
+            "Trailing comment on continue should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_do_while_statement() {
+        let source = r#"function f() {
+    var i = 0;
+    do {
+        i++;
+    } while (i < 10); // loop end
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("while (i < 10); // loop end"),
+            "Trailing comment on do-while should stay on the same line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn trailing_comment_on_debugger_statement() {
+        let source = "function f() {\n    debugger; // breakpoint\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("debugger; // breakpoint"),
+            "Trailing comment on debugger should stay on the same line.\nOutput:\n{output}"
         );
     }
 }
