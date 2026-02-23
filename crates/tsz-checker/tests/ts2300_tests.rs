@@ -442,6 +442,23 @@ fn duplicate_symbol_property_in_interface_no_ts2300() {
     );
 }
 
+/// Test that class extending a namespaced class does NOT produce false TS2506.
+/// The recursion guard in `class_type.rs` should not emit TS2506 — true cycle
+/// detection is handled by dedicated DFS in `class_inheritance.rs`.
+#[test]
+fn class_extends_namespaced_class_no_false_ts2506() {
+    let diagnostics = verify_errors(
+        "declare namespace D { class bar { } }
+declare namespace E { class foobar extends D.bar { foo(): void; } }",
+        &[], // No errors expected
+    );
+    let ts2506 = diagnostics.iter().filter(|d| d.code == 2506).count();
+    assert_eq!(
+        ts2506, 0,
+        "Class extending namespaced class should NOT produce false TS2506"
+    );
+}
+
 /// Test that exported and non-exported classes with the same name in merging
 /// namespaces do NOT produce TS2300. tsc allows this because they occupy
 /// different visibility scopes.
