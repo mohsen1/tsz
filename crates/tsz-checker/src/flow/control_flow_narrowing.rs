@@ -21,112 +21,7 @@ use super::control_flow::{FlowAnalyzer, PredicateSignature};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn assignment_affects_reference(&self, left: NodeIndex, target: NodeIndex) -> bool {
-        let left = self.skip_parenthesized(left);
-        let target = self.skip_parenthesized(target);
-        if self.is_matching_reference(left, target) {
-            return true;
-        }
-        if let Some(base) = self.reference_base(target)
-            && self.assignment_affects_reference(left, base)
-        {
-            return true;
-        }
-
-        let Some(node) = self.arena.get(left) else {
-            return false;
-        };
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            let Some(access) = self.arena.get_access_expr(node) else {
-                return false;
-            };
-            if access.question_dot_token {
-                return false;
-            }
-            return self.assignment_affects_reference(access.expression, target);
-        }
-
-        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
-            && let Some(unary) = self.arena.get_unary_expr_ex(node)
-        {
-            return self.assignment_affects_reference(unary.expression, target);
-        }
-
-        if (node.kind == syntax_kind_ext::TYPE_ASSERTION
-            || node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-            && let Some(assertion) = self.arena.get_type_assertion(node)
-        {
-            return self.assignment_affects_reference(assertion.expression, target);
-        }
-
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(bin) = self.arena.get_binary_expr(node)
-            && self.is_assignment_operator(bin.operator_token)
-        {
-            return self.assignment_affects_reference(bin.left, target);
-        }
-
-        if (node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-            && let Some(lit) = self.arena.get_literal_expr(node)
-        {
-            for &elem in &lit.elements.nodes {
-                if elem.is_none() {
-                    continue;
-                }
-                if self.assignment_affects_reference(elem, target) {
-                    return true;
-                }
-            }
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-            && let Some(prop) = self.arena.get_property_assignment(node)
-            && self.assignment_affects_reference(prop.initializer, target)
-        {
-            return true;
-        }
-
-        if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
-            && let Some(prop) = self.arena.get_shorthand_property(node)
-            && self.assignment_affects_reference(prop.name, target)
-        {
-            return true;
-        }
-
-        if (node.kind == syntax_kind_ext::SPREAD_ELEMENT
-            || node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
-            && let Some(spread) = self.arena.get_spread(node)
-            && self.assignment_affects_reference(spread.expression, target)
-        {
-            return true;
-        }
-
-        if (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            && let Some(pattern) = self.arena.get_binding_pattern(node)
-        {
-            for &elem in &pattern.elements.nodes {
-                if elem.is_none() {
-                    continue;
-                }
-                if self.assignment_affects_reference(elem, target) {
-                    return true;
-                }
-            }
-        }
-
-        if node.kind == syntax_kind_ext::BINDING_ELEMENT
-            && let Some(binding) = self.arena.get_binding_element(node)
-            && self.assignment_affects_reference(binding.name, target)
-        {
-            return true;
-        }
-
-        false
+        self.assignment_matches_reference_core(left, target, true)
     }
 
     pub(crate) fn assignment_targets_reference_internal(
@@ -134,20 +29,58 @@ impl<'a> FlowAnalyzer<'a> {
         left: NodeIndex,
         target: NodeIndex,
     ) -> bool {
+        self.assignment_matches_reference_core(left, target, false)
+    }
+
+    /// Core implementation for both `assignment_affects_reference` and
+    /// `assignment_targets_reference_internal`.
+    ///
+    /// When `check_property_access` is true (the "affects" variant), this also:
+    /// - Recurses through `reference_base` on the target
+    /// - Traverses property/element access expressions on the left side
+    fn assignment_matches_reference_core(
+        &self,
+        left: NodeIndex,
+        target: NodeIndex,
+        check_property_access: bool,
+    ) -> bool {
         let left = self.skip_parenthesized(left);
         let target = self.skip_parenthesized(target);
         if self.is_matching_reference(left, target) {
             return true;
         }
+        if check_property_access
+            && let Some(base) = self.reference_base(target)
+                && self.assignment_matches_reference_core(left, base, true)
+            {
+                return true;
+            }
 
         let Some(node) = self.arena.get(left) else {
             return false;
         };
 
+        if check_property_access
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        {
+            let Some(access) = self.arena.get_access_expr(node) else {
+                return false;
+            };
+            if access.question_dot_token {
+                return false;
+            }
+            return self.assignment_matches_reference_core(access.expression, target, true);
+        }
+
         if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
             && let Some(unary) = self.arena.get_unary_expr_ex(node)
         {
-            return self.assignment_targets_reference_internal(unary.expression, target);
+            return self.assignment_matches_reference_core(
+                unary.expression,
+                target,
+                check_property_access,
+            );
         }
 
         if (node.kind == syntax_kind_ext::TYPE_ASSERTION
@@ -155,14 +88,18 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
             && let Some(assertion) = self.arena.get_type_assertion(node)
         {
-            return self.assignment_targets_reference_internal(assertion.expression, target);
+            return self.assignment_matches_reference_core(
+                assertion.expression,
+                target,
+                check_property_access,
+            );
         }
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.arena.get_binary_expr(node)
             && self.is_assignment_operator(bin.operator_token)
         {
-            return self.assignment_targets_reference_internal(bin.left, target);
+            return self.assignment_matches_reference_core(bin.left, target, check_property_access);
         }
 
         if (node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -173,7 +110,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if elem.is_none() {
                     continue;
                 }
-                if self.assignment_targets_reference_internal(elem, target) {
+                if self.assignment_matches_reference_core(elem, target, check_property_access) {
                     return true;
                 }
             }
@@ -181,21 +118,18 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
             && let Some(prop) = self.arena.get_property_assignment(node)
-            && self.assignment_targets_reference_internal(prop.initializer, target)
-        {
-            return true;
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-            && let Some(prop) = self.arena.get_property_assignment(node)
-            && self.assignment_targets_reference_internal(prop.initializer, target)
+            && self.assignment_matches_reference_core(
+                prop.initializer,
+                target,
+                check_property_access,
+            )
         {
             return true;
         }
 
         if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
             && let Some(prop) = self.arena.get_shorthand_property(node)
-            && self.assignment_targets_reference_internal(prop.name, target)
+            && self.assignment_matches_reference_core(prop.name, target, check_property_access)
         {
             return true;
         }
@@ -203,7 +137,11 @@ impl<'a> FlowAnalyzer<'a> {
         if (node.kind == syntax_kind_ext::SPREAD_ELEMENT
             || node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
             && let Some(spread) = self.arena.get_spread(node)
-            && self.assignment_targets_reference_internal(spread.expression, target)
+            && self.assignment_matches_reference_core(
+                spread.expression,
+                target,
+                check_property_access,
+            )
         {
             return true;
         }
@@ -216,7 +154,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if elem.is_none() {
                     continue;
                 }
-                if self.assignment_targets_reference_internal(elem, target) {
+                if self.assignment_matches_reference_core(elem, target, check_property_access) {
                     return true;
                 }
             }
@@ -224,7 +162,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::BINDING_ELEMENT
             && let Some(binding) = self.arena.get_binding_element(node)
-            && self.assignment_targets_reference_internal(binding.name, target)
+            && self.assignment_matches_reference_core(binding.name, target, check_property_access)
         {
             return true;
         }
