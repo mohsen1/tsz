@@ -297,8 +297,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_checking_queries should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
-    let state_checking_members_src = fs::read_to_string("src/state/state_checking_members.rs")
-        .expect("failed to read src/state/state_checking_members.rs for architecture guard");
+    let state_checking_members_src = fs::read_to_string("src/state/state_checking_members/mod.rs")
+        .expect("failed to read src/state/state_checking_members/mod.rs for architecture guard");
     assert!(
         !state_checking_members_src.contains("TypeData::TypeParameter"),
         "state_checking_members should use solver type_param constructor API, not TypeData::TypeParameter"
@@ -817,34 +817,36 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "assignability_checker subtype checks should route through checker/solver query gateways, not direct interner calls"
     );
 
-    let mut state_checking_members_src = fs::read_to_string("src/state/state_checking_members.rs")
-        .expect("failed to read src/state/state_checking_members.rs for architecture guard");
+    let mut state_checking_members_src = fs::read_to_string(
+        "src/state/state_checking_members/mod.rs",
+    )
+    .expect("failed to read src/state/state_checking_members/mod.rs for architecture guard");
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
+        &fs::read_to_string("src/state/state_checking_members/ambient_signature_checks.rs")
             .expect("failed to read ambient_signature_checks.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/implicit_any_checks.rs")
+        &fs::read_to_string("src/state/state_checking_members/implicit_any_checks.rs")
             .expect("failed to read implicit_any_checks.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/overload_compatibility.rs")
+        &fs::read_to_string("src/state/state_checking_members/overload_compatibility.rs")
             .expect("failed to read overload_compatibility.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/member_access.rs")
+        &fs::read_to_string("src/state/state_checking_members/member_access.rs")
             .expect("failed to read member_access.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/member_declaration_checks.rs")
+        &fs::read_to_string("src/state/state_checking_members/member_declaration_checks.rs")
             .expect("failed to read member_declaration_checks.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/statement_callback_bridge.rs")
+        &fs::read_to_string("src/state/state_checking_members/statement_callback_bridge.rs")
             .expect("failed to read statement_callback_bridge.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
-        &fs::read_to_string("src/state_checking_members/statement_checks.rs")
+        &fs::read_to_string("src/state/state_checking_members/statement_checks.rs")
             .expect("failed to read statement_checks.rs for architecture guard"),
     );
     assert!(
@@ -1287,10 +1289,11 @@ fn test_solver_sources_forbid_parser_checker_imports() {
 
 #[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
-    let mut src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
-        .expect("failed to read ambient signature checker for architecture guard");
+    let mut src =
+        fs::read_to_string("src/state/state_checking_members/ambient_signature_checks.rs")
+            .expect("failed to read ambient signature checker for architecture guard");
     src.push_str(
-        &fs::read_to_string("src/state_checking_members/overload_compatibility.rs")
+        &fs::read_to_string("src/state/state_checking_members/overload_compatibility.rs")
             .expect("failed to read overload_compatibility.rs for architecture guard"),
     );
     assert!(
