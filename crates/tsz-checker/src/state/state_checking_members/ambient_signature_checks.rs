@@ -655,6 +655,7 @@ impl<'a> CheckerState<'a> {
 
         // Check overload compatibility for method implementations
         if method.body.is_some() {
+            self.check_overload_modifier_consistency(member_idx);
             self.check_overload_compatibility(member_idx);
         }
 
@@ -898,6 +899,7 @@ impl<'a> CheckerState<'a> {
 
         // Check overload compatibility for constructor implementations
         if ctor.body.is_some() {
+            self.check_overload_modifier_consistency(member_idx);
             self.check_overload_compatibility(member_idx);
         }
     }

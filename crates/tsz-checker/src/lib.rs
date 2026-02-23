@@ -133,6 +133,9 @@ mod ts2322_tests;
 #[path = "../tests/ts2323_tests.rs"]
 mod ts2323_tests;
 #[cfg(test)]
+#[path = "../tests/ts2385_overload_modifier_tests.rs"]
+mod ts2385_overload_modifier_tests;
+#[cfg(test)]
 #[path = "../tests/ts2397_tests.rs"]
 mod ts2397_tests;
 #[cfg(test)]

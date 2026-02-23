@@ -440,6 +440,86 @@ impl<'a> CheckerState<'a> {
         replace_function_return_type(self.ctx.types, type_id, new_return)
     }
 
+    /// TS2385: "Overload signatures must all be public, private or protected."
+    ///
+    /// When a class method has overload signatures, all overload signatures must have
+    /// the same access modifier as the implementation. tsc uses the implementation's
+    /// modifier as canonical and flags each overload that disagrees.
+    pub(crate) fn check_overload_modifier_consistency(&mut self, impl_node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_scanner::SyntaxKind;
+
+        let Some(impl_sym_id) = self.ctx.binder.get_node_symbol(impl_node_idx) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(impl_sym_id) else {
+            return;
+        };
+        if symbol.declarations.len() < 2 {
+            return;
+        }
+
+        // Helper: extract access modifier kind from a declaration node
+        let get_access_modifier =
+            |arena: &tsz_parser::parser::NodeArena, node_idx: NodeIndex| -> u16 {
+                let Some(node) = arena.get(node_idx) else {
+                    return SyntaxKind::PublicKeyword as u16; // default is public
+                };
+                if let Some(mods) = arena.get_declaration_modifiers(node) {
+                    for &m_idx in &mods.nodes {
+                        if let Some(m_node) = arena.get(m_idx)
+                            && (m_node.kind == SyntaxKind::PrivateKeyword as u16
+                                || m_node.kind == SyntaxKind::ProtectedKeyword as u16
+                                || m_node.kind == SyntaxKind::PublicKeyword as u16)
+                            {
+                                return m_node.kind;
+                            }
+                    }
+                }
+                SyntaxKind::PublicKeyword as u16 // no explicit modifier = public
+            };
+
+        // Helper: check if a declaration has the `static` modifier
+        let has_static = |arena: &tsz_parser::parser::NodeArena, node_idx: NodeIndex| -> bool {
+            let Some(node) = arena.get(node_idx) else {
+                return false;
+            };
+            if let Some(mods) = arena.get_declaration_modifiers(node) {
+                for &m_idx in &mods.nodes {
+                    if let Some(m_node) = arena.get(m_idx)
+                        && m_node.kind == SyntaxKind::StaticKeyword as u16 {
+                            return true;
+                        }
+                }
+            }
+            false
+        };
+
+        // Use the implementation's modifier as canonical
+        let impl_modifier = get_access_modifier(self.ctx.arena, impl_node_idx);
+        let impl_is_static = has_static(self.ctx.arena, impl_node_idx);
+
+        // Check each overload signature against the implementation.
+        // Only compare declarations with the same static/instance status.
+        for &decl_idx in &symbol.declarations {
+            if decl_idx == impl_node_idx {
+                continue;
+            }
+            if has_static(self.ctx.arena, decl_idx) != impl_is_static {
+                continue;
+            }
+            let decl_modifier = get_access_modifier(self.ctx.arena, decl_idx);
+            if decl_modifier != impl_modifier {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                );
+            }
+        }
+    }
+
     pub(crate) fn check_modifier_combinations(
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
