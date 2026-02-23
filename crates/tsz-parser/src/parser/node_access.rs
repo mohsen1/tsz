@@ -39,12 +39,13 @@ use super::syntax_kind_ext::{
     JSX_ELEMENT, JSX_EXPRESSION, JSX_FRAGMENT, JSX_NAMESPACED_NAME, JSX_OPENING_ELEMENT,
     JSX_SELF_CLOSING_ELEMENT, JSX_SPREAD_ATTRIBUTE, LABELED_STATEMENT, LITERAL_TYPE, MAPPED_TYPE,
     METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, NAMED_EXPORTS,
-    NAMED_IMPORTS, NAMED_TUPLE_MEMBER, NAMESPACE_EXPORT, NAMESPACE_IMPORT, NEW_EXPRESSION,
-    NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN, OBJECT_LITERAL_EXPRESSION, OPTIONAL_TYPE,
-    PARAMETER, PARENTHESIZED_EXPRESSION, PARENTHESIZED_TYPE, POSTFIX_UNARY_EXPRESSION,
-    PREFIX_UNARY_EXPRESSION, PROPERTY_ACCESS_EXPRESSION, PROPERTY_ASSIGNMENT, PROPERTY_DECLARATION,
-    PROPERTY_SIGNATURE, QUALIFIED_NAME, REST_TYPE, RETURN_STATEMENT, SATISFIES_EXPRESSION,
-    SET_ACCESSOR, SHORTHAND_PROPERTY_ASSIGNMENT, SOURCE_FILE, SPREAD_ASSIGNMENT, SPREAD_ELEMENT,
+    NAMED_IMPORTS, NAMED_TUPLE_MEMBER, NAMESPACE_EXPORT, NAMESPACE_EXPORT_DECLARATION,
+    NAMESPACE_IMPORT, NEW_EXPRESSION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN,
+    OBJECT_LITERAL_EXPRESSION, OPTIONAL_TYPE, PARAMETER, PARENTHESIZED_EXPRESSION,
+    PARENTHESIZED_TYPE, POSTFIX_UNARY_EXPRESSION, PREFIX_UNARY_EXPRESSION,
+    PROPERTY_ACCESS_EXPRESSION, PROPERTY_ASSIGNMENT, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
+    QUALIFIED_NAME, REST_TYPE, RETURN_STATEMENT, SATISFIES_EXPRESSION, SET_ACCESSOR,
+    SHORTHAND_PROPERTY_ASSIGNMENT, SOURCE_FILE, SPREAD_ASSIGNMENT, SPREAD_ELEMENT,
     SWITCH_STATEMENT, TAGGED_TEMPLATE_EXPRESSION, TEMPLATE_EXPRESSION, TEMPLATE_LITERAL_TYPE,
     TEMPLATE_SPAN, THROW_STATEMENT, TRY_STATEMENT, TUPLE_TYPE, TYPE_ALIAS_DECLARATION,
     TYPE_ASSERTION, TYPE_LITERAL, TYPE_OPERATOR, TYPE_PARAMETER, TYPE_PREDICATE, TYPE_QUERY,
@@ -196,6 +197,113 @@ impl NodeArena {
             return false;
         }
         false
+    }
+
+    /// Check whether a namespace/module declaration is instantiated (has runtime value declarations).
+    ///
+    /// Returns `true` if the namespace contains value declarations (variables, functions,
+    /// classes, enums, expression statements, export assignments), or is a
+    /// `NAMESPACE_EXPORT_DECLARATION` (`export as namespace X`), which always produces a
+    /// runtime global.
+    ///
+    /// Recursively walks dotted namespaces (`namespace Foo.Bar`) and `EXPORT_DECLARATION`
+    /// wrappers to find the innermost `MODULE_BLOCK`, then checks each statement.
+    #[must_use]
+    pub fn is_namespace_instantiated(&self, namespace_idx: NodeIndex) -> bool {
+        let Some(node) = self.get(namespace_idx) else {
+            return false;
+        };
+
+        // `export as namespace X` always creates a global runtime value.
+        if node.kind == NAMESPACE_EXPORT_DECLARATION {
+            return true;
+        }
+
+        if node.kind != MODULE_DECLARATION {
+            return false;
+        }
+        let Some(module_decl) = self.get_module(node) else {
+            return false;
+        };
+        self.module_body_has_runtime_members(module_decl.body)
+    }
+
+    /// Check whether a module body contains runtime value declarations.
+    ///
+    /// Helper for [`is_namespace_instantiated`]. Handles dotted namespaces
+    /// (body is another `MODULE_DECLARATION`) and `MODULE_BLOCK` bodies.
+    fn module_body_has_runtime_members(&self, body_idx: NodeIndex) -> bool {
+        if body_idx.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.get(body_idx) else {
+            return false;
+        };
+
+        // Dotted namespace: `namespace Foo.Bar { ... }` — recurse into inner module
+        if body_node.kind == MODULE_DECLARATION {
+            return self.is_namespace_instantiated(body_idx);
+        }
+
+        if body_node.kind != MODULE_BLOCK {
+            return false;
+        }
+
+        let Some(module_block) = self.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(statements) = &module_block.statements else {
+            return false;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.get(stmt_idx) else {
+                continue;
+            };
+            if self.is_runtime_module_statement(stmt_node, stmt_idx) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a statement inside a module block is a runtime value declaration.
+    fn is_runtime_module_statement(&self, node: &Node, node_idx: NodeIndex) -> bool {
+        match node.kind {
+            k if k == VARIABLE_STATEMENT
+                || k == FUNCTION_DECLARATION
+                || k == CLASS_DECLARATION
+                || k == ENUM_DECLARATION
+                || k == EXPRESSION_STATEMENT
+                || k == EXPORT_ASSIGNMENT =>
+            {
+                true
+            }
+            k if k == EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.get_export_decl(node)
+                    && let Some(clause) = self.get(export_decl.export_clause)
+                {
+                    match clause.kind {
+                        k if k == VARIABLE_STATEMENT
+                            || k == FUNCTION_DECLARATION
+                            || k == CLASS_DECLARATION
+                            || k == ENUM_DECLARATION =>
+                        {
+                            true
+                        }
+                        k if k == MODULE_DECLARATION => {
+                            self.is_namespace_instantiated(export_decl.export_clause)
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            k if k == MODULE_DECLARATION => self.is_namespace_instantiated(node_idx),
+            _ => false,
+        }
     }
 
     /// Get access expression data (property access or element access).
