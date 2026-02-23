@@ -251,10 +251,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // may find JSDoc from a parent function via parent chain walking.
         if !is_closure
             && self.is_js_file()
-                && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx)
-            {
-                self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
-            }
+            && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx)
+        {
+            self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
+        }
 
         // Check parameter initializer placement for implementation vs signature (TS2371)
         self.check_non_impl_parameter_initializers(
