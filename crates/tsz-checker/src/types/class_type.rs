@@ -114,31 +114,17 @@ impl<'a> CheckerState<'a> {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
         let factory = self.ctx.types.factory();
 
-        // Try to insert into global class_instance_resolution_set for cross-call-chain cycle detection.
-        // If the symbol is already in the set, it means we have a cycle - return ERROR.
-        // We track whether we inserted so we know to remove it later.
+        // Try to insert into global class_instance_resolution_set for recursion prevention.
+        // If the symbol is already in the set, it means this type is currently being resolved
+        // somewhere up the call stack — return ERROR to break the recursion. Do NOT emit
+        // TS2506 here: this is a recursion guard, not a cycle detector. The symbol being
+        // in the set does not prove circular inheritance. True TS2506 cycle detection is
+        // handled by dedicated inheritance checks in class_inheritance.rs.
         let did_insert_into_global_set = if let Some(sym_id) = current_sym {
             if self.ctx.class_instance_resolution_set.insert(sym_id) {
                 true // We inserted it
             } else {
-                // Symbol already in set - this is a cycle, return ERROR
-                let error_node = class.name;
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let name_text = self
-                    .ctx
-                    .arena
-                    .get(class.name)
-                    .and_then(|n| self.get_identifier_text(n))
-                    .unwrap_or_else(|| "unknown".to_string());
-                let message = format_message(
-                    diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                    &[&name_text],
-                );
-                self.error_at_node(
-                    error_node,
-                    &message,
-                    diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                );
+                // Symbol already being resolved — break recursion without diagnostic
                 return TypeId::ERROR;
             }
         } else {
