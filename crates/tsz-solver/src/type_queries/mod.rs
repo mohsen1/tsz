@@ -75,8 +75,7 @@ pub use extended::{
     get_invalid_index_type_member, get_literal_property_name, get_number_literal_value,
     get_string_literal_atom, get_string_literal_value, get_tuple_list_id, get_type_param_default,
     get_widened_literal_type, is_boolean_literal, is_direct_type_parameter, is_invalid_index_type,
-    is_number_literal, is_object_with_index_type, is_string_literal, unwrap_readonly_for_lookup,
-    widen_literal_to_primitive,
+    is_number_literal, is_object_with_index_type, is_string_literal, widen_literal_to_primitive,
 };
 pub use extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, AbstractConstructorKind,
