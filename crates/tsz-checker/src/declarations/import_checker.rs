@@ -1175,8 +1175,41 @@ impl<'a> CheckerState<'a> {
             let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
             if is_conflict {
                 for &export_idx in &export_default_indices {
+                    // tsc points TS2528 at the declaration name for named exports
+                    // (e.g., `Foo` in `export default function Foo()`), or at `default`
+                    // for anonymous exports. Find the best anchor node.
+                    let anchor = self
+                        .ctx
+                        .arena
+                        .get_export_decl_at(export_idx)
+                        .and_then(|ed| {
+                            let clause = self.ctx.arena.get(ed.export_clause)?;
+                            // For function/class declarations, point at the name
+                            if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                                self.ctx.arena.get_function(clause).and_then(|f| {
+                                    let n = self.ctx.arena.get(f.name)?;
+                                    if n.kind == SyntaxKind::Identifier as u16 {
+                                        Some(f.name)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else if clause.kind == syntax_kind_ext::CLASS_DECLARATION {
+                                self.ctx.arena.get_class(clause).and_then(|c| {
+                                    let n = self.ctx.arena.get(c.name)?;
+                                    if n.kind == SyntaxKind::Identifier as u16 {
+                                        Some(c.name)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(export_idx);
                     self.error_at_node(
-                        export_idx,
+                        anchor,
                         "A module cannot have multiple default exports.",
                         diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                     );
