@@ -480,11 +480,11 @@ impl NodeArena {
         use super::flags::node_flags;
         if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) == 0
             && let Some(ext) = self.get_extended(node_idx)
-                && let Some(parent) = self.get(ext.parent)
-                && parent.kind == VARIABLE_DECLARATION_LIST
-            {
-                flags |= parent.flags as u32;
-            }
+            && let Some(parent) = self.get(ext.parent)
+            && parent.kind == VARIABLE_DECLARATION_LIST
+        {
+            flags |= parent.flags as u32;
+        }
         flags
     }
 
