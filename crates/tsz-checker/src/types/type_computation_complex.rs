@@ -172,7 +172,59 @@ impl<'a> CheckerState<'a> {
         let module_specifier = self.get_require_module_specifier(import_decl.module_specifier)?;
         let exports = self.resolve_effective_module_exports(&module_specifier)?;
         let export_equals_sym = exports.get("export=")?;
-        Some(self.get_type_of_symbol(export_equals_sym))
+        let resolved_export_equals_sym = self
+            .ctx
+            .binder
+            .get_symbol(export_equals_sym)
+            .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::ALIAS) != 0)
+            .then(|| {
+                let mut visited_aliases = Vec::new();
+                self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
+            })
+            .flatten()
+            .unwrap_or(export_equals_sym);
+
+        let mut constructor_type = self.get_type_of_symbol(resolved_export_equals_sym);
+        if constructor_type == TypeId::UNKNOWN || constructor_type == TypeId::ERROR {
+            constructor_type = self.get_type_of_symbol(export_equals_sym);
+        }
+
+        // If `export =` resolves to an alias chain we couldn't lower to a concrete
+        // constructor type, prefer any concrete value export from the module over
+        // propagating unknown into TS18046 false positives.
+        if constructor_type == TypeId::UNKNOWN || constructor_type == TypeId::ERROR {
+            let mut preferred_candidate: Option<TypeId> = None;
+            let mut fallback_candidate: Option<TypeId> = None;
+            for (export_name, export_sym) in exports.iter() {
+                if export_name == "export=" {
+                    continue;
+                }
+                let candidate = self.get_type_of_symbol(*export_sym);
+                if candidate == TypeId::UNKNOWN || candidate == TypeId::ERROR {
+                    continue;
+                }
+
+                let symbol_flags = self
+                    .ctx
+                    .binder
+                    .get_symbol(*export_sym)
+                    .map_or(0, |sym| sym.flags);
+                let is_likely_constructor_symbol = (symbol_flags
+                    & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::FUNCTION))
+                    != 0;
+                if is_likely_constructor_symbol && preferred_candidate.is_none() {
+                    preferred_candidate = Some(candidate);
+                }
+                if fallback_candidate.is_none() {
+                    fallback_candidate = Some(candidate);
+                }
+            }
+            if let Some(candidate) = preferred_candidate.or(fallback_candidate) {
+                constructor_type = candidate;
+            }
+        }
+
+        Some(constructor_type)
     }
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {

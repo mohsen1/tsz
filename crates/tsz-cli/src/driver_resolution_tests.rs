@@ -254,6 +254,34 @@ fn test_resolve_type_package_entry_with_mode_require() {
 }
 
 #[test]
+fn test_default_type_roots_walks_parent_directories() {
+    use std::fs;
+
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let repo_root = dir.path();
+    let app_dir = repo_root.join("packages").join("app");
+    let local_types = app_dir.join("node_modules").join("@types");
+    let parent_types = repo_root.join("node_modules").join("@types");
+
+    fs::create_dir_all(&local_types).unwrap();
+    fs::create_dir_all(&parent_types).unwrap();
+
+    let roots = default_type_roots(&app_dir);
+    let local_canonical = canonicalize_or_owned(&local_types);
+    let parent_canonical = canonicalize_or_owned(&parent_types);
+
+    assert_eq!(
+        roots.first(),
+        Some(&local_canonical),
+        "Nearest @types root should come first"
+    );
+    assert!(
+        roots.contains(&parent_canonical),
+        "Should include parent @types root"
+    );
+}
+
+#[test]
 fn test_resolve_module_specifier_classic_path_mapping_falls_back_to_root() {
     let mut raw_paths = FxHashMap::default();
     raw_paths.insert(

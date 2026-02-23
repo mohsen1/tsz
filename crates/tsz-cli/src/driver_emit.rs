@@ -446,11 +446,23 @@ pub(crate) fn normalize_type_roots(
     let roots = roots?;
     let mut normalized = Vec::new();
     for root in roots {
-        let resolved = if root.is_absolute() {
+        let mut resolved = if root.is_absolute() {
             root
         } else {
             base_dir.join(root)
         };
+        if resolved.is_absolute() && !resolved.exists() {
+            // Conformance fixtures often use virtual-root absolute paths (e.g. "/types").
+            // If the absolute path doesn't exist on disk, reinterpret it relative to project root.
+            let mut relative = PathBuf::new();
+            for component in resolved.components() {
+                match component {
+                    std::path::Component::Prefix(_) | std::path::Component::RootDir => {}
+                    other => relative.push(other.as_os_str()),
+                }
+            }
+            resolved = base_dir.join(relative);
+        }
         let resolved = canonicalize_or_owned(&resolved);
         if resolved.is_dir() {
             normalized.push(resolved);
