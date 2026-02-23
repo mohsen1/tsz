@@ -251,7 +251,10 @@ impl<'a> Printer<'a> {
                     // `exports.default = name;` assignment BEFORE the function
                     // declaration. This works because JS function declarations
                     // are hoisted, so the binding exists at the top of the scope.
+                    // When the default export was already hoisted to the preamble,
+                    // skip the inline emission to avoid duplicates.
                     if !self.ctx.module_state.has_export_assignment
+                        && !self.ctx.module_state.default_func_export_hoisted
                         && export.is_default_export
                         && let Some(func) = self.arena.get_function(clause_node)
                         && let Some(name) = self.get_identifier_text_opt(func.name)

@@ -46,7 +46,7 @@ impl<'a> CommonJsTransformContext<'a> {
     /// Transform a source file's statements to `CommonJS` IR
     pub fn transform_source_file(&mut self, statements: &[NodeIndex]) -> Vec<IRNode> {
         // Collect export names for initialization
-        let (_func_exports, other_exports) =
+        let (_func_exports, other_exports, _default_func_export) =
             crate::transforms::module_commonjs::collect_export_names_categorized(
                 self.arena, statements,
             );

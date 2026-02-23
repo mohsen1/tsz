@@ -235,13 +235,17 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
 
 /// Collect export names, categorized into function declarations (hoisted)
 /// and other declarations (non-hoisted).
-/// Returns (`function_exports`, `other_exports`)
+/// Returns (`function_exports`, `other_exports`, `default_func_export`)
+/// where `default_func_export` is `Some(local_name)` when the file has
+/// `export default function name() {}` — the local function name for the
+/// hoisted `exports.default = name;` preamble assignment.
 pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
-) -> (Vec<String>, Vec<String>) {
+) -> (Vec<String>, Vec<String>, Option<String>) {
     let mut func_exports = Vec::new();
     let mut other_exports = Vec::new();
+    let mut default_func_export: Option<String> = None;
     let all = collect_export_names(arena, statements);
 
     // First pass: collect all function declaration names in the file (including
@@ -295,6 +299,22 @@ pub fn collect_export_names_categorized(
         {
             func_exports.push(name);
         }
+        // Default function export: export default function func() {}
+        // tsc hoists `exports.default = func;` to the preamble, just like
+        // named function exports, because JS function declarations are hoisted.
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_decl) = arena.get_export_decl(node)
+            && !export_decl.is_type_only
+            && export_decl.is_default_export
+            && export_decl.module_specifier.is_none()
+            && let Some(clause_node) = arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = arena.get_function(clause_node)
+            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && let Some(name) = get_identifier_text(arena, func.name)
+        {
+            default_func_export = Some(name);
+        }
         // Named export specifiers: export { f } where f is a function declaration
         // JS function declarations are hoisted, so `exports.f = f;` can appear
         // in the preamble (before the function body), matching tsc behavior.
@@ -337,7 +357,7 @@ pub fn collect_export_names_categorized(
     // TypeScript emits void 0 initialization in reverse declaration order
     other_exports.reverse();
 
-    (func_exports, other_exports)
+    (func_exports, other_exports, default_func_export)
 }
 
 /// Emit the exports initialization line
