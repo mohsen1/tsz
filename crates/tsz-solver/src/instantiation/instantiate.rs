@@ -145,6 +145,94 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
+    /// Instantiate a slice of properties by substituting type IDs.
+    fn instantiate_properties(&mut self, properties: &[PropertyInfo]) -> Vec<PropertyInfo> {
+        properties
+            .iter()
+            .map(|p| PropertyInfo {
+                name: p.name,
+                type_id: self.instantiate(p.type_id),
+                write_type: self.instantiate(p.write_type),
+                optional: p.optional,
+                readonly: p.readonly,
+                is_method: p.is_method,
+                visibility: p.visibility,
+                parent_id: p.parent_id,
+            })
+            .collect()
+    }
+
+    /// Instantiate an optional index signature.
+    fn instantiate_index_signature(
+        &mut self,
+        idx: Option<&IndexSignature>,
+    ) -> Option<IndexSignature> {
+        idx.map(|idx| IndexSignature {
+            key_type: self.instantiate(idx.key_type),
+            value_type: self.instantiate(idx.value_type),
+            readonly: idx.readonly,
+        })
+    }
+
+    /// Instantiate type parameter constraints and defaults.
+    fn instantiate_type_params(&mut self, type_params: &[TypeParamInfo]) -> Vec<TypeParamInfo> {
+        type_params
+            .iter()
+            .map(|tp| TypeParamInfo {
+                is_const: false,
+                name: tp.name,
+                constraint: tp.constraint.map(|c| self.instantiate(c)),
+                default: tp.default.map(|d| self.instantiate(d)),
+            })
+            .collect()
+    }
+
+    /// Instantiate function/signature parameters.
+    fn instantiate_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
+        params
+            .iter()
+            .map(|p| ParamInfo {
+                name: p.name,
+                type_id: self.instantiate(p.type_id),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect()
+    }
+
+    /// Enter a shadowing scope for type parameters.
+    ///
+    /// Returns `(saved_shadowed_len, saved_visiting)` for restoring via
+    /// [`exit_shadowing_scope`].
+    fn enter_shadowing_scope(
+        &mut self,
+        type_params: &[TypeParamInfo],
+    ) -> (usize, Option<FxHashMap<TypeId, TypeId>>) {
+        let shadowed_len = self.shadowed.len();
+        let saved_visiting = (!type_params.is_empty()).then(|| {
+            let saved = self.visiting.clone();
+            for tp in type_params {
+                let tp_id = self.interner.type_param(tp.clone());
+                self.visiting.remove(&tp_id);
+            }
+            saved
+        });
+        self.shadowed.extend(type_params.iter().map(|tp| tp.name));
+        (shadowed_len, saved_visiting)
+    }
+
+    /// Exit a shadowing scope, restoring the previous state.
+    fn exit_shadowing_scope(
+        &mut self,
+        shadowed_len: usize,
+        saved_visiting: Option<FxHashMap<TypeId, TypeId>>,
+    ) {
+        self.shadowed.truncate(shadowed_len);
+        if let Some(saved) = saved_visiting {
+            self.visiting = saved;
+        }
+    }
+
     /// Apply the substitution to a type, returning the instantiated type.
     pub fn instantiate(&mut self, type_id: TypeId) -> TypeId {
         // Fast path: intrinsic types don't need instantiation
@@ -192,64 +280,18 @@ impl<'a> TypeInstantiator<'a> {
 
     /// Instantiate a call signature.
     fn instantiate_call_signature(&mut self, sig: &CallSignature) -> CallSignature {
-        let shadowed_len = self.shadowed.len();
-
-        // Save the visiting cache before entering a shadowing scope.
-        // The cache maps TypeId→TypeId, but TypeParameter substitution depends on
-        // the current `shadowed` set. If we cache T→string when T is not shadowed,
-        // then enter a scope where T IS shadowed (method <T>), the stale cache
-        // would incorrectly return string instead of T. Conversely, if T→T is
-        // cached while shadowed, it would persist after leaving the scope.
-        // Saving/restoring ensures correctness across shadowing boundaries.
-        let saved_visiting = (!sig.type_params.is_empty()).then(|| {
-            let saved = self.visiting.clone();
-            // Remove cached entries for TypeParameters being shadowed.
-            // Without this, instantiate_inner returns cached results before
-            // instantiate_key gets to check is_shadowed.
-            for tp in &sig.type_params {
-                let tp_id = self.interner.type_param(tp.clone());
-                self.visiting.remove(&tp_id);
-            }
-            saved
-        });
-
-        self.shadowed
-            .extend(sig.type_params.iter().map(|tp| tp.name));
+        let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
 
         let type_predicate = sig
             .type_predicate
             .as_ref()
             .map(|predicate| self.instantiate_type_predicate(predicate));
         let this_type = sig.this_type.map(|type_id| self.instantiate(type_id));
-        let type_params: Vec<TypeParamInfo> = sig
-            .type_params
-            .iter()
-            .map(|tp| TypeParamInfo {
-                is_const: false,
-                name: tp.name,
-                constraint: tp.constraint.map(|c| self.instantiate(c)),
-                default: tp.default.map(|d| self.instantiate(d)),
-            })
-            .collect();
-        let params: Vec<ParamInfo> = sig
-            .params
-            .iter()
-            .map(|p| ParamInfo {
-                name: p.name,
-                type_id: self.instantiate(p.type_id),
-                optional: p.optional,
-                rest: p.rest,
-            })
-            .collect();
+        let type_params = self.instantiate_type_params(&sig.type_params);
+        let params = self.instantiate_params(&sig.params);
         let return_type = self.instantiate(sig.return_type);
 
-        self.shadowed.truncate(shadowed_len);
-
-        // Restore the visiting cache to discard any entries produced under the
-        // shadowed scope that would be stale now.
-        if let Some(saved) = saved_visiting {
-            self.visiting = saved;
-        }
+        self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
         CallSignature {
             type_params,
@@ -374,20 +416,7 @@ impl<'a> TypeInstantiator<'a> {
             // Object: instantiate all property types
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-                let instantiated: Vec<PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|p| PropertyInfo {
-                        name: p.name,
-                        type_id: self.instantiate(p.type_id),
-                        write_type: self.instantiate(p.write_type),
-                        optional: p.optional,
-                        readonly: p.readonly,
-                        is_method: p.is_method,
-                        visibility: p.visibility,
-                        parent_id: p.parent_id,
-                    })
-                    .collect();
+                let instantiated = self.instantiate_properties(&shape.properties);
                 self.interner
                     .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
             }
@@ -395,32 +424,11 @@ impl<'a> TypeInstantiator<'a> {
             // Object with index signatures: instantiate all types
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
-                let instantiated_props: Vec<PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|p| PropertyInfo {
-                        name: p.name,
-                        type_id: self.instantiate(p.type_id),
-                        write_type: self.instantiate(p.write_type),
-                        optional: p.optional,
-                        readonly: p.readonly,
-                        is_method: p.is_method,
-                        visibility: p.visibility,
-                        parent_id: p.parent_id,
-                    })
-                    .collect();
+                let instantiated_props = self.instantiate_properties(&shape.properties);
                 let instantiated_string_idx =
-                    shape.string_index.as_ref().map(|idx| IndexSignature {
-                        key_type: self.instantiate(idx.key_type),
-                        value_type: self.instantiate(idx.value_type),
-                        readonly: idx.readonly,
-                    });
+                    self.instantiate_index_signature(shape.string_index.as_ref());
                 let instantiated_number_idx =
-                    shape.number_index.as_ref().map(|idx| IndexSignature {
-                        key_type: self.instantiate(idx.key_type),
-                        value_type: self.instantiate(idx.value_type),
-                        readonly: idx.readonly,
-                    });
+                    self.instantiate_index_signature(shape.number_index.as_ref());
                 self.interner.object_with_index(ObjectShape {
                     flags: shape.flags,
                     properties: instantiated_props,
@@ -434,54 +442,18 @@ impl<'a> TypeInstantiator<'a> {
             // Note: Type params in the function create a new scope - don't substitute those
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
-                let shadowed_len = self.shadowed.len();
-                let saved_visiting = (!shape.type_params.is_empty()).then(|| {
-                    let saved = self.visiting.clone();
-                    // Remove cached entries for TypeParameters being shadowed.
-                    // The cache might already contain T→string from instantiating
-                    // a sibling property in the same object. Without removal,
-                    // instantiate_inner returns the cached result before
-                    // instantiate_key gets to check is_shadowed.
-                    for tp in &shape.type_params {
-                        let tp_id = self.interner.type_param(tp.clone());
-                        self.visiting.remove(&tp_id);
-                    }
-                    saved
-                });
-                self.shadowed
-                    .extend(shape.type_params.iter().map(|tp| tp.name));
+                let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
                 let type_predicate = shape
                     .type_predicate
                     .as_ref()
                     .map(|predicate| self.instantiate_type_predicate(predicate));
                 let this_type = shape.this_type.map(|type_id| self.instantiate(type_id));
-                let instantiated_type_params: Vec<TypeParamInfo> = shape
-                    .type_params
-                    .iter()
-                    .map(|tp| TypeParamInfo {
-                        is_const: false,
-                        name: tp.name,
-                        constraint: tp.constraint.map(|c| self.instantiate(c)),
-                        default: tp.default.map(|d| self.instantiate(d)),
-                    })
-                    .collect();
-                let instantiated_params: Vec<ParamInfo> = shape
-                    .params
-                    .iter()
-                    .map(|p| ParamInfo {
-                        name: p.name,
-                        type_id: self.instantiate(p.type_id),
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
+                let instantiated_type_params = self.instantiate_type_params(&shape.type_params);
+                let instantiated_params = self.instantiate_params(&shape.params);
                 let instantiated_return = self.instantiate(shape.return_type);
 
-                self.shadowed.truncate(shadowed_len);
-                if let Some(saved) = saved_visiting {
-                    self.visiting = saved;
-                }
+                self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
                 self.interner.function(FunctionShape {
                     type_params: instantiated_type_params,
@@ -507,20 +479,7 @@ impl<'a> TypeInstantiator<'a> {
                     .iter()
                     .map(|sig| self.instantiate_call_signature(sig))
                     .collect();
-                let instantiated_props = shape
-                    .properties
-                    .iter()
-                    .map(|p| PropertyInfo {
-                        name: p.name,
-                        type_id: self.instantiate(p.type_id),
-                        write_type: self.instantiate(p.write_type),
-                        optional: p.optional,
-                        readonly: p.readonly,
-                        is_method: p.is_method,
-                        visibility: p.visibility,
-                        parent_id: p.parent_id,
-                    })
-                    .collect();
+                let instantiated_props = self.instantiate_properties(&shape.properties);
 
                 self.interner.callable(CallableShape {
                     call_signatures: instantiated_call,
@@ -627,12 +586,8 @@ impl<'a> TypeInstantiator<'a> {
             // Mapped: instantiate constraint and template
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
-                let shadowed_len = self.shadowed.len();
-                let saved = self.visiting.clone();
-                let tp_id = self.interner.type_param(mapped.type_param.clone());
-                self.visiting.remove(&tp_id);
-                let saved_visiting = Some(saved);
-                self.shadowed.push(mapped.type_param.name);
+                let tp_slice = std::slice::from_ref(&mapped.type_param);
+                let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
 
                 let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
@@ -641,10 +596,7 @@ impl<'a> TypeInstantiator<'a> {
                     mapped.type_param.constraint.map(|c| self.instantiate(c));
                 let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
 
-                self.shadowed.truncate(shadowed_len);
-                if let Some(saved) = saved_visiting {
-                    self.visiting = saved;
-                }
+                self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
                 // If the mapped type is unchanged after substitution (e.g., because
                 // the mapped type's own type parameter shadowed the outer substitution),

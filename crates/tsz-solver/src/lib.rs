@@ -41,7 +41,6 @@ pub mod unsoundness_audit;
 pub mod utils;
 pub mod visitor;
 mod visitors;
-// widening: moved into operations/widening.rs
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
 pub use operations::widening;
