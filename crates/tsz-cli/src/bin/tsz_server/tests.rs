@@ -2401,6 +2401,186 @@ fn test_completion_info_auto_import_export_equals_type_only_preferred() {
 }
 
 #[test]
+fn test_completion_info_verbatim_commonjs_auto_imports_include_require_member_forms() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/node/path.d.ts".to_string(),
+        "declare module 'path' {\n  namespace path {\n    interface PlatformPath {\n      normalize(p: string): string;\n      join(...paths: string[]): string;\n      resolve(...pathSegments: string[]): string;\n      isAbsolute(p: string): boolean;\n    }\n  }\n  const path: path.PlatformPath;\n  export = path;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/cool-name.js".to_string(),
+        "module.exports = {\n  explode: () => {}\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "// @module: node18\n// @verbatimModuleSyntax: true\n// @allowJs: true\n/**/\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 4,
+            "offset": 1,
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+
+    let normalize = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("normalize")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("path")
+        })
+        .expect("expected `normalize` auto-import entry from `path`");
+    assert_eq!(
+        normalize
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("path.normalize")
+    );
+
+    let explode = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("explode")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("./cool-name")
+        })
+        .expect("expected `explode` auto-import entry from `./cool-name`");
+    assert_eq!(
+        explode
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("coolName.explode")
+    );
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 4,
+            "offset": 1,
+            "entryNames": [{ "name": "normalize", "source": "path" }],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "allowIncompleteCompletions": true
+            }
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let text_changes = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|actions| actions.first())
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("completion details should include text changes");
+    let import_text = text_changes
+        .first()
+        .and_then(|change| change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("completion details should include import text");
+    assert!(
+        import_text.contains("import path = require(\"path\");"),
+        "expected `import = require` edit for `path`, got: {import_text}"
+    );
+}
+
+#[test]
+fn test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@types/node/path.d.ts".to_string(),
+        "declare module 'path' {\n  namespace path {\n    interface PlatformPath {\n      normalize(p: string): string;\n    }\n  }\n  const path: path.PlatformPath;\n  export = path;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "// @module: node18\n// @verbatimModuleSyntax: true\n// @allowJs: true\nnormalize\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 4,
+            "startOffset": 1,
+            "endLine": 4,
+            "endOffset": 10,
+            "errorCodes": [2304]
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|desc| desc.contains("Add import from \"path\""))
+        })
+        .expect("expected verbatim CommonJS fallback import action");
+    let text_changes = action
+        .get("changes")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .expect("expected fallback action text changes");
+    assert!(
+        text_changes.iter().any(|change| {
+            change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("import path = require(\"path\");"))
+        }),
+        "expected fallback action to add `import path = require(\"path\")`"
+    );
+    assert!(
+        text_changes.iter().any(|change| {
+            change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text == "path.normalize")
+        }),
+        "expected fallback action to rewrite `normalize` usage to `path.normalize`"
+    );
+}
+
+#[test]
 fn test_completion_entry_details_upgrades_type_only_named_import_for_value_usage() {
     let mut server = make_server();
     server.open_files.insert(

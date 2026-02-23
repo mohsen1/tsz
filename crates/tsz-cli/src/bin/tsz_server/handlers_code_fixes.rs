@@ -487,6 +487,19 @@ impl Server {
                 });
                 response_actions.push(action);
             }
+            if response_actions.is_empty()
+                && error_codes
+                    .iter()
+                    .any(|code| *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && let Some(action) = self.verbatim_commonjs_auto_import_codefix_action(
+                    file_path,
+                    &content,
+                    &line_map,
+                    request_span,
+                )
+            {
+                response_actions.push(action);
+            }
             Self::rewrite_jsdoc_import_fixes(&content, &mut response_actions);
             self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
@@ -3315,6 +3328,311 @@ impl Server {
         }
 
         specifier.to_string()
+    }
+
+    fn verbatim_commonjs_auto_import_codefix_action(
+        &self,
+        file_path: &str,
+        content: &str,
+        line_map: &LineMap,
+        request_span: Option<(tsz::lsp::position::Position, tsz::lsp::position::Position)>,
+    ) -> Option<serde_json::Value> {
+        let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), text);
+                }
+            }
+        }
+        files
+            .entry(file_path.to_string())
+            .or_insert_with(|| content.to_string());
+
+        if !Self::is_ts_like_file_for_codefix(file_path) {
+            return None;
+        }
+        let (start_pos, end_pos) = request_span?;
+        let start_off = line_map.position_to_offset(start_pos, content)? as usize;
+        let end_off = line_map.position_to_offset(end_pos, content)? as usize;
+        if end_off <= start_off || end_off > content.len() {
+            return None;
+        }
+        let missing_name = content[start_off..end_off].trim();
+        if !Self::is_identifier_for_codefix(missing_name) {
+            return None;
+        }
+
+        let mut candidates: Vec<(String, String, Vec<String>)> = Vec::new();
+        for text in files.values() {
+            candidates.extend(Self::extract_ambient_export_equals_modules_for_codefix(text));
+        }
+        for (path, text) in &files {
+            if path == file_path || !Self::is_js_like_file(path) || !text.contains("module.exports")
+            {
+                continue;
+            }
+            let Some(specifier) = Self::relative_module_specifier_for_codefix(file_path, path)
+            else {
+                continue;
+            };
+            let alias = Self::commonjs_binding_name_from_specifier_for_codefix(&specifier);
+            if alias.is_empty() {
+                continue;
+            }
+            let members = Self::extract_module_exports_object_members_for_codefix(text);
+            if members.is_empty() {
+                continue;
+            }
+            candidates.push((specifier, alias, members));
+        }
+
+        for (module_specifier, alias, members) in candidates {
+            let replacement = if missing_name == alias {
+                alias.clone()
+            } else if members.iter().any(|m| m == missing_name) {
+                format!("{alias}.{missing_name}")
+            } else {
+                continue;
+            };
+
+            let mut text_changes = Vec::new();
+            let import_stmt = format!("import {alias} = require(\"{module_specifier}\");\n\n");
+            if !content.contains(import_stmt.trim()) {
+                text_changes.push(serde_json::json!({
+                    "start": { "line": 1, "offset": 1 },
+                    "end": { "line": 1, "offset": 1 },
+                    "newText": import_stmt
+                }));
+            }
+            text_changes.push(serde_json::json!({
+                "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                "newText": replacement
+            }));
+
+            return Some(serde_json::json!({
+                "fixName": "import",
+                "description": format!("Add import from \"{module_specifier}\""),
+                "changes": [{
+                    "fileName": file_path,
+                    "textChanges": text_changes
+                }]
+            }));
+        }
+
+        None
+    }
+
+    fn is_ts_like_file_for_codefix(path: &str) -> bool {
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "ts" | "tsx" | "mts" | "cts"
+                )
+            })
+    }
+
+    fn relative_module_specifier_for_codefix(from_file: &str, target_file: &str) -> Option<String> {
+        let from = std::path::Path::new(from_file);
+        let target = std::path::Path::new(target_file);
+        let (Some(from_parent), Some(target_parent)) = (from.parent(), target.parent()) else {
+            return None;
+        };
+        if from_parent != target_parent {
+            return None;
+        }
+        let stem = target.file_stem()?.to_str()?;
+        Some(format!("./{stem}"))
+    }
+
+    fn commonjs_binding_name_from_specifier_for_codefix(specifier: &str) -> String {
+        let trimmed = specifier.trim();
+        let last_segment = if trimmed.starts_with('@') {
+            trimmed.rsplit('/').next().unwrap_or(trimmed)
+        } else {
+            trimmed
+                .trim_start_matches("./")
+                .trim_start_matches("../")
+                .rsplit('/')
+                .next()
+                .unwrap_or(trimmed)
+        };
+        let base = last_segment
+            .trim_end_matches(".d.ts")
+            .trim_end_matches(".d.mts")
+            .trim_end_matches(".d.cts")
+            .trim_end_matches(".ts")
+            .trim_end_matches(".tsx")
+            .trim_end_matches(".mts")
+            .trim_end_matches(".cts")
+            .trim_end_matches(".js")
+            .trim_end_matches(".jsx")
+            .trim_end_matches(".mjs")
+            .trim_end_matches(".cjs");
+
+        let mut out = String::new();
+        let mut upper_next = false;
+        for ch in base.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                if out.is_empty() {
+                    out.push(ch.to_ascii_lowercase());
+                } else if upper_next {
+                    out.push(ch.to_ascii_uppercase());
+                    upper_next = false;
+                } else {
+                    out.push(ch);
+                }
+            } else {
+                upper_next = true;
+            }
+        }
+        out
+    }
+
+    fn extract_module_exports_object_members_for_codefix(content: &str) -> Vec<String> {
+        let Some(exports_idx) = content.find("module.exports") else {
+            return Vec::new();
+        };
+        let Some(open_rel) = content[exports_idx..].find('{') else {
+            return Vec::new();
+        };
+        let body_start = exports_idx + open_rel + 1;
+        let bytes = content.as_bytes();
+        let mut depth = 1usize;
+        let mut idx = body_start;
+        while idx < bytes.len() {
+            match bytes[idx] as char {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        if idx <= body_start || idx > content.len() {
+            return Vec::new();
+        }
+        let body = &content[body_start..idx];
+        let mut out = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for line in body.lines() {
+            let trimmed = line.trim();
+            let Some((raw_name, _)) = trimmed.split_once(':') else {
+                continue;
+            };
+            let name = raw_name.trim().trim_matches('"').trim_matches('\'');
+            if Self::is_identifier_for_codefix(name) && seen.insert(name.to_string()) {
+                out.push(name.to_string());
+            }
+        }
+        out
+    }
+
+    fn extract_ambient_export_equals_modules_for_codefix(
+        content: &str,
+    ) -> Vec<(String, String, Vec<String>)> {
+        let mut modules = Vec::new();
+        let mut cursor = 0usize;
+        while let Some(decl_rel) = content[cursor..].find("declare module ") {
+            let decl_start = cursor + decl_rel;
+            let after_decl = decl_start + "declare module ".len();
+            let quote = content[after_decl..]
+                .chars()
+                .find(|ch| *ch == '"' || *ch == '\'');
+            let Some(quote) = quote else {
+                cursor = after_decl;
+                continue;
+            };
+            let quote_start = content[after_decl..].find(quote).map(|i| after_decl + i);
+            let Some(quote_start) = quote_start else {
+                cursor = after_decl;
+                continue;
+            };
+            let module_name_start = quote_start + 1;
+            let Some(quote_end_rel) = content[module_name_start..].find(quote) else {
+                cursor = module_name_start;
+                continue;
+            };
+            let module_name_end = module_name_start + quote_end_rel;
+            let module_name = content[module_name_start..module_name_end].trim();
+            let Some(open_brace_rel) = content[module_name_end..].find('{') else {
+                cursor = module_name_end;
+                continue;
+            };
+            let body_start = module_name_end + open_brace_rel + 1;
+            let bytes = content.as_bytes();
+            let mut depth = 1usize;
+            let mut idx = body_start;
+            while idx < bytes.len() {
+                match bytes[idx] as char {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                idx += 1;
+            }
+            if idx <= body_start || idx > content.len() {
+                cursor = body_start;
+                continue;
+            }
+            let body = &content[body_start..idx];
+            let alias = body
+                .lines()
+                .find_map(|line| {
+                    let trimmed = line.trim();
+                    let rest = trimmed.strip_prefix("export = ")?;
+                    let alias = rest.trim_end_matches(';').trim();
+                    Self::is_identifier_for_codefix(alias).then(|| alias.to_string())
+                })
+                .unwrap_or_default();
+            if !alias.is_empty() {
+                let mut members = Vec::new();
+                let mut seen = rustc_hash::FxHashSet::default();
+                for line in body.lines() {
+                    let trimmed = line.trim();
+                    let Some(paren_idx) = trimmed.find('(') else {
+                        continue;
+                    };
+                    let mut head = trimmed[..paren_idx].trim();
+                    if head.ends_with('?') {
+                        head = head.trim_end_matches('?').trim();
+                    }
+                    if Self::is_identifier_for_codefix(head) && seen.insert(head.to_string()) {
+                        members.push(head.to_string());
+                    }
+                }
+                modules.push((module_name.to_string(), alias, members));
+            }
+            cursor = idx + 1;
+        }
+        modules
+    }
+
+    fn is_identifier_for_codefix(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+            return false;
+        }
+        chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
     }
 
     fn is_declaration_file_path(file_path: &str) -> bool {
