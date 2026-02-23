@@ -847,25 +847,25 @@ impl<'a> Printer<'a> {
             // re-emitting the source's own directive inside execute() would duplicate it.
             if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-                    && let Some(expr_node) = self.arena.get(expr_stmt.expression)
-                        && expr_node.kind == SyntaxKind::StringLiteral as u16 {
-                            let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node)
-                            {
-                                lit.text == "use strict"
-                            } else if let Some(text) = self.source_text {
-                                let s = crate::safe_slice::slice(
-                                    text,
-                                    expr_node.pos as usize,
-                                    expr_node.end as usize,
-                                );
-                                s == "\"use strict\"" || s == "'use strict'"
-                            } else {
-                                false
-                            };
-                            if is_use_strict {
-                                continue;
-                            }
-                        }
+                && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+                && expr_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
+                    lit.text == "use strict"
+                } else if let Some(text) = self.source_text {
+                    let s = crate::safe_slice::slice(
+                        text,
+                        expr_node.pos as usize,
+                        expr_node.end as usize,
+                    );
+                    s == "\"use strict\"" || s == "'use strict'"
+                } else {
+                    false
+                };
+                if is_use_strict {
+                    continue;
+                }
+            }
             if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 continue;
             }
