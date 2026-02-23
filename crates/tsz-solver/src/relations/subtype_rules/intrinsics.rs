@@ -6,20 +6,35 @@
 //! - The `Function` type
 //! - Apparent primitive shapes (for object-like operations on primitives)
 
-use crate::types::Visibility;
-use crate::types::{
-    FunctionShape, IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape,
-    PropertyInfo, TypeId,
-};
+use crate::TypeDatabase;
+use crate::objects::apparent::apparent_primitive_shape;
+use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
     intrinsic_kind, is_this_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, union_list_id,
 };
-use crate::{ApparentMemberKind, apparent_primitive_members};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+
+/// Create a function type with no parameters and the given return type.
+///
+/// Used for apparent method types on primitive wrappers during subtype checking.
+/// Unlike the evaluator's `make_apparent_method_type` (which uses `...any[]`),
+/// the subtype checker uses empty params because it only needs structural shape
+/// matching, not full call-site compatibility.
+fn make_subtype_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeId {
+    db.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if an intrinsic type is a subtype of another intrinsic type.
@@ -337,72 +352,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Build the apparent object shape for a primitive type.
     ///
-    /// This creates an `ObjectShape` representing the wrapper type's members:
-    /// - String: length, charAt, concat, etc.
-    /// - Number: toFixed, toPrecision, etc.
-    /// - Boolean: valueOf
-    /// - `BigInt`: toString, valueOf, etc.
-    /// - Symbol: description, toString, valueOf
+    /// Delegates to the shared `apparent_primitive_shape` with a simple
+    /// method-type factory (no params, given return type).
     pub(crate) fn apparent_primitive_shape(&mut self, kind: IntrinsicKind) -> ObjectShape {
-        let members = apparent_primitive_members(self.interner, kind);
-        let mut properties = Vec::with_capacity(members.len());
-
-        for member in members {
-            let name = self.interner.intern_string(member.name);
-            match member.kind {
-                ApparentMemberKind::Value(type_id) => properties.push(PropertyInfo {
-                    name,
-                    type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                }),
-                ApparentMemberKind::Method(return_type) => properties.push(PropertyInfo {
-                    name,
-                    type_id: self.apparent_method_type(return_type),
-                    write_type: self.apparent_method_type(return_type),
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                }),
-            }
-        }
-        properties.sort_by_key(|a| a.name);
-
-        let number_index = (kind == IntrinsicKind::String).then_some(IndexSignature {
-            key_type: TypeId::NUMBER,
-            value_type: TypeId::STRING,
-            // Keep string index signature assignable to mutable targets for TS compat.
-            readonly: false,
-        });
-
-        ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties,
-            string_index: None,
-            number_index,
-            symbol: None,
-        }
-    }
-
-    /// Create a function type with no parameters and the given return type.
-    ///
-    /// Used for apparent method types on primitive wrappers.
-    pub(crate) fn apparent_method_type(&mut self, return_type: TypeId) -> TypeId {
-        self.interner.function(FunctionShape {
-            params: Vec::new(),
-            this_type: None,
-            return_type,
-            type_params: Vec::new(),
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        })
+        apparent_primitive_shape(self.interner, kind, make_subtype_method_type)
     }
 
     /// Get the apparent primitive kind for a type (helper for template literal checking).

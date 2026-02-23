@@ -56,14 +56,14 @@ pub use visitors::visitor::{
     is_empty_object_type_db, is_enum_type, is_error_type, is_function_type, is_function_type_db,
     is_generic_application, is_identity_comparable_type, is_index_access_type,
     is_intersection_type, is_literal_type, is_literal_type_db, is_mapped_type,
-    is_module_namespace_type, is_module_namespace_type_db, is_object_like_type,
-    is_object_like_type_db, is_primitive_type, is_template_literal_type, is_this_type,
-    is_tuple_type, is_type_kind, is_type_parameter, is_type_reference, is_union_type,
-    keyof_inner_type, lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
-    module_namespace_symbol_ref, no_infer_inner_type, object_shape_id, object_with_index_shape_id,
-    readonly_inner_type, recursive_index, ref_symbol, string_intrinsic_components,
-    template_literal_id, test_type, tuple_list_id, type_param_info, type_query_symbol,
-    union_list_id, unique_symbol_ref, walk_referenced_types,
+    is_module_namespace_type, is_object_like_type, is_object_like_type_db, is_primitive_type,
+    is_template_literal_type, is_this_type, is_tuple_type, is_type_kind, is_type_parameter,
+    is_type_reference, is_union_type, keyof_inner_type, lazy_def_id, literal_number,
+    literal_string, literal_value, mapped_type_id, module_namespace_symbol_ref,
+    no_infer_inner_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
+    recursive_index, ref_symbol, string_intrinsic_components, template_literal_id, test_type,
+    tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
+    walk_referenced_types,
 };
 
 pub use application::*;

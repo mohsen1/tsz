@@ -431,11 +431,6 @@ pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     LiteralTypeChecker::check(types, type_id)
 }
 
-/// Check if a type is a module namespace type (`TypeDatabase` version).
-pub fn is_module_namespace_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
-}
-
 /// Check if a type is a function type (`TypeDatabase` version).
 pub fn is_function_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     FunctionTypeChecker::check(types, type_id)

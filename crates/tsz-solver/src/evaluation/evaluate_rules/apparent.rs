@@ -3,14 +3,10 @@
 //! This module provides utilities for working with apparent types of primitives.
 //! Apparent types define the shape of primitive values (e.g., string has .length, .`charAt()`, etc.)
 
-use crate::objects::apparent::apparent_primitive_members;
+use crate::TypeDatabase;
+use crate::objects::apparent::{apparent_primitive_members, apparent_primitive_shape};
 use crate::relations::subtype::TypeResolver;
-use crate::types::Visibility;
-use crate::types::{
-    FunctionShape, IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, TypeId,
-};
-use crate::{ApparentMemberKind, TypeDatabase};
+use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ParamInfo, TypeId};
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -51,54 +47,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Build an object shape for a primitive type's apparent members.
     pub(crate) fn apparent_primitive_shape(&self, kind: IntrinsicKind) -> ObjectShape {
-        let members = apparent_primitive_members(self.interner(), kind);
-        let mut properties = Vec::with_capacity(members.len());
-
-        for member in members {
-            let name = self.interner().intern_string(member.name);
-            match member.kind {
-                ApparentMemberKind::Value(type_id) => properties.push(PropertyInfo {
-                    name,
-                    type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                }),
-                ApparentMemberKind::Method(return_type) => properties.push(PropertyInfo {
-                    name,
-                    type_id: self.apparent_method_type(return_type),
-                    write_type: self.apparent_method_type(return_type),
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                }),
-            }
-        }
-        properties.sort_by_key(|a| a.name);
-
-        let number_index = (kind == IntrinsicKind::String).then_some(IndexSignature {
-            key_type: TypeId::NUMBER,
-            value_type: TypeId::STRING,
-            readonly: false,
-        });
-
-        ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties,
-            string_index: None,
-            number_index,
-            symbol: None,
-        }
-    }
-
-    /// Create a function type representing a method.
-    pub(crate) fn apparent_method_type(&self, return_type: TypeId) -> TypeId {
-        make_apparent_method_type(self.interner(), return_type)
+        apparent_primitive_shape(self.interner(), kind, make_apparent_method_type)
     }
 
     /// Get keyof for a primitive type.

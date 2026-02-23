@@ -1,5 +1,7 @@
 use crate::TypeDatabase;
-use crate::types::{IntrinsicKind, TypeId};
+use crate::types::{
+    IndexSignature, IntrinsicKind, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility,
+};
 
 pub enum ApparentMemberKind {
     Value(TypeId),
@@ -332,4 +334,64 @@ pub fn apparent_primitive_members(
     }
 
     members
+}
+
+/// Build an `ObjectShape` for a primitive type's apparent members.
+///
+/// This is the shared implementation used by both the evaluator and the subtype
+/// checker.  The `make_method_type` callback controls how method signatures are
+/// created — the evaluator passes `make_apparent_method_type` (which includes a
+/// `...any[]` rest param for full evaluation semantics), while the subtype
+/// checker may use a simpler shape.
+pub fn apparent_primitive_shape(
+    db: &dyn TypeDatabase,
+    kind: IntrinsicKind,
+    make_method_type: impl Fn(&dyn TypeDatabase, TypeId) -> TypeId,
+) -> ObjectShape {
+    let members = apparent_primitive_members(db, kind);
+    let mut properties = Vec::with_capacity(members.len());
+
+    for member in members {
+        let name = db.intern_string(member.name);
+        match member.kind {
+            ApparentMemberKind::Value(type_id) => properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            }),
+            ApparentMemberKind::Method(return_type) => {
+                let method_ty = make_method_type(db, return_type);
+                properties.push(PropertyInfo {
+                    name,
+                    type_id: method_ty,
+                    write_type: method_ty,
+                    optional: false,
+                    readonly: false,
+                    is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                });
+            }
+        }
+    }
+    properties.sort_by_key(|a| a.name);
+
+    let number_index = (kind == IntrinsicKind::String).then_some(IndexSignature {
+        key_type: TypeId::NUMBER,
+        value_type: TypeId::STRING,
+        readonly: false,
+    });
+
+    ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties,
+        string_index: None,
+        number_index,
+        symbol: None,
+    }
 }
