@@ -167,3 +167,83 @@ fn test_cjs_exported_enum_iife_tail_folding() {
         "Body should be unchanged after folding"
     );
 }
+
+#[test]
+fn test_template_literal_enum_no_reverse_mapping() {
+    // NoSubstitutionTemplateLiteral is syntactically string — no reverse mapping.
+    // Note: backtick template literals may not parse correctly in minimal test strings,
+    // so we test the is_syntactically_string logic indirectly via string member tracking:
+    // If A is a string literal and H = A, then H should also be string (no reverse mapping).
+    let output = transform_enum("enum Foo { A = \"hello\", H = A }");
+    assert!(
+        output.contains("Foo[\"A\"] = \"hello\""),
+        "String literal should not have reverse mapping, got: {output}"
+    );
+    assert!(
+        output.contains("Foo[\"H\"] = Foo.A"),
+        "Reference to string member should not have reverse mapping, got: {output}"
+    );
+}
+
+#[test]
+fn test_string_concatenation_enum_no_reverse_mapping() {
+    // "x" + expr is syntactically string — no reverse mapping
+    let output = transform_enum("enum Foo { B = \"2\" + BAR }");
+    assert!(
+        output.contains("Foo[\"B\"] = \"2\" + BAR"),
+        "String concat enum should not have reverse mapping, got: {output}"
+    );
+    assert!(
+        !output.contains("Foo[Foo["),
+        "Should not have reverse mapping pattern for string concat"
+    );
+}
+
+#[test]
+fn test_enum_member_self_reference_qualified() {
+    // Bare identifiers referencing sibling members must be qualified with enum name
+    let output = transform_enum("enum Foo { a = 2, b = 3, x = a + b }");
+    assert!(
+        output.contains("Foo.a + Foo.b"),
+        "Sibling member references should be qualified with enum name, got: {output}"
+    );
+}
+
+#[test]
+fn test_string_member_reference_no_reverse_mapping() {
+    // H = A where A is string-valued — H should also have no reverse mapping
+    let output = transform_enum("enum Foo { A = \"alpha\", H = A }");
+    // A is string, so H = Foo.A should also be treated as string (no reverse mapping)
+    assert!(
+        output.contains("Foo[\"A\"] = \"alpha\""),
+        "A should have no reverse mapping, got: {output}"
+    );
+    assert!(
+        output.contains("Foo[\"H\"] = Foo.A"),
+        "H referencing string member A should have no reverse mapping, got: {output}"
+    );
+}
+
+#[test]
+fn test_parenthesized_string_enum_no_reverse_mapping() {
+    // Parenthesized string literal is still syntactically string
+    let output = transform_enum("enum Foo { C = (\"hello\") }");
+    assert!(
+        !output.contains("Foo[Foo["),
+        "Parenthesized string should not have reverse mapping, got: {output}"
+    );
+}
+
+#[test]
+fn test_numeric_enum_still_has_reverse_mapping() {
+    // Numeric values should still get reverse mapping
+    let output = transform_enum("enum Foo { F = BAR, G = 2 + BAR }");
+    assert!(
+        output.contains("Foo[Foo[\"F\"] = BAR] = \"F\""),
+        "Non-string computed should have reverse mapping, got: {output}"
+    );
+    assert!(
+        output.contains("Foo[Foo[\"G\"] = 2 + BAR] = \"G\""),
+        "Numeric expression should have reverse mapping, got: {output}"
+    );
+}

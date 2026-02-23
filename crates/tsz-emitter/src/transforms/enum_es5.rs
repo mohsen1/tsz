@@ -35,6 +35,8 @@
 //! // usages are inlined
 //! ```
 
+use std::collections::HashSet;
+
 use crate::transforms::ir::{IRNode, IRParam};
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::node::NodeArena;
@@ -49,14 +51,23 @@ pub struct EnumES5Transformer<'a> {
     last_value: Option<i64>,
     /// Source text for extracting raw expressions
     source_text: Option<&'a str>,
+    /// Names of all enum members declared so far (for qualifying self-references)
+    member_names: HashSet<String>,
+    /// Names of enum members with string-valued initializers (no reverse mapping)
+    string_members: HashSet<String>,
+    /// The enum parameter name used inside the IIFE (for qualifying self-references)
+    current_enum_name: String,
 }
 
 impl<'a> EnumES5Transformer<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumES5Transformer {
             arena,
             last_value: None,
             source_text: None,
+            member_names: HashSet::new(),
+            string_members: HashSet::new(),
+            current_enum_name: String::new(),
         }
     }
 
@@ -153,6 +164,10 @@ impl<'a> EnumES5Transformer<'a> {
     /// Transform enum members to IR statements
     fn transform_members(&mut self, members: &NodeList, enum_name: &str) -> Vec<IRNode> {
         let mut statements = Vec::new();
+        // Reset per-enum tracking state
+        self.member_names.clear();
+        self.string_members.clear();
+        self.current_enum_name = enum_name.to_string();
 
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -167,9 +182,10 @@ impl<'a> EnumES5Transformer<'a> {
             let has_initializer = member_data.initializer.is_some();
 
             let stmt = if has_initializer {
-                if self.is_string_literal(member_data.initializer) {
+                if self.is_syntactically_string(member_data.initializer) {
                     // String enum: E["A"] = "val";
                     // No reverse mapping for string enums
+                    self.string_members.insert(member_name.clone());
                     let assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
                             object: Box::new(IRNode::Identifier(enum_name.to_string())),
@@ -233,6 +249,7 @@ impl<'a> EnumES5Transformer<'a> {
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
 
+            self.member_names.insert(member_name);
             statements.push(stmt);
         }
 
@@ -262,7 +279,18 @@ impl<'a> EnumES5Transformer<'a> {
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(id) = self.arena.get_identifier(node) {
-                    IRNode::Identifier(id.escaped_text.clone())
+                    // Inside enum IIFE, references to sibling enum members must be
+                    // qualified with the enum parameter name: `a` -> `Foo.a`
+                    if !self.current_enum_name.is_empty()
+                        && self.member_names.contains(id.escaped_text.as_str())
+                    {
+                        IRNode::PropertyAccess {
+                            object: Box::new(IRNode::Identifier(self.current_enum_name.clone())),
+                            property: id.escaped_text.clone(),
+                        }
+                    } else {
+                        IRNode::Identifier(id.escaped_text.clone())
+                    }
                 } else {
                     IRNode::Identifier("unknown".to_string())
                 }
@@ -458,11 +486,77 @@ impl<'a> EnumES5Transformer<'a> {
         }
     }
 
-    fn is_string_literal(&self, idx: NodeIndex) -> bool {
-        if let Some(node) = self.arena.get(idx) {
-            return node.kind == SyntaxKind::StringLiteral as u16;
+    /// Check if an expression is syntactically string-valued per tsc's rules.
+    /// String-valued enum members do NOT get reverse mappings.
+    /// Handles: string literals, template literals, string concatenation (`"x" + expr`),
+    /// references to other string-valued enum members, and parenthesized wrappers.
+    fn is_syntactically_string(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => true,
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                // Unwrap parens: (`${BAR}`) is still syntactically string
+                if let Some(paren) = self.arena.get_parenthesized(node) {
+                    self.is_syntactically_string(paren.expression)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                // String concatenation: "x" + expr is syntactically string
+                if let Some(bin) = self.arena.get_binary_expr(node) {
+                    let is_plus = bin.operator_token == SyntaxKind::PlusToken as u16;
+                    if is_plus {
+                        self.is_syntactically_string(bin.left)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                // E.A where A is a known string member — syntactically string
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    // Check if the object is the enum parameter name
+                    let obj_node = self.arena.get(access.expression);
+                    let obj_is_enum = obj_node.is_some_and(|n| {
+                        n.kind == SyntaxKind::Identifier as u16
+                            && self
+                                .arena
+                                .get_identifier(n)
+                                .is_some_and(|id| id.escaped_text == self.current_enum_name)
+                    });
+                    if obj_is_enum {
+                        // Check if the property name is a known string member
+                        let prop_name = self
+                            .arena
+                            .get(access.name_or_argument)
+                            .and_then(|n| self.arena.get_identifier(n))
+                            .map(|id| id.escaped_text.as_str());
+                        if let Some(name) = prop_name {
+                            return self.string_members.contains(name);
+                        }
+                    }
+                    false
+                } else {
+                    false
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Bare identifier that matches a known string member
+                if let Some(id) = self.arena.get_identifier(node) {
+                    self.string_members.contains(id.escaped_text.as_str())
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
-        false
     }
 }
 
@@ -473,7 +567,7 @@ pub struct EnumES5Emitter<'a> {
 }
 
 impl<'a> EnumES5Emitter<'a> {
-    pub const fn new(arena: &'a NodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumES5Emitter {
             indent_level: 0,
             transformer: EnumES5Transformer::new(arena),
