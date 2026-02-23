@@ -79,7 +79,7 @@ impl<'a> Printer<'a> {
             self.write_space();
             let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
             if !comment_text.is_empty() {
-                self.write_comment(comment_text);
+                self.write_comment_with_reindent(comment_text, Some(c_pos));
             }
             self.comment_emit_idx += 1;
         }
@@ -272,7 +272,7 @@ impl<'a> Printer<'a> {
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
                         crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    self.write_comment(comment_text);
+                    self.write_comment_with_reindent(comment_text, Some(c_pos));
                     if c_trailing {
                         self.write_line();
                     }
@@ -284,18 +284,78 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Compute the number of leading whitespace chars on the line containing `pos`.
+    /// Used by `write_comment_with_reindent` to determine how much source indentation
+    /// to strip from multi-line comment continuation lines.
+    fn source_column_at(&self, pos: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return 0;
+        };
+        let bytes = text.as_bytes();
+        let pos = pos as usize;
+        if pos == 0 || pos > bytes.len() {
+            return 0;
+        }
+        // Scan backwards to find the start of the line
+        let mut i = pos;
+        while i > 0 {
+            i -= 1;
+            if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                break;
+            }
+        }
+        let line_start = if i == 0 && bytes[0] != b'\n' && bytes[0] != b'\r' {
+            0
+        } else {
+            i + 1
+        };
+        // Count leading whitespace chars on this line
+        let mut ws = 0;
+        for &b in &bytes[line_start..pos] {
+            if b == b' ' || b == b'\t' {
+                ws += 1;
+            } else {
+                break;
+            }
+        }
+        ws as u32
+    }
+
     /// Write comment text, trimming trailing whitespace from each line of multi-line comments.
     /// TypeScript strips trailing whitespace from multi-line comment lines in its emitter.
     pub(super) fn write_comment(&mut self, text: &str) {
+        self.write_comment_with_reindent(text, None);
+    }
+
+    /// Write comment text with optional reindentation for multi-line comments.
+    /// When `source_pos` is provided, computes the source column of the comment and
+    /// reindents continuation lines to match the current output indentation level,
+    /// matching tsc's behavior of adjusting multi-line comment indentation.
+    pub(super) fn write_comment_with_reindent(&mut self, text: &str, source_pos: Option<u32>) {
         if text.contains('\n') {
-            // Multi-line comment: trim trailing whitespace from each line
+            // Multi-line comment: reindent continuation lines.
+            // tsc computes the indent of the line containing the opening /*, then
+            // strips that many leading whitespace chars from each continuation line,
+            // letting the output indentation system re-add the correct amount.
+            let source_indent = source_pos
+                .map(|pos| self.source_column_at(pos))
+                .unwrap_or(0) as usize;
+
             let mut first = true;
             for line in text.split('\n') {
-                if !first {
-                    self.write("\n");
+                if first {
+                    // First line (starts at /*): write as-is, indentation is already
+                    // handled by ensure_indent() from the caller's context
+                    self.write(line.trim_end());
+                    first = false;
+                } else {
+                    // Continuation line: use write_line() to properly trigger
+                    // ensure_indent() on the next write, then strip source-level
+                    // indentation and write the rest
+                    self.write_line();
+                    let trimmed = strip_leading_whitespace(line.trim_end(), source_indent);
+                    self.write(trimmed);
                 }
-                self.write(line.trim_end());
-                first = false;
             }
         } else {
             self.write(text);
@@ -303,9 +363,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Collect leading comment texts for a node at the given position.
-    /// Returns the text of comments whose end is before `pos` and that haven't been emitted yet.
+    /// Returns (text, `source_pos`) tuples for comments whose end is before `pos`
+    /// and that haven't been emitted yet.
     /// Does NOT advance the comment index — use this before `skip_comments_for_erased_node`.
-    pub(super) fn collect_leading_comments(&self, pos: u32) -> Vec<String> {
+    pub(super) fn collect_leading_comments(&self, pos: u32) -> Vec<(String, u32)> {
         if self.ctx.options.remove_comments {
             return Vec::new();
         }
@@ -319,7 +380,7 @@ impl<'a> Printer<'a> {
             let c = &self.all_comments[idx];
             if c.end <= actual_start {
                 let comment_text = crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
-                result.push(comment_text.to_string());
+                result.push((comment_text.to_string(), c.pos));
                 idx += 1;
             } else {
                 break;
@@ -402,5 +463,59 @@ impl<'a> Printer<'a> {
                 break;
             }
         }
+    }
+}
+
+/// Strip up to `count` leading whitespace characters from a string.
+/// This mirrors tsc's behavior of removing the source-level indentation from
+/// multi-line comment continuation lines before the output indentation is applied.
+fn strip_leading_whitespace(s: &str, count: usize) -> &str {
+    let bytes = s.as_bytes();
+    let mut stripped = 0;
+    for &b in bytes.iter().take(count) {
+        if b == b' ' || b == b'\t' {
+            stripped += 1;
+        } else {
+            break;
+        }
+    }
+    &s[stripped..]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_leading_whitespace_basic() {
+        assert_eq!(strip_leading_whitespace("   * @type", 2), " * @type");
+        assert_eq!(strip_leading_whitespace("   * @type", 3), "* @type");
+        assert_eq!(strip_leading_whitespace("   * @type", 0), "   * @type");
+    }
+
+    #[test]
+    fn test_strip_leading_whitespace_strips_up_to_count() {
+        // When count exceeds available whitespace, only strip actual whitespace
+        assert_eq!(strip_leading_whitespace(" * foo", 4), "* foo");
+        assert_eq!(strip_leading_whitespace("* foo", 4), "* foo");
+    }
+
+    #[test]
+    fn test_strip_leading_whitespace_stops_at_non_whitespace() {
+        // Non-whitespace characters stop the stripping even within count
+        assert_eq!(strip_leading_whitespace("abc", 3), "abc");
+        assert_eq!(strip_leading_whitespace("  abc", 4), "abc");
+    }
+
+    #[test]
+    fn test_strip_leading_whitespace_tabs() {
+        assert_eq!(strip_leading_whitespace("\t\t* foo", 2), "* foo");
+        assert_eq!(strip_leading_whitespace("\t * foo", 1), " * foo");
+    }
+
+    #[test]
+    fn test_strip_leading_whitespace_empty() {
+        assert_eq!(strip_leading_whitespace("", 3), "");
+        assert_eq!(strip_leading_whitespace("   ", 2), " ");
     }
 }

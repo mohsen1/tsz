@@ -1719,4 +1719,66 @@ mod tests {
             "Trailing comment on debugger should stay on the same line.\nOutput:\n{output}"
         );
     }
+
+    /// Multi-line JSDoc comments inside class bodies should have their continuation
+    /// lines reindented to match the output indentation level.
+    /// Source uses 2-space indent, output uses 4-space indent.
+    #[test]
+    fn jsdoc_comment_reindented_in_class_body() {
+        let source =
+            "class C {\n  /**\n   * @type {number}\n   */\n  get bar(): number { return 1; }\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // The JSDoc continuation lines should be at 4-space indent + 1 relative space
+        assert!(
+            output.contains("    /**\n     * @type {number}\n     */"),
+            "JSDoc continuation lines should be reindented to match output indent.\nOutput:\n{output}"
+        );
+    }
+
+    /// When static class properties are lowered (moved outside the class body),
+    /// their leading JSDoc comments should be reindented to the new (top-level) context.
+    #[test]
+    fn jsdoc_comment_reindented_for_lowered_static_field() {
+        let source =
+            "class test {\n    /**\n     * p1 comment\n     */\n    static p1 = \"\";\n}\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // The lowered static field is at top level, so JSDoc should have no extra indent
+        assert!(
+            output.contains("/**\n * p1 comment\n */"),
+            "JSDoc on lowered static field should be reindented to top level.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multi-line comments at top-level should preserve their content without
+    /// extra indentation being added.
+    #[test]
+    fn multiline_comment_top_level_preserved() {
+        let source = "/*\n * top level comment\n */\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("/*\n * top level comment\n */"),
+            "Top-level multi-line comment should be preserved.\nOutput:\n{output}"
+        );
+    }
 }

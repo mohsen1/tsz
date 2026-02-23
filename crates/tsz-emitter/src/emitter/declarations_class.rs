@@ -6,8 +6,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 /// Entry for a static field initializer that will be emitted after the class body.
-/// Fields: (name, initializer node, member pos, leading comments, trailing comments)
-type StaticFieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
+/// Fields: (name, initializer node, member pos, leading comments with source pos, trailing comments)
+type StaticFieldInit = (String, NodeIndex, u32, Vec<(String, u32)>, Vec<String>);
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -1070,8 +1070,8 @@ impl<'a> Printer<'a> {
                     &static_field_inits
                 {
                     // Emit saved leading comments from the original static property declaration
-                    for comment_text in leading_comments {
-                        self.write_comment(comment_text);
+                    for (comment_text, source_pos) in leading_comments {
+                        self.write_comment_with_reindent(comment_text, Some(*source_pos));
                         self.write_line();
                     }
                     if self.ctx.options.use_define_for_class_fields {

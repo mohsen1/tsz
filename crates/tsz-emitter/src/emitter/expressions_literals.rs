@@ -23,7 +23,7 @@ impl<'a> Printer<'a> {
                         self.write_space();
                         let comment_text =
                             crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                        self.write_comment(comment_text);
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
                         self.comment_emit_idx += 1;
                     } else {
                         break;
@@ -117,7 +117,7 @@ impl<'a> Printer<'a> {
                         self.write_space();
                         let comment_text =
                             crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                        self.write_comment(comment_text);
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
                         self.comment_emit_idx += 1;
                     } else {
                         break;
@@ -183,7 +183,7 @@ impl<'a> Printer<'a> {
                                         c_pos as usize,
                                         c_end as usize,
                                     );
-                                    self.write_comment(comment_text);
+                                    self.write_comment_with_reindent(comment_text, Some(c_pos));
                                     // Determine separation from what follows (next comment or element):
                                     // if there's a newline between this comment's end and
                                     // actual_start, put on a new line; otherwise add a space.
@@ -262,7 +262,10 @@ impl<'a> Printer<'a> {
                                                 c_pos as usize,
                                                 c_end as usize,
                                             );
-                                            self.write_comment(comment_text);
+                                            self.write_comment_with_reindent(
+                                                comment_text,
+                                                Some(c_pos),
+                                            );
                                             wrote_pre_sep = true;
                                             last_was_newline_comment = preceded_by_newline;
                                             self.comment_emit_idx += 1;
@@ -303,7 +306,7 @@ impl<'a> Printer<'a> {
                             }
                             let comment_text =
                                 crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                            self.write_comment(comment_text);
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
                             self.comment_emit_idx += 1;
                         } else {
                             break;
