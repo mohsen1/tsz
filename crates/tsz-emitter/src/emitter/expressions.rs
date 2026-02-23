@@ -1541,12 +1541,123 @@ impl<'a> Printer<'a> {
 
         let prev = self.ctx.flags.in_binary_operand;
         self.ctx.flags.in_binary_operand = true;
+
+        // Detect newlines between the three operands in source to preserve
+        // multiline ternary formatting (tsc preserves these line breaks).
+        let (newline_before_question, newline_before_colon) =
+            self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
+
         self.emit(cond.condition);
-        self.write(" ? ");
-        self.emit(cond.when_true);
-        self.write(" : ");
-        self.emit(cond.when_false);
+
+        if newline_before_question {
+            // Newline between condition and `?` — e.g.:
+            //   var v = a
+            //       ? b
+            //       : c;
+            self.write_line();
+            self.increase_indent();
+            self.write("? ");
+            self.emit(cond.when_true);
+            if newline_before_colon {
+                self.write_line();
+                self.write(": ");
+            } else {
+                self.write(" : ");
+            }
+            self.emit(cond.when_false);
+            self.decrease_indent();
+        } else if newline_before_colon {
+            self.write(" ? ");
+            self.emit(cond.when_true);
+            let colon_on_new_line = self.colon_starts_new_line(cond.when_true, cond.when_false);
+            if colon_on_new_line {
+                // Newline before `:` — e.g.:
+                //   var v = a ? b
+                //       : c;
+                self.write_line();
+                self.increase_indent();
+                self.write(": ");
+                self.emit(cond.when_false);
+                self.decrease_indent();
+            } else {
+                // `:` trailing on same line, alternate on next — e.g.:
+                //   var v = a ? b :
+                //       c;
+                self.write(" :");
+                self.write_line();
+                self.increase_indent();
+                self.emit(cond.when_false);
+                self.decrease_indent();
+            }
+        } else {
+            self.write(" ? ");
+            self.emit(cond.when_true);
+            self.write(" : ");
+            self.emit(cond.when_false);
+        }
+
         self.ctx.flags.in_binary_operand = prev;
+    }
+
+    /// Detect whether the source text has newlines between the parts of a
+    /// conditional expression. Returns (`newline_before_question`, `newline_before_colon`).
+    fn detect_conditional_newlines(
+        &self,
+        condition: NodeIndex,
+        when_true: NodeIndex,
+        when_false: NodeIndex,
+    ) -> (bool, bool) {
+        let Some(text) = self.source_text else {
+            return (false, false);
+        };
+        let cond_node = self.arena.get(condition);
+        let true_node = self.arena.get(when_true);
+        let false_node = self.arena.get(when_false);
+
+        let newline_before_question = match (cond_node, true_node) {
+            (Some(c), Some(t)) => {
+                let start = std::cmp::min(c.end as usize, text.len());
+                let end = std::cmp::min(t.pos as usize, text.len());
+                start < end && text[start..end].contains('\n')
+            }
+            _ => false,
+        };
+
+        let newline_before_colon = match (true_node, false_node) {
+            (Some(t), Some(f)) => {
+                let start = std::cmp::min(t.end as usize, text.len());
+                let end = std::cmp::min(f.pos as usize, text.len());
+                start < end && text[start..end].contains('\n')
+            }
+            _ => false,
+        };
+
+        (newline_before_question, newline_before_colon)
+    }
+
+    /// Check whether the `:` token in a conditional expression starts on a new
+    /// line (relative to `when_true`'s end). This determines formatting:
+    ///   `a ? b\n    : c`  (colon on new line)  vs  `a ? b :\n    c`  (colon trailing)
+    fn colon_starts_new_line(&self, when_true: NodeIndex, when_false: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let (Some(t), Some(f)) = (self.arena.get(when_true), self.arena.get(when_false)) else {
+            return false;
+        };
+        let start = t.end as usize;
+        let end = std::cmp::min(f.pos as usize, text.len());
+        if start >= end {
+            return false;
+        }
+        let region = &text[start..end];
+        // Find the newline and colon positions
+        let newline_pos = region.find('\n');
+        let colon_pos = region.find(':');
+        match (newline_pos, colon_pos) {
+            (Some(nl), Some(c)) => nl < c, // newline comes before colon
+            _ => false,
+        }
     }
 }
 
@@ -1684,6 +1795,82 @@ mod tests {
         assert!(
             output.contains("(yield p) || a"),
             "yield-from-await in || operand MUST have parens for correct precedence.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multiline ternary: colon trailing on previous line, alternate on next.
+    /// `a ? b :\n    c` must preserve the line break after `:`.
+    #[test]
+    fn conditional_preserves_newline_after_colon() {
+        let source = "var v = a ? b :\n  c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a ? b :\n"),
+            "Ternary with colon trailing must preserve newline after `:`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    c"),
+            "Alternate must be indented on the new line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multiline ternary: colon leading on new line.
+    /// `a ? b\n    : c` must preserve the line break before `:`.
+    #[test]
+    fn conditional_preserves_newline_before_colon() {
+        let source = "var v = a ? b\n  : c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a ? b\n"),
+            "Ternary with colon leading must preserve newline before `:`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    : c"),
+            "Colon must lead on the new indented line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multiline ternary: both `?` and `:` on new lines.
+    /// `a\n    ? b\n    : c` must preserve both line breaks.
+    #[test]
+    fn conditional_preserves_newline_before_question_and_colon() {
+        let source = "var v = a\n  ? b\n  : c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a\n"),
+            "Must preserve newline after condition.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    ? b\n"),
+            "Question mark must lead on the new indented line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    : c"),
+            "Colon must lead on the new indented line.\nOutput:\n{output}"
         );
     }
 }
