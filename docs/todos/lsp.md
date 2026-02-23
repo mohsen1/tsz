@@ -442,3 +442,21 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`, `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{1,2,3,4}.ts`, and `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: still fail in fourslash with snippet-shape mismatches (`isSnippet`/`insertText`) despite passing focused tsserver unit coverage.
   Reason: remaining divergence appears in the fourslash harness/session bridge completion-entry matching/selection path (not reproducible in direct `tsz-server` unit tests), and needs dedicated adapter-level trace instrumentation to locate where snippet entry metadata is lost or a non-snippet duplicate entry is selected first.
+
+## 2026-02-23 (quickinfo class-property assignment parameter follow-up)
+
+Completed in this pass:
+- Fixed tsserver quickinfo contextual parameter fallback for function expressions assigned to class properties (`this.foo = function(i, s)`) by:
+  - adding assignment-LHS property probe support when resolving enclosing callable hover context,
+  - accepting property/variable function-type quickinfo display forms (`(property) C.foo: (i: number, s: string) => ...`) in parameter type extraction.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_quickinfo_contextual_class_property_assignment_function_parameter`
+- Verified crate safety:
+  - `cargo nextest run -p tsz-cli`
+  - `cargo nextest run -p tsz-lsp -p tsz-cli`
+- Verified targeted fourslash progression:
+  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `36` to marker `45`.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `45` (`(property) t1: (s: string) => string` expected, got empty quick info).
+  Reason: remaining gap is declaration-site/object-property assignment quickinfo fallback for `objc8.t1 = function(...)` in `handlers_info` member-access recovery; needs a dedicated property-assignment quickinfo resolver pass beyond this parameter-only fix.
