@@ -724,3 +724,24 @@ Investigated but punted:
   Reason: same cross-file tsserver request-shape/aggregation limitation as `_types` for string-literal module namespace identifiers.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
   Reason: still requires deeper CommonJS/`export =` auto-import completion candidate modeling and `import = require(...)` edit synthesis parity.
+
+## 2026-02-23 (autoImportVerbatimCJS1 fallback follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts` by adding tsserver-side fallback auto-import candidate synthesis for CommonJS `module.exports = { ... }` sources and ambient-module `export =` declarations in:
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs` (completion entry + completion details code-action edits with `import x = require(...)` and member-access insert text),
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` (`getCodeFixes` fallback rewrite for unresolved member names to `alias.member` plus `import = require` insertion).
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_completion_info_verbatim_commonjs_auto_imports_include_require_member_forms`
+  - `test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member`
+- Verification:
+  - `cargo nextest run -p tsz-cli test_completion_info_verbatim_commonjs_auto_imports_include_require_member_forms test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member` passes.
+  - `./scripts/run-fourslash.sh --skip-ts-build --filter=autoImportVerbatimCJS1 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `197/200` to `198/200` passing in this run.
+  - `cargo nextest run -p tsz-lsp` passes (`735` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: still requires project-wide cross-file definition/references/rename grouping parity in tsserver namespace-identifier request paths (current request handling remains single-file oriented in this sampled path).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same cross-file tsserver namespace alias/re-export navigation parity gap as `_types`, needing broader project-backed request aggregation.
