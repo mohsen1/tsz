@@ -295,6 +295,42 @@ impl<'a> Printer<'a> {
             let Some(check_node) = self.arena.get(check_idx) else {
                 continue;
             };
+            // Variable statements can declare multiple names (var a, b, c).
+            // Structure: VARIABLE_STATEMENT → declarations[VARIABLE_DECLARATION_LIST]
+            //            VARIABLE_DECLARATION_LIST → declarations[VARIABLE_DECLARATION, ...]
+            if check_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if let Some(var_stmt) = self.arena.get_variable(check_node) {
+                    let decl_lists = var_stmt.declarations.nodes.clone();
+                    for &list_idx in &decl_lists {
+                        if let Some(list_node) = self.arena.get(list_idx)
+                            && let Some(decl_list) = self.arena.get_variable(list_node) {
+                                let decls = decl_list.declarations.nodes.clone();
+                                for &decl_idx in &decls {
+                                    if let Some(decl_node) = self.arena.get(decl_idx)
+                                        && let Some(vd) =
+                                            self.arena.get_variable_declaration(decl_node)
+                                        {
+                                            let name = self.get_identifier_text_idx(vd.name);
+                                            if name == ns_name {
+                                                return true;
+                                            }
+                                        }
+                                }
+                            }
+                    }
+                }
+                continue;
+            }
+            // Import-equals declarations (import X = Y.Z) introduce a name.
+            if check_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(import_data) = self.arena.get_import_decl(check_node) {
+                    let name = self.get_identifier_text_idx(import_data.import_clause);
+                    if name == ns_name {
+                        return true;
+                    }
+                }
+                continue;
+            }
             let decl_name = match check_node.kind {
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     self.arena.get_class(check_node).and_then(|c| {
@@ -986,6 +1022,53 @@ mod tests {
         assert!(
             output.contains("class C {"),
             "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a namespace body has a variable with the same name as the namespace,
+    /// the IIFE parameter must be renamed to avoid collision.
+    /// E.g., `namespace m { export var m = ''; }` should emit `(function (m_1) { m_1.m = ''; })`.
+    #[test]
+    fn namespace_iife_param_renamed_for_variable_conflict() {
+        let source = "namespace m {\n  export var m = '';\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(function (m_1)"),
+            "Namespace IIFE parameter should be renamed to m_1 when body has 'var m'.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("m_1.m = '';"),
+            "Exported variable should use renamed parameter m_1.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a namespace body has an import-equals with the same name as the namespace,
+    /// the IIFE parameter must be renamed.
+    /// E.g., `namespace A.M { import M = Z.M; ... }` should emit `(function (M_1) { ... })`.
+    #[test]
+    fn namespace_iife_param_renamed_for_import_equals_conflict() {
+        let source = "namespace Z {\n  export namespace M {\n    export function bar() { return ''; }\n  }\n}\nnamespace A {\n  export namespace M {\n    import M = Z.M;\n    export function bar() {}\n    M.bar();\n  }\n}";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // The inner M namespace IIFE should have parameter renamed to M_1
+        assert!(
+            output.contains("(function (M_1)"),
+            "Namespace IIFE parameter should be renamed to M_1 when body has 'import M = ...'.\nOutput:\n{output}"
         );
     }
 }
