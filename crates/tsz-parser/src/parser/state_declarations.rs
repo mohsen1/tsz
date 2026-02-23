@@ -1157,6 +1157,47 @@ impl ParserState {
                     self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
                 }
             }
+            SyntaxKind::UsingKeyword => {
+                // declare using
+                let modifiers = self.make_node_list(vec![declare_modifier]);
+                self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
+            }
+            SyntaxKind::AwaitKeyword => {
+                // declare await using
+                let modifiers = self.make_node_list(vec![declare_modifier]);
+                self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
+            }
+            SyntaxKind::ExportKeyword => {
+                // declare export ... — consume 'export' and parse the inner declaration
+                // with declare modifier, so the entire statement is treated as ambient.
+                let export_start = self.token_pos();
+                self.parse_expected(SyntaxKind::ExportKeyword);
+                let export_end = self.token_end();
+                let export_modifier = self.arena.add_token(
+                    SyntaxKind::ExportKeyword as u16,
+                    export_start,
+                    export_end,
+                );
+                let modifiers = self.make_node_list(vec![declare_modifier, export_modifier]);
+                match self.token() {
+                    SyntaxKind::FunctionKeyword => {
+                        self.parse_function_declaration_with_async(false, Some(modifiers))
+                    }
+                    SyntaxKind::ClassKeyword => {
+                        self.parse_declare_class(start_pos, declare_modifier)
+                    }
+                    SyntaxKind::VarKeyword
+                    | SyntaxKind::LetKeyword
+                    | SyntaxKind::ConstKeyword
+                    | SyntaxKind::UsingKeyword
+                    | SyntaxKind::AwaitKeyword => self
+                        .parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers)),
+                    _ => {
+                        self.error_declaration_expected();
+                        self.parse_expression_statement()
+                    }
+                }
+            }
             SyntaxKind::AsyncKeyword => {
                 // declare async function
                 if self.look_ahead_is_async_function() {

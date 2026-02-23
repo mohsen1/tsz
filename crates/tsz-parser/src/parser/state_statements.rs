@@ -657,6 +657,9 @@ impl ParserState {
                     | SyntaxKind::TypeKeyword
                     | SyntaxKind::GlobalKeyword
                     | SyntaxKind::AsyncKeyword
+                    | SyntaxKind::UsingKeyword
+                    | SyntaxKind::AwaitKeyword
+                    | SyntaxKind::ExportKeyword
             );
         self.scanner.restore_state(snapshot);
         self.current_token = current;
