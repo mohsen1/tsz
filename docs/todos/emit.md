@@ -1,8 +1,18 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5163/7163 = 72.1% JS, ~416/1039 = 40.0% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9811/13623 = 72.0% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Trailing comment emission on 6 statement types** (+6 JS):
+  `return`, `throw`, `break`, `continue`, `do-while`, and `debugger` statements were not
+  calling `emit_trailing_comment_after_semicolon` after writing their semicolons. This caused
+  trailing same-line comments like `return 42; // the answer` to be displaced to the next line
+  instead of staying on the same line as the statement. The helper already existed and was called
+  by `emit_variable_statement` and `emit_expression_statement`. Added the call to all 6 missing
+  statement types in `statements.rs`. Seven unit tests added (one per statement type, plus bare
+  return). JS: 9805→9811, DTS unchanged, zero regressions.
+
+### Previously Fixed (This Branch)
 - **ES5 destructuring: parenthesize `new` expressions before property access** (+2 JS):
   When lowering `var { x } = <any>new Foo` to ES5 property access form (`var x = expr.x`),
   `new Foo` without arguments must be wrapped in parens: `(new Foo).x`. Without parens,
