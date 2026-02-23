@@ -806,6 +806,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_truthy_or_falsy(self, node_idx);
     }
 
+    fn check_callable_truthiness(&mut self, cond_expr: NodeIndex, body: Option<NodeIndex>) {
+        CheckerState::check_callable_truthiness(self, cond_expr, body);
+    }
+
     fn is_true_condition(&self, condition_idx: NodeIndex) -> bool {
         CheckerState::is_true_condition(self, condition_idx)
     }
