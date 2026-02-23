@@ -585,3 +585,26 @@ Investigated but punted:
   Reason: appears to require broader cross-file project-backed rename/definition/reference protocol parity in the tsserver bridge; deferred to keep this pass tightly scoped to static-block call hierarchy correctness.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{2,4}.ts`: still fail `verifyFileContent` in this run.
   Reason: completion snippet/code-action shaping for export-list augmentation remains a larger completion pipeline parity task; out of scope for this targeted call-hierarchy fix.
+
+## 2026-02-23 (class-member snippet export-equals details follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts` by improving class-member snippet handling in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`:
+  - map explicit `./x.js` imports to sibling TS sources (`./x.ts`/`./x.d.ts`) for snippet fallback graph traversal,
+  - normalize property snippet type names to underscored alias forms discovered from project/import graph (`Container` -> `Container_`, `Document` -> `Document_`),
+  - allow snippet detail resolution when `completionEntryDetails` explicitly requests `source: "ClassMemberSnippet/"` even if snippet prefs are absent on the details request,
+  - synthesize transitive default-import code actions for underscored alias members when direct auto-import edits are unavailable.
+- Added focused unit coverage:
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`
+    - `resolve_imported_module_files_maps_js_specifier_to_ts_source`
+    - `class_member_snippet_additional_edits_rewrite_default_import_for_underscored_alias`
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
+    - `test_completion_info_class_member_snippet_export_equals_default_parent`
+- Verification:
+  - `cargo nextest run -p tsz-cli test_completion_info_class_member_snippet_export_equals_default_parent`
+  - `./scripts/run-fourslash.sh --filter=autoImportCompletionExportEqualsWithDefault1 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --max=200` improved from `192/200` to `193/200` passing.
+  - `cargo nextest run -p tsz-cli -p tsz-lsp` passed (`1146` tests).
+
+Investigated but punted:
+- None in this pass.
