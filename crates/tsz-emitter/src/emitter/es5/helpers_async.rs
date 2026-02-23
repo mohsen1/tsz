@@ -88,7 +88,7 @@ impl<'a> Printer<'a> {
         let move_params_to_generator = use_native_generators && params_have_top_level_await;
         let es5_await_param_recovery = !use_native_generators
             && params_have_top_level_await
-            && self.block_is_empty(body)
+            && emit_utils::block_is_empty(self.arena, body)
             && self.first_await_default_param_name(params).is_some();
 
         // function name(params) { ... } or function (params) { ... }
@@ -415,16 +415,6 @@ impl<'a> Printer<'a> {
             }
             self.emit(param.name);
         }
-    }
-
-    fn block_is_empty(&self, body: NodeIndex) -> bool {
-        let Some(body_node) = self.arena.get(body) else {
-            return false;
-        };
-        let Some(block) = self.arena.get_block(body_node) else {
-            return false;
-        };
-        block.statements.nodes.is_empty()
     }
 
     pub(in crate::emitter) fn emit_function_parameters_es5(

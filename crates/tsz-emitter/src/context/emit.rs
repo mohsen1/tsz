@@ -120,9 +120,7 @@ pub struct DestructuringState {
 impl DestructuringState {
     /// Get the next temporary variable name
     pub fn next_temp_var(&mut self) -> String {
-        let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
-        self.temp_var_counter += 1;
-        name
+        crate::transforms::emit_utils::next_temp_var_name(&mut self.temp_var_counter)
     }
 
     /// Reset the counter (for a new file)

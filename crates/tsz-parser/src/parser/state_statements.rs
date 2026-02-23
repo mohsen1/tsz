@@ -1354,14 +1354,15 @@ impl ParserState {
             && initializer.is_none()
             && (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
             && let Some(name_node) = self.arena.get(name)
-            && name_node.is_binding_pattern() {
-                self.parse_error_at(
-                    name_node.pos,
-                    name_node.end - name_node.pos,
-                    "A destructuring declaration must have an initializer.",
-                    diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
-                );
-            }
+            && name_node.is_binding_pattern()
+        {
+            self.parse_error_at(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "A destructuring declaration must have an initializer.",
+                diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
+            );
+        }
         if name == NodeIndex::NONE {
             self.parse_error_at_current_token(
                 "Identifier expected.",

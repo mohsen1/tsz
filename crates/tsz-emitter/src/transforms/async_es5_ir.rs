@@ -170,14 +170,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 let params = self.collect_parameters(&func.parameters);
                 let await_default_param_name =
                     self.first_await_default_param_name(&func.parameters);
-                let recover_await_default = self.block_is_empty(func.body)
-                    && await_default_param_name.is_some()
-                    && func
-                        .parameters
-                        .nodes
-                        .iter()
-                        .copied()
-                        .any(|p| self.param_initializer_has_top_level_await(p));
+                let recover_await_default =
+                    super::emit_utils::block_is_empty(self.arena, func.body)
+                        && await_default_param_name.is_some()
+                        && func
+                            .parameters
+                            .nodes
+                            .iter()
+                            .copied()
+                            .any(|p| self.param_initializer_has_top_level_await(p));
                 (
                     name,
                     params,
@@ -467,7 +468,7 @@ impl<'a> AsyncES5Transformer<'a> {
                                 comment: Some("return".to_string()),
                             },
                         ))));
-                    } else if self.is_await_expression(ret.expression) {
+                    } else if super::emit_utils::is_await_expression(self.arena, ret.expression) {
                         // return await expr; -> yield, then return _a.sent()
                         self.process_await_expression(
                             ret.expression,
@@ -612,7 +613,9 @@ impl<'a> AsyncES5Transformer<'a> {
             let name = self.get_identifier_text(decl.name);
 
             // Check if initializer contains await
-            if decl.initializer.is_some() && self.is_await_expression(decl.initializer) {
+            if decl.initializer.is_some()
+                && super::emit_utils::is_await_expression(self.arena, decl.initializer)
+            {
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
@@ -1059,13 +1062,6 @@ impl<'a> AsyncES5Transformer<'a> {
         false
     }
 
-    fn is_await_expression(&self, idx: NodeIndex) -> bool {
-        if let Some(node) = self.arena.get(idx) {
-            return node.kind == syntax_kind_ext::AWAIT_EXPRESSION;
-        }
-        false
-    }
-
     fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
         let Some(param_node) = self.arena.get(param_idx) else {
             return false;
@@ -1114,16 +1110,6 @@ impl<'a> AsyncES5Transformer<'a> {
             }
         }
         None
-    }
-
-    fn block_is_empty(&self, body_idx: NodeIndex) -> bool {
-        let Some(body_node) = self.arena.get(body_idx) else {
-            return false;
-        };
-        let Some(block) = self.arena.get_block(body_node) else {
-            return false;
-        };
-        block.statements.nodes.is_empty()
     }
 
     fn extract_preceding_line_comment(&self, pos: u32) -> Option<String> {
