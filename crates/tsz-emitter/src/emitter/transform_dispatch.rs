@@ -339,20 +339,43 @@ impl<'a> Printer<'a> {
 
                 if !skip {
                     if node.kind == syntax_kind_ext::MODULE_DECLARATION && !is_default {
-                        let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
-                        ns_emitter.set_indent_level(self.writer.indent_level());
-                        ns_emitter.set_target_es5(self.ctx.target_es5);
-                        if let Some(text) = self.source_text_for_map() {
-                            ns_emitter.set_source_text(text);
+                        if self.ctx.target_es5 {
+                            // ES5: use the IR-based ES5 namespace emitter (only emits var)
+                            let mut ns_emitter =
+                                NamespaceES5Emitter::with_commonjs(self.arena, true);
+                            ns_emitter.set_indent_level(self.writer.indent_level());
+                            ns_emitter.set_target_es5(true);
+                            if let Some(text) = self.source_text_for_map() {
+                                ns_emitter.set_source_text(text);
+                            }
+                            if let Some(should_declare_var) =
+                                Self::namespace_var_flag_from_directive(inner.as_ref())
+                            {
+                                ns_emitter.set_should_declare_var(should_declare_var);
+                            }
+                            let output = ns_emitter.emit_exported_namespace(idx);
+                            self.write(output.trim_end_matches('\n'));
+                            self.skip_comments_for_erased_node(node);
+                            return;
                         }
+                        // ES2015+: use the regular IIFE path which preserves let/const.
+                        // Set flag so the IIFE tail folds exports.N into the closing.
+                        self.pending_cjs_namespace_export_fold = true;
+                        // Track whether the namespace var was already declared
+                        // (merged with class/enum/function).
                         if let Some(should_declare_var) =
                             Self::namespace_var_flag_from_directive(inner.as_ref())
-                        {
-                            ns_emitter.set_should_declare_var(should_declare_var);
-                        }
-                        let output = ns_emitter.emit_exported_namespace(idx);
-                        self.write(output.trim_end_matches('\n'));
-                        self.skip_comments_for_erased_node(node);
+                            && !should_declare_var {
+                                // Mark as already declared so emit_namespace_iife skips
+                                // the `var N;` / `let N;` preamble.
+                                if let Some(module_decl) = self.arena.get_module(node) {
+                                    let ns_name = self.get_identifier_text_idx(module_decl.name);
+                                    if !ns_name.is_empty() {
+                                        self.declared_namespace_names.insert(ns_name);
+                                    }
+                                }
+                            }
+                        self.emit_node_default(node, idx);
                         return;
                     }
 
