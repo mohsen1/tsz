@@ -711,35 +711,37 @@ impl<'a> CheckerState<'a> {
         // Prefix/postfix ++/-- (e.g., `++x`, `x--`)
         if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
-            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node) {
-                return (unary.operator == SyntaxKind::PlusPlusToken as u16
-                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
-                    && unary.operand == ident_idx;
-            }
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+        {
+            return (unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                && unary.operand == ident_idx;
+        }
 
         // Compound assignment operators (+=, -=, *=, /=, %=, **=, <<=, >>=, >>>=, &=, |=, ^=, &&=, ||=, ??=)
         if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node) {
-                let is_compound_assign = matches!(
-                    bin.operator_token,
-                    op if op == SyntaxKind::PlusEqualsToken as u16
-                        || op == SyntaxKind::MinusEqualsToken as u16
-                        || op == SyntaxKind::AsteriskEqualsToken as u16
-                        || op == SyntaxKind::SlashEqualsToken as u16
-                        || op == SyntaxKind::PercentEqualsToken as u16
-                        || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                        || op == SyntaxKind::LessThanLessThanEqualsToken as u16
-                        || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                        || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                        || op == SyntaxKind::AmpersandEqualsToken as u16
-                        || op == SyntaxKind::BarEqualsToken as u16
-                        || op == SyntaxKind::CaretEqualsToken as u16
-                        || op == SyntaxKind::BarBarEqualsToken as u16
-                        || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                        || op == SyntaxKind::QuestionQuestionEqualsToken as u16
-                );
-                return is_compound_assign && bin.left == ident_idx;
-            }
+            && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
+        {
+            let is_compound_assign = matches!(
+                bin.operator_token,
+                op if op == SyntaxKind::PlusEqualsToken as u16
+                    || op == SyntaxKind::MinusEqualsToken as u16
+                    || op == SyntaxKind::AsteriskEqualsToken as u16
+                    || op == SyntaxKind::SlashEqualsToken as u16
+                    || op == SyntaxKind::PercentEqualsToken as u16
+                    || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                    || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+                    || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                    || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                    || op == SyntaxKind::AmpersandEqualsToken as u16
+                    || op == SyntaxKind::BarEqualsToken as u16
+                    || op == SyntaxKind::CaretEqualsToken as u16
+                    || op == SyntaxKind::BarBarEqualsToken as u16
+                    || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                    || op == SyntaxKind::QuestionQuestionEqualsToken as u16
+            );
+            return is_compound_assign && bin.left == ident_idx;
+        }
 
         false
     }
