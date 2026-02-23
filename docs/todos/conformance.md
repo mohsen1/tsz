@@ -782,3 +782,26 @@ TS1194 only fires in non-ambient namespaces.
   plus module resolution for implicit imports. HIGH difficulty.
 - **TS6133 (28+ tests)**: Unused variable/parameter detection. Large cluster requiring
   systematic analysis pass. MEDIUM-HIGH difficulty but high payoff.
+
+## Session 2026-02-23 — First 6000
+
+**Score**: 4006/5997 (66.8%) — first 6000, fingerprint level
+
+### Fixed
+
+- **TS2397 (+3 tests)**: "Declaration name conflicts with built-in global identifier" for
+  `var undefined`, `var globalThis`, `namespace globalThis`. Added checks in
+  `state_variable_checking.rs` (variable declarations) and `declarations_module.rs`
+  (namespace declarations). 6 unit tests added.
+- **TS2528 position fix (+1 test)**: tsc points TS2528 at the declaration name (e.g., `Foo`
+  in `export default function Foo()`) not the export keyword. Updated anchor selection in
+  `import_checker.rs` to extract function/class name nodes. Fixes `multipleExportDefault2`.
+
+### Investigated but deferred
+
+- **TS2528 remaining position mismatches**: Some cases still have position differences where
+  tsc uses more nuanced anchor selection (e.g., `default` keyword for `export { x as default }`).
+- **TS6046, TS1382, TS2433**: Complex/low ROI after investigation.
+- **TS7017, TS7041, TS2702, TS2308**: Too complex or low impact.
+- **TS2585**: Symbol/Iterator in ES5 — medium difficulty, needs lib target awareness.
+- **TS2303**: Circular imports in multi-file scenarios.
