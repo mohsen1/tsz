@@ -199,9 +199,12 @@ impl TypeResolver for NoopResolver {
 /// This allows `&dyn TypeResolver` (which is Sized) to be used wherever
 /// `R: TypeResolver` is expected.
 impl<T: TypeResolver + ?Sized> TypeResolver for &T {
-    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        // This method is deprecated - use resolve_lazy instead
-        None
+    fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).resolve_ref(symbol, interner)
+    }
+
+    fn resolve_symbol_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).resolve_symbol_ref(symbol, interner)
     }
 
     fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
@@ -216,8 +219,75 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).get_lazy_type_params(def_id)
     }
 
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        (**self).def_to_symbol_id(def_id)
+    }
+
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
         (**self).symbol_to_def_id(symbol)
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
+        (**self).get_def_kind(def_id)
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        (**self).get_boxed_type(kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        (**self).is_boxed_def_id(def_id, kind)
+    }
+
+    fn is_boxed_type_id(&self, type_id: TypeId, kind: IntrinsicKind) -> bool {
+        (**self).is_boxed_type_id(type_id, kind)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        (**self).get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        (**self).get_array_base_type_params()
+    }
+
+    fn get_lazy_export(&self, def_id: DefId, name: tsz_common::interner::Atom) -> Option<TypeId> {
+        (**self).get_lazy_export(def_id, name)
+    }
+
+    fn get_lazy_enum_member(
+        &self,
+        def_id: DefId,
+        name: tsz_common::interner::Atom,
+    ) -> Option<TypeId> {
+        (**self).get_lazy_enum_member(def_id, name)
+    }
+
+    fn is_numeric_enum(&self, def_id: DefId) -> bool {
+        (**self).is_numeric_enum(def_id)
+    }
+
+    fn is_enum_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> bool {
+        (**self).is_enum_type(type_id, interner)
+    }
+
+    fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
+        (**self).get_enum_parent_def_id(member_def_id)
+    }
+
+    fn is_user_enum_def(&self, def_id: DefId) -> bool {
+        (**self).is_user_enum_def(def_id)
+    }
+
+    fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        (**self).get_base_type(type_id, interner)
+    }
+
+    fn get_type_param_variance(
+        &self,
+        def_id: DefId,
+    ) -> Option<std::sync::Arc<[crate::types::Variance]>> {
+        (**self).get_type_param_variance(def_id)
     }
 }
 
