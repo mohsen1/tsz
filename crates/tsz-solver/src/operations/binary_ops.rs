@@ -60,9 +60,7 @@ pub enum PrimitiveClass {
 ///   - `check_union_all` — `visit_union` returns true when ALL members match
 ///   - `check_constraint` — `visit_type_parameter/visit_infer` recurse into constraint
 ///   - `recurse_enum`    — `visit_enum` recurses into the member type
-///   - `ref_conservative`— `visit_ref` returns true (conservative for unresolved enums)
 ///   - `match_template_literal` — `visit_template_literal` returns true
-///   - `match_unique_symbol`    — `visit_unique_symbol` returns true
 ///   - `check_intersection_any` — `visit_intersection` returns true when ANY member matches
 macro_rules! primitive_visitor {
     ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
@@ -96,14 +94,8 @@ macro_rules! primitive_visitor {
             self.visit_type(self._db, member_type)
         }
     };
-    (@method ref_conservative) => {
-        fn visit_ref(&mut self, _symbol_ref: u32) -> bool { true }
-    };
     (@method match_template_literal) => {
         fn visit_template_literal(&mut self, _template_id: u32) -> bool { true }
-    };
-    (@method match_unique_symbol) => {
-        fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool { true }
     };
     (@method check_intersection_any) => {
         fn visit_intersection(&mut self, list_id: u32) -> bool {
