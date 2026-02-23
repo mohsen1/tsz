@@ -13,7 +13,7 @@
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use tracing::{Level, debug, span};
-use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
+use tsz_binder::{FlowNodeArena, FlowNodeId, flow_flags};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -52,11 +52,6 @@ impl FlowGraph {
     /// Get the flow node at a given AST node position.
     pub fn get_flow_at_node(&self, node: NodeIndex) -> Option<FlowNodeId> {
         self.node_flow.get(&node.0).copied()
-    }
-
-    /// Get a flow node by ID.
-    pub fn get_node(&self, id: FlowNodeId) -> Option<&FlowNode> {
-        self.nodes.get(id)
     }
 
     /// Check if a flow node exists.
@@ -167,11 +162,6 @@ impl<'a> FlowGraphBuilder<'a> {
     /// - Block statements
     /// - Any list of statements
     ///
-    /// This is an alias for `build_source_file()` but with a more general name.
-    pub fn build_flow_graph(&mut self, statements: &NodeList) -> &FlowGraph {
-        self.build_source_file(statements)
-    }
-
     /// Build the flow graph for a function body.
     ///
     /// Entry point for building flow graphs for function bodies.

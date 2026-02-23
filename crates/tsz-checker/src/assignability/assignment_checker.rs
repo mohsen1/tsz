@@ -179,7 +179,7 @@ impl<'a> CheckerState<'a> {
     /// This mirrors existing declaration-site checks and keeps diagnostics in
     /// parity with TypeScript's behavior for strict-mode built-ins.
     fn check_strict_assignment_target(&mut self, target_idx: NodeIndex) {
-        let inner = self.skip_parenthesized_expression(target_idx);
+        let inner = self.ctx.arena.skip_parenthesized(target_idx);
         if !self.is_strict_mode_for_node(inner) {
             return;
         }
@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
     /// Resolves through parenthesized expressions to find the underlying identifier.
     /// Returns `true` if a TS2588 error was emitted (caller should skip further type checks).
     pub(crate) fn check_const_assignment(&mut self, target_idx: NodeIndex) -> bool {
-        let inner = self.skip_parenthesized_expression(target_idx);
+        let inner = self.ctx.arena.skip_parenthesized(target_idx);
         if let Some(name) = self.get_const_variable_name(inner) {
             self.error_at_node_msg(
                 inner,
@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This check helps catch common mistakes where users try to reassign function names.
     pub(crate) fn check_function_assignment(&mut self, target_idx: NodeIndex) -> bool {
-        let inner = self.skip_parenthesized_expression(target_idx);
+        let inner = self.ctx.arena.skip_parenthesized(target_idx);
 
         // Only check identifiers - property access like obj.fn = x is allowed
         let Some(node) = self.ctx.arena.get(inner) else {

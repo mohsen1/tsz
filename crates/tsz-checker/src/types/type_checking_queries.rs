@@ -281,11 +281,6 @@ impl<'a> CheckerState<'a> {
     // Section 28: Expression Analysis Utilities
     // =========================================================================
 
-    /// Skip parenthesized expressions to get to the underlying expression.
-    pub(crate) fn skip_parenthesized_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
-        self.ctx.arena.skip_parenthesized(expr_idx)
-    }
-
     /// Check if an expression is side-effect free.
     ///
     /// Returns true if the expression does not modify state or have observable effects.
@@ -309,7 +304,7 @@ impl<'a> CheckerState<'a> {
     /// - Tagged templates (function calls)
     /// - Delete expressions
     pub(crate) fn is_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
-        let expr_idx = self.skip_parenthesized_expression(expr_idx);
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
