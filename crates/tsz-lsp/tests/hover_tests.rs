@@ -219,6 +219,28 @@ fn test_hover_property_assignment_function_parameter_uses_member_signature() {
 }
 
 #[test]
+fn test_hover_contextual_object_literal_property_name_in_assignment() {
+    let source = "interface IFoo { n: number; }\ninterface IBar { foo: IFoo; }\nconst holder: { t12: IBar } = { t12: { foo: { n: 1 } } };\nholder.t12 = {\n    foo: <IFoo>({})\n};";
+    let info = get_hover_at(source, 4, 4)
+        .expect("Should find hover info for contextually typed property in assignment");
+    assert_eq!(
+        info.display_string, "(property) IBar.foo: IFoo",
+        "Object-literal property hover should use assigned member contextual type"
+    );
+}
+
+#[test]
+fn test_hover_contextual_parameter_in_call_argument_function_expression() {
+    let source = "interface IFoo { n: number; }\nfunction c9t5(f: (n: number) => IFoo) {}\nc9t5(function(n) {\n    return <IFoo>({ n: n });\n});";
+    let info = get_hover_at(source, 2, 14)
+        .expect("Should find hover info for contextually typed call-argument parameter");
+    assert_eq!(
+        info.display_string, "(parameter) n: number",
+        "Call-argument function-expression parameter hover should use contextual call signature type"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
