@@ -87,11 +87,6 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
-    pub fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
-        self.db.object_with_flags(properties, flags)
-    }
-
-    #[inline]
     pub fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.db.object_fresh(properties)
     }
@@ -145,16 +140,6 @@ impl<'db> TypeFactory<'db> {
     #[inline]
     pub fn lazy(&self, def_id: crate::def::DefId) -> TypeId {
         self.db.lazy(def_id)
-    }
-
-    #[inline]
-    pub fn bound_parameter(&self, index: u32) -> TypeId {
-        self.db.bound_parameter(index)
-    }
-
-    #[inline]
-    pub fn recursive(&self, depth: u32) -> TypeId {
-        self.db.recursive(depth)
     }
 
     #[inline]
