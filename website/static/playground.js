@@ -115,6 +115,7 @@ const user: User = {
 
 let editor = null;
 let jsEditor = null;
+let dtsEditor = null;
 let wasm = null;
 let libFiles = {};
 let checkTimeout = null;
@@ -198,6 +199,23 @@ async function loadMonaco() {
         jsEditor = monaco.editor.create(document.getElementById("js-output-editor"), {
           value: "",
           language: "javascript",
+          theme: isDark ? "vs-dark" : "vs",
+          minimap: { enabled: false },
+          fontSize: 14,
+          fontFamily: "'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
+          lineNumbers: "on",
+          scrollBeyondLastLine: false,
+          automaticLayout: true,
+          tabSize: 2,
+          readOnly: true,
+          renderLineHighlight: "none",
+          padding: { top: 12 },
+          smoothScrolling: true,
+        });
+
+        dtsEditor = monaco.editor.create(document.getElementById("dts-output-editor"), {
+          value: "",
+          language: "typescript",
           theme: isDark ? "vs-dark" : "vs",
           minimap: { enabled: false },
           fontSize: 14,
@@ -568,6 +586,18 @@ function runCheck() {
       jsEditor.setValue(jsOutput || "// (empty output)");
     } catch (e) {
       jsEditor.setValue(`// Emit error: ${e.message}`);
+    }
+
+    // Emit .d.ts output
+    try {
+      const transpileResultJson = wasm.transpileModule(code, JSON.stringify({ declaration: true }));
+      const transpileResult = JSON.parse(transpileResultJson || "{}");
+      const dtsOutput = transpileResult && typeof transpileResult.declaration_text === "string"
+        ? transpileResult.declaration_text
+        : "";
+      dtsEditor.setValue(dtsOutput || "// (no declaration output)");
+    } catch (e) {
+      dtsEditor.setValue(`// DTS emit error: ${e.message}`);
     }
 
     program.dispose();

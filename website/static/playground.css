@@ -227,7 +227,8 @@
   margin-top: 0.15rem;
 }
 
-#js-output-editor {
+#js-output-editor,
+#dts-output-editor {
   width: 100%;
   height: 100%;
 }
@@ -235,7 +236,11 @@
 #js-output-editor .monaco-editor,
 #js-output-editor .monaco-editor .margin,
 #js-output-editor .monaco-editor-background,
-#js-output-editor .monaco-editor .inputarea.ime-input {
+#js-output-editor .monaco-editor .inputarea.ime-input,
+#dts-output-editor .monaco-editor,
+#dts-output-editor .monaco-editor .margin,
+#dts-output-editor .monaco-editor-background,
+#dts-output-editor .monaco-editor .inputarea.ime-input {
   background-color: var(--bg-code) !important;
 }
 
