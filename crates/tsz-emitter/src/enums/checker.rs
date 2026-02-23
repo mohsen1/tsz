@@ -15,7 +15,6 @@
 
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_binder::symbol_flags;
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -26,7 +25,6 @@ use tsz_scanner::SyntaxKind;
 pub mod diagnostic_codes {
     pub const DUPLICATE_IDENTIFIER: u32 = 2300;
     pub const CONST_ENUM_LITERAL_ONLY: u32 = 2474;
-    pub const CONST_ENUM_STRING_ACCESS: u32 = 2476;
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 1061;
     pub const COMPUTED_ENUM_NOT_NUMERIC: u32 = 2553;
 }
@@ -274,42 +272,6 @@ impl<'a> EnumChecker<'a> {
 
             // Everything else is invalid
             _ => false,
-        }
-    }
-
-    /// Get cached enum values for an enum declaration
-    pub fn get_enum_values(&self, enum_idx: NodeIndex) -> Option<&FxHashMap<String, EnumValue>> {
-        self.enum_values.get(&enum_idx)
-    }
-
-    /// Check if a symbol refers to a const enum
-    pub const fn is_symbol_const_enum(&self, symbol_flags: u32) -> bool {
-        symbol_flags & symbol_flags::CONST_ENUM != 0
-    }
-
-    /// Validate access to a const enum member
-    /// Const enum members can only be accessed with string literal keys
-    pub fn check_const_enum_access(
-        &mut self,
-        _access_node: NodeIndex,
-        is_element_access: bool,
-        argument_idx: NodeIndex,
-    ) {
-        if is_element_access {
-            // Element access to const enum must use string literal
-            let Some(arg_node) = self.arena.get(argument_idx) else {
-                return;
-            };
-
-            if arg_node.kind != SyntaxKind::StringLiteral as u16 {
-                self.diagnostics.push(Diagnostic::error(
-                    String::new(),
-                    arg_node.pos,
-                    arg_node.end - arg_node.pos,
-                    "A const enum member can only be accessed using a string literal.".to_string(),
-                    diagnostic_codes::CONST_ENUM_STRING_ACCESS,
-                ));
-            }
         }
     }
 }

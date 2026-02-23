@@ -182,17 +182,6 @@ impl<'a> EnumTransformer<'a> {
         Some(inlined)
     }
 
-    /// Transform an element access to a const enum member
-    /// E.g., `ConstEnum`["Member"]
-    pub fn try_inline_const_enum_element_access(
-        &mut self,
-        obj_name: &str,
-        member_name: &str,
-    ) -> Option<String> {
-        // Same logic as property access
-        self.try_inline_const_enum_access(obj_name, member_name)
-    }
-
     /// Emit an enum declaration in ES5 format
     pub fn emit_enum_es5(&mut self, enum_idx: NodeIndex) -> String {
         let Some(enum_node) = self.arena.get(enum_idx) else {
@@ -397,54 +386,6 @@ impl<'a> EnumTransformer<'a> {
     /// Check if an identifier refers to a const enum
     pub fn is_const_enum_reference(&self, name: &str) -> bool {
         self.const_enum_names.get(name).copied().unwrap_or(false)
-    }
-
-    /// Get all registered enum names
-    pub fn get_enum_names(&self) -> Vec<&String> {
-        self.enum_declarations.keys().collect()
-    }
-}
-
-/// Inline const enum usages in a source file
-pub struct ConstEnumInliner<'a> {
-    transformer: EnumTransformer<'a>,
-}
-
-impl<'a> ConstEnumInliner<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
-        ConstEnumInliner {
-            transformer: EnumTransformer::new(arena),
-        }
-    }
-
-    /// Register all enums from the source file
-    pub fn register_enums(&mut self, source_file_idx: NodeIndex) {
-        let Some(root_node) = self.transformer.arena.get(source_file_idx) else {
-            return;
-        };
-
-        let Some(source_file) = self.transformer.arena.get_source_file(root_node) else {
-            return;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            if let Some(stmt_node) = self.transformer.arena.get(stmt_idx)
-                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
-            {
-                self.transformer.register_enum(stmt_idx);
-            }
-        }
-    }
-
-    /// Try to inline a const enum access
-    pub fn try_inline(&mut self, obj_name: &str, member_name: &str) -> Option<String> {
-        self.transformer
-            .try_inline_const_enum_access(obj_name, member_name)
-    }
-
-    /// Check if a name refers to a const enum
-    pub fn is_const_enum(&self, name: &str) -> bool {
-        self.transformer.is_const_enum_reference(name)
     }
 }
 
