@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9789/13623 = 71.9% JS, 776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9800/13623 = 71.9% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Empty class body trailing comment preserved** (+6 JS sole-fix, ~45 total affected):
+  For empty single-line class bodies like `class C {} // comment`, the opening-brace comment
+  suppression logic incorrectly consumed the trailing comment after `}`. Root cause: the
+  `scan_end` for determining whether to suppress comments on `{` used `node.end` (which
+  extends past the next newline) instead of the closing `}` position. This made `has_newline`
+  true, triggering `skip_trailing_same_line_comments(brace_end, node.end)` which consumed the
+  comment that logically belongs to `}`. Fix: when the class has no members, scan for the
+  closing `}` and use its position as `scan_end`. Two unit tests added.
+  Tests fixed include: `baseExpressionTypeParameters`, `bind1`,
+  `classAbstractOverrideWithAbstract`, `classImplementsClass2`, `es6MemberScoping`,
+  `objectTypesWithPredefinedTypesAsName`.
+
+### Previously Fixed
 - **CJS namespace IIFE tail folding for AMD/UMD exported namespaces** (+13 JS):
   For `export namespace N { ... }` with AMD/UMD modules, tsc folds `exports.N` into the
   IIFE closing argument: `(N || (exports.N = N = {}))` instead of emitting a separate
