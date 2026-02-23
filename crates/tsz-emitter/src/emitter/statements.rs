@@ -37,14 +37,31 @@ impl<'a> Printer<'a> {
                     .get(self.comment_emit_idx)
                     .is_some_and(|c| c.end <= closing_brace_pos);
             if has_inner_comments {
-                self.map_opening_brace(node);
-                self.write_with_end_marker("{");
-                self.write_line();
-                self.increase_indent();
-                self.emit_comments_before_pos(closing_brace_pos);
-                self.decrease_indent();
-                self.map_closing_brace(node);
-                self.write_with_end_marker("}");
+                if is_function_body_block {
+                    // tsc suppresses trailing comments on function/method/arrow body
+                    // opening braces.  For empty bodies the comments sit between { and },
+                    // so we skip them and preserve original single/multi-line format.
+                    self.skip_trailing_same_line_comments(node.pos, closing_brace_pos);
+                    if self.is_single_line(node) {
+                        self.map_opening_brace(node);
+                        self.write("{ }");
+                    } else {
+                        self.map_opening_brace(node);
+                        self.write_with_end_marker("{");
+                        self.write_line();
+                        self.map_closing_brace(node);
+                        self.write_with_end_marker("}");
+                    }
+                } else {
+                    self.map_opening_brace(node);
+                    self.write_with_end_marker("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_comments_before_pos(closing_brace_pos);
+                    self.decrease_indent();
+                    self.map_closing_brace(node);
+                    self.write_with_end_marker("}");
+                }
             } else if self.is_single_line(node) {
                 // Single-line empty block: { }
                 self.map_opening_brace(node);
@@ -1411,6 +1428,64 @@ mod tests {
         assert!(
             !output.contains("// arrow comment"),
             "Trailing comment on arrow function body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+    }
+
+    /// Empty function body with trailing comment on `{` should suppress the comment.
+    /// tsc: `function f4(_i, ...rest) {\n}` (comment dropped)
+    #[test]
+    fn empty_function_body_brace_comment_suppressed() {
+        let source = "function f4(_i: any, ...rest) { // error\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// error"),
+            "Trailing comment on empty function body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+    }
+
+    /// Empty method body with comment should also be suppressed.
+    #[test]
+    fn empty_method_body_brace_comment_suppressed() {
+        let source = "class C {\n    foo() { // comment\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// comment"),
+            "Trailing comment on empty method body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+    }
+
+    /// Control-flow empty blocks should still preserve comments.
+    #[test]
+    fn empty_if_block_comment_preserved() {
+        let source = "function f() {\n    if (true) { // keep this\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// keep this"),
+            "Trailing comment on control-flow empty block should be preserved.\nOutput:\n{output}"
         );
     }
 }

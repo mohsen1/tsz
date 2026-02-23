@@ -398,6 +398,33 @@ impl<'a> Printer<'a> {
         }
 
         self.write(" {");
+        // Suppress trailing comments on class body opening brace.
+        // tsc drops same-line comments on `{` for class bodies, just like function
+        // bodies (e.g. `class C { // error` → `class C {`).
+        if !self.ctx.options.remove_comments
+            && let Some(text) = self.source_text {
+                let bytes = text.as_bytes();
+                let start = node.pos as usize;
+                let end = (node.end as usize).min(bytes.len());
+                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                    let brace_end = (start + offset + 1) as u32;
+                    // Only suppress if there's a newline between `{` and the first
+                    // member (or `}` if empty).  Single-line class bodies like
+                    // `class C { x: T; } // error` have the comment after `}`.
+                    let scan_end = class
+                        .members
+                        .nodes
+                        .first()
+                        .and_then(|&idx| self.arena.get(idx))
+                        .map_or(end, |m| m.pos as usize);
+                    let has_newline = bytes[brace_end as usize..scan_end.min(end)]
+                        .iter()
+                        .any(|&b| b == b'\n' || b == b'\r');
+                    if has_newline {
+                        self.skip_trailing_same_line_comments(brace_end, node.end);
+                    }
+                }
+            }
         self.write_line();
         self.increase_indent();
 
@@ -1790,6 +1817,46 @@ mod tests {
         assert!(
             !output.contains("\"a\";"),
             "String literal computed property should NOT produce side-effect statement.\nOutput:\n{output}"
+        );
+    }
+
+    /// Trailing comment on class body opening `{` should be suppressed.
+    /// tsc: `class E extends A {` (comment dropped)
+    #[test]
+    fn class_body_brace_trailing_comment_suppressed() {
+        let source =
+            "class E extends A { // error -- doesn't implement bar\n    foo() { return 1; }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// error"),
+            "Trailing comment on class body `{{` should be suppressed.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comment inside class body (not on opening brace) should still be preserved.
+    #[test]
+    fn class_body_inner_comment_preserved() {
+        let source = "class C {\n    // this is a method\n    foo() { return 1; }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// this is a method"),
+            "Leading comment of class member should be preserved.\nOutput:\n{output}"
         );
     }
 }
