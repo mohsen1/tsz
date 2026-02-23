@@ -1,8 +1,34 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9872/13623 = 72.5% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9884/13623 = 72.6% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **CJS `exports.default` not hoisted to preamble for named default function exports** (+12 JS):
+  `export default function func()` should have `exports.default = func;` in the CJS preamble
+  (right after `Object.defineProperty`), not at the function's source position. JS function
+  declarations are hoisted, so the binding exists before any code runs. When other statements
+  appeared before the function declaration in source order (e.g., `var before = func();`), the
+  export assignment was emitted after them instead of before. Fix: (1) `collect_export_names_categorized`
+  now detects `export default function name()` and returns `default_func_export: Option<String>`.
+  (2) `source_file.rs` preamble emits `exports.default = name;` alongside other hoisted function
+  exports. (3) `module_emission.rs` and `module_emission_exports.rs` skip inline emission when
+  the preamble already handled the default export. One unit test added.
+  Tests fixed: `es5ExportDefaultFunctionDeclaration(target=es2015/es5)`,
+  `es5ExportDefaultFunctionDeclaration3(target=es2015/es5)`, and 8 others.
+  JS: 9872→9884, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session
+- **Anonymous default export class/function naming** (~8 tests):
+  tsc names anonymous `export default class` as `default_1`, `default_2`, etc. tsz uses
+  `_a_default` or doesn't name them at all (`class {}`). Requires generating sequential
+  `default_N` names in the emitter. Separate from the hoisting fix — needs its own tracking
+  of anonymous default export counters. Tests: `es5ExportDefaultClassDeclaration2`,
+  `es5ExportDefaultFunctionDeclaration2`, `exportDefaultClassInNamespace`,
+  `exportDefaultClassWithStaticPropertyAssignmentsInES6`, etc.
+- **Comment displacement** (~170+ exclusive tests): Still the single largest category of
+  JS emit failures. Each subpattern needs individual investigation. Not a single-fix pattern.
+
+### Previously Fixed This Session
 - **Namespace IIFE parameter not renamed for variable/import-equals conflicts** (+9 JS):
   `namespace_body_has_name_conflict` only checked class, function, enum, and module
   declarations. Variable declarations (`export var m`) and import-equals declarations
