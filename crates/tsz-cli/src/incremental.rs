@@ -411,11 +411,6 @@ impl ChangeTracker {
             || !self.new_files.is_empty()
             || !self.deleted_files.is_empty()
     }
-
-    /// Get total number of affected files
-    pub fn affected_count(&self) -> usize {
-        self.affected_files.len()
-    }
 }
 
 /// Compute a version string for a file (content hash)
@@ -461,14 +456,6 @@ impl BuildInfoBuilder {
         }
     }
 
-    /// Create a builder from existing build info
-    pub const fn from_existing(build_info: BuildInfo, base_dir: PathBuf) -> Self {
-        Self {
-            build_info,
-            base_dir,
-        }
-    }
-
     /// Set root files
     pub fn set_root_files(&mut self, files: Vec<String>) -> &mut Self {
         self.build_info.root_files = files;
@@ -505,25 +492,6 @@ impl BuildInfoBuilder {
 
         self.build_info
             .set_dependencies(&relative_path, relative_deps);
-        self
-    }
-
-    /// Set emit signature for a file
-    pub fn set_file_emit(
-        &mut self,
-        path: &Path,
-        js_hash: Option<&str>,
-        dts_hash: Option<&str>,
-    ) -> &mut Self {
-        let relative_path = self.relative_path(path);
-        self.build_info.set_emit_signature(
-            &relative_path,
-            EmitSignature {
-                js: js_hash.map(String::from),
-                dts: dts_hash.map(String::from),
-                map: None,
-            },
-        );
         self
     }
 

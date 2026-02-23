@@ -61,10 +61,6 @@ pub enum FileInclusionReason {
     ImportedFrom(PathBuf),
     /// File is a lib file (e.g., lib.es2020.d.ts)
     LibFile,
-    /// Type reference from another file
-    TypeReference(PathBuf),
-    /// Referenced in a /// <reference> directive
-    TripleSlashReference(PathBuf),
 }
 
 impl std::fmt::Display for FileInclusionReason {
@@ -78,12 +74,6 @@ impl std::fmt::Display for FileInclusionReason {
                 write!(f, "Imported from '{}'", path.display())
             }
             Self::LibFile => write!(f, "Library file"),
-            Self::TypeReference(path) => {
-                write!(f, "Type reference from '{}'", path.display())
-            }
-            Self::TripleSlashReference(path) => {
-                write!(f, "Referenced from '{}'", path.display())
-            }
         }
     }
 }
