@@ -184,6 +184,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
     pub(crate) fn interner(&self) -> &dyn TypeDatabase {
         self.db.as_type_database()
     }
+
+    /// Try to resolve a member from the global `Object` type, returning
+    /// `PropertyNotFound` if no such member exists.
+    fn resolve_object_member_or_not_found(
+        &self,
+        obj_type: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_object_member(prop_name, prop_atom).unwrap_or(
+            PropertyAccessResult::PropertyNotFound {
+                type_id: obj_type,
+                property_name: prop_atom,
+            },
+        )
+    }
 }
 
 impl<'a> PropertyAccessEvaluator<'a> {
@@ -571,12 +587,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // TypeParameter with no constraint: fallback to Object members
                     // In TypeScript, unconstrained type parameters allow access to Object members
                     // like toString, hasOwnProperty, etc.
-                    self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                        PropertyAccessResult::PropertyNotFound {
-                            type_id: obj_type,
-                            property_name: prop_atom,
-                        },
-                    )
+                    self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
                 }
             }
 
@@ -626,12 +637,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             TypeData::Intrinsic(IntrinsicKind::Object) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
-                    },
-                )
+                self.resolve_object_member_or_not_found(obj_type, prop_name, prop_atom)
             }
 
             TypeData::Array(_) => {
@@ -653,12 +659,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                            PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            },
-                        );
+                        return self
+                            .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
                 };
 
@@ -683,12 +685,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                            PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            },
-                        );
+                        return self
+                            .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
                 };
 
@@ -746,12 +744,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                            PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            },
-                        );
+                        return self
+                            .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
                 };
 
@@ -786,12 +780,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                            PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            },
-                        );
+                        return self
+                            .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
                 };
 
@@ -856,12 +846,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     None => {
                         let prop_atom =
                             prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                        return self.resolve_object_member(prop_name, prop_atom).unwrap_or(
-                            PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom,
-                            },
-                        );
+                        return self
+                            .resolve_object_member_or_not_found(obj_type, prop_name, prop_atom);
                     }
                 };
 
