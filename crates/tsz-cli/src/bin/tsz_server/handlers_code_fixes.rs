@@ -4599,6 +4599,30 @@ fn parse_identifier_call_expression(line: &str) -> Option<(usize, &str)> {
         return None;
     }
 
+    let mut depth = 0u32;
+    let mut close_idx = None;
+    for (idx, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    close_idx = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close_idx = close_idx?;
+    let suffix = rest.get(close_idx + 1..)?.trim_start();
+    if suffix.starts_with('{') || suffix.starts_with(':') {
+        return None;
+    }
+
     Some((leading_ws, name))
 }
 
@@ -6390,11 +6414,57 @@ mod tests {
     }
 
     #[test]
+    fn semantic_diagnostics_sync_does_not_add_missing_name_for_class_method_declaration() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/index.ts".to_string(),
+            "class Foo {\n    constructor() { }\n    constructor() { }\n    fn() { }\n}\n"
+                .to_string(),
+        );
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "semanticDiagnosticsSync".to_string(),
+            arguments: serde_json::json!({
+                "file": "/index.ts",
+                "includeLinePosition": true
+            }),
+        };
+
+        let resp = server.handle_semantic_diagnostics_sync(1, &req);
+        assert!(resp.success, "expected semanticDiagnosticsSync to succeed");
+        let diagnostics = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected diagnostics array");
+
+        let fn_missing_name_count = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.get("code").and_then(serde_json::Value::as_u64)
+                    == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
+                    && diag
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|msg| msg.contains("'fn'"))
+            })
+            .count();
+        assert_eq!(
+            fn_missing_name_count, 0,
+            "did not expect synthetic missing-name diagnostics for class method declarations: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn parse_identifier_call_expression_ignores_keywords() {
         assert_eq!(
             parse_identifier_call_expression("useEffect(() => {})"),
             Some((0, "useEffect"))
         );
         assert_eq!(parse_identifier_call_expression("if (cond)"), None);
+        assert_eq!(parse_identifier_call_expression("fn() { }"), None);
+        assert_eq!(parse_identifier_call_expression("fn(): number { return 1; }"), None);
     }
 }
