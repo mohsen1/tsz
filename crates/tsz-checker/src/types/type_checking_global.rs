@@ -1619,6 +1619,84 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for declarations that conflict with built-in global identifiers (TS2397).
+    ///
+    /// TypeScript protects the built-in global names `undefined` and `globalThis`
+    /// from being redeclared:
+    /// - `var undefined = null;` → TS2397 (value declaration of `undefined`)
+    /// - `namespace globalThis {}` → TS2397 (in non-module/script files)
+    /// - `var globalThis;` → TS2397 (in non-module/script files)
+    ///
+    /// Type declarations (interfaces, type aliases, etc.) named `undefined` are
+    /// allowed — `checkTypeNameIsReserved` handles those separately.
+    pub(crate) fn check_built_in_global_identifier_conflicts(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let is_external_module = self
+            .ctx
+            .is_external_module_by_file
+            .as_ref()
+            .and_then(|m| m.get(&self.ctx.file_name))
+            .copied()
+            .unwrap_or_else(|| self.ctx.binder.is_external_module());
+
+        // Check `undefined` redeclaration.
+        // tsc checks if `undefined` exists in globals and emits TS2397 for each
+        // non-type declaration. We check the file-level locals.
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("undefined")
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                for &decl_idx in &symbol.declarations {
+                    let Some(node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    // Skip type declarations — only value declarations conflict.
+                    let is_type_declaration = matches!(
+                        node.kind,
+                        syntax_kind_ext::INTERFACE_DECLARATION
+                            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            | syntax_kind_ext::ENUM_DECLARATION
+                            | syntax_kind_ext::CLASS_DECLARATION
+                            | syntax_kind_ext::TYPE_PARAMETER
+                    );
+                    if is_type_declaration {
+                        continue;
+                    }
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    let message = format_message(
+                        diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                        &["undefined"],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    );
+                }
+            }
+
+        // Check `globalThis` redeclaration in non-module (script) files.
+        // tsc only emits TS2397 for `globalThis` in non-external-module files,
+        // since module-scoped `globalThis` declarations don't pollute the global scope.
+        if !is_external_module
+            && let Some(sym_id) = self.ctx.binder.file_locals.get("globalThis")
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    for &decl_idx in &symbol.declarations {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        let message = format_message(
+                            diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                            &["globalThis"],
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                        );
+                    }
+                }
+    }
+
     /// Check if a function declaration has a body (is an implementation, not just a signature).
     pub(crate) fn function_has_body(&self, decl_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;

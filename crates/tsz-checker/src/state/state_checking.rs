@@ -244,6 +244,9 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
+            // Check for built-in global identifier conflicts (2397)
+            self.check_built_in_global_identifier_conflicts();
+
             // Check for missing global types (2318)
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();
