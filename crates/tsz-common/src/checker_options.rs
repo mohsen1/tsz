@@ -101,6 +101,9 @@ pub struct CheckerOptions {
     /// When true, suppress TS7053 (implicit any index) errors.
     /// This is a removed option (TS5102) but tsc still honors its suppression behavior.
     pub suppress_implicit_any_index_errors: bool,
+    /// When true, allow import paths to end with `.ts`, `.tsx`, `.mts`, `.cts` extensions.
+    /// When false (default), such imports emit TS5097.
+    pub allow_importing_ts_extensions: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -162,6 +165,7 @@ impl Default for CheckerOptions {
             module_explicitly_set: false,
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
+            allow_importing_ts_extensions: false,
         }
     }
 }

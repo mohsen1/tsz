@@ -7,6 +7,31 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Returns the TypeScript extension suffix (e.g. `".ts"`, `".tsx"`) if the module path
+/// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
+/// Returns `None` for `.d.ts`/`.d.mts`/`.d.cts` (handled separately by TS2846) and
+/// non-TS extensions.
+pub(super) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
+    // .d.ts/.d.mts/.d.cts are declaration files — handled by TS2846, not TS5097
+    if module_name.ends_with(".d.ts")
+        || module_name.ends_with(".d.mts")
+        || module_name.ends_with(".d.cts")
+    {
+        return None;
+    }
+    if module_name.ends_with(".ts") {
+        Some(".ts")
+    } else if module_name.ends_with(".tsx") {
+        Some(".tsx")
+    } else if module_name.ends_with(".mts") {
+        Some(".mts")
+    } else if module_name.ends_with(".cts") {
+        Some(".cts")
+    } else {
+        None
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Check for duplicate import alias declarations within a scope.
     ///
@@ -859,6 +884,24 @@ impl<'a> CheckerState<'a> {
             emitted_dts_import_error = true;
         }
 
+        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled
+        if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && !is_type_only_import
+            && let Some(ext) = ts_extension_suffix(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                    diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                    &[ext],
+                );
+            self.error_at_position(
+                    spec_start,
+                    spec_length,
+                    &message,
+                    diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                );
+        }
+
         if let Some(binders) = &self.ctx.all_binders
             && binders.iter().any(|binder| {
                 binder.declared_modules.contains(module_name)
@@ -1514,5 +1557,60 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ts_extension_suffix;
+
+    #[test]
+    fn ts_extension_detects_ts() {
+        assert_eq!(ts_extension_suffix("./foo.ts"), Some(".ts"));
+    }
+
+    #[test]
+    fn ts_extension_detects_tsx() {
+        assert_eq!(ts_extension_suffix("./foo.tsx"), Some(".tsx"));
+    }
+
+    #[test]
+    fn ts_extension_detects_mts() {
+        assert_eq!(ts_extension_suffix("./foo.mts"), Some(".mts"));
+    }
+
+    #[test]
+    fn ts_extension_detects_cts() {
+        assert_eq!(ts_extension_suffix("./foo.cts"), Some(".cts"));
+    }
+
+    #[test]
+    fn ts_extension_ignores_dts() {
+        assert_eq!(ts_extension_suffix("./foo.d.ts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_d_mts() {
+        assert_eq!(ts_extension_suffix("./foo.d.mts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_d_cts() {
+        assert_eq!(ts_extension_suffix("./foo.d.cts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_js() {
+        assert_eq!(ts_extension_suffix("./foo.js"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_no_ext() {
+        assert_eq!(ts_extension_suffix("./foo"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_json() {
+        assert_eq!(ts_extension_suffix("./data.json"), None);
     }
 }

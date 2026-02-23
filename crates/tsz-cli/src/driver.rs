@@ -732,6 +732,9 @@ fn compile_inner(
     if loaded.suppress_implicit_any_index_errors {
         resolved.checker.suppress_implicit_any_index_errors = true;
     }
+    if resolved.allow_importing_ts_extensions {
+        resolved.checker.allow_importing_ts_extensions = true;
+    }
     if config.is_none()
         && args.module.is_none()
         && matches!(resolved.printer.module, ModuleKind::None)

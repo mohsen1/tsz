@@ -29182,6 +29182,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             module_explicitly_set: false,
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
+            allow_importing_ts_extensions: false,
         },
     );
     assert!(
