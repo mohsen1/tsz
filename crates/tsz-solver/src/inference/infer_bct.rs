@@ -88,7 +88,7 @@ impl<'a> InferenceContext<'a> {
 
         // Step 1: Try to find a common base type for primitives/literals
         // For example, [string, "hello"] -> string
-        let common_base = self.find_common_base_type(&unique);
+        let common_base = crate::utils::find_common_base_type(&unique, |ty| self.get_base_type(ty));
         if let Some(base) = common_base {
             // All types share a common base type (e.g. all are strings or derived from Animal).
             // Using the common base is more specific than a full union only when there's
@@ -119,27 +119,6 @@ impl<'a> InferenceContext<'a> {
 
         // Step 4: Create union of all types
         self.interner.union(unique)
-    }
-
-    /// Find a common base type for a set of types.
-    /// For example, [string, "hello"] -> Some(string)
-    fn find_common_base_type(&self, types: &[TypeId]) -> Option<TypeId> {
-        if types.is_empty() {
-            return None;
-        }
-
-        // Get the base type of the first element
-        let first_base = self.get_base_type(types[0])?;
-
-        // Check if all other types have the same base
-        for &ty in types.iter().skip(1) {
-            let base = self.get_base_type(ty)?;
-            if base != first_base {
-                return None;
-            }
-        }
-
-        Some(first_base)
     }
 
     /// Get the base type of a type.
