@@ -347,11 +347,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Get identifier text from a node index
-    pub(super) fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
-    }
-
     // =========================================================================
     // Unique Name Generation (mirrors TypeScript's makeUniqueName)
     // =========================================================================

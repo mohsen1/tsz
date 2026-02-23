@@ -453,7 +453,10 @@ impl<'a> Printer<'a> {
             .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
 
         if is_simple_ident {
-            let ident_text = self.get_identifier_text(decl.initializer);
+            let ident_text = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                decl.initializer,
+            );
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
             return;
         }
@@ -577,7 +580,7 @@ impl<'a> Printer<'a> {
         if key_node.kind != SyntaxKind::Identifier as u16 {
             return false;
         }
-        let key_text = self.get_identifier_text(key_idx);
+        let key_text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, key_idx);
 
         if !*first {
             self.write(", ");
