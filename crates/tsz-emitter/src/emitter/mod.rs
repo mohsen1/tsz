@@ -328,6 +328,12 @@ pub struct Printer<'a> {
     /// base of a property/element access. This prevents stripping parens around
     /// `new` expressions where removal would change semantics: `(new a).b` vs `new a.b`.
     pub(super) paren_in_access_position: bool,
+
+    /// When true, the current parenthesized expression is being emitted as the
+    /// callee of a `new` expression. This prevents stripping parens around
+    /// call expressions where removal would change semantics:
+    /// `new (x() as T)` → `new (x())` (not `new x()`).
+    pub(super) paren_in_new_callee: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -444,6 +450,7 @@ impl<'a> Printer<'a> {
             iterator_for_of_depth: 0,
             destructuring_read_depth: 0,
             paren_in_access_position: false,
+            paren_in_new_callee: false,
         }
     }
 

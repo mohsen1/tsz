@@ -539,7 +539,12 @@ impl<'a> Printer<'a> {
         };
 
         self.write("new ");
+        // Signal new-callee position so `emit_parenthesized` preserves parens
+        // around call expressions: `new (x() as T)` → `new (x())` not `new x()`.
+        let prev_new = self.paren_in_new_callee;
+        self.paren_in_new_callee = true;
         self.emit(call.expression);
+        self.paren_in_new_callee = prev_new;
         if let Some(ref args) = call.arguments {
             // Map opening `(` — scan forward from callee end
             if let Some(expr_node) = self.arena.get(call.expression) {
@@ -885,7 +890,10 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     || k == syntax_kind_ext::NON_NULL_EXPRESSION
                     || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                    || k == syntax_kind_ext::CALL_EXPRESSION
+                    // CALL_EXPRESSION can strip parens unless in new-callee position:
+                    // `(x() as T).foo` → `x().foo` is fine, but `new (x() as T)` must keep
+                    // parens because `new x()` has different semantics (constructs `x`).
+                    || (k == syntax_kind_ext::CALL_EXPRESSION && !self.paren_in_new_callee)
                     // NEW_EXPRESSION can strip parens only when NOT in access position:
                     // `(new a)` → `new a` is fine, but `(new a).b` must keep parens
                     // because `new a.b` has different semantics (constructs `a.b`).
@@ -1444,6 +1452,75 @@ mod tests {
         assert!(
             output.contains("(new a).b"),
             "Parens around new expression in access position must be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion around call expression in `new` callee position keeps parens:
+    /// `new (x() as any)` → `new (x())` (not `new x()` which has different semantics).
+    #[test]
+    fn type_assertion_call_in_new_callee_keeps_parens() {
+        let source = "new (x() as any);\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("new (x())"),
+            "Parens around call expression in new callee must be preserved.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("new x()"),
+            "Should NOT strip parens to `new x()` (different semantics).\nOutput:\n{output}"
+        );
+    }
+
+    /// `as` type assertion around call expression in `new` callee position keeps parens:
+    /// `new (x() as any)` → `new (x())`.
+    #[test]
+    fn as_assertion_call_in_new_callee_keeps_parens() {
+        // Use angle-bracket style too: `new (<any>x())`
+        let source = "new (<any>x());\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("new (x())"),
+            "Parens around angle-bracket-asserted call in new callee must be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Call expressions with type assertions outside `new` context still strip parens:
+    /// `(<any>x()).foo` → `x().foo`.
+    #[test]
+    fn type_assertion_call_outside_new_still_strips_parens() {
+        let source = "var b = (<any>x()).foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("x().foo"),
+            "Parens around type-asserted call in access position should still strip.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(x()).foo"),
+            "Should not have redundant parens.\nOutput:\n{output}"
         );
     }
 }
