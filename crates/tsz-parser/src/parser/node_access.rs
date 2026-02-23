@@ -1233,10 +1233,7 @@ impl NodeArena {
     #[inline]
     #[must_use]
     pub fn get_binding_pattern(&self, node: &Node) -> Option<&BindingPatternData> {
-        use super::syntax_kind_ext::{ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN};
-        if node.has_data()
-            && (node.kind == OBJECT_BINDING_PATTERN || node.kind == ARRAY_BINDING_PATTERN)
-        {
+        if node.has_data() && node.is_binding_pattern() {
             self.binding_patterns.get(node.data_index as usize)
         } else {
             None
@@ -1595,6 +1592,13 @@ impl Node {
                 | GET_ACCESSOR
                 | SET_ACCESSOR
         )
+    }
+
+    /// Check if this is a binding pattern (array or object destructuring)
+    #[inline]
+    #[must_use]
+    pub const fn is_binding_pattern(&self) -> bool {
+        self.kind == OBJECT_BINDING_PATTERN || self.kind == ARRAY_BINDING_PATTERN
     }
 
     /// Check if this is a statement

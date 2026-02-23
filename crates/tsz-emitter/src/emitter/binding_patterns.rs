@@ -6,7 +6,6 @@
 use super::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
-use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -107,10 +106,6 @@ impl<'a> Printer<'a> {
 
     /// Check if a node is a binding pattern
     pub(super) fn is_binding_pattern(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        self.arena.get(idx).is_some_and(|n| n.is_binding_pattern())
     }
 }
