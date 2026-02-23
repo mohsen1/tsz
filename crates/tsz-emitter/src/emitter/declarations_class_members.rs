@@ -427,10 +427,38 @@ impl<'a> Printer<'a> {
 
         // Empty constructor with no prologue: check source format
         if block.statements.nodes.is_empty() && !has_prologue && !has_function_temps {
-            // TypeScript preserves the source formatting: if the body was
-            // on a single line in the source (e.g. `{ }`), keep it single-line.
-            // If it was multi-line, emit multi-line with empty body.
-            if self.is_single_line(block_node) {
+            // Check for inner comments (e.g., constructor body with only comments).
+            // tsc preserves these comments even in otherwise-empty constructor bodies.
+            let closing_brace_pos =
+                self.find_token_end_before_trivia(block_node.pos, block_node.end);
+            let has_inner_comments = !self.ctx.options.remove_comments
+                && self
+                    .all_comments
+                    .get(self.comment_emit_idx)
+                    .is_some_and(|c| c.end <= closing_brace_pos);
+            if has_inner_comments {
+                // Skip same-line-as-brace comments (suppressed for function bodies),
+                // then emit any remaining inner comments on subsequent lines.
+                self.skip_trailing_same_line_comments(block_node.pos, closing_brace_pos);
+                let has_remaining = self
+                    .all_comments
+                    .get(self.comment_emit_idx)
+                    .is_some_and(|c| c.end <= closing_brace_pos);
+                if has_remaining {
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_comments_before_pos(closing_brace_pos);
+                    self.decrease_indent();
+                    self.write("}");
+                } else if self.is_single_line(block_node) {
+                    self.write("{ }");
+                } else {
+                    self.write("{");
+                    self.write_line();
+                    self.write("}");
+                }
+            } else if self.is_single_line(block_node) {
                 self.write("{ }");
             } else {
                 self.write("{");
