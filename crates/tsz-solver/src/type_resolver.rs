@@ -192,10 +192,6 @@ impl TypeResolver for NoopResolver {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }
-
-    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
-        None
-    }
 }
 
 /// Blanket implementation of `TypeResolver` for references to resolver types.
