@@ -1415,11 +1415,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional {
-            self.interner.union2(prop.type_id, TypeId::UNDEFINED)
-        } else {
-            prop.type_id
-        }
+        crate::utils::optional_property_type(self.interner, prop)
     }
 
     /// Constrain each element type against the string and number index signatures
