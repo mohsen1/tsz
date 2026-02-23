@@ -330,16 +330,9 @@ impl<'a> CheckerState<'a> {
         // The flags are on the VariableDeclarationList child node
         for &decl_idx in &var_data.declarations.nodes {
             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                // Check the declaration node or its parent for let/const flags
-                let flags = decl_node.flags as u32;
+                // Check if it's let/const (not var) using combined node+parent flags
+                let flags = self.ctx.arena.get_variable_declaration_flags(decl_idx);
                 if (flags & (node_flags::LET | node_flags::CONST)) != 0 {
-                    return false;
-                }
-                // Check if parent (VariableDeclarationList) has let/const flags
-                if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                    && (parent_node.flags as u32 & (node_flags::LET | node_flags::CONST)) != 0
-                {
                     return false;
                 }
                 // Check that declaration has no initializer

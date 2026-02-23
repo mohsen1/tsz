@@ -935,20 +935,8 @@ impl<'a> CheckerState<'a> {
             return Some(false);
         }
 
-        let decl_node = self.ctx.arena.get(value_decl)?;
-        let mut decl_flags = decl_node.flags as u32;
-
-        // If CONST flag not directly on node, check parent (VariableDeclarationList)
-        use tsz_parser::parser::flags::node_flags;
-        if (decl_flags & node_flags::CONST) == 0
-            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
-            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-        {
-            decl_flags |= parent_node.flags as u32;
-        }
-
-        Some(decl_flags & node_flags::CONST != 0)
+        self.ctx.arena.get(value_decl)?;
+        Some(self.ctx.arena.is_const_variable_declaration(value_decl))
     }
 
     /// Check if a property access refers to an enum member.

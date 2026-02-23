@@ -465,6 +465,39 @@ impl NodeArena {
         false
     }
 
+    /// Returns the combined `node_flags` for a `VARIABLE_DECLARATION` node,
+    /// merging the node's own flags with its parent `VARIABLE_DECLARATION_LIST`
+    /// flags. This is needed because the parser may place `LET`/`CONST`/`USING`
+    /// flags on either the declaration or the list.
+    ///
+    /// Returns `0` if the node doesn't exist.
+    #[must_use]
+    pub fn get_variable_declaration_flags(&self, node_idx: NodeIndex) -> u32 {
+        let Some(node) = self.get(node_idx) else {
+            return 0;
+        };
+        let mut flags = node.flags as u32;
+        use super::flags::node_flags;
+        if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) == 0
+            && let Some(ext) = self.get_extended(node_idx)
+                && let Some(parent) = self.get(ext.parent)
+                && parent.kind == VARIABLE_DECLARATION_LIST
+            {
+                flags |= parent.flags as u32;
+            }
+        flags
+    }
+
+    /// Returns `true` if a `VARIABLE_DECLARATION` node is declared with `const`.
+    ///
+    /// Handles the fact that the `CONST` flag may live on the node itself or
+    /// on its parent `VARIABLE_DECLARATION_LIST`.
+    #[must_use]
+    pub fn is_const_variable_declaration(&self, node_idx: NodeIndex) -> bool {
+        use super::flags::node_flags;
+        (self.get_variable_declaration_flags(node_idx) & node_flags::CONST) != 0
+    }
+
     /// Get access expression data (property access or element access).
     /// Returns None if node is not an access expression or has no data.
     #[inline]

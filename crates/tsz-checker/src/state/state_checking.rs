@@ -838,14 +838,7 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             syntax_kind_ext::VARIABLE_DECLARATION => {
-                let mut decl_flags = node.flags as u32;
-                if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
-                    && let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent)
-                    && let Some(parent_node) = arena.get(parent)
-                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                {
-                    decl_flags |= parent_node.flags as u32;
-                }
+                let decl_flags = arena.get_variable_declaration_flags(decl_idx);
                 if (decl_flags & (node_flags::LET | node_flags::CONST)) != 0 {
                     Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 } else {

@@ -492,27 +492,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn is_const_variable_declaration(&self, decl_idx: NodeIndex) -> bool {
-        let Some(decl_node) = self.arena.get(decl_idx) else {
-            return false;
-        };
-        let mut flags = decl_node.flags as u32;
-        if (flags & (node_flags::LET | node_flags::CONST)) == 0 {
-            let Some(ext) = self.arena.get_extended(decl_idx) else {
-                return false;
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.arena.get(parent_idx) else {
-                return false;
-            };
-            if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                return false;
-            }
-            flags |= parent_node.flags as u32;
-        }
-        (flags & node_flags::CONST) != 0
+        self.arena.is_const_variable_declaration(decl_idx)
     }
 
     /// Check if a symbol is const (immutable) vs mutable (let/var).
@@ -520,38 +500,17 @@ impl<'a> FlowAnalyzer<'a> {
     /// This is used for loop widening: const variables preserve narrowing through loops,
     /// while mutable variables are widened to the declared type to account for mutations.
     pub(crate) fn is_const_symbol(&self, sym_id: SymbolId) -> bool {
-        use tsz_parser::parser::node_flags;
-        use tsz_parser::parser::syntax_kind_ext;
-
         let symbol = match self.binder.get_symbol(sym_id) {
             Some(sym) => sym,
             None => return false, // Assume mutable if we can't determine
         };
 
-        // Check the value declaration
         let decl_idx = symbol.value_declaration;
         if decl_idx.is_none() {
             return false; // Assume mutable if no declaration
         }
 
-        let decl_node = match self.arena.get(decl_idx) {
-            Some(node) => node,
-            None => return false,
-        };
-
-        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
-        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-            && let Some(ext) = self.arena.get_extended(decl_idx)
-            && ext.parent.is_some()
-            && let Some(parent_node) = self.arena.get(ext.parent)
-        {
-            let flags = parent_node.flags as u32;
-            return (flags & node_flags::CONST) != 0;
-        }
-
-        // For other node types, check the node's own flags
-        let flags = decl_node.flags as u32;
-        (flags & node_flags::CONST) != 0
+        self.arena.is_const_variable_declaration(decl_idx)
     }
 
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)

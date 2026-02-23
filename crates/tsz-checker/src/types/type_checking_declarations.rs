@@ -939,22 +939,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the variable is declared with `const`.
     pub(crate) fn is_const_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::node_flags;
-
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return false;
-        }
-        (parent_node.flags as u32) & node_flags::CONST != 0
+        self.ctx.arena.is_const_variable_declaration(var_decl_idx)
     }
 
     /// Check if an initializer expression is an `as const` assertion.

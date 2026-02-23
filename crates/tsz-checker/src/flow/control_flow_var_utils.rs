@@ -224,15 +224,7 @@ impl<'a> FlowAnalyzer<'a> {
                 return false;
             }
             // Check if the parent declaration list is let/var (not const)
-            if let Some(ext) = self.arena.get_extended(node)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.arena.get(ext.parent)
-            {
-                use tsz_parser::parser::node_flags;
-                let flags = parent_node.flags as u32;
-                return (flags & node_flags::CONST) == 0;
-            }
-            return false;
+            return !self.arena.is_const_variable_declaration(node);
         }
 
         // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT: check flags on the list

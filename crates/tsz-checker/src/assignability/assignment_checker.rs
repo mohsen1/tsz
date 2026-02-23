@@ -4,7 +4,6 @@ use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, form
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -168,19 +167,10 @@ impl<'a> CheckerState<'a> {
             target_arena = first.as_ref();
         }
 
-        let decl_node = target_arena.get(value_decl)?;
-        let mut decl_flags = decl_node.flags as u32;
-
-        // If CONST/LET not directly on node, check parent (VariableDeclarationList)
-        if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
-            && let Some(ext) = target_arena.get_extended(value_decl)
-            && let Some(parent_node) = target_arena.get(ext.parent)
-            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-        {
-            decl_flags |= parent_node.flags as u32;
-        }
-
-        (decl_flags & node_flags::CONST != 0).then_some(name)
+        target_arena.get(value_decl)?;
+        target_arena
+            .is_const_variable_declaration(value_decl)
+            .then_some(name)
     }
 
     /// Emit TS1100 when assigning to strict-mode reserved identifiers.

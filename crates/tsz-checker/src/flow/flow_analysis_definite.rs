@@ -560,43 +560,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for let/var (mutable), false for const (immutable).
     fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
-        use tsz_parser::parser::node_flags;
-        use tsz_parser::parser::syntax_kind_ext;
-
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
             None => return true, // Assume mutable if we can't determine
         };
 
-        // Check the value declaration
         let decl_idx = symbol.value_declaration;
         if decl_idx.is_none() {
             return true; // Assume mutable if no declaration
         }
 
-        let decl_node = match self.ctx.arena.get(decl_idx) {
-            Some(node) => node,
-            None => return true,
-        };
-
-        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
-        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
-        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
-            if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-            {
-                let flags = parent_node.flags as u32;
-                let is_const = (flags & node_flags::CONST) != 0;
-                return !is_const; // Return true if NOT const (i.e., let or var)
-            }
-        }
-
-        // For other node types, check the node's own flags
-        let flags = decl_node.flags as u32;
-        let is_const = (flags & node_flags::CONST) != 0;
-        !is_const // Return true if NOT const (i.e., let or var)
+        !self.ctx.arena.is_const_variable_declaration(decl_idx)
     }
 
     /// Check if a variable is captured from an outer scope (vs declared locally).
