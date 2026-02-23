@@ -776,3 +776,25 @@
     `export {};` when tsc omits it, or vice versa. This is an import elision problem that
     requires checker integration to determine which imports are type-only and should be elided.
     Not solvable in the emitter alone.
+
+25. **Blank line preservation between statements** (~9 tests): tsc preserves blank lines between
+    top-level statements and class members in certain contexts (mainly .js passthrough and some
+    .ts files). A universal blank-line-preservation approach caused 1730 regressions because tsc
+    is selective about when to preserve them. Needs study of tsc's `preserveSourceNewlines` and
+    `getLinesBetweenNodes()` logic. Key challenge: the parser's `node.end` extends past trailing
+    trivia (due to `skip_trivia: true`), requiring `find_token_end_before_trivia()` for accurate
+    source range checks.
+
+26. **Baseline parser multi-file duplicate filename bug** (1 test: `reExportJsFromTs`): The
+    baseline parser in `scripts/emit/src/baseline-parser.ts` picks the first JS output block
+    when multiple output blocks share the same filename (e.g., a .js passthrough and a .ts→.js
+    transpilation both producing `constants.js`). It should pick the last one (the main file's
+    output). This is a test infrastructure bug, not an emitter bug.
+
+27. **Double "use strict" normalization** (5 tests): tsc emits duplicate `"use strict"` when the
+    source already contains `"use strict"` and `alwaysStrict` is enabled. Our emitter's
+    `dedupeUseStrictPreamble` post-processor correctly deduplicates, but the test runner was
+    comparing against tsc's double-strict baseline. Fixed by adding `dedupeUseStrict` normalizer
+    to the runner's JS comparison logic (both expected and actual are normalized).
+    Tests fixed: `binopAssignmentShouldHaveType`, `localClassesInLoop`, `localClassesInLoop_ES6`,
+    `mixinAccessors1`, `objectLitArrayDeclNoNew`.
