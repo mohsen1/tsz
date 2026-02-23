@@ -1,6 +1,6 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9767/13623 = 71.7% JS, 777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current 9777/13623 = 71.8% JS, 776/1995 = 38.9% DTS)
 
 ### Fixed This Session
 - **CJS export ordering for class declarations with static blocks** (+5 JS):
@@ -929,3 +929,29 @@
     callbacks with different emission logic than CommonJS/AMD/UMD. The export appears after the
     IIFE instead of between class body and IIFE. Also has minor formatting issues (missing
     semicolon after class body `}`, double semicolon `})();;`). Needs System-specific fix.
+
+29. **Trailing comma preservation in single-line objects and binding patterns** (+7 JS):
+    tsc preserves trailing commas in single-line object literals (`{ a: 1, }`) and object binding
+    patterns (`{ b1, }`). Two emitter paths were missing `has_trailing_comma_in_source` checks:
+    the single-line branch of `emit_object_literal` and `emit_object_binding_pattern`. The
+    multi-line object path and array binding pattern already had the check. Fixed by adding it
+    to both paths. Tests fixed include `trailingCommasES5` (2 variants),
+    `destructuringObjectBindingPatternAndAssignment1` (2 variants), plus 3 more multi-diff tests.
+
+### Investigated but deferred
+
+30. **Import elision (~81+ tests, requires checker integration)**: The largest single pattern of
+    JS emit failures is import elision — tsc removes `import` statements for type-only or unused
+    imports when compiling to CJS, while tsz emits `require()` calls and `__createBinding`/
+    `__importStar` helpers for every import. This is NOT an emitter-only problem: import elision
+    requires checker data (which symbols are type-only, which are unused) that isn't available in
+    the current `--noCheck` emit pipeline. The `__esModule` marker itself emits correctly; the
+    extra `require()` calls are what cause the diff. Fixing this requires either: (a) a
+    lightweight type-aware import analysis pass before emit, or (b) running emit tests with check
+    enabled. ~81 tests show this as the sole diff; ~128 more have it as one of multiple diffs.
+
+31. **Namespace parameter naming `m_1` vs `m` (~10 tests)**: tsc uses `m` as the parameter name
+    for namespace IIFEs (`(function(m) { ... })(M || (M = {}))`) while tsz emits `m_1`. This is
+    a collision-avoidance issue in the unique name generator — the emitter's `make_unique_name`
+    always appends `_N` suffix, while tsc only does so when there's an actual collision. Low
+    impact per test but affects ~10 tests as a sole diff.
