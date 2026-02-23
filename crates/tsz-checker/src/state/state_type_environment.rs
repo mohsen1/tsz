@@ -173,8 +173,7 @@ impl<'a> CheckerState<'a> {
 
         // Memoize monomorphic application evaluation. This is a hot path for
         // repeated accesses on aliases like DeepPartial<{...}>.
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        let can_cache = !self.contains_type_parameters_cached(type_id);
 
         // Canonicalize application keys by evaluating type arguments first. This
         // allows structurally equivalent applications from different declaration
@@ -326,8 +325,7 @@ impl<'a> CheckerState<'a> {
         // Memoize mapped-type expansion for monomorphic inputs.
         // This is a hot path for repeated property access on mapped aliases
         // (e.g., DeepPartial<...>).
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        let can_cache = !self.contains_type_parameters_cached(type_id);
 
         if !self.ctx.mapped_eval_set.insert(type_id) {
             return type_id;

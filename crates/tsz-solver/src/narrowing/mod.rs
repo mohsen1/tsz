@@ -57,6 +57,8 @@ use std::cell::RefCell;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
+type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
+
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
 ///
 /// Using an enum instead of `String` eliminates heap allocation per typeof guard.
@@ -261,11 +263,33 @@ pub struct NarrowingCache {
     pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
     pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
+    /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
+    /// Reused by checker optional-chain/property-access hot paths.
+    pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
+    /// Cache for "type contains type parameters" checks.
+    pub contains_type_parameters_cache: RefCell<FxHashMap<TypeId, bool>>,
 }
 
 impl NarrowingCache {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                1024,
+                Default::default(),
+            )),
+            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                Default::default(),
+            )),
+            split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                512,
+                Default::default(),
+            )),
+            contains_type_parameters_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                1024,
+                Default::default(),
+            )),
+        }
     }
 }
 

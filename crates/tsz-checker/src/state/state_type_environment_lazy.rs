@@ -125,8 +125,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        let can_cache = !self.contains_type_parameters_cached(type_id);
 
         self.ensure_relation_input_ready(type_id);
 

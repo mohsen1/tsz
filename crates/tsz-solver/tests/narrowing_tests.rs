@@ -128,11 +128,30 @@ fn test_split_nullish_type() {
 }
 
 #[test]
+fn test_split_nullish_type_non_union_and_nullable_literals() {
+    let interner = TypeInterner::new();
+
+    let (non_null, cause) = split_nullish_type(&interner, TypeId::STRING);
+    assert_eq!(non_null, Some(TypeId::STRING));
+    assert_eq!(cause, None);
+
+    let (non_null, cause) = split_nullish_type(&interner, TypeId::UNDEFINED);
+    assert_eq!(non_null, None);
+    assert_eq!(cause, Some(TypeId::UNDEFINED));
+}
+
+#[test]
 fn test_definitely_nullish_union() {
     let interner = TypeInterner::new();
 
     let union = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
     assert!(is_definitely_nullish(&interner, union));
+}
+
+#[test]
+fn test_narrowing_cache_contains_type_parameters_cache_starts_empty() {
+    let cache = NarrowingCache::new();
+    assert!(cache.contains_type_parameters_cache.borrow().is_empty());
 }
 
 // =============================================================================
