@@ -810,7 +810,7 @@ fn compile_inner(
 
     // Determine which cache to use: local cache from BuildInfo, or provided cache, or none
     // When cache is None, we can use local_cache; otherwise we use the provided cache
-    let type_files = collect_type_root_files(&base_dir, &resolved);
+    let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
 
     // Add type definition files (e.g., @types packages) to the source file list.
     // Note: lib.d.ts files are NOT added here - they are loaded separately via
@@ -902,6 +902,16 @@ fn compile_inner(
         let file_name = path.to_string_lossy().into_owned();
         type_file_diagnostics.push(Diagnostic::error(
             file_name,
+            0,
+            0,
+            format!("Cannot find type definition file for '{type_name}'."),
+            diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR,
+        ));
+    }
+    // Emit TS2688 for unresolved entries in tsconfig `types` array
+    for type_name in &unresolved_types {
+        type_file_diagnostics.push(Diagnostic::error(
+            String::new(),
             0,
             0,
             format!("Cannot find type definition file for '{type_name}'."),

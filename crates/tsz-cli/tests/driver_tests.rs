@@ -6224,3 +6224,72 @@ fn compile_binary_file_reports_errors() {
         "Expected only TS1490 for binary files, but got additional errors: {non_binary_errors:?}"
     );
 }
+
+#[test]
+fn ts2688_unresolved_types_in_tsconfig() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    // Create a type root directory so default_type_roots finds it,
+    // but don't create the requested package inside it
+    std::fs::create_dir_all(base.join("node_modules/@types")).unwrap();
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "types": ["nonexistent-package"] }, "files": ["index.ts"] }"#,
+    );
+    write_file(&base.join("index.ts"), "const x: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected TS2688 for unresolved 'nonexistent-package' in types array, got codes: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ts2688_diags[0].message_text.contains("nonexistent-package"),
+        "TS2688 message should mention the package name, got: {}",
+        ts2688_diags[0].message_text
+    );
+}
+
+#[test]
+fn ts2688_resolved_types_no_error() {
+    let tmp = TempDir::new().unwrap();
+    let base = &tmp.path;
+
+    // Create a valid @types package structure
+    write_file(
+        &base.join("node_modules/@types/mylib/index.d.ts"),
+        "declare const myLibValue: string;\n",
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "types": ["mylib"] }, "files": ["index.ts"] }"#,
+    );
+    write_file(&base.join("index.ts"), "const x: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        ts2688_diags.is_empty(),
+        "Should NOT emit TS2688 when types package is found, got: {:?}",
+        ts2688_diags
+    );
+}
