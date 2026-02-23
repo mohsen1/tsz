@@ -647,9 +647,10 @@ impl<'a> TypeFormatter<'a> {
     /// falling back to `"<prefix>(<raw_id>)"` if unavailable.
     fn format_def_id(&mut self, def_id: crate::def::DefId, fallback_prefix: &str) -> String {
         if let Some(def_store) = self.def_store
-            && let Some(def) = def_store.get(def_id) {
-                return self.format_def_name(&def);
-            }
+            && let Some(def) = def_store.get(def_id)
+        {
+            return self.format_def_name(&def);
+        }
         format!("{}({})", fallback_prefix, def_id.0)
     }
 
