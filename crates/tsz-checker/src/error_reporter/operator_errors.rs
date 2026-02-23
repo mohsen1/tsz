@@ -45,33 +45,6 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Report TS2507: "Type 'X' is not a constructor function type"
-    /// This is for extends clauses where the base type isn't a constructor.
-    pub fn error_not_a_constructor_at(&mut self, type_id: TypeId, idx: NodeIndex) {
-        // Suppress error if type is ERROR/ANY/UNKNOWN - prevents cascading errors
-        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
-            return;
-        }
-
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
-        let mut formatter = self.ctx.create_type_formatter();
-        let type_str = formatter.format(type_id);
-
-        let message =
-            diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE.replace("{0}", &type_str);
-
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
-            message,
-            diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-        ));
-    }
-
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
     pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {

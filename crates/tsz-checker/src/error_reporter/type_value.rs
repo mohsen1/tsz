@@ -439,22 +439,6 @@ impl<'a> CheckerState<'a> {
             ));
         }
     }
-
-    /// Report TS18050: The value 'X' cannot be used here.
-    /// Emitted when a value (like a variable or literal) is used where it's not permitted.
-    pub fn error_value_cannot_be_used_here_at(&mut self, name: &str, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let message =
-                format_message(diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE, &[name]);
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-            ));
-        }
-    }
 }
 
 #[cfg(test)]

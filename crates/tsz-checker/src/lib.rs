@@ -7,7 +7,6 @@
 //! - `declarations` - Declaration type checking
 //! - `flow_graph_builder` - Control flow graph builder
 //! - `flow_analyzer` - Definite assignment analysis
-//! - `reachability_analyzer` - Unreachable code detection
 //! - `control_flow` - Flow analyzer for type narrowing
 //! - `error_reporter` - Error reporting utilities
 //!
@@ -60,8 +59,7 @@ pub use classes_domain::{
 pub use declarations_domain::{declarations, import_checker, module_checker, namespace_checker};
 
 pub use flow_domain::{
-    control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_analyzer,
-    reachability_checker,
+    control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_checker,
 };
 
 pub use state_domain::{
@@ -210,7 +208,6 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
-pub use reachability_analyzer::ReachabilityAnalyzer;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
