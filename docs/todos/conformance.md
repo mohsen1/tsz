@@ -721,6 +721,19 @@ expression name (when available via `expression_text()`) or TS2571 fallback.
 - **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of8.ts` — still missing TS2454 (`v; for (var v of [0]) {}`); unresolved identifier fallback in single-file/no-import mode bypasses flow-based definite assignment for bare expression statements.
 - **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of22.ts` — same root cause as above for pre-loop read of `var` from for-of header.
 
+## TS1194 — Export declarations in ambient namespaces (Fixed)
+
+**Status**: Fixed.
+**Error code:** TS1194 ("Export declarations are not permitted in a namespace.")
+**Root cause:** `check_export_declaration` emitted TS1194 for `export { ... }` inside any
+namespace, including `declare namespace` blocks. TypeScript allows named re-exports in
+ambient namespaces (the only mechanism available since they can't contain executable code).
+**Fix:** Added ambient context check (`is_in_ambient_context` + `.d.ts` file check) so
+TS1194 only fires in non-ambient namespaces.
+**Tests fixed:** `exportDeclarationsInAmbientNamespaces.ts`,
+`noCircularDefinitionOnExportOfPrivateInMergedNamespace.ts` (+2 conformance).
+**Score:** 4005 → 4007 first-6000, 7940 → 7942 full suite.
+
 ## Deferred from this run (2026-02-23, offset 6000)
 
 - **TS2722 remaining (8 tests)**: 7 tests that need TS2722 also require other missing codes
