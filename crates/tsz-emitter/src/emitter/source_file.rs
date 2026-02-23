@@ -338,7 +338,7 @@ impl<'a> Printer<'a> {
                     {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
-                        self.write_comment(comment_text);
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
                         if c_trailing {
                             self.write_line();
                         }

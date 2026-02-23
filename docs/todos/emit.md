@@ -3,6 +3,30 @@
 ## Pattern Analysis (JS+DTS mode, current ~9811/13623 = 72.0% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Multi-line comment reindentation for JSDoc and block comments** (+7 JS):
+  When emitting multi-line comments (e.g., `/** ... */` JSDoc blocks), continuation lines
+  (lines after `/**`) retained their source-level indentation instead of being reindented
+  to match the output indentation level. For example, a JSDoc inside a 2-space-indented
+  class body would emit ` * @type` with 3 source-level spaces instead of the 5 spaces
+  expected from the 4-space output indentation. Root cause: `write_comment()` used
+  `self.write("\n")` between lines, which goes through `ensure_indent()` → `raw_write()`.
+  `raw_write()` does NOT set `at_line_start = true`, so `ensure_indent()` never fires for
+  continuation lines. Fix: added `write_comment_with_reindent(text, source_pos)` which
+  computes the source column of the comment via `source_column_at(pos)`, strips that much
+  leading whitespace from each continuation line, and uses `self.write_line()` (which sets
+  `at_line_start = true`) between lines so `ensure_indent()` properly adds output-level
+  indentation. Also updated `collect_leading_comments` to return `(String, u32)` tuples so
+  collected comments (for lowered static fields) carry their source position for correct
+  reindentation. The `strip_leading_whitespace(s, count)` helper strips up to `count`
+  whitespace chars from the start of a string, stopping at non-whitespace. All callers of
+  `write_comment` that have `c_pos` available now call `write_comment_with_reindent` instead.
+  Eight unit tests added (5 for `strip_leading_whitespace`, 3 integration tests for JSDoc
+  reindentation in class bodies, lowered static fields, and top-level comments).
+  Tests fixed: `commentOnClassAccessor1`, `commentsOnStaticMembers`, and 5 other multi-issue
+  tests where JSDoc indentation was one of the diffs.
+  JS: 5160→5167, DTS unchanged, zero regressions.
+
+### Previously Fixed (This Branch)
 - **Trailing comment emission on 6 statement types** (+6 JS):
   `return`, `throw`, `break`, `continue`, `do-while`, and `debugger` statements were not
   calling `emit_trailing_comment_after_semicolon` after writing their semicolons. This caused
