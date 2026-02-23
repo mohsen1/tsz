@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crate::args::{CliArgs, PollingWatchKind, WatchFileKind};
 use crate::config::{ResolvedCompilerOptions, resolve_compiler_options};
 use crate::driver::{self, CompilationCache};
+use crate::driver_resolution::canonicalize_or_owned;
 use crate::fs::{DEFAULT_EXCLUDES, is_ts_file};
 use crate::reporter::Reporter;
 
@@ -352,10 +353,6 @@ fn normalize_event_path(base_dir: &Path, path: &Path) -> PathBuf {
     } else {
         base_dir.join(path)
     }
-}
-
-fn canonicalize_or_owned(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 pub(crate) struct WatchFilter {
