@@ -990,7 +990,11 @@ impl Server {
     }
 
     fn extract_first_param_type_from_fn_type(type_text: &str) -> Option<(String, bool)> {
-        let trimmed = Self::strip_outer_parens(type_text);
+        let mut candidate = type_text.trim();
+        while let Some(stripped) = candidate.strip_suffix("[]") {
+            candidate = stripped.trim_end();
+        }
+        let trimmed = Self::strip_outer_parens(candidate);
         let open = trimmed.find('(')?;
         let mut depth = 0i32;
         let mut close = None;
@@ -1025,7 +1029,11 @@ impl Server {
         type_text: &str,
         param_index: usize,
     ) -> Option<(String, bool)> {
-        let trimmed = Self::strip_outer_parens(type_text);
+        let mut candidate = type_text.trim();
+        while let Some(stripped) = candidate.strip_suffix("[]") {
+            candidate = stripped.trim_end();
+        }
+        let trimmed = Self::strip_outer_parens(candidate);
         let open = trimmed.find('(')?;
         let mut depth = 0i32;
         let mut close = None;
@@ -1308,6 +1316,14 @@ impl Server {
         let mut cursor = function_pos as i32 - 1;
         while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
             cursor -= 1;
+        }
+        // Allow wrapped assignment RHS forms like `x.y = [function(...) {}]`
+        // and `x.y = (function(...) {})` by skipping the immediate wrapper opener.
+        while cursor >= 0 && matches!(bytes[cursor as usize], b'[' | b'(') {
+            cursor -= 1;
+            while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
+                cursor -= 1;
+            }
         }
         if cursor < 0 || bytes[cursor as usize] != b'=' {
             return None;
@@ -3391,6 +3407,36 @@ mod tests {
         assert_eq!(
             normalized,
             "var c3t7: {\n    (n: number): number;\n    (s1: string): number;\n}"
+        );
+    }
+
+    #[test]
+    fn assignment_lhs_property_offset_before_function_supports_array_wrapped_rhs() {
+        let source = "objc8.t11 = [function(n, s) { return s; }];";
+        let function_pos = source
+            .find("function")
+            .expect("function keyword should exist") as u32;
+        let offset = Server::assignment_lhs_property_offset_before_function(source, function_pos)
+            .expect("should find lhs property offset");
+        assert_eq!(
+            source[offset as usize..]
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect::<String>(),
+            "t11"
+        );
+    }
+
+    #[test]
+    fn contextual_parameter_type_from_text_extracts_function_array_parameter() {
+        let type_text = "((n: number, s: string) => string)[]";
+        assert_eq!(
+            Server::contextual_parameter_type_from_text(type_text, 0).as_deref(),
+            Some("number")
+        );
+        assert_eq!(
+            Server::contextual_parameter_type_from_text(type_text, 1).as_deref(),
+            Some("string")
         );
     }
 }
