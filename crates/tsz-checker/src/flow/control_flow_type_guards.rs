@@ -29,30 +29,7 @@ impl<'a> FlowAnalyzer<'a> {
             return false; // No value declaration = not a variable we care about
         }
 
-        // Get the declaration node to check its flags
-        let Some(decl_node) = self.arena.get(decl_id) else {
-            return false;
-        };
-
-        // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
-        // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
-        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
-            if let Some(ext) = self.arena.get_extended(decl_id)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.arena.get(ext.parent)
-            {
-                let flags = parent_node.flags as u32;
-                let is_const = (flags & node_flags::CONST) != 0;
-                return !is_const; // Return true if NOT const (i.e., let or var)
-            }
-        }
-
-        // For other node types, check the node's own flags
-        let flags = decl_node.flags as u32;
-        let is_const = (flags & node_flags::CONST) != 0;
-
-        !is_const // Return true if NOT const (i.e., let or var)
+        !self.arena.is_const_variable_declaration(decl_id)
     }
 
     /// Check if a variable is captured from an outer scope (vs declared locally).
