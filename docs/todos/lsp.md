@@ -904,3 +904,19 @@ Investigated but punted:
   Reason: remaining baseline mismatch is still in tsserver `references-full` definition/detail shaping (defId/context grouping and canonical symbol identity for quoted alias chains), which needs a broader alias-symbol modeling pass than this targeted span/offset fix.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same unresolved `references-full` alias-symbol identity/detail-shaping parity gap as `_types`.
+
+## 2026-02-23 (call hierarchy tagged-template incoming follow-up)
+
+Completed in this pass:
+- Fixed call hierarchy incoming-call reference detection in `crates/tsz-lsp/src/hierarchy/call_hierarchy.rs` to treat `TaggedTemplateExpression` (`bar\`...\``) as a call-like reference context.
+- Added focused unit coverage in `crates/tsz-lsp/tests/call_hierarchy_tests.rs`:
+  - `test_incoming_calls_include_tagged_template_references`.
+
+Verification:
+- `cargo nextest run -p tsz-lsp` passes.
+- `./scripts/run-fourslash.sh --filter=callHierarchyTaggedTemplate` now passes (`1/1`).
+- `cargo nextest run -p tsz-cli` still has existing `tsc_compat_tests::*` failures in this environment; tsserver/unit suites remain passing.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/callHierarchyFunctionAmbiguity.2.ts`
+  Reason: parity requires project-wide/multi-file call hierarchy symbol resolution for merged overload declarations (`a.d.ts` + `b.d.ts` + `main.ts`), while current tsserver call hierarchy path binds a single file per request.

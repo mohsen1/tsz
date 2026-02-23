@@ -22,6 +22,15 @@ use super::{
 };
 
 impl Project {
+    fn symbol_text(
+        arena: &tsz_parser::parser::node::NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<&str> {
+        arena
+            .get_identifier_text(node_idx)
+            .or_else(|| arena.get_literal_text(node_idx))
+    }
+
     fn collect_file_references(
         file: &mut ProjectFile,
         node_idx: NodeIndex,
@@ -148,7 +157,7 @@ impl Project {
                 } else {
                     spec.name
                 };
-                let Some(imported_name) = arena.get_identifier_text(export_ident) else {
+                let Some(imported_name) = Self::symbol_text(arena, export_ident) else {
                     continue;
                 };
                 if imported_name != export_name {
@@ -232,7 +241,7 @@ impl Project {
                 } else {
                     spec.name
                 };
-                let Some(export_text) = arena.get_identifier_text(export_ident) else {
+                let Some(export_text) = Self::symbol_text(arena, export_ident) else {
                     continue;
                 };
                 if export_text != export_name {
@@ -326,7 +335,7 @@ impl Project {
                 } else {
                     spec.name
                 };
-                let Some(export_text) = arena.get_identifier_text(export_ident) else {
+                let Some(export_text) = Self::symbol_text(arena, export_ident) else {
                     continue;
                 };
                 if export_text != export_name {
@@ -338,7 +347,7 @@ impl Project {
                 } else {
                     spec.property_name
                 };
-                let Some(local_text) = arena.get_identifier_text(local_ident) else {
+                let Some(local_text) = Self::symbol_text(arena, local_ident) else {
                     continue;
                 };
                 locals.push(local_text.to_string());
@@ -426,7 +435,7 @@ impl Project {
                     } else {
                         spec.name
                     };
-                    let Some(import_text) = arena.get_identifier_text(import_ident) else {
+                    let Some(import_text) = Self::symbol_text(arena, import_ident) else {
                         continue;
                     };
                     if import_text != export_name {
@@ -442,7 +451,7 @@ impl Project {
                     } else {
                         spec.property_name
                     };
-                    if let Some(export_text) = arena.get_identifier_text(export_ident) {
+                    if let Some(export_text) = Self::symbol_text(arena, export_ident) {
                         targets.push((file_name.clone(), export_text.to_string()));
                     }
                 }

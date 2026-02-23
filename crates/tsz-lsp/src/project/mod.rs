@@ -537,6 +537,13 @@ impl ProjectFile {
         self.binder.resolve_identifier(self.arena(), node_idx)
     }
 
+    fn node_symbol_text(&self, node_idx: NodeIndex) -> Option<&str> {
+        let arena = self.arena();
+        arena
+            .get_identifier_text(node_idx)
+            .or_else(|| arena.get_literal_text(node_idx))
+    }
+
     pub(crate) fn export_locations(&self, export_name: &str) -> Vec<Location> {
         self.export_nodes(export_name)
             .into_iter()
@@ -665,7 +672,7 @@ impl ProjectFile {
                         } else {
                             spec.property_name
                         };
-                        if let Some(export_text) = arena.get_identifier_text(export_ident) {
+                        if let Some(export_text) = self.node_symbol_text(export_ident) {
                             names.push(export_text.to_string());
                         }
                     }
@@ -768,7 +775,7 @@ impl ProjectFile {
                 } else {
                     spec.property_name
                 };
-                let Some(local_text) = arena.get_identifier_text(local_ident) else {
+                let Some(local_text) = self.node_symbol_text(local_ident) else {
                     continue;
                 };
                 if local_text != local_name {
@@ -780,7 +787,7 @@ impl ProjectFile {
                 } else {
                     spec.name
                 };
-                let Some(export_text) = arena.get_identifier_text(export_ident) else {
+                let Some(export_text) = self.node_symbol_text(export_ident) else {
                     continue;
                 };
 
@@ -835,7 +842,7 @@ impl ProjectFile {
             } else {
                 spec.property_name
             };
-            let Some(export_text) = arena.get_identifier_text(export_ident) else {
+            let Some(export_text) = self.node_symbol_text(export_ident) else {
                 continue;
             };
             if export_text != export_name {
@@ -847,7 +854,7 @@ impl ProjectFile {
             } else {
                 spec.name
             };
-            if let Some(local_text) = arena.get_identifier_text(local_ident) {
+            if let Some(local_text) = self.node_symbol_text(local_ident) {
                 if let Some(sym_id) = binder.file_locals.get(local_text) {
                     self.push_symbol_decls(sym_id, nodes);
                 } else {
