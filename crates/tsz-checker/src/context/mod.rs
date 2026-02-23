@@ -16,6 +16,7 @@ mod constructors;
 mod def_mapping;
 mod lib_queries;
 mod resolver;
+mod strict_mode;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
