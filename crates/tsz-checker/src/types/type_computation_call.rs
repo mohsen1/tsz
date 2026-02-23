@@ -648,6 +648,17 @@ impl<'a> CheckerState<'a> {
                     self.error_class_constructor_without_new_at(callee_type, callee_expr);
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
+                } else if self.ctx.compiler_options.strict_null_checks {
+                    // TS2721/TS2722/TS2723: Check if the callee type contains null/undefined.
+                    // When strictNullChecks is on and the type includes nullish parts,
+                    // emit a specific "cannot invoke possibly null/undefined" error
+                    // instead of the generic TS2349 "not callable".
+                    let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
+                    if let Some(cause) = nullish_cause {
+                        self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
+                    } else {
+                        self.error_not_callable_at(callee_type, callee_expr);
+                    }
                 } else {
                     self.error_not_callable_at(callee_type, callee_expr);
                 }
