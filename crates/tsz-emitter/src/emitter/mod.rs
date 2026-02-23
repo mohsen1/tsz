@@ -1316,16 +1316,7 @@ impl<'a> Printer<'a> {
 // Operator Text Helper
 // =============================================================================
 
-fn is_valid_identifier_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first == '$' || first.is_alphabetic()) {
-        return false;
-    }
-    chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
-}
+pub(super) use crate::transforms::emit_utils::is_valid_identifier_name;
 
 const fn get_operator_text(op: u16) -> &'static str {
     crate::transforms::emit_utils::operator_to_str(op)

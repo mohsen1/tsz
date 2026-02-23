@@ -58,7 +58,9 @@ impl Server {
         project.set_import_module_specifier_ending(
             self.completion_import_module_specifier_ending.clone(),
         );
-        project.set_import_module_specifier_preference(self.import_module_specifier_preference.clone());
+        project.set_import_module_specifier_preference(
+            self.import_module_specifier_preference.clone(),
+        );
         project
             .set_auto_import_file_exclude_patterns(self.auto_import_file_exclude_patterns.clone());
         project.set_auto_import_specifier_exclude_regexes(
@@ -101,7 +103,11 @@ impl Server {
         text.trim()
             .strip_prefix('"')
             .and_then(|s| s.strip_suffix('"'))
-            .or_else(|| text.trim().strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .or_else(|| {
+                text.trim()
+                    .strip_prefix('\'')
+                    .and_then(|s| s.strip_suffix('\''))
+            })
             .unwrap_or(text.trim())
             .to_string()
     }
@@ -165,8 +171,11 @@ impl Server {
         if node_idx.is_none() {
             return None;
         }
-        let mut specifier_idx =
-            Self::find_ancestor_of_kind(arena, node_idx, tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER);
+        let mut specifier_idx = Self::find_ancestor_of_kind(
+            arena,
+            node_idx,
+            tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+        );
         if specifier_idx.is_none() {
             specifier_idx = Self::find_ancestor_of_kind(
                 arena,
@@ -276,7 +285,10 @@ impl Server {
             let module_spec = Self::extract_quoted_after(trimmed, " from ");
 
             for segment in clause.split(',') {
-                let part = segment.trim().strip_prefix("type ").unwrap_or(segment.trim());
+                let part = segment
+                    .trim()
+                    .strip_prefix("type ")
+                    .unwrap_or(segment.trim());
                 let Some((left_raw, right_raw)) = part.split_once(" as ") else {
                     continue;
                 };
@@ -300,8 +312,13 @@ impl Server {
                 let token_start = (line_start + token_pos_in_line) as u32;
                 let token_end = token_start + left.len() as u32;
                 let token_position = line_map.offset_to_position(token_start, &source_text);
-                let provider =
-                    GoToDefinition::new(&arena, &binder, &line_map, target_file.clone(), &source_text);
+                let provider = GoToDefinition::new(
+                    &arena,
+                    &binder,
+                    &line_map,
+                    target_file.clone(),
+                    &source_text,
+                );
                 if let Some(defs) = provider.get_definition(root, token_position)
                     && let Some(first) = defs.first()
                 {
@@ -342,7 +359,10 @@ impl Server {
         self.resolve_export_alias_definition(file, &module_specifier, &alias_name, 0)
     }
 
-    fn definition_info_from_location(&self, loc: &tsz_common::position::Location) -> Option<serde_json::Value> {
+    fn definition_info_from_location(
+        &self,
+        loc: &tsz_common::position::Location,
+    ) -> Option<serde_json::Value> {
         let (arena, binder, root, source_text) = self.parse_and_bind_file(&loc.file_path)?;
         let line_map = LineMap::build(&source_text);
         let provider = GoToDefinition::new(
@@ -813,9 +833,14 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let query_offset = line_map.position_to_offset(position, &source_text)?;
             if let Some(mut project) = self.build_project_for_file(&file)
-                && let Some(canonical_loc) = self
-                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset)
-                && let Some(locs) = project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
+                && let Some(canonical_loc) = self.canonical_definition_for_alias_position(
+                    &file,
+                    &arena,
+                    &source_text,
+                    query_offset,
+                )
+                && let Some(locs) =
+                    project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
             {
                 let definition_locs = vec![canonical_loc];
                 let refs: Vec<serde_json::Value> = locs
@@ -831,9 +856,9 @@ impl Server {
                             .nth(loc.range.start.line as usize)
                             .unwrap_or("")
                             .to_string();
-                        let is_definition = definition_locs.iter().any(|def| {
-                            def.file_path == loc.file_path && def.range == loc.range
-                        });
+                        let is_definition = definition_locs
+                            .iter()
+                            .any(|def| def.file_path == loc.file_path && def.range == loc.range);
                         Some(serde_json::json!({
                             "file": loc.file_path,
                             "start": Self::lsp_to_tsserver_position(loc.range.start),
@@ -967,9 +992,14 @@ impl Server {
             let trigger_length = end_offset.saturating_sub(start_offset);
 
             if let Some(mut project) = self.build_project_for_file(&file)
-                && let Some(canonical_loc) = self
-                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset)
-                && let Some(locs) = project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
+                && let Some(canonical_loc) = self.canonical_definition_for_alias_position(
+                    &file,
+                    &arena,
+                    &source_text,
+                    query_offset,
+                )
+                && let Some(locs) =
+                    project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
             {
                 let mut grouped: rustc_hash::FxHashMap<String, Vec<serde_json::Value>> =
                     rustc_hash::FxHashMap::default();
