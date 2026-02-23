@@ -4,9 +4,8 @@ use tsz_solver::TupleElement;
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    array_element_type, contains_type_parameters, intersection_members, is_mapped_type,
-    is_string_type, is_type_parameter_like, object_shape_for_type as object_shape, tuple_elements,
-    union_members,
+    array_element_type, intersection_members, is_mapped_type, is_string_type,
+    is_type_parameter_like, object_shape_for_type as object_shape, tuple_elements, union_members,
 };
 
 pub(crate) fn extract_string_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {

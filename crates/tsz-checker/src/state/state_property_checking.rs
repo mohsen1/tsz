@@ -614,7 +614,7 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        let can_cache = !query::contains_type_parameters(self.ctx.types, mapped_type);
+        let can_cache = !self.contains_type_parameters_cached(mapped_type);
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
         // If the constraint is an explicit literal key set, reject unknown keys early.

@@ -118,11 +118,12 @@ impl<'a> CheckerState<'a> {
         // probing the property on the non-flow object type is often enough. If the
         // property is found without flow narrowing, keep that cheaper object type and
         // avoid an additional flow walk on the object expression.
-        let skip_result_flow =
-            !self.ctx.skip_flow_narrowing && self.should_skip_property_result_flow_narrowing(idx);
-        let skip_optional_base_flow = !self.ctx.skip_flow_narrowing
-            && access.question_dot_token
+        let skip_result_flow_for_result = !self.ctx.skip_flow_narrowing
             && self.should_skip_property_result_flow_narrowing_for_result(idx);
+        let skip_result_flow = !self.ctx.skip_flow_narrowing
+            && (skip_result_flow_for_result
+                || self.should_skip_property_result_flow_narrowing(idx));
+        let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
         let prev_skip = self.ctx.skip_flow_narrowing;
 
         let original_object_type = if skip_optional_base_flow {
@@ -208,6 +209,40 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                let can_cache_fast = !self.contains_type_parameters_cached(resolved_base);
+                let prop_atom = can_cache_fast.then(|| self.ctx.types.intern_string(property_name));
+
+                if can_cache_fast
+                    && let Some(prop_atom) = prop_atom
+                    && let Some(cached) = self
+                        .ctx
+                        .narrowing_cache
+                        .property_cache
+                        .borrow()
+                        .get(&(resolved_base, prop_atom))
+                        .copied()
+                {
+                    match cached {
+                        Some(type_id) => {
+                            let mut result_type = type_id;
+                            if base_nullish.is_some()
+                                && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                            {
+                                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                            }
+                            return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
+                                result_type
+                            } else {
+                                self.apply_flow_narrowing(idx, result_type)
+                            };
+                        }
+                        None => {
+                            // Fall through to full diagnostic path so TS2339 and related
+                            // diagnostics are still emitted at this access site.
+                        }
+                    }
+                }
+
                 let fast_result = self.ctx.types.resolve_property_access_with_options(
                     resolved_base,
                     property_name,
@@ -224,31 +259,54 @@ impl<'a> CheckerState<'a> {
                         write_type,
                         ..
                     } => {
+                        if can_cache_fast {
+                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                                (resolved_base, prop_atom.expect("cached atom")),
+                                Some(type_id),
+                            );
+                        }
                         let mut result_type = if self.ctx.skip_flow_narrowing {
                             write_type.unwrap_or(type_id)
                         } else {
                             type_id
                         };
-                        if base_nullish.is_some() {
+                        if base_nullish.is_some()
+                            && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                        {
                             result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
                         }
-                        return if !self.ctx.skip_flow_narrowing
-                            && self.should_skip_property_result_flow_narrowing_for_result(idx)
-                        {
+                        return if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
                             result_type
                         } else {
                             self.apply_flow_narrowing(idx, result_type)
                         };
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                        if can_cache_fast {
+                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                                (resolved_base, prop_atom.expect("cached atom")),
+                                property_type,
+                            );
+                        }
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
-                        if base_nullish.is_some() {
+                        if base_nullish.is_some()
+                            && !tsz_solver::type_contains_undefined(self.ctx.types, result_type)
+                        {
                             result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
                         }
                         return self.apply_flow_narrowing(idx, result_type);
                     }
-                    PropertyAccessResult::PropertyNotFound { .. }
-                    | PropertyAccessResult::IsUnknown => {
+                    PropertyAccessResult::PropertyNotFound { .. } => {
+                        if can_cache_fast {
+                            self.ctx
+                                .narrowing_cache
+                                .property_cache
+                                .borrow_mut()
+                                .insert((resolved_base, prop_atom.expect("cached atom")), None);
+                        }
+                        // Fall through to full diagnostic path.
+                    }
+                    PropertyAccessResult::IsUnknown => {
                         // Fall through to full diagnostic path.
                     }
                 }
@@ -485,9 +543,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         prop_type
                     };
-                    if !self.ctx.skip_flow_narrowing
-                        && self.should_skip_property_result_flow_narrowing_for_result(idx)
-                    {
+                    if !self.ctx.skip_flow_narrowing && skip_result_flow_for_result {
                         effective_type
                     } else {
                         self.apply_flow_narrowing(idx, effective_type)
@@ -798,6 +854,24 @@ impl<'a> CheckerState<'a> {
         let Some(parent_node) = self.ctx.arena.get(parent) else {
             return false;
         };
+
+        // For optional-chain continuations like `obj?.a?.b`, applying flow
+        // narrowing to the intermediate `obj?.a` result is redundant because
+        // the continuation logic already handles nullish propagation.
+        if let Some(access_node) = self.ctx.arena.get(idx)
+            && let Some(access) = self.ctx.arena.get_access_expr(access_node)
+            && access.question_dot_token
+            && matches!(
+                parent_node.kind,
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+            && let Some(parent_access) = self.ctx.arena.get_access_expr(parent_node)
+            && parent_access.expression == idx
+        {
+            return true;
+        }
+
         if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return false;
         }

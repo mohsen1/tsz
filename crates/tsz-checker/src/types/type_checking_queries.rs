@@ -882,6 +882,29 @@ impl<'a> CheckerState<'a> {
         tsz_solver::contains_error_type(self.ctx.types, type_id)
     }
 
+    /// Returns whether a type references type parameters.
+    /// Cached because this query is hot on optional-chain/property access paths.
+    pub(crate) fn contains_type_parameters_cached(&mut self, type_id: TypeId) -> bool {
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .contains_type_parameters_cache
+            .borrow()
+            .get(&type_id)
+        {
+            return cached;
+        }
+
+        let contains =
+            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        self.ctx
+            .narrowing_cache
+            .contains_type_parameters_cache
+            .borrow_mut()
+            .insert(type_id, contains);
+        contains
+    }
+
     // =========================================================================
     // Section 37: Nullish Type Utilities
     // =========================================================================
@@ -892,7 +915,23 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> (Option<TypeId>, Option<TypeId>) {
-        tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), type_id)
+        if let Some(&cached) = self
+            .ctx
+            .narrowing_cache
+            .split_nullish_cache
+            .borrow()
+            .get(&type_id)
+        {
+            return cached;
+        }
+
+        let split = tsz_solver::split_nullish_type(self.ctx.types.as_type_database(), type_id);
+        self.ctx
+            .narrowing_cache
+            .split_nullish_cache
+            .borrow_mut()
+            .insert(type_id, split);
+        split
     }
 
     /// Report an error for nullish object access.

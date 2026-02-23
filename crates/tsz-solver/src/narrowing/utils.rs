@@ -376,6 +376,14 @@ pub fn split_nullish_type(
     types: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> (Option<TypeId>, Option<TypeId>) {
+    if type_id.is_nullable() {
+        return (None, Some(normalize_nullish(type_id)));
+    }
+
+    if top_level_union_members(types, type_id).is_none() {
+        return (Some(type_id), None);
+    }
+
     let mut non_nullish = Vec::new();
     let mut nullish = Vec::new();
 
