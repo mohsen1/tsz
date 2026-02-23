@@ -525,6 +525,64 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
+    /// Emit an expression that will be followed by `.` for property access.
+    /// Wraps in parens if the expression (after unwrapping type assertions) is a
+    /// `new` expression without arguments, because `new Foo.x` differs from `(new Foo).x`.
+    fn emit_for_property_access(&mut self, idx: NodeIndex) {
+        let needs_parens = self.initializer_needs_parens_for_access(idx);
+        if needs_parens {
+            self.write("(");
+        }
+        self.emit(idx);
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    /// Check if an expression needs parens when used as the base of property access.
+    /// `new Foo` needs parens because `new Foo.x` means `new (Foo.x)` not `(new Foo).x`.
+    /// `new Foo()` does NOT need parens because the args make it a complete `MemberExpression`.
+    fn initializer_needs_parens_for_access(&self, idx: NodeIndex) -> bool {
+        // Unwrap type assertions to find the underlying expression kind
+        let kind = self.unwrap_type_assertion_kind(idx);
+        match kind {
+            Some(k) if k == syntax_kind_ext::NEW_EXPRESSION => {
+                // Check if the new expression has arguments (e.g., `new Foo()` vs `new Foo`)
+                // `new Foo()` is a complete MemberExpression and doesn't need parens.
+                // `new Foo` (no args) needs parens before `.x`.
+                let unwrapped = self.unwrap_type_assertion_idx(idx);
+                if let Some(node) = self.arena.get(unwrapped)
+                    && let Some(call) = self.arena.get_call_expr(node) {
+                        return call.arguments.is_none();
+                    }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Unwrap type assertion chain and return the `NodeIndex` of the underlying expression.
+    fn unwrap_type_assertion_idx(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return idx;
+                    }
+                }
+                _ => return idx,
+            }
+        }
+    }
+
     // ES5 parity: for a single object binding with an identifier key, inline source access.
     // Example: var { x } = { x: 1 } -> var x = { x: 1 }.x
     // Default initializer still uses a value temp:
@@ -589,14 +647,14 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_none() {
             self.write_identifier_text(elem.name);
             self.write(" = ");
-            self.emit(initializer);
+            self.emit_for_property_access(initializer);
             self.write(".");
             self.write(&key_text);
         } else {
             let value_name = self.get_temp_var_name();
             self.write(&value_name);
             self.write(" = ");
-            self.emit(initializer);
+            self.emit_for_property_access(initializer);
             self.write(".");
             self.write(&key_text);
             self.write(", ");
@@ -1467,4 +1525,52 @@ impl<'a> Printer<'a> {
 
     // Binding element patterns + param bindings → es5/bindings_patterns.rs
     // For-of array + assignment destructuring → es5/bindings_assignment.rs
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::output::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    #[test]
+    fn destructuring_new_expr_gets_parens_for_property_access() {
+        // var { x } = <any>new Foo; → var x = (new Foo).x;
+        let source = "var { x } = <any>new Foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(new Foo).x"),
+            "Destructured new expression needs parens for property access.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("new Foo.x"),
+            "Should NOT produce `new Foo.x` (different semantics).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn destructuring_new_with_args_no_extra_parens() {
+        // var { x } = <any>new Foo(); → var x = new Foo().x; (no extra parens needed)
+        let source = "var { x } = <any>new Foo();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("new Foo().x"),
+            "new Foo() with args should NOT have extra parens.\nOutput:\n{output}"
+        );
+    }
 }
