@@ -210,10 +210,11 @@ impl NodeArena {
                 return idx;
             };
             if node.kind == PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.get_parenthesized(node) {
-                    idx = paren.expression;
-                    continue;
-                }
+                && let Some(paren) = self.get_parenthesized(node)
+            {
+                idx = paren.expression;
+                continue;
+            }
             return idx;
         }
         idx
