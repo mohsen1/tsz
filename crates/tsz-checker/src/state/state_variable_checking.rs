@@ -621,6 +621,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2481: Check var declarations that shadow block-scoped variables.
+        // When a `var` declaration appears in a scope where a `let`/`const` with the same
+        // name exists in an enclosing block (but not at function/module/source-file level),
+        // the var initialization would write to the outer hoisted variable while the
+        // block-scoped binding shadows it — this is a runtime SyntaxError.
+        self.check_var_declared_names_not_shadowed(decl_idx, var_decl);
+
         // Check if this is a destructuring pattern (object/array binding)
         let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
             name_node.kind != SyntaxKind::Identifier as u16
@@ -1477,8 +1484,229 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2481: Check if a `var` declaration shadows a block-scoped declaration (`let`/`const`)
+    /// in an enclosing scope that is NOT at function/module/source-file level.
+    ///
+    /// When `var x` appears in the same block as `let x` (or `const x`) from an enclosing
+    /// block that is NOT the function/module top scope, the `var` hoists past the block-scoped
+    /// binding. At runtime this is a `SyntaxError` because the `var` initialization would write
+    /// to the outer function-scoped variable while the block-scoped binding shadows it.
+    fn check_var_declared_names_not_shadowed(
+        &mut self,
+        decl_idx: NodeIndex,
+        var_decl: &tsz_parser::parser::node::VariableDeclarationData,
+    ) {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::node_flags;
+
+        // Skip block-scoped variables (let/const) and parameters — only var triggers TS2481
+        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+        {
+            let parent_flags = parent_node.flags as u32;
+            if parent_flags & (node_flags::LET | node_flags::CONST) != 0 {
+                return;
+            }
+        } else {
+            return;
+        }
+
+        // Only applies to identifier names (not destructuring patterns)
+        let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+            return;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+        let var_name = ident.escaped_text.as_str();
+
+        // Get the symbol for this var declaration itself
+        let Some(decl_symbol_id) = self.ctx.binder.get_node_symbol(decl_idx) else {
+            return;
+        };
+        let Some(decl_symbol) = self.ctx.binder.get_symbol(decl_symbol_id) else {
+            return;
+        };
+
+        // Only check function-scoped variables (var)
+        if decl_symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0 {
+            return;
+        }
+
+        // Walk the scope chain from the var's name position, looking for a block-scoped
+        // symbol with the same name in an enclosing scope. We check all scopes including
+        // the immediate one, because `const x` and `var x` in the same block creates
+        // separate symbols (var hoists to function scope, const stays in block scope).
+        let Some(start_scope_id) = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, var_decl.name)
+        else {
+            return;
+        };
+
+        let mut scope_id = start_scope_id;
+        let mut found_block_scoped_symbol = None;
+        let mut found_scope_kind = None;
+        let mut depth = 0;
+        while scope_id.is_some() && depth < 50 {
+            let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+                break;
+            };
+            if let Some(sym_id) = scope.table.get(var_name)
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                    && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+                        found_block_scoped_symbol = Some(sym_id);
+                        found_scope_kind = Some(scope.kind);
+                        break;
+                    }
+            // If we hit a function scope, var hoists to this level — stop searching
+            if scope.is_function_scope() {
+                break;
+            }
+            scope_id = scope.parent;
+            depth += 1;
+        }
+
+        let Some(_block_sym_id) = found_block_scoped_symbol else {
+            return;
+        };
+        let Some(scope_kind) = found_scope_kind else {
+            return;
+        };
+
+        // If the block-scoped variable is in a function/module/source-file scope,
+        // then names share scope (var hoists to the same level). The binder already
+        // handles duplicate declarations in that case — no TS2481 needed.
+        // TS2481 only fires when the block-scoped variable is in an intermediate
+        // Block scope (not at function/module/source level).
+        let names_share_scope = matches!(
+            scope_kind,
+            tsz_binder::ContainerKind::SourceFile
+                | tsz_binder::ContainerKind::Function
+                | tsz_binder::ContainerKind::Module
+        );
+
+        if !names_share_scope {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                var_decl.name,
+                diagnostic_codes::CANNOT_INITIALIZE_OUTER_SCOPED_VARIABLE_IN_THE_SAME_SCOPE_AS_BLOCK_SCOPED_DECLAR,
+                &[var_name, var_name],
+            );
+        }
+    }
+
     // Destructuring pattern methods (report_empty_array_destructuring_bounds,
     // assign_binding_pattern_symbol_types, record_destructured_binding_group,
     // get_binding_element_type, rest_binding_array_type, is_only_undefined_or_null)
     // are in `state_variable_checking_destructuring.rs`.
+}
+
+#[cfg(test)]
+mod ts2481_tests {
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+
+    fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions::default();
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.check_source_file(root);
+
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == error_code)
+            .map(|d| (d.start, d.message_text.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn var_in_for_of_with_let() {
+        let source = "for (let v of []) {\n    var v = 0;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+        assert!(errors[0].1.contains("'v'"));
+    }
+
+    #[test]
+    fn var_in_for_of_without_initializer() {
+        let source = "for (let v of []) {\n    var v;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_nested_block_with_let() {
+        let source = "{\n    let x;\n    {\n        var x = 1;\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_for_in_with_let() {
+        let source = "function test() {\n    for (let v in {}) { var v; }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_for_with_let() {
+        let source = "function test() {\n    for (let v; ; ) { var v; }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn no_error_when_names_share_function_scope() {
+        // function f() { let x; var x; } — no TS2481 (names share function scope)
+        let source = "function f() {\n    let x = 1;\n    var x = 2;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2481 when names share function scope: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn no_error_for_let_only() {
+        let source = "{\n    let x;\n    {\n        let x;\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 0, "No TS2481 for let-to-let: {errors:?}");
+    }
+
+    #[test]
+    fn deeply_nested_var() {
+        let source = "{\n    let x;\n    {\n        {\n            var x = 1;\n        }\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for deeply nested var: {errors:?}"
+        );
+    }
 }

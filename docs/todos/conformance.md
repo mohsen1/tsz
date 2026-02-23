@@ -404,9 +404,23 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7928/12574 (63.1%) — full suite
+## Current score: 7932/12574 (63.1%) — full suite (estimated +4 from TS2481)
 
-### Session progress (7894 → 7928, +34 tests):
+### Session progress (7928 → ~7932, +4 tests):
+- **TS2481**: Implemented "Cannot initialize outer scoped variable in the same scope as block
+  scoped declaration." Walks binder scope chain from the `var` declaration's position, looking
+  for a block-scoped (`let`/`const`) symbol with the same name. Emits TS2481 when the block-
+  scoped variable is NOT at function/module/source-file level (i.e., names don't share scope).
+  - Tests passing: `for-of53`, `for-of54`, `shadowingViaLocalValue`,
+    `shadowedFunctionScopedVariablesByBlockScopedOnes`
+  - Added 8 unit tests covering for-of, for-in, for, nested blocks, and negative cases
+  - **Deferred**: `constDeclarationShadowedByVarDeclaration` — binder merges `const x` and
+    `var x` in same block into one symbol (TS2451 emitted instead of TS2481). Needs binder
+    fix to keep separate symbols for var/let/const in same block scope.
+  - **Deferred**: `shadowingViaLocalValueOrBindingElement` — destructuring binding elements
+    (`var { x } = ...`) not yet handled; needs TS2481 check for BindingElement nodes too.
+
+### Previous session progress (7894 → 7928, +34 tests):
 - **TS2343 ES decorator helpers**: Changed `first_required_helper` (returning a single legacy
   `__decorate` helper) to `required_helpers` (returning a Vec of ES decorator helpers).
   Added `es_decorator_helpers()` function that determines the correct TC39 Stage 3 helpers:
