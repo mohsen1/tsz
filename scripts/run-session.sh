@@ -81,6 +81,8 @@ Available sessions:
   architect          Architecture audit + CI health check
   conformance-1      Conformance parity (first half, --max 6000)
   conformance-2      Conformance parity (second half, --offset 6000)
+  conformance-3      Conformance parity (start at 25% of tests)
+  conformance-4      Conformance parity (start at 75% of tests)
   emit               Emitter correctness
   lsp                LSP / fourslash tests
   perf               Performance benchmarking + optimization
