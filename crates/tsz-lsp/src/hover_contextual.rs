@@ -44,8 +44,6 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
-        let contextual_type_idx =
-            self.contextual_type_for_object_literal(object_literal_idx, prop_assign_idx)?;
         let prop_name = self
             .arena
             .get_identifier_text(prop_assign.name)
@@ -82,12 +80,25 @@ impl<'a> HoverProvider<'a> {
             )
         };
 
-        let container_type_id = checker.get_type_of_node(contextual_type_idx);
+        let contextual_type_idx =
+            self.contextual_type_for_object_literal(object_literal_idx, prop_assign_idx);
+        let (container_type_id, container_type_text) = if let Some(type_idx) = contextual_type_idx {
+            let type_id = checker.get_type_of_node(type_idx);
+            let text = checker.format_type(type_id);
+            (type_id, text)
+        } else {
+            let (type_id, text) = self.contextual_container_type_from_binary_assignment(
+                object_literal_idx,
+                &mut checker,
+            )?;
+            (type_id, text)
+        };
         let mut value_type_id = self
             .contextual_property_type_from_type(container_type_id, &prop_name)
             .unwrap_or(tsz_solver::TypeId::ERROR);
         let value_type_text = if value_type_id == tsz_solver::TypeId::ERROR {
-            self.contextual_property_annotation_text(contextual_type_idx, &prop_name)
+            contextual_type_idx
+                .and_then(|type_idx| self.contextual_property_annotation_text(type_idx, &prop_name))
         } else {
             None
         };
@@ -97,7 +108,7 @@ impl<'a> HoverProvider<'a> {
                 value_type_id = checker.get_type_of_node(prop_assign_idx);
             }
         }
-        let container_type = checker.format_type(container_type_id);
+        let container_type = container_type_text;
         let value_type = value_type_text.unwrap_or_else(|| checker.format_type(value_type_id));
         *type_cache = Some(checker.extract_cache());
 
@@ -110,8 +121,8 @@ impl<'a> HoverProvider<'a> {
             == tsz_parser::syntax_kind_ext::FUNCTION_EXPRESSION
             || initializer_node.kind == tsz_parser::syntax_kind_ext::ARROW_FUNCTION;
         let (display_string, kind) = if is_function_like {
-            let signature = self
-                .contextual_method_signature_text(contextual_type_idx, &prop_name)
+            let signature = contextual_type_idx
+                .and_then(|type_idx| self.contextual_method_signature_text(type_idx, &prop_name))
                 .unwrap_or_else(|| format::arrow_to_colon(&value_type));
             (
                 format!("(method) {container_type}.{prop_name}{signature}"),
@@ -139,6 +150,49 @@ impl<'a> HoverProvider<'a> {
             documentation: String::new(),
             tags: Vec::new(),
         })
+    }
+
+    fn contextual_container_type_from_binary_assignment(
+        &self,
+        object_literal_idx: NodeIndex,
+        checker: &mut CheckerState<'_>,
+    ) -> Option<(tsz_solver::TypeId, String)> {
+        use tsz_parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let parent_idx = self.arena.get_extended(object_literal_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(parent_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || binary.right != object_literal_idx
+        {
+            return None;
+        }
+
+        let left_node = self.arena.get(binary.left)?;
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(left_node)?;
+        let prop_name = self
+            .arena
+            .get_identifier_text(access.name_or_argument)
+            .map(std::string::ToString::to_string)?;
+        let receiver_type_id = checker.get_type_of_node(access.expression);
+        let container_type_id = self
+            .contextual_property_type_from_type(receiver_type_id, &prop_name)
+            .unwrap_or(tsz_solver::TypeId::ERROR);
+        if container_type_id == tsz_solver::TypeId::ERROR {
+            return None;
+        }
+        let container_type_text = checker.format_type(container_type_id);
+        if container_type_text.is_empty() || container_type_text == "error" {
+            return None;
+        }
+        Some((container_type_id, container_type_text))
     }
 
     pub(crate) fn contextual_property_type_from_type(
@@ -575,6 +629,13 @@ impl<'a> HoverProvider<'a> {
                 return Some(callable_type);
             }
 
+            if parent.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(callable_type) =
+                    self.contextual_callable_type_for_call_argument(parent_idx, current)
+            {
+                return Some(callable_type);
+            }
+
             if parent.kind == syntax_kind_ext::TYPE_ASSERTION
                 || parent.kind == syntax_kind_ext::AS_EXPRESSION
                 || parent.kind == syntax_kind_ext::SATISFIES_EXPRESSION
@@ -662,6 +723,59 @@ impl<'a> HoverProvider<'a> {
         };
 
         self.callable_type_from_array_annotation(annotation_type_idx, element_index)
+    }
+
+    fn contextual_callable_type_for_call_argument(
+        &self,
+        call_expr_idx: NodeIndex,
+        argument_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let call_node = self.arena.get(call_expr_idx)?;
+        let call = self.arena.get_call_expr(call_node)?;
+        let arg_position = call
+            .arguments
+            .as_ref()?
+            .nodes
+            .iter()
+            .position(|&idx| idx == argument_idx)?;
+        let callee = self.arena.get(call.expression)?;
+        if callee.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .binder
+            .node_symbols
+            .get(&call.expression.0)
+            .copied()
+            .or_else(|| self.binder.resolve_identifier(self.arena, call.expression))?;
+        let symbol = self.binder.symbols.get(sym_id)?;
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION
+                && decl_node.kind != syntax_kind_ext::METHOD_DECLARATION
+                && decl_node.kind != syntax_kind_ext::METHOD_SIGNATURE
+            {
+                continue;
+            }
+            let params = if let Some(function) = self.arena.get_function(decl_node) {
+                &function.parameters.nodes
+            } else if let Some(signature) = self.arena.get_signature(decl_node) {
+                let list = signature.parameters.as_ref()?;
+                &list.nodes
+            } else {
+                continue;
+            };
+            let &param_idx = params.get(arg_position)?;
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if param.type_annotation.is_some() {
+                return Some(param.type_annotation);
+            }
+        }
+        None
     }
 
     fn callable_type_from_array_annotation(

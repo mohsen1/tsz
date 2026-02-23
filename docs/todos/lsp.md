@@ -745,3 +745,17 @@ Investigated but punted:
   Reason: still requires project-wide cross-file definition/references/rename grouping parity in tsserver namespace-identifier request paths (current request handling remains single-file oriented in this sampled path).
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same cross-file tsserver namespace alias/re-export navigation parity gap as `_types`, needing broader project-backed request aggregation.
+
+## 2026-02-23 (quick info contextual typing follow-up)
+
+Completed in this pass:
+- Fixed contextual object-literal property-name hover when the object literal appears on the RHS of a property-assignment binary expression (e.g. `holder.t12 = { foo: ... }`) by deriving container type from the assignment target in `crates/tsz-lsp/src/hover_contextual.rs`.
+- Added focused hover unit coverage in `crates/tsz-lsp/tests/hover_tests.rs`:
+  - contextual object-literal property hover in assignment context,
+  - contextual parameter hover for function expressions passed as call arguments.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `73` (`(parameter) n: any` vs `(parameter) n: number`) after fixing marker `64`.
+  Reason: remaining gap is contextual typing for nested returned function expressions (`return function(n) { ... }`) and needs a broader contextual-call-signature propagation path than this targeted assignment/call-argument fix.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still fail in `--max=200` run.
+  Reason: requires project-wide go-to-definition/references/rename parity for quoted import/export names across files; current tsserver handler path remains file-local for these operations.
