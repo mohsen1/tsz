@@ -453,24 +453,6 @@ impl<'a> Printer<'a> {
         printer
     }
 
-    /// Create a new Printer targeting ES5.
-    pub fn new_es5(arena: &'a NodeArena) -> Self {
-        let options = PrinterOptions {
-            target: ScriptTarget::ES5,
-            ..Default::default()
-        };
-        Self::with_options(arena, options)
-    }
-
-    /// Create a new Printer targeting ES6+.
-    pub fn new_es6(arena: &'a NodeArena) -> Self {
-        let options = PrinterOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        };
-        Self::with_options(arena, options)
-    }
-
     /// Set whether to target ES5 behavior.
     ///
     /// This updates both the legacy `target_es5` bool and all derived
