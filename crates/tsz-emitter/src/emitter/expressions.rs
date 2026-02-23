@@ -267,7 +267,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Signal access position so `(new a)()` keeps parens (vs `new a()`).
+        let prev = self.paren_in_access_position;
+        self.paren_in_access_position = true;
         self.emit(call.expression);
+        self.paren_in_access_position = prev;
         // Map the opening `(` to its source position
         if let Some(expr_node) = self.arena.get(call.expression) {
             self.map_token_after(expr_node.end, node.end, b'(');
@@ -620,7 +624,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Signal that the expression is in access position so `emit_parenthesized`
+        // preserves parens around `new` expressions: `(new a).b` vs `new a.b`.
+        let prev = self.paren_in_access_position;
+        self.paren_in_access_position = true;
         self.emit(access.expression);
+        self.paren_in_access_position = prev;
 
         // Preserve multi-line property access chains from the original source.
         // TypeScript preserves the original line break pattern. If there's a
@@ -701,7 +710,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let prev = self.paren_in_access_position;
+        self.paren_in_access_position = true;
         self.emit(access.expression);
+        self.paren_in_access_position = prev;
         self.write("[");
         self.emit(access.name_or_argument);
         self.write("]");
@@ -873,6 +885,11 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     || k == syntax_kind_ext::NON_NULL_EXPRESSION
                     || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::CALL_EXPRESSION
+                    // NEW_EXPRESSION can strip parens only when NOT in access position:
+                    // `(new a)` → `new a` is fine, but `(new a).b` must keep parens
+                    // because `new a.b` has different semantics (constructs `a.b`).
+                    || (k == syntax_kind_ext::NEW_EXPRESSION && !self.paren_in_access_position)
             );
 
             if can_strip {
@@ -1343,6 +1360,90 @@ mod tests {
         assert!(
             output.contains("    : c"),
             "Colon must lead on the new indented line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion around a call expression should strip parens:
+    /// `(<any>a.b()).c` → `a.b().c` (not `(a.b()).c`).
+    #[test]
+    fn type_assertion_call_expression_strips_parens() {
+        let source = "var b = (<any>a.b()).c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a.b().c"),
+            "Parens around type-asserted call expression should be stripped.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(a.b()).c"),
+            "Should not have redundant parens around call expression.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion around `new` expression strips parens when not in access position:
+    /// `(<any>new a)` → `new a`.
+    #[test]
+    fn type_assertion_new_expression_strips_parens() {
+        let source = "var b = (<any>new a);\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var b = new a;"),
+            "Parens around type-asserted new expression should be stripped.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion around `new a.b` strips parens when not in access position:
+    /// `(<any>new a.b)` → `new a.b`.
+    #[test]
+    fn type_assertion_new_expression_with_member_strips_parens() {
+        let source = "var b = (<any>new a.b);\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var b = new a.b;"),
+            "Parens around type-asserted new a.b should be stripped.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion around `new a` keeps parens when in property access position:
+    /// `(<any>new a).b` → `(new a).b` (removing parens would change semantics).
+    #[test]
+    fn type_assertion_new_expression_keeps_parens_in_access() {
+        let source = "var b = (<any>new a).b;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(new a).b"),
+            "Parens around new expression in access position must be preserved.\nOutput:\n{output}"
         );
     }
 }

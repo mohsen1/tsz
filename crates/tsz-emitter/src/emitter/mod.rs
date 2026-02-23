@@ -323,6 +323,11 @@ pub struct Printer<'a> {
 
     /// Current nesting depth for destructuring emission that should wrap spread inputs with `__read`.
     pub(super) destructuring_read_depth: u32,
+
+    /// When true, the current parenthesized expression is being emitted as the
+    /// base of a property/element access. This prevents stripping parens around
+    /// `new` expressions where removal would change semantics: `(new a).b` vs `new a.b`.
+    pub(super) paren_in_access_position: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -438,6 +443,7 @@ impl<'a> Printer<'a> {
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,
             destructuring_read_depth: 0,
+            paren_in_access_position: false,
         }
     }
 
