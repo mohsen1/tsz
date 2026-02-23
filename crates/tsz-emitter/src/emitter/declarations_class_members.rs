@@ -117,10 +117,12 @@ impl<'a> Printer<'a> {
         self.write(")");
 
         // Skip return type for JavaScript emit — skip comments inside erased return type
-        if !self.ctx.flags.in_declaration_emit && method.type_annotation.is_some()
-            && let Some(type_node) = self.arena.get(method.type_annotation) {
-                self.skip_comments_in_range(type_node.pos, type_node.end);
-            }
+        if !self.ctx.flags.in_declaration_emit
+            && method.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(method.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
 
         if needs_async_lowering {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
