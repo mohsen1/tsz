@@ -552,9 +552,10 @@ impl<'a> Printer<'a> {
                 // `new Foo` (no args) needs parens before `.x`.
                 let unwrapped = self.unwrap_type_assertion_idx(idx);
                 if let Some(node) = self.arena.get(unwrapped)
-                    && let Some(call) = self.arena.get_call_expr(node) {
-                        return call.arguments.is_none();
-                    }
+                    && let Some(call) = self.arena.get_call_expr(node)
+                {
+                    return call.arguments.is_none();
+                }
                 true
             }
             _ => false,
