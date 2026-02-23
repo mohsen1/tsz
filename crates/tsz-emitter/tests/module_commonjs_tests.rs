@@ -1,3 +1,4 @@
+use crate::transforms::emit_utils::sanitize_module_name;
 use crate::transforms::ir::IRNode;
 use crate::transforms::module_commonjs::*;
 use crate::transforms::module_commonjs_ir::CommonJsTransformContext;

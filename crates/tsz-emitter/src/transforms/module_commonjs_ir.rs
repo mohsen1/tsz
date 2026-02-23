@@ -20,7 +20,9 @@
 //! exports.default = myFunc;
 //! ```
 
-use crate::transforms::emit_utils::identifier_text as get_identifier_text;
+use crate::transforms::emit_utils::{
+    identifier_text as get_identifier_text, sanitize_module_name, string_literal_text,
+};
 use crate::transforms::ir::IRNode;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -113,7 +115,7 @@ impl<'a> CommonJsTransformContext<'a> {
         let import = self.arena.get_import_decl_at(import_idx)?;
 
         // Get module specifier
-        let module_spec = get_string_literal_text(self.arena, import.module_specifier)?;
+        let module_spec = string_literal_text(self.arena, import.module_specifier)?;
 
         // Side-effect import: `import "./x";` -> `require("./x");`
         if import.import_clause.is_none() {
@@ -238,7 +240,7 @@ impl<'a> CommonJsTransformContext<'a> {
         &mut self,
         export_data: &tsz_parser::parser::node::ExportDeclData,
     ) -> Option<IRNode> {
-        let module_spec = get_string_literal_text(self.arena, export_data.module_specifier)?;
+        let module_spec = string_literal_text(self.arena, export_data.module_specifier)?;
         let module_var = sanitize_module_name(&module_spec);
 
         self.module_counter += 1;
@@ -404,43 +406,4 @@ impl<'a> CommonJsTransformContext<'a> {
             Some(IRNode::ASTRef(ns_idx))
         }
     }
-}
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::StringLiteral as u16 {
-        arena.get_literal(node).map(|s| s.text.clone())
-    } else {
-        None
-    }
-}
-
-/// Sanitize module specifier for use as variable name
-pub fn sanitize_module_name(module_spec: &str) -> String {
-    let raw = module_spec
-        .trim_start_matches("./")
-        .trim_start_matches("../");
-    let mut sanitized = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
-            sanitized.push(ch);
-        } else {
-            sanitized.push('_');
-        }
-    }
-    if sanitized.is_empty() {
-        sanitized.push_str("module");
-    }
-    let starts_with_invalid_ident = sanitized
-        .chars()
-        .next()
-        .is_some_and(|c| !(c == '_' || c == '$' || c.is_ascii_alphabetic()));
-    if starts_with_invalid_ident {
-        sanitized.insert(0, '_');
-    }
-    sanitized
 }

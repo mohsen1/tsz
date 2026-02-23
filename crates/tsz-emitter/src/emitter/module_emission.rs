@@ -9,9 +9,7 @@ use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(super) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
-        use crate::transforms::module_commonjs;
-
-        let base = module_commonjs::sanitize_module_name(module_spec);
+        let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
         let next = self
             .ctx
             .module_state

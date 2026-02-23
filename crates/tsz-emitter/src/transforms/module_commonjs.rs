@@ -19,7 +19,9 @@
 //! exports.default = myFunc;
 //! ```
 
-use crate::transforms::emit_utils::identifier_text as get_identifier_text;
+use crate::transforms::emit_utils::{
+    identifier_text as get_identifier_text, sanitize_module_name, string_literal_text,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -380,7 +382,7 @@ pub fn transform_import_to_require(
     let import = arena.get_import_decl(node)?;
 
     // Get module specifier text
-    let module_spec = get_string_literal_text(arena, import.module_specifier)?;
+    let module_spec = string_literal_text(arena, import.module_specifier)?;
 
     // Generate module variable name (e.g., module_1, module_2)
     *module_counter += 1;
@@ -568,44 +570,4 @@ fn collect_binding_names_from_element(
     if let Some(elem) = arena.get_binding_element(elem_node) {
         collect_binding_names(arena, elem.name, exports);
     }
-}
-
-/// Get string literal text from a node index
-fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::StringLiteral as u16 {
-        arena.get_literal(node).map(|s| s.text.clone())
-    } else {
-        None
-    }
-}
-
-/// Sanitize module specifier for use as variable name
-/// "./foo/bar" -> "`foo_bar`"
-pub fn sanitize_module_name(module_spec: &str) -> String {
-    let raw = module_spec
-        .trim_start_matches("./")
-        .trim_start_matches("../");
-    let mut sanitized = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
-            sanitized.push(ch);
-        } else {
-            sanitized.push('_');
-        }
-    }
-
-    if sanitized.is_empty() {
-        sanitized.push_str("module");
-    }
-
-    let starts_with_invalid_ident = sanitized
-        .chars()
-        .next()
-        .is_some_and(|c| !(c == '_' || c == '$' || c.is_ascii_alphabetic()));
-    if starts_with_invalid_ident {
-        sanitized.insert(0, '_');
-    }
-
-    sanitized
 }

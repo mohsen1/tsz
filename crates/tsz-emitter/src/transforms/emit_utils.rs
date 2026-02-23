@@ -255,6 +255,49 @@ pub(crate) fn is_computed_property_member(arena: &NodeArena, idx: NodeIndex) -> 
     false
 }
 
+/// Get the text content of a string literal node.
+///
+/// Returns `None` if the index is null, the node doesn't exist, or the node
+/// is not a `StringLiteral`.
+pub(crate) fn string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == SyntaxKind::StringLiteral as u16 {
+        arena.get_literal(node).map(|s| s.text.clone())
+    } else {
+        None
+    }
+}
+
+/// Sanitize a module specifier string for use as a JavaScript variable name.
+///
+/// Strips leading `./` and `../` prefixes, replaces non-identifier characters
+/// with `_`, and ensures the result is a valid identifier (non-empty, starts
+/// with a letter/`_`/`$`).
+pub(crate) fn sanitize_module_name(module_spec: &str) -> String {
+    let raw = module_spec
+        .trim_start_matches("./")
+        .trim_start_matches("../");
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+    if sanitized.is_empty() {
+        sanitized.push_str("module");
+    }
+    let starts_with_invalid_ident = sanitized
+        .chars()
+        .next()
+        .is_some_and(|c| !(c == '_' || c == '$' || c.is_ascii_alphabetic()));
+    if starts_with_invalid_ident {
+        sanitized.insert(0, '_');
+    }
+    sanitized
+}
+
 /// Check if a node is a spread element or spread assignment.
 pub(crate) fn is_spread_element(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
