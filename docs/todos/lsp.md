@@ -647,3 +647,42 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `64`: expected `(property) IBar.foo: IFoo`, got empty quick info).
   Reason: declaration-site/object-literal member quickinfo fallback for contextual `IBar` property names still misses this assignment path and needs a dedicated member-property resolver follow-up in tsserver `handlers_info`.
+
+## 2026-02-23 (auto-import pnpm/symlink diagnostics+codefix follow-up)
+
+Completed in this pass:
+- Hardened tsserver missing-import fallback plumbing in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` by:
+  - scanning external project file content for synthetic missing-name viability,
+  - adding side-effect-import fallback candidates (`import "pkg"`) for missing-name fixes,
+  - adding external-project node_modules path fallback candidates (including pnpm path normalization) when file content is unavailable.
+- Improved external-project path tracking in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs` so `openExternalProject` keeps root file paths even when inline content is absent.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` and `crates/tsz-cli/src/bin/tsz_server/tests.rs` for the above fallback paths and tracking behavior.
+- Validation:
+  - `cargo nextest run -p tsz-cli`
+  - `cargo nextest run -p tsz-lsp -p tsz-cli`
+  both pass in this run.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportPnpm.ts`: still returns `No codefixes returned`.
+  Reason: despite handler-level fallback coverage, fourslash still does not surface an actionable missing-import codefix in this adapter path; remaining gap appears to be in SessionClient/adapter diagnostics→codefix request flow for virtual linked files, beyond a safe small server-side patch.
+- `TypeScript/tests/cases/fourslash/autoImportSymlinkCaseSensitive.ts`: still returns `No codefixes returned`.
+  Reason: appears to share the same adapter-level linked-file diagnostics/codefix request parity gap as `autoImportPnpm.ts`.
+
+## 2026-02-23 (JSDoc annotate codefix ordering follow-up)
+
+Completed in this pass:
+- Fixed tsserver `getCodeFixes` placeholder ordering for JSDoc annotate parity in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` by aligning synthetic `inferFromUsage` placeholder count to TypeScript-style `untypedParameterCount - 1` behavior.
+- Added focused handler-level regression coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`:
+  - `get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_24_26`
+- Validation:
+  - `cargo nextest run -p tsz-cli` passed (`424` tests).
+  - `cargo nextest run -p tsz-lsp` passed (`734` tests).
+  - `./scripts/run-fourslash.sh --max=200` improved from `193/200` to `196/200` passing.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/addFunctionInDuplicatedConstructorClassBody.ts`
+  Reason: remaining mismatch is diagnostics cardinality/shape in constructor-body duplicate-member scenarios, which needs checker+diagnostics parity work beyond this targeted codefix-ordering patch.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: still require broader cross-file rename/definition/reference bridge parity for arbitrary module namespace identifiers.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
+  Reason: still needs deeper CommonJS/export-equals auto-import completion + codefix synthesis parity (`import = require(...)` style candidates/edits).
