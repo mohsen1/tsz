@@ -416,7 +416,28 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 4005/5997 (66.8%) — first-6000 fingerprint-level; 7940/12574 (63.1%) — full suite error-code-level
+## Current score: 7947/12574 (63.2%) — full suite fingerprint-level
+
+### Session progress (2026-02-23, TS2454 compound ops):
+- **TS2454 compound read-write fix (+7 tests, 7940→7947)**: Compound read-write operations
+  (`++x`, `x--`, `x += 1`, `x **= 2`, etc.) no longer count as "definite assignment" for
+  TS2454 analysis. These operations read the variable before writing, so tsc considers the
+  variable still "used before being assigned" even after the compound write. Two-part fix:
+  1. `control_flow_var_utils.rs`: `is_compound_read_write_assignment()` — when the definite
+     assignment worklist encounters a flow ASSIGNMENT node that is a prefix/postfix ++/-- or
+     compound assignment (+=, -=, etc.), it follows the antecedent instead of returning
+     "definitely assigned."
+  2. `flow_analysis_usage.rs`: `is_compound_read_write_target()` — during parent-walk fallback
+     to find a flow node for an identifier, skips the parent's flow node when the parent is
+     a compound read-write expression targeting that identifier.
+  - Tests passing: `decrementOperatorWithNumberType`, `incrementOperatorWithNumberType`,
+    `commaOperatorsMultipleOperators`, `compoundExponentiationAssignmentLHSIsReference`,
+    `emitCompoundExponentiationOperator1`, `emitCompoundExponentiationOperator2`, +1 more
+  - Added 7 unit tests: prefix increment, postfix decrement, compound assignment, compound
+    ops don't count as assignment, exponentiation compound, simple assignment still counts
+  - 0 regressions
+
+## Previous score: 7940/12574 (63.1%) — full suite
 
 **Note**: Conformance runner now uses fingerprint-level comparison (code + file + line + column
 + message) instead of error-code-level. This is stricter and reduced the apparent pass rate.

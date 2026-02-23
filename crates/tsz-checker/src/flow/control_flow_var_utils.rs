@@ -79,7 +79,13 @@ impl<'a> FlowAnalyzer<'a> {
             let result = if flow.has_any_flags(flow_flags::UNREACHABLE) {
                 false
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                if self.assignment_targets_reference(flow.node, reference) {
+                if self.assignment_targets_reference(flow.node, reference)
+                    && !self.is_compound_read_write_assignment(flow.node)
+                {
+                    // Simple assignment (x = value) counts as definite assignment.
+                    // Compound assignments (x += 1, ++x, x--) do NOT — they read
+                    // the variable first, so tsc considers the variable still
+                    // "used before being assigned" even after the compound write.
                     true
                 } else if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
@@ -205,6 +211,52 @@ impl<'a> FlowAnalyzer<'a> {
         cache.extend(local_cache);
 
         final_result
+    }
+
+    /// Check if an assignment node is a compound read-write operation.
+    ///
+    /// Compound read-write operations (`++x`, `x--`, `x += 1`, `x **= 2`, etc.)
+    /// read the variable before writing it. For definite assignment analysis,
+    /// these do NOT count as "definitely assigning" the variable — tsc still
+    /// reports TS2454 for uses after a compound assignment if the variable was
+    /// never properly initialized with `=`.
+    pub(crate) fn is_compound_read_write_assignment(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+
+        // Prefix/postfix ++/-- (e.g., `++x`, `x--`)
+        if (node_data.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || node_data.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.arena.get_unary_expr(node_data) {
+                return unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == tsz_scanner::SyntaxKind::MinusMinusToken as u16;
+            }
+
+        // Compound assignment operators (+=, -=, *=, /=, %=, **=, <<=, >>=, >>>=,
+        // &=, |=, ^=, &&=, ||=, ??=)
+        if node_data.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node_data) {
+                use tsz_scanner::SyntaxKind;
+                let op = bin.operator_token;
+                return op == SyntaxKind::PlusEqualsToken as u16
+                    || op == SyntaxKind::MinusEqualsToken as u16
+                    || op == SyntaxKind::AsteriskEqualsToken as u16
+                    || op == SyntaxKind::SlashEqualsToken as u16
+                    || op == SyntaxKind::PercentEqualsToken as u16
+                    || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                    || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+                    || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                    || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                    || op == SyntaxKind::AmpersandEqualsToken as u16
+                    || op == SyntaxKind::BarEqualsToken as u16
+                    || op == SyntaxKind::CaretEqualsToken as u16
+                    || op == SyntaxKind::BarBarEqualsToken as u16
+                    || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                    || op == SyntaxKind::QuestionQuestionEqualsToken as u16;
+            }
+
+        false
     }
 
     /// Check if an assignment node is a mutable variable declaration (let/var) without a type annotation.

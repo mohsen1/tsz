@@ -325,3 +325,159 @@ fn test_ts2454_multiple_uninitialized_vars() {
         "Expected TS2454 for both `a` and `b`, got: {diags:?}"
     );
 }
+
+/// TS2454 must fire for prefix increment on uninitialized variable.
+/// `++x` reads x before writing, so it's use-before-assignment.
+#[test]
+fn test_ts2454_prefix_increment_reads_before_writing() {
+    let source = r"
+        var x: number;
+        ++x;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for `x` in `++x` (reads before writing), got: {diags:?}"
+    );
+}
+
+/// TS2454 must fire for postfix decrement on uninitialized variable.
+/// `x--` reads x before writing, so it's use-before-assignment.
+#[test]
+fn test_ts2454_postfix_decrement_reads_before_writing() {
+    let source = r"
+        var x: number;
+        x--;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for `x` in `x--` (reads before writing), got: {diags:?}"
+    );
+}
+
+/// TS2454 must fire for compound assignment (+=) on uninitialized variable.
+/// `x += 1` reads x before writing, so it's use-before-assignment.
+#[test]
+fn test_ts2454_compound_assignment_reads_before_writing() {
+    let source = r"
+        var x: number;
+        x += 1;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for `x` in `x += 1` (reads before writing), got: {diags:?}"
+    );
+}
+
+/// TS2454 must fire REPEATEDLY for ++/-- on uninitialized variable.
+/// Even after `--x` executes, the variable is NOT considered "definitely assigned"
+/// because compound operations don't count as proper initialization.
+#[test]
+fn test_ts2454_compound_ops_do_not_count_as_assignment() {
+    let source = r"
+        var x: number;
+        --x;
+        x--;
+        --x;
+        x--;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    let count = count_code(
+        &diags,
+        diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
+    );
+    assert!(
+        count >= 4,
+        "Expected TS2454 for ALL --x/x-- uses (got {count}), since compound ops don't assign: {diags:?}"
+    );
+}
+
+/// TS2454 must fire for compound exponentiation assignment (**=).
+#[test]
+fn test_ts2454_exponentiation_compound_assignment() {
+    let source = r"
+        var x: number;
+        x **= 2;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for `x` in `x **= 2`, got: {diags:?}"
+    );
+}
+
+/// Simple assignment (=) DOES count as definite assignment.
+/// After `x = 1`, subsequent uses of x should NOT trigger TS2454.
+#[test]
+fn test_ts2454_simple_assignment_counts_as_definite() {
+    let source = r"
+        var x: number;
+        x = 1;
+        var y = x + 1;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    // Should get 0 TS2454 — x is properly assigned before use in `y = x + 1`
+    let ts2454_for_y: Vec<_> = diags
+        .iter()
+        .filter(|(c, m)| {
+            *c == diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED && m.contains("'x'")
+        })
+        .collect();
+    // The only TS2454 should NOT be for the `x + 1` usage (after `x = 1`)
+    // There should be 0 TS2454 total since x is assigned before its only read
+    assert_eq!(
+        ts2454_for_y.len(),
+        0,
+        "Should not emit TS2454 for `x` after `x = 1`, got: {diags:?}"
+    );
+}
