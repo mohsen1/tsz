@@ -396,9 +396,10 @@ impl Server {
         }
 
         let fallback_source = Self::infer_extends_import_source(source_text);
+        let side_effect_sources = Self::side_effect_import_modules(source_text);
         let mut changes = Vec::new();
         for required_name in required_names {
-            let source = project_items
+            let candidate_sources: Vec<&str> = project_items
                 .iter()
                 .find(|item| {
                     item.label == required_name
@@ -406,6 +407,37 @@ impl Server {
                         && item.source.as_deref().is_some()
                 })
                 .and_then(|item| item.source.as_deref())
+                .into_iter()
+                .chain(
+                    project_items
+                        .iter()
+                        .filter(|item| {
+                            item.label == required_name
+                                && item.has_action
+                                && item.source.as_deref().is_some()
+                        })
+                        .filter_map(|item| item.source.as_deref()),
+                )
+                .collect();
+            let source = candidate_sources
+                .iter()
+                .copied()
+                .find(|candidate| {
+                    Self::has_side_effect_import_for_module(source_text, candidate)
+                })
+                .or_else(|| {
+                    (side_effect_sources.len() == 1).then(|| side_effect_sources[0].as_str())
+                })
+                .or_else(|| {
+                    candidate_sources.iter().copied().find(|candidate| {
+                        Self::find_named_import_line_for_module(source_text, candidate).is_some()
+                    })
+                })
+                .or_else(|| {
+                    candidate_sources.iter().copied().min_by_key(|candidate| {
+                        (candidate.matches('/').count(), candidate.len())
+                    })
+                })
                 .or(fallback_source.as_deref());
             let Some(source) = source else {
                 continue;
@@ -429,9 +461,15 @@ impl Server {
                     "newText": format!("import {{ {} }} from \"{}\";\n", merged.join(", "), source),
                 }));
             } else {
+                let insert_offset =
+                    if Self::has_side_effect_import_for_module(source_text, source) {
+                        Self::import_insertion_offset_after_import_block(source_text)
+                    } else {
+                        0
+                    };
                 changes.push(serde_json::json!({
                     "span": {
-                        "start": 0,
+                        "start": insert_offset,
                         "length": 0,
                     },
                     "newText": format!("import {{ {} }} from \"{}\";\n", required_name, source),
@@ -611,6 +649,49 @@ impl Server {
             return Some((offset, offset + line.len(), names));
         }
         None
+    }
+
+    fn has_side_effect_import_for_module(source_text: &str, module_specifier: &str) -> bool {
+        let double_quoted = format!("import \"{module_specifier}\";");
+        let single_quoted = format!("import '{module_specifier}';");
+        source_text.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed == double_quoted || trimmed == single_quoted
+        })
+    }
+
+    fn side_effect_import_modules(source_text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("import \"")
+                && let Some(module) = rest.strip_suffix("\";")
+            {
+                out.push(module.to_string());
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("import '")
+                && let Some(module) = rest.strip_suffix("';")
+            {
+                out.push(module.to_string());
+            }
+        }
+        out
+    }
+
+    fn import_insertion_offset_after_import_block(source_text: &str) -> usize {
+        let mut offset = 0usize;
+        let mut last_import_end = 0usize;
+        for line in source_text.split_inclusive('\n') {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("import ") {
+                offset += line.len();
+                last_import_end = offset;
+                continue;
+            }
+            break;
+        }
+        last_import_end
     }
 
     fn class_member_snippet_items(
@@ -2995,6 +3076,41 @@ mod tests {
         assert_eq!(
             change.get("newText").and_then(serde_json::Value::as_str),
             Some("import { Container, Piece } from \"@sapphire/pieces\";\n")
+        );
+    }
+
+    #[test]
+    fn class_member_snippet_synthesized_text_changes_inserts_after_import_block_for_side_effect_import()
+     {
+        let source_text = "import \"@sapphire/pieces\";\nimport { Command } from \"@sapphire/framework\";\nclass PingCommand extends Command {\n}\n";
+        let project_items = vec![
+            CompletionItem::new("Container".to_string(), CompletionItemKind::Interface)
+                .with_has_action()
+                .with_source("@sapphire/pieces".to_string()),
+        ];
+
+        let changes = Server::class_member_snippet_synthesized_text_changes(
+            source_text,
+            "get container(): Container {\n}",
+            "container",
+            &project_items,
+        );
+
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        let expected_start = source_text
+            .find("class PingCommand")
+            .expect("expected class declaration");
+        assert_eq!(
+            change
+                .get("span")
+                .and_then(|span| span.get("start"))
+                .and_then(serde_json::Value::as_u64),
+            Some(expected_start as u64)
+        );
+        assert_eq!(
+            change.get("newText").and_then(serde_json::Value::as_str),
+            Some("import { Container } from \"@sapphire/pieces\";\n")
         );
     }
 

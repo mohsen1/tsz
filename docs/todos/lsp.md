@@ -608,3 +608,24 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-23 (class-member snippet import source/order follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{2,4}.ts` code-action parity for class-member snippet completion application by improving import edit synthesis in `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`:
+  - prefer side-effect-imported module sources when synthesizing required type imports for `ClassMemberSnippet/` completion details,
+  - insert synthesized named imports after the existing import block (instead of always at byte `0`) when a side-effect import for the module already exists.
+- Added focused unit coverage:
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`
+    - `class_member_snippet_synthesized_text_changes_inserts_after_import_block_for_side_effect_import`
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
+    - `test_completion_entry_details_class_member_snippet_export_list_augmentation_import_order`
+- Verification:
+  - `cargo nextest run -p tsz-cli` passed (`414` tests).
+  - `./scripts/run-fourslash.sh --skip-ts-build --filter=autoImportCompletionExportListAugmentation2 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --filter=autoImportCompletionExportListAugmentation4 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` improved from `193/200` to `195/200` passing.
+  - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1148` tests).
+
+Investigated but punted:
+- None in this pass.
