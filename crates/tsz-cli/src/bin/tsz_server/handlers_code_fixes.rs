@@ -488,9 +488,9 @@ impl Server {
                 response_actions.push(action);
             }
             if response_actions.is_empty()
-                && error_codes
-                    .iter()
-                    .any(|code| *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && error_codes.iter().any(|code| {
+                    *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                })
                 && let Some(action) = self.verbatim_commonjs_auto_import_codefix_action(
                     file_path,
                     &content,
@@ -3368,7 +3368,9 @@ impl Server {
 
         let mut candidates: Vec<(String, String, Vec<String>)> = Vec::new();
         for text in files.values() {
-            candidates.extend(Self::extract_ambient_export_equals_modules_for_codefix(text));
+            candidates.extend(Self::extract_ambient_export_equals_modules_for_codefix(
+                text,
+            ));
         }
         for (path, text) in &files {
             if path == file_path || !Self::is_js_like_file(path) || !text.contains("module.exports")
