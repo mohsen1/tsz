@@ -1,8 +1,31 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9834/13623 = 72.2% JS, ~775/1995 = 38.8% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9855/13623 = 72.3% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Missing `var _a;` hoisted declaration for optional chain/nullish coalescing temps** (+20 JS):
+  When lowering `?.` and `??` operators to ES2019 and below for complex (non-identifier)
+  expressions, temp variables like `_a` are used in ternary expressions
+  (e.g., `(_a = f()) !== null && _a !== void 0 ? _a : 'foo'`) but were never declared with
+  `var _a;` at the top of the enclosing scope. Root cause: 7 call sites in
+  `expressions.rs` (optional call, optional method call, optional property/element access) and
+  `expressions_binary_downlevel.rs` (nullish coalescing) used `get_temp_var_name()` which
+  generates a unique name but does NOT register it for hoisting. Fix: changed all 7 sites to
+  `make_unique_name_hoisted()` which also adds the name to `hoisted_assignment_temps`. The
+  existing `emit_block()` mechanism then inserts `var _a, _b;` at the recorded byte offset
+  via `insert_line_at()` for function bodies, and `emit_source_file` does the same for
+  top-level scope. Two unit tests added.
+  Tests fixed: `discriminatedUnionJsxElement`, `elementAccessChain.2`,
+  `exhaustiveSwitchStatements1`, `invalidOptionalChainFromNewExpression`,
+  `literalTypesAndDestructuring`, `nullishCoalescingOperator10`, `nullishCoalescingOperator12`,
+  `optionalChainWithInstantiationExpression2(target=es2019)`, `propertyAccessChain.2`,
+  `spreadUnionPropOverride`, `truthinessCallExpressionCoercion2`,
+  `typeOfThisInstanceMemberNarrowedWithLoopAntecedent`, `typeParameterLeak`,
+  `typePredicatesOptionalChaining1`, `unionReductionMutualSubtypes`,
+  `unionTypeReduction2`, `useUnknownInCatchVariables01`.
+  JS: 9835→9855, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **`let` emitted instead of `var` in namespace IIFE bodies at ES5 target** (+5 JS):
   When `target: "es5"`, nested namespace/enum declarations inside IIFE bodies were
   emitting `let` instead of `var`, producing invalid ES5 JavaScript. Root cause: the
@@ -809,6 +832,13 @@
 
 ### Investigated but Deferred
 
+- **Single-line function body with optional chain/nullish temps missing `var _a;` (~0 known tests)**:
+  The single-line block emit path (`emit_block`, lines 111-124 in statements.rs) returns early
+  without inserting hoisted temp declarations. If a single-line function body contains a complex
+  `?.` or `??` expression that needs a temp, the `var _a;` won't be emitted. In practice this
+  seems rare (such expressions usually span multiple lines), and no tests currently fail from this.
+  Fix would require checking for accumulated hoisted temps after single-line emit and forcing a
+  multi-line rewrite, or pre-scanning the AST to detect if temps will be needed.
 - **`declare;` emitted as standalone statement (~7 tests)**: Ambient declarations like
   `declare import a = b;`, `declare declare var x;`, and `declare export function f() {}` emit
   the `declare` keyword as a standalone expression statement `declare;` instead of being fully
