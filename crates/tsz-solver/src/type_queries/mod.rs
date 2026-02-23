@@ -48,12 +48,10 @@ pub use crate::visitors::visitor_predicates::{
 
 // Re-export sub-module items so callers can use `type_queries::*`
 pub use classifiers::{
-    AssignabilityEvalKind, AugmentationTargetKind, BindingElementTypeKind, ConstructorAccessKind,
-    ExcessPropertiesKind, InterfaceMergeKind, SymbolResolutionTraversalKind,
-    classify_for_assignability_eval, classify_for_augmentation, classify_for_binding_element,
+    AssignabilityEvalKind, AugmentationTargetKind, ConstructorAccessKind, ExcessPropertiesKind,
+    InterfaceMergeKind, classify_for_assignability_eval, classify_for_augmentation,
     classify_for_constructor_access, classify_for_excess_properties, classify_for_interface_merge,
-    classify_for_symbol_resolution_traversal, get_conditional_type_id, get_enum_components,
-    get_keyof_type, get_lazy_def_id, get_mapped_type_id, get_type_identity,
+    get_conditional_type_id, get_keyof_type, get_lazy_def_id, get_mapped_type_id,
 };
 // `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
 pub use classifiers::get_lazy_def_id as get_def_id;
@@ -228,25 +226,11 @@ pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::KeyOf(_)))
 }
 
-/// Check if a type is a type query (typeof expr).
-///
-/// Returns true for `TypeData::TypeQuery`.
-pub fn is_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::TypeQuery(_)))
-}
-
 /// Check if a type is a readonly type modifier.
 ///
 /// Returns true for `TypeData::ReadonlyType`.
 pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
-}
-
-/// Check if a type is a unique symbol type.
-///
-/// Returns true for `TypeData::UniqueSymbol`.
-pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
 /// Check if a type is usable as a property name (TS1166/TS1165/TS1169).
@@ -668,123 +652,6 @@ pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
             !shape.construct_signatures.is_empty()
         }
         _ => false,
-    }
-}
-
-/// Get the symbol reference from a `TypeQuery` type.
-///
-/// Returns None if the type is not a `TypeQuery`.
-pub fn get_symbol_ref_from_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::types::SymbolRef> {
-    match db.lookup(type_id) {
-        Some(TypeData::TypeQuery(sym_ref)) => Some(sym_ref),
-        _ => None,
-    }
-}
-
-/// Kind of constructable type for `get_construct_type_from_type`.
-///
-/// This enum represents the different ways a type can be constructable,
-/// allowing the caller to handle each case appropriately without matching
-/// directly on `TypeData`.
-#[derive(Debug, Clone)]
-pub enum ConstructableTypeKind {
-    /// Callable type with construct signatures - return transformed callable
-    CallableWithConstruct,
-    /// Callable type without construct signatures - check for prototype property
-    CallableMaybePrototype,
-    /// Function type - always constructable
-    Function,
-    /// Reference to a symbol - need to check symbol flags
-    SymbolRef(crate::types::SymbolRef),
-    /// `TypeQuery` (typeof expr) - need to check symbol flags
-    TypeQueryRef(crate::types::SymbolRef),
-    /// Type parameter with a constraint to check recursively
-    TypeParameterWithConstraint(TypeId),
-    /// Type parameter without constraint - not constructable
-    TypeParameterNoConstraint,
-    /// Intersection type - all members must be constructable
-    Intersection(Vec<TypeId>),
-    /// Application (generic instantiation) - return as-is
-    Application,
-    /// Object type - return as-is (may have construct signatures)
-    Object,
-    /// Not constructable
-    NotConstructable,
-}
-
-/// Classify a type for constructability checking.
-///
-/// This function examines a type and returns information about how to handle it
-/// when determining if it can be used with `new`. This is specifically for
-/// the `get_construct_type_from_type` use case.
-///
-/// The caller is responsible for:
-/// - Checking symbol flags for SymbolRef/TypeQueryRef cases
-/// - Checking prototype property for `CallableMaybePrototype`
-/// - Recursing into constraint for `TypeParameterWithConstraint`
-/// - Checking all members for Intersection
-pub fn classify_for_constructability(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> ConstructableTypeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return ConstructableTypeKind::NotConstructable;
-    };
-
-    match key {
-        TypeData::Callable(shape_id) => {
-            let shape = db.callable_shape(shape_id);
-            if shape.construct_signatures.is_empty() {
-                ConstructableTypeKind::CallableMaybePrototype
-            } else {
-                ConstructableTypeKind::CallableWithConstruct
-            }
-        }
-        TypeData::Function(_) => ConstructableTypeKind::Function,
-        TypeData::TypeQuery(sym_ref) => ConstructableTypeKind::TypeQueryRef(sym_ref),
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            if let Some(constraint) = info.constraint {
-                ConstructableTypeKind::TypeParameterWithConstraint(constraint)
-            } else {
-                ConstructableTypeKind::TypeParameterNoConstraint
-            }
-        }
-        TypeData::Intersection(members_id) => {
-            let members = db.type_list(members_id);
-            ConstructableTypeKind::Intersection(members.to_vec())
-        }
-        TypeData::Application(_) => ConstructableTypeKind::Application,
-        TypeData::Object(_) | TypeData::ObjectWithIndex(_) => ConstructableTypeKind::Object,
-        _ => ConstructableTypeKind::NotConstructable,
-    }
-}
-
-/// Create a callable type with construct signatures converted to call signatures.
-///
-/// This is used when resolving `new` expressions where we need to treat
-/// construct signatures as call signatures for type checking purposes.
-/// Returns None if the type doesn't have construct signatures.
-pub fn construct_to_call_callable(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Callable(shape_id)) => {
-            let shape = db.callable_shape(shape_id);
-            if shape.construct_signatures.is_empty() {
-                None
-            } else {
-                Some(db.callable(crate::types::CallableShape {
-                    call_signatures: shape.construct_signatures.clone(),
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                }))
-            }
-        }
-        _ => None,
     }
 }
 
