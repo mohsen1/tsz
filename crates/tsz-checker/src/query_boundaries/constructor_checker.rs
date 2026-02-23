@@ -1,6 +1,6 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::common::{construct_signatures_for_type, has_construct_signatures};
+pub(crate) use super::common::has_construct_signatures;
 pub(crate) use tsz_solver::type_queries::{
     AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
 };

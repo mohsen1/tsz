@@ -8,8 +8,7 @@
 use crate::query_boundaries::constructor_checker::{
     AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
     classify_for_constructor_access, classify_for_constructor_return_merge,
-    classify_for_instance_type, construct_signatures_for_type, has_construct_signatures,
-    resolve_abstract_constructor_anchor,
+    classify_for_instance_type, has_construct_signatures, resolve_abstract_constructor_anchor,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -49,13 +48,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.protected_constructor_types.contains(&type_id)
     }
 
-    /// Check if a type is a public constructor.
-    ///
-    /// Public constructors have no access restrictions.
-    pub fn is_public_ctor(&self, type_id: TypeId) -> bool {
-        !self.is_private_ctor(type_id) && !self.is_protected_ctor(type_id)
-    }
-
     // =========================================================================
     // Constructor Signature Utilities
     // =========================================================================
@@ -65,74 +57,6 @@ impl<'a> CheckerState<'a> {
     /// Construct signatures allow a type to be called with `new`.
     pub fn has_construct_sig(&self, type_id: TypeId) -> bool {
         has_construct_signatures(self.ctx.types, type_id)
-    }
-
-    /// Get the number of construct signatures for a type.
-    ///
-    /// Multiple construct signatures indicate constructor overloading.
-    pub fn construct_signature_count(&self, type_id: TypeId) -> usize {
-        construct_signatures_for_type(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
-    }
-
-    // =========================================================================
-    // Constructor Instantiation
-    // =========================================================================
-
-    /// Check if a constructor can be instantiated.
-    ///
-    /// Returns false for abstract constructors which cannot be instantiated.
-    pub fn can_instantiate(&self, constructor_type: TypeId) -> bool {
-        !self.is_abstract_ctor(constructor_type)
-    }
-
-    /// Check if `new` can be applied to a type.
-    ///
-    /// This is a convenience check combining constructor type detection
-    /// with abstract constructor checking.
-    pub fn can_use_new(&self, type_id: TypeId) -> bool {
-        self.has_construct_sig(type_id) && self.can_instantiate(type_id)
-    }
-
-    /// Check if a type is a class constructor (typeof Class).
-    ///
-    /// Returns true for Callable types with only construct signatures (no call signatures).
-    /// This is used to detect when a class constructor is being called without `new`.
-    pub fn is_class_constructor_type(&self, type_id: TypeId) -> bool {
-        // A class constructor is a Callable with construct signatures but no call signatures
-        self.has_construct_sig(type_id)
-            && !crate::query_boundaries::class_type::has_call_signatures(self.ctx.types, type_id)
-    }
-
-    /// Check if two constructor types have compatible accessibility.
-    ///
-    /// Returns true if source can be assigned to target based on their constructor accessibility.
-    /// - Public constructors are compatible with everything
-    /// - Private constructors are only compatible with the same private constructor
-    /// - Protected constructors are compatible with protected or public targets
-    pub fn ctor_access_compatible(&self, source: TypeId, target: TypeId) -> bool {
-        // Public constructors are compatible with everything
-        if !self.is_private_ctor(source) && !self.is_protected_ctor(source) {
-            return true;
-        }
-
-        // Private constructors are only compatible with the same private constructor
-        if self.is_private_ctor(source) {
-            if self.is_private_ctor(target) {
-                source == target
-            } else {
-                false
-            }
-        } else {
-            // Protected constructors are compatible with protected or public targets
-            !self.is_private_ctor(target)
-        }
-    }
-
-    /// Check if a type should be treated as a constructor in `new` expressions.
-    ///
-    /// This determines if a type can be used with the `new` operator.
-    pub fn is_newable(&self, type_id: TypeId) -> bool {
-        self.has_construct_sig(type_id)
     }
 
     // =========================================================================

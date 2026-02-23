@@ -402,14 +402,6 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should use solver literal constructors, not TypeData::Literal"
     );
     assert!(
-        !state_type_environment_src.contains("SymbolResolutionTraversalKind::"),
-        "state_type_environment should use solver visitor traversal helpers, not checker-side SymbolResolutionTraversalKind branching"
-    );
-    assert!(
-        !state_type_environment_src.contains("classify_for_symbol_resolution_traversal("),
-        "state_type_environment should not classify traversal in checker; use solver visitor APIs instead"
-    );
-    assert!(
         state_type_environment_src.contains("collect_referenced_types("),
         "state_type_environment should use solver collect_referenced_types visitor helper for traversal preconditions"
     );

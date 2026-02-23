@@ -486,19 +486,6 @@ pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
-/// Get the callable shape ID for a callable type.
-///
-/// Returns None if the type is not a Callable.
-pub fn get_callable_shape_id(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::types::CallableShapeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Callable(shape_id)) => Some(shape_id),
-        _ => None,
-    }
-}
-
 /// Get the callable shape for a callable type.
 ///
 /// Returns None if the type is not a Callable.
@@ -558,19 +545,6 @@ pub fn get_construct_return_type_union(
         .map(|sig| sig.return_type)
         .collect();
     Some(crate::utils::union_or_single(db, returns))
-}
-
-/// Get the function shape ID for a function type.
-///
-/// Returns None if the type is not a Function.
-pub fn get_function_shape_id(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<crate::types::FunctionShapeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Function(shape_id)) => Some(shape_id),
-        _ => None,
-    }
 }
 
 /// Get the function shape for a function type.

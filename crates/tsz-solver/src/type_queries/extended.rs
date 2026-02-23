@@ -710,45 +710,6 @@ pub fn classify_for_type_depth(db: &dyn TypeDatabase, type_id: TypeId) -> TypeDe
 }
 
 // =============================================================================
-// Object Spread Property Classification
-// =============================================================================
-
-/// Classification for collecting properties from spread expressions.
-#[derive(Debug, Clone)]
-pub enum SpreadPropertyKind {
-    /// Object type with properties
-    Object(crate::types::ObjectShapeId),
-    /// Callable type with properties
-    Callable(crate::types::CallableShapeId),
-    /// Intersection - collect from all members
-    Intersection(Vec<TypeId>),
-    /// No properties to spread
-    NoProperties,
-}
-
-/// Classify a type for spread property collection.
-pub fn classify_for_spread_properties(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> SpreadPropertyKind {
-    let Some(key) = db.lookup(type_id) else {
-        return SpreadPropertyKind::NoProperties;
-    };
-
-    match key {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            SpreadPropertyKind::Object(shape_id)
-        }
-        TypeData::Callable(shape_id) => SpreadPropertyKind::Callable(shape_id),
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            SpreadPropertyKind::Intersection(members.to_vec())
-        }
-        _ => SpreadPropertyKind::NoProperties,
-    }
-}
-
-// =============================================================================
 // Ref Type Resolution
 // =============================================================================
 
