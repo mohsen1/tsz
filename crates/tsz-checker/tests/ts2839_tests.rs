@@ -1,0 +1,126 @@
+//! Tests for TS2839: This condition will always return 'true'/'false'
+//! since JavaScript compares objects by reference, not value.
+
+use crate::CheckerState;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn has_error_with_code(source: &str, code: u32) -> bool {
+    get_diagnostics(source).iter().any(|d| d.0 == code)
+}
+
+// TS2839 should fire when comparing object literals with equality operators
+
+#[test]
+fn object_literal_strict_equals_object_literal() {
+    let source = r#"
+if ({a: 1} === {a: 1}) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+    let diags = get_diagnostics(source);
+    let msg = &diags.iter().find(|d| d.0 == 2839).unwrap().1;
+    assert!(msg.contains("'false'"));
+}
+
+#[test]
+fn array_literal_strict_equals_array_literal() {
+    let source = r#"
+if ([1] === [1]) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+    let diags = get_diagnostics(source);
+    let msg = &diags.iter().find(|d| d.0 == 2839).unwrap().1;
+    assert!(msg.contains("'false'"));
+}
+
+#[test]
+fn object_literal_strict_not_equals() {
+    let source = r#"
+if ({a: 1} !== {a: 1}) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+    let diags = get_diagnostics(source);
+    let msg = &diags.iter().find(|d| d.0 == 2839).unwrap().1;
+    assert!(msg.contains("'true'"));
+}
+
+#[test]
+fn variable_equals_object_literal() {
+    // TS2839 fires when one side is a variable and the other is a literal
+    let source = r#"
+const a = {x: 1};
+if (a === {x: 1}) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+}
+
+#[test]
+fn loose_equality_object_literal() {
+    // TS2839 also fires for == and !=
+    let source = r#"
+if ({a: 1} == {a: 1}) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+    let diags = get_diagnostics(source);
+    let msg = &diags.iter().find(|d| d.0 == 2839).unwrap().1;
+    assert!(msg.contains("'false'"));
+}
+
+#[test]
+fn loose_not_equals_array_literal() {
+    let source = r#"
+if ([1] != [1]) {}
+"#;
+    assert!(has_error_with_code(source, 2839));
+    let diags = get_diagnostics(source);
+    let msg = &diags.iter().find(|d| d.0 == 2839).unwrap().1;
+    assert!(msg.contains("'true'"));
+}
+
+#[test]
+fn no_ts2839_for_primitive_comparison() {
+    // Comparing primitive values should NOT trigger TS2839
+    let source = r#"
+if (1 === 1) {}
+if ("a" === "b") {}
+"#;
+    assert!(!has_error_with_code(source, 2839));
+}
+
+#[test]
+fn no_ts2839_for_variable_variable_comparison() {
+    // Comparing two variables should NOT trigger TS2839
+    let source = r#"
+const a = {x: 1};
+const b = {x: 1};
+if (a === b) {}
+"#;
+    assert!(!has_error_with_code(source, 2839));
+}

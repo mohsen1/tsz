@@ -539,6 +539,26 @@ impl<'a> CheckerState<'a> {
             let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
             let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
 
+            // TS2839: Object/array literal equality always compares by reference
+            let left_is_object_or_array_literal = self
+                .ctx
+                .arena
+                .get(left_idx)
+                .map(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                })
+                .unwrap_or(false);
+            let right_is_object_or_array_literal = self
+                .ctx
+                .arena
+                .get(right_idx)
+                .map(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                })
+                .unwrap_or(false);
+
             if is_equality_op && (is_left_nan || is_right_nan) {
                 let condition_result = match op_kind {
                     k if k == SyntaxKind::EqualsEqualsToken as u16
@@ -557,6 +577,27 @@ impl<'a> CheckerState<'a> {
                     node_idx,
                     &message,
                     diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                );
+            } else if is_equality_op
+                && (left_is_object_or_array_literal || right_is_object_or_array_literal)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let condition_result = match op_kind {
+                    k if k == SyntaxKind::EqualsEqualsToken as u16
+                        || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
+                    {
+                        "false"
+                    }
+                    _ => "true",
+                };
+                let message = format_message(
+                    diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
+                    &[condition_result],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
                 );
             } else if is_equality_op
                 && left_narrow != TypeId::ERROR
