@@ -377,6 +377,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2397: Declaration name conflicts with built-in global identifier.
+        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`.
+        if let Some(ref name) = var_name
+            && (name == "undefined" || name == "globalThis")
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                &[name],
+            );
+            self.error_at_node(
+                var_decl.name,
+                &message,
+                diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+            );
+        }
+
         // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode
         // Use class-specific messaging in class bodies.
         if self.is_strict_mode_for_node(var_decl.name)
@@ -1336,5 +1353,83 @@ mod ts2481_tests {
             1,
             "Expected 1 TS2481 for deeply nested var: {errors:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod ts2397_tests {
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+
+    fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions::default();
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.check_source_file(root);
+
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == error_code)
+            .map(|d| (d.start, d.message_text.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn var_undefined_emits_ts2397() {
+        let errors = check_and_collect("var undefined = null;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'undefined'"));
+    }
+
+    #[test]
+    fn var_global_this_emits_ts2397() {
+        let errors = check_and_collect("var globalThis;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'globalThis'"));
+    }
+
+    #[test]
+    fn let_undefined_emits_ts2397() {
+        let errors = check_and_collect("let undefined = 1;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+    }
+
+    #[test]
+    fn namespace_global_this_emits_ts2397() {
+        let errors = check_and_collect("namespace globalThis { export function foo() {} }", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'globalThis'"));
+    }
+
+    #[test]
+    fn normal_var_no_ts2397() {
+        let errors = check_and_collect("var x = 1;", 2397);
+        assert_eq!(errors.len(), 0, "No TS2397 for normal var: {errors:?}");
+    }
+
+    #[test]
+    fn const_undefined_emits_ts2397() {
+        let errors = check_and_collect("const undefined = void 0;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
     }
 }
