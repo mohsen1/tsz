@@ -415,6 +415,53 @@ impl<'a> ScopeWalker<'a> {
                     return Some(res);
                 }
             }
+            k if k == syntax_kind_ext::IMPORT_CLAUSE => {
+                if let Some(clause) = self.arena.get_import_clause(node) {
+                    if clause.name.is_some()
+                        && let Some(res) = f(self, clause.name)
+                    {
+                        return Some(res);
+                    }
+                    if clause.named_bindings.is_some()
+                        && let Some(res) = f(self, clause.named_bindings)
+                    {
+                        return Some(res);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::NAMED_IMPORTS
+                || k == syntax_kind_ext::NAMED_EXPORTS
+                || k == syntax_kind_ext::NAMESPACE_IMPORT =>
+            {
+                if let Some(named) = self.arena.get_named_imports(node) {
+                    if named.name.is_some()
+                        && let Some(res) = f(self, named.name)
+                    {
+                        return Some(res);
+                    }
+                    for &elem in &named.elements.nodes {
+                        if let Some(res) = f(self, elem) {
+                            return Some(res);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_SPECIFIER
+                || k == syntax_kind_ext::EXPORT_SPECIFIER =>
+            {
+                if let Some(spec) = self.arena.get_specifier(node) {
+                    if spec.property_name.is_some()
+                        && let Some(res) = f(self, spec.property_name)
+                    {
+                        return Some(res);
+                    }
+                    if spec.name.is_some()
+                        && let Some(res) = f(self, spec.name)
+                    {
+                        return Some(res);
+                    }
+                }
+            }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 if let Some(import) = self.arena.get_import_decl(node) {
                     if import.import_clause.is_some()

@@ -61,7 +61,20 @@ impl<'a> ScopeWalker<'a> {
             return None;
         }
 
-        self.binder.node_symbols.get(&parent.0).copied()
+        self.binder
+            .node_symbols
+            .get(&parent.0)
+            .copied()
+            .or_else(|| {
+                let spec = self.arena.get_specifier(parent_node)?;
+                if spec.name.is_some() {
+                    self.binder.node_symbols.get(&spec.name.0).copied()
+                } else if spec.property_name.is_some() {
+                    self.binder.node_symbols.get(&spec.property_name.0).copied()
+                } else {
+                    None
+                }
+            })
     }
 
     /// Create a new scope walker.
@@ -748,6 +761,16 @@ impl<'a> ScopeWalker<'a> {
                     refs.push(current);
                 }
             }
+        }
+        // 2b. Support arbitrary module namespace identifiers represented as
+        // string literals in import/export specifiers.
+        if node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(text) = self.arena.get_literal_text(current)
+            && text == target_name
+            && let Some(resolved_sym) = self.resolve_module_namespace_string_symbol(current)
+            && resolved_sym == target_symbol
+        {
+            refs.push(current);
         }
 
         // 3. Recurse into children
