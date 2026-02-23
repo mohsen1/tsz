@@ -691,14 +691,6 @@ impl<'a> CheckerState<'a> {
         self.get_class_instance_type(base_class_idx, base_class)
     }
 
-    /// Get the type of a node with a fallback.
-    ///
-    /// Returns the computed type, or the fallback if the computed type is ERROR.
-    pub fn get_type_of_node_or(&mut self, idx: NodeIndex, fallback: TypeId) -> TypeId {
-        let ty = self.get_type_of_node(idx);
-        if ty == TypeId::ERROR { fallback } else { ty }
-    }
-
     // =========================================================================
     // Await Expression Type Computation
     // =========================================================================

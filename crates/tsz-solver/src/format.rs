@@ -69,12 +69,6 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    pub const fn with_limits(mut self, max_depth: u32, max_union_members: usize) -> Self {
-        self.max_depth = max_depth;
-        self.max_union_members = max_union_members;
-        self
-    }
-
     fn atom(&mut self, atom: Atom) -> Arc<str> {
         if let Some(value) = self.atom_cache.get(&atom) {
             return std::sync::Arc::clone(value);

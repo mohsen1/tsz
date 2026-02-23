@@ -11,39 +11,6 @@ impl<'a> CheckerState<'a> {
     // Property Errors
     // =========================================================================
 
-    /// Report a property missing error using solver diagnostics with source tracking.
-    pub fn error_property_missing_at(
-        &mut self,
-        prop_name: &str,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-    ) {
-        // Suppress cascade errors from unresolved types
-        if source == TypeId::ERROR
-            || target == TypeId::ERROR
-            || source == TypeId::ANY
-            || target == TypeId::ANY
-            || source == TypeId::UNKNOWN
-            || target == TypeId::UNKNOWN
-        {
-            return;
-        }
-
-        if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-            let diag = builder.property_missing(prop_name, source, target, loc.start, loc.length());
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
-        }
-    }
-
     /// Report a property not exist error using solver diagnostics with source tracking.
     /// If a similar property name is found on the type, emits TS2551 ("Did you mean?")
     /// instead of TS2339.
