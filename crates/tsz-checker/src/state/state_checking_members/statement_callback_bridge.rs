@@ -629,14 +629,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 return;
             }
 
-            // TS1194: `export { ... }` / `export ... from` forms are not valid inside namespaces.
+            // TS1194: `export { ... }` / `export ... from` forms are not valid inside
+            // non-ambient namespaces. Ambient namespaces (`declare namespace`) allow
+            // these re-export forms.
             let is_reexport_syntax = export_decl.module_specifier.is_some()
                 || self
                     .ctx
                     .arena
                     .get(export_decl.export_clause)
                     .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
-            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) {
+            let is_ambient = self.ctx.file_name.ends_with(".d.ts")
+                || self.ctx.arena.is_in_ambient_context(export_idx);
+            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) && !is_ambient
+            {
                 let report_idx = if export_decl.module_specifier.is_some() {
                     export_decl.module_specifier
                 } else {

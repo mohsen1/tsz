@@ -34056,3 +34056,147 @@ fn test_namespace_export_binds_global() {
         "Global scope should contain 'foo'"
     );
 }
+
+// ── TS1194: Export declarations in namespaces ──────────────────────────
+
+#[test]
+fn test_ts1194_export_in_non_ambient_namespace() {
+    // `export { ... }` inside a regular namespace should emit TS1194.
+    let source = r#"
+        namespace Q {
+            function _try() {}
+            export { _try as try2 };
+        }
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1194),
+        "Expected TS1194 for export in non-ambient namespace, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1194_no_error_in_ambient_namespace() {
+    // `export { ... }` inside `declare namespace` should NOT emit TS1194.
+    let source = r#"
+        declare namespace Q {
+            function _try(method: Function, ...args: any[]): any;
+            export { _try as try2 };
+        }
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1194),
+        "Should NOT emit TS1194 in ambient namespace, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1194_no_error_in_dts_file() {
+    // In `.d.ts` files, all namespaces are ambient, so no TS1194.
+    let source = r#"
+        namespace Q {
+            function _try(): void;
+            export { _try as try2 };
+        }
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.d.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1194),
+        "Should NOT emit TS1194 in .d.ts file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1194_no_error_nested_in_declare_namespace() {
+    // Nested namespace inside `declare namespace` is still ambient.
+    let source = r#"
+        declare namespace A {
+            namespace B {
+                function foo(): void;
+                export { foo };
+            }
+        }
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1194),
+        "Should NOT emit TS1194 for nested namespace in ambient context, got: {diagnostics:?}"
+    );
+}
