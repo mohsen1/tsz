@@ -147,6 +147,10 @@ pub struct ModuleTransformState {
     /// duplicate inline emission in `export { f }` clauses.
     pub hoisted_func_exports: Vec<String>,
 
+    /// Whether a `export default function func()` was hoisted to the preamble
+    /// (`exports.default = func;`). When true, skip inline emission.
+    pub default_func_export_hoisted: bool,
+
     /// Whether the file contains an `export =` assignment (`CommonJS` export assignment)
     /// If true, other named exports should be suppressed in `CommonJS` emit.
     pub has_export_assignment: bool,

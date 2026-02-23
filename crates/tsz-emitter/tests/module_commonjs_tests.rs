@@ -608,7 +608,7 @@ export const bar = 42;
         panic!("Failed to get source file");
     };
 
-    let (func_exports, other_exports) =
+    let (func_exports, other_exports, _default_func_export) =
         collect_export_names_categorized(&parser.arena, &source_file.statements.nodes);
 
     assert_eq!(

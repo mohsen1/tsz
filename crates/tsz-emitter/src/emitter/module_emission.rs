@@ -42,7 +42,11 @@ impl<'a> Printer<'a> {
 
         // For default exports of hoisted declarations (functions), emit
         // the export assignment before the declaration body, matching tsc.
-        if is_default && is_hoisted_declaration {
+        // Skip if the assignment was already hoisted to the preamble.
+        let hoisted_inline = is_default
+            && is_hoisted_declaration
+            && !self.ctx.module_state.default_func_export_hoisted;
+        if hoisted_inline {
             self.write("exports.default = ");
             self.write_identifier_by_id(names[0]);
             self.write(";");
@@ -66,7 +70,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // For hoisted default exports, the assignment was already emitted above.
+        // For hoisted default exports, the assignment was already emitted
+        // (either above as inline hoisting, or in the preamble).
         if is_default && is_hoisted_declaration {
             if !self.writer.is_at_line_start() {
                 self.write_line();
@@ -1128,6 +1133,65 @@ mod tests {
         assert!(
             export_pos.unwrap() < func_pos.unwrap(),
             "exports.default = f; should appear before function f() (hoisting).\nOutput:\n{output}"
+        );
+    }
+
+    /// `export default function func()` with other statements before the
+    /// function should hoist `exports.default = func;` to the preamble,
+    /// before all other statements. This matches tsc behavior:
+    /// ```js
+    /// "use strict";
+    /// Object.defineProperty(exports, "__esModule", { value: true });
+    /// exports.default = func;        // <-- hoisted to preamble
+    /// var before = func();           // <-- source statement
+    /// function func() { return func; } // <-- function declaration
+    /// ```
+    #[test]
+    fn default_export_function_hoisted_to_preamble() {
+        let source = r#"var before: typeof func = func();
+export default function func(): typeof func {
+    return func;
+}
+var after: typeof func = func();
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // exports.default = func; should be in the preamble (before `var before`)
+        let export_pos = output.find("exports.default = func;");
+        let before_pos = output.find("var before");
+        let func_pos = output.find("function func()");
+        assert!(
+            export_pos.is_some(),
+            "Should emit exports.default = func; in preamble.\nOutput:\n{output}"
+        );
+        assert!(
+            before_pos.is_some(),
+            "Should emit var before.\nOutput:\n{output}"
+        );
+        assert!(
+            export_pos.unwrap() < before_pos.unwrap(),
+            "exports.default = func; should appear before var before (preamble hoisting).\nOutput:\n{output}"
+        );
+        assert!(
+            export_pos.unwrap() < func_pos.unwrap(),
+            "exports.default = func; should appear before function func().\nOutput:\n{output}"
+        );
+        // Should NOT have a duplicate exports.default = func; at the function's position
+        let count = output.matches("exports.default = func;").count();
+        assert_eq!(
+            count, 1,
+            "Should emit exports.default = func; exactly once.\nOutput:\n{output}"
         );
     }
 

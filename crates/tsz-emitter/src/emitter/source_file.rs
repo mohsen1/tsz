@@ -405,10 +405,11 @@ impl<'a> Printer<'a> {
 
             // Collect and emit exports initialization
             // Function exports get direct assignment (hoisted), others get void 0
-            let (func_exports, other_exports) = module_commonjs::collect_export_names_categorized(
-                self.arena,
-                &source.statements.nodes,
-            );
+            let (func_exports, other_exports, default_func_export) =
+                module_commonjs::collect_export_names_categorized(
+                    self.arena,
+                    &source.statements.nodes,
+                );
             // When `export =` is present, suppress hoisted function exports
             // (exports.f = f;) since module.exports replaces them, but keep
             // void 0 initialization for non-function exports (tsc behavior).
@@ -445,6 +446,20 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
+            // Emit hoisted default function export: exports.default = funcName;
+            // `export default function func() {}` is hoisted like named exports.
+            let default_func_export = if self.ctx.module_state.has_export_assignment {
+                None
+            } else {
+                default_func_export
+            };
+            if let Some(ref name) = default_func_export {
+                self.write("exports.default = ");
+                self.write(name);
+                self.write(";");
+                self.write_line();
+            }
+            self.ctx.module_state.default_func_export_hoisted = default_func_export.is_some();
         }
 
         if !deferred_header_comments.is_empty() {
