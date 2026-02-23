@@ -53,10 +53,6 @@ impl<'a> CheckerState<'a> {
         FxHashSet::default()
     }
 
-    fn skip_parenthesized_for_assignability(&self, idx: NodeIndex) -> NodeIndex {
-        self.skip_parenthesized_expression(idx)
-    }
-
     fn typeof_this_comparison_literal(
         &self,
         left: NodeIndex,
@@ -73,7 +69,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_typeof_this_target(&self, expr: NodeIndex, this_ref: NodeIndex) -> bool {
-        let expr = self.skip_parenthesized_for_assignability(expr);
+        let expr = self.ctx.arena.skip_parenthesized(expr);
         let Some(node) = self.ctx.arena.get(expr) else {
             return false;
         };
@@ -86,7 +82,7 @@ impl<'a> CheckerState<'a> {
         if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
             return false;
         }
-        let operand = self.skip_parenthesized_for_assignability(unary.operand);
+        let operand = self.ctx.arena.skip_parenthesized(unary.operand);
         if operand == this_ref {
             return true;
         }
@@ -97,7 +93,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn string_literal_text(&self, idx: NodeIndex) -> Option<&str> {
-        let idx = self.skip_parenthesized_for_assignability(idx);
+        let idx = self.ctx.arena.skip_parenthesized(idx);
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::StringLiteral as u16
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16

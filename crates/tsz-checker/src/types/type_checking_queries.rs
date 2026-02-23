@@ -248,17 +248,8 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Skip parenthesized expressions to get to the underlying expression.
-    pub(crate) fn skip_parenthesized_expression(&self, mut expr_idx: NodeIndex) -> NodeIndex {
-        while let Some(node) = self.ctx.arena.get(expr_idx) {
-            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                break;
-            }
-            let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
-                break;
-            };
-            expr_idx = paren.expression;
-        }
-        expr_idx
+    pub(crate) fn skip_parenthesized_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
+        self.ctx.arena.skip_parenthesized(expr_idx)
     }
 
     /// Check if an expression is side-effect free.

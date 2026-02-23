@@ -601,28 +601,8 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    pub(crate) fn skip_parens_and_assertions(&self, mut idx: NodeIndex) -> NodeIndex {
-        loop {
-            idx = self.skip_parenthesized(idx);
-            let Some(node) = self.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
-                && let Some(unary) = self.arena.get_unary_expr_ex(node)
-            {
-                idx = unary.expression;
-                continue;
-            }
-            if (node.kind == syntax_kind_ext::TYPE_ASSERTION
-                || node.kind == syntax_kind_ext::AS_EXPRESSION
-                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-                && let Some(assertion) = self.arena.get_type_assertion(node)
-            {
-                idx = assertion.expression;
-                continue;
-            }
-            return idx;
-        }
+    pub(crate) fn skip_parens_and_assertions(&self, idx: NodeIndex) -> NodeIndex {
+        self.arena.skip_parenthesized_and_assertions(idx)
     }
 
     pub(crate) fn typeof_comparison_literal(
