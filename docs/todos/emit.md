@@ -3,6 +3,22 @@
 ## Pattern Analysis (JS+DTS mode, current 5184/7258 = 71.4% JS, 420/1047 = 40.1% DTS)
 
 ### Fixed This Session
+- **Suppress trailing comments on empty function body and class body opening braces** (+21 JS, +1 DTS):
+  tsc drops same-line comments on the opening `{` of function/method/arrow body blocks and class
+  body blocks. The existing suppression only covered non-empty function bodies. Two gaps:
+  (1) Empty function body blocks: the early-return path in `emit_block()` bypassed the
+  `is_function_body_block` check. Now skips comments via `skip_trailing_same_line_comments` while
+  preserving single/multi-line formatting from source. (2) Class body opening braces: emitted
+  through `declarations_class.rs` (not `emit_block()`), so never had comment suppression. Now scans
+  for `{` position and skips trailing same-line comments when the body is multi-line (to avoid
+  consuming comments that belong after `}`). Five unit tests added.
+  Tests fixed: `collisionRestParameterFunction`, `collisionRestParameterFunctionExpressions`,
+  `collisionRestParameterClassConstructor`, `classAbstractGeneric`,
+  `classConstructorAccessibility2`, `destructuringArrayBindingPatternAndAssignment3`,
+  `duplicateIdentifiersAcrossContainerBoundaries`, `genericSpecializations3`, and ~13 others.
+  JS: 9702→9723, DTS: 776→777, zero regressions.
+
+### Previously Fixed
 - **CJS exported enum IIFE tail folding** (+6 JS):
   tsc emits `})(E || (exports.E = E = {}));` for CommonJS exported enums, folding the `exports.`
   binding into the IIFE tail. tsz was emitting the IIFE with `(E || (E = {}))` and a separate
