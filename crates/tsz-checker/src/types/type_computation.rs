@@ -46,6 +46,25 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is a "literal expression of object" — one of:
+    /// `ObjectLiteralExpression`, `ArrayLiteralExpression`, `RegularExpressionLiteral`,
+    /// `FunctionExpression`, or `ClassExpression`. Used for TS2839 (object equality check).
+    pub(crate) fn is_literal_expression_of_object(&self, node_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+        if let Some(node) = self.ctx.arena.get(node_idx) {
+            matches!(
+                node.kind,
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || k == SyntaxKind::RegularExpressionLiteral as u16
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+            )
+        } else {
+            false
+        }
+    }
+
     // Core Type Computation
     // =========================================================================
 

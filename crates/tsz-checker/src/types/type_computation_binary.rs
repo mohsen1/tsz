@@ -490,6 +490,35 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS2839: Check for object literal equality comparison.
+            // "This condition will always return 'false'/'true' since JavaScript
+            // compares objects by reference, not value."
+            // Fires when at least one operand is an object/array/regex/function/class literal.
+            // In JS files, only fires for strict equality (===, !==), not loose (==, !=).
+            {
+                let is_strict_eq = op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16;
+                let is_loose_eq = op_kind == SyntaxKind::EqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsToken as u16;
+
+                if is_strict_eq || is_loose_eq {
+                    let left_is_literal = self.is_literal_expression_of_object(left_idx);
+                    let right_is_literal = self.is_literal_expression_of_object(right_idx);
+
+                    if (left_is_literal || right_is_literal) && (!self.is_js_file() || is_strict_eq)
+                    {
+                        let is_eq = op_kind == SyntaxKind::EqualsEqualsToken as u16
+                            || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16;
+                        let result = if is_eq { "false" } else { "true" };
+                        self.error_at_node_msg(
+                            node_idx,
+                            crate::diagnostics::diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
+                            &[result],
+                        );
+                    }
+                }
+            }
+
             // TS2367: Check for comparisons with no overlap
             let is_equality_op = matches!(
                 op_kind,
@@ -901,5 +930,135 @@ impl<'a> CheckerState<'a> {
         }
 
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions::default();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    fn check_js_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        };
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.js".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn ts2839_strict_equality_object_literal() {
+        let diags = check_source_diagnostics("if ({a: 1} === {a: 1}) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 2839),
+            "Expected TS2839 for object literal strict equality, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2839_strict_inequality_array_literal() {
+        let diags = check_source_diagnostics("if ([1] !== [1]) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 2839),
+            "Expected TS2839 for array literal strict inequality, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2839_loose_equality_in_ts_file() {
+        // In TS files, loose equality (==) also triggers TS2839
+        let diags = check_source_diagnostics("if ({a: 1} == {a: 1}) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 2839),
+            "Expected TS2839 for object literal loose equality in TS, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2839_one_sided_literal() {
+        // TS2839 fires even when only ONE side is a literal
+        let diags = check_source_diagnostics("const a = {x: 1};\nif (a === {x: 1}) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 2839),
+            "Expected TS2839 for one-sided object literal equality, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2839_no_error_for_non_literals() {
+        // No TS2839 when neither side is a literal
+        let diags =
+            check_source_diagnostics("const a = {x: 1};\nconst b = {x: 1};\nif (a === b) {}");
+        let has_2839 = diags.iter().any(|d| d.code == 2839);
+        assert!(
+            !has_2839,
+            "Should NOT emit TS2839 when no operand is a literal, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2839_js_file_strict_eq_only() {
+        // In JS files, only strict equality (===) triggers TS2839, not loose (==)
+        let diags_strict = check_js_source_diagnostics("if ({} === {}) {}");
+        assert!(
+            diags_strict.iter().any(|d| d.code == 2839),
+            "Expected TS2839 for strict equality in JS file, got: {:?}",
+            diags_strict.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+
+        let diags_loose = check_js_source_diagnostics("if ({} == {}) {}");
+        let has_2839_loose = diags_loose.iter().any(|d| d.code == 2839);
+        assert!(
+            !has_2839_loose,
+            "Should NOT emit TS2839 for loose equality in JS file, got: {:?}",
+            diags_loose.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
     }
 }
