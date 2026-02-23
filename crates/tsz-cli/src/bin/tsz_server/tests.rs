@@ -4468,6 +4468,71 @@ fn test_references_full_quoted_alias_includes_symbol_alias_references_when_avail
 }
 
 #[test]
+fn test_references_full_quoted_alias_returns_multiple_symbol_groups() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references-full",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 24
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references-full should return body");
+    let entries = body
+        .as_array()
+        .expect("references-full response should be array");
+
+    assert!(
+        entries.len() > 1,
+        "quoted alias references-full should preserve multiple symbol groups, got: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|entry| {
+            entry["definition"]
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("alias")
+        }),
+        "expected at least one alias definition group: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|entry| {
+            entry["references"]
+                .as_array()
+                .is_some_and(|refs| refs.iter().any(|r| {
+                    r.get("fileName").and_then(serde_json::Value::as_str) == Some("/bar.ts")
+                }))
+        }),
+        "expected at least one group with /bar.ts references: {entries:?}"
+    );
+}
+
+#[test]
 fn test_type_only_quoted_alias_references_work_from_type_keyword_offset() {
     let mut server = make_server();
     server.open_files.insert(
