@@ -890,9 +890,10 @@ impl<'a> CheckerState<'a> {
             TypeId::UNDEFINED
         };
 
-        // Ensure relation preconditions before assignability check.
+        // Ensure relation preconditions for the return expression before assignability.
+        // The assignability gateway already prepares `expected_type`, so doing it here
+        // as well duplicates expensive lazy-ref/application traversals on hot return paths.
         self.ensure_relation_input_ready(return_type);
-        self.ensure_relation_input_ready(expected_type);
 
         // Check if the return type is assignable to the expected type.
         let is_in_constructor = self
