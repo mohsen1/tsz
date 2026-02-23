@@ -629,4 +629,163 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD,
         ));
     }
+
+    /// Report TS2721/TS2722/TS2723: "Cannot invoke an object which is possibly 'null'/'undefined'/'null or undefined'."
+    /// Emitted when strictNullChecks is on and the callee type includes null/undefined.
+    pub fn error_cannot_invoke_possibly_nullish_at(
+        &mut self,
+        nullish_cause: TypeId,
+        idx: NodeIndex,
+    ) {
+        let Some(loc) = self.get_source_location(idx) else {
+            return;
+        };
+
+        let (message, code) = if nullish_cause == TypeId::NULL {
+            (
+                diagnostic_messages::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL,
+                diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL,
+            )
+        } else if nullish_cause == TypeId::UNDEFINED {
+            (
+                diagnostic_messages::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED,
+                diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED,
+            )
+        } else {
+            // Union of null and undefined (or void)
+            (
+                diagnostic_messages::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED,
+            )
+        };
+
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message.to_string(),
+            code,
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_source_with_strict_null(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        // Default already has strict_null_checks: true
+        let options = CheckerOptions::default();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    fn check_source_without_strict_null(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions {
+            strict_null_checks: false,
+            ..CheckerOptions::default()
+        };
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn emits_ts2721_for_calling_null() {
+        let diagnostics = check_source_with_strict_null("null();");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2721),
+            "Expected TS2721 for `null()`, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn emits_ts2722_for_calling_undefined() {
+        let diagnostics = check_source_with_strict_null("undefined();");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2722),
+            "Expected TS2722 for `undefined()`, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn emits_ts2723_for_calling_null_or_undefined() {
+        let diagnostics = check_source_with_strict_null("let f: null | undefined;\nf();");
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2723),
+            "Expected TS2723 for calling `null | undefined`, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn emits_ts2349_without_strict_null_checks() {
+        // Without strictNullChecks, null/undefined are in every type's domain,
+        // so we should get TS2349 (not callable) instead of TS2721/2722/2723.
+        let diagnostics = check_source_without_strict_null("null();");
+        let has_2349 = diagnostics.iter().any(|d| d.code == 2349);
+        let has_272x = diagnostics.iter().any(|d| (2721..=2723).contains(&d.code));
+        assert!(
+            has_2349 && !has_272x,
+            "Expected TS2349 (not TS272x) without strictNullChecks, got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn emits_ts2722_for_optional_method_call() {
+        // When an optional method is called without optional chaining,
+        // its type includes undefined, so TS2722 should be emitted.
+        let diagnostics = check_source_with_strict_null(
+            r#"
+interface Foo {
+    optionalMethod?(x: number): string;
+}
+declare let foo: Foo;
+foo.optionalMethod(1);
+"#,
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.code == 2722),
+            "Expected TS2722 for calling optional method without ?., got: {:?}",
+            diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
 }
