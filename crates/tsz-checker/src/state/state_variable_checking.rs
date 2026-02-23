@@ -1558,11 +1558,12 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(sym_id) = scope.table.get(var_name)
                 && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                    && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-                        found_block_scoped_symbol = Some(sym_id);
-                        found_scope_kind = Some(scope.kind);
-                        break;
-                    }
+                && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+            {
+                found_block_scoped_symbol = Some(sym_id);
+                found_scope_kind = Some(scope.kind);
+                break;
+            }
             // If we hit a function scope, var hoists to this level — stop searching
             if scope.is_function_scope() {
                 break;
