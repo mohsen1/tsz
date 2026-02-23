@@ -114,6 +114,20 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings);
                 let type_id = lowering.lower_type(idx);
+
+                // Eagerly evaluate type alias applications to detect TS2589
+                // (excessive instantiation depth). Without this, the application
+                // stays lazy and deep recursion is never detected.
+                let lib_binders = self.get_lib_binders();
+                let is_type_alias = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
+                if is_type_alias {
+                    let _ = self.evaluate_application_type(type_id);
+                }
+
                 return type_id;
             }
             // No type arguments provided - check if this generic type requires them
@@ -488,6 +502,33 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Eagerly evaluate type alias applications to detect TS2589
+                // (excessive instantiation depth). Without this, the application
+                // stays lazy and deep recursion is never detected.
+                if let Some(sym_id) = sym_id {
+                    let lib_binders = self.get_lib_binders();
+                    let is_type_alias = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(sym_id, &lib_binders)
+                        .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
+                    if is_type_alias {
+                        // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
+                        *self.ctx.depth_exceeded.borrow_mut() = false;
+                        let _ = self.evaluate_application_type(result);
+
+                        // TS2589: emit at the type reference node if depth was exceeded
+                        if *self.ctx.depth_exceeded.borrow() {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                idx,
+                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                            );
                         }
                     }
                 }
