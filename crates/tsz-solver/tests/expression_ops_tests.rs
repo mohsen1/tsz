@@ -140,33 +140,29 @@ fn test_conditional_falsy_condition() {
 
 #[test]
 fn test_template_always_string() {
-    let interner = TypeInterner::new();
     // `foo${bar}` -> string
-    let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::NUMBER]);
+    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
 fn test_template_empty() {
-    let interner = TypeInterner::new();
     // `` -> string
-    let result = compute_template_expression_type(&interner, &[]);
+    let result = compute_template_expression_type(&[]);
     assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
 fn test_template_error_propagation() {
-    let interner = TypeInterner::new();
     // `foo${ERROR}` -> ERROR
-    let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::ERROR]);
+    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::ERROR]);
     assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
 fn test_template_never_propagation() {
-    let interner = TypeInterner::new();
     // `foo${never}` -> never
-    let result = compute_template_expression_type(&interner, &[TypeId::STRING, TypeId::NEVER]);
+    let result = compute_template_expression_type(&[TypeId::STRING, TypeId::NEVER]);
     assert_eq!(result, TypeId::NEVER);
 }
 

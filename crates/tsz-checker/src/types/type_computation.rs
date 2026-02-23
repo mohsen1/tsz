@@ -663,7 +663,7 @@ impl<'a> CheckerState<'a> {
 
         // Use Solver API for type computation (Solver-First architecture)
         // Template literals always produce string type, but we check for ERROR/NEVER propagation
-        expression_ops::compute_template_expression_type(self.ctx.types, &part_types)
+        expression_ops::compute_template_expression_type(&part_types)
     }
 
     /// Get type of variable declaration.
