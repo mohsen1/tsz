@@ -33,7 +33,7 @@ impl<'a> Printer<'a> {
                     if decl.initializer != current {
                         return None;
                     }
-                    let name = self.get_identifier_text(decl.name);
+                    let name = emit_utils::identifier_text_or_empty(self.arena, decl.name);
                     if name.is_empty() || !is_valid_identifier_name(&name) {
                         return None;
                     }
@@ -48,7 +48,7 @@ impl<'a> Printer<'a> {
                     if binary.operator_token != SyntaxKind::EqualsToken as u16 {
                         return None;
                     }
-                    let name = self.get_identifier_text(binary.left);
+                    let name = emit_utils::identifier_text_or_empty(self.arena, binary.left);
                     if name.is_empty() || !is_valid_identifier_name(&name) {
                         return None;
                     }
@@ -389,7 +389,7 @@ impl<'a> Printer<'a> {
             if name_node.kind != SyntaxKind::Identifier as u16 {
                 continue;
             }
-            let name = self.get_identifier_text(param.name);
+            let name = emit_utils::identifier_text_or_empty(self.arena, param.name);
             if !name.is_empty() {
                 return Some(name);
             }
@@ -443,7 +443,7 @@ impl<'a> Printer<'a> {
                 let rest_name = if rest_is_pattern {
                     self.get_temp_var_name()
                 } else {
-                    self.get_identifier_text(rest_target)
+                    emit_utils::identifier_text_or_empty(self.arena, rest_target)
                 };
 
                 if !rest_name.is_empty() {
@@ -476,7 +476,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.emit(param.name);
                 if param.initializer.is_some() {
-                    let name = self.get_identifier_text(param.name);
+                    let name = emit_utils::identifier_text_or_empty(self.arena, param.name);
                     if !name.is_empty() {
                         plan.params.push(ParamTransform {
                             name,
@@ -513,7 +513,7 @@ impl<'a> Printer<'a> {
         }
 
         let (class_name, es5_output) = if class_data.name.is_some() {
-            let candidate = self.get_identifier_text(class_data.name);
+            let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
             if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
                 let temp_name = self
                     .get_class_expression_name(class_node)

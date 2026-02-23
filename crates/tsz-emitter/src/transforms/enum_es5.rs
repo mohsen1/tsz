@@ -82,7 +82,8 @@ impl<'a> EnumES5Transformer<'a> {
             return None;
         }
 
-        let name = self.get_identifier_text(enum_data.name);
+        let name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
         if name.is_empty() {
             return None;
         }
@@ -134,7 +135,7 @@ impl<'a> EnumES5Transformer<'a> {
         let Some(enum_data) = self.arena.get_enum(enum_node) else {
             return String::new();
         };
-        self.get_identifier_text(enum_data.name)
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name)
     }
 
     /// Check if enum is a const enum
@@ -478,10 +479,6 @@ impl<'a> EnumES5Transformer<'a> {
             return node.kind == SyntaxKind::StringLiteral as u16;
         }
         false
-    }
-
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 }
 

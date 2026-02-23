@@ -802,7 +802,7 @@ impl<'a> Printer<'a> {
         let needs_temp = !is_simple && element_count > 1;
 
         let source_name = if is_simple {
-            self.get_identifier_text(right_idx)
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, right_idx)
         } else if needs_temp {
             let temp = self.make_unique_name_hoisted_assignment();
             self.write(&temp);
@@ -1108,7 +1108,10 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     // { name } → name = source.name
                     if let Some(shorthand) = self.arena.get_shorthand_property(elem_node) {
-                        let name = self.get_identifier_text(shorthand.name);
+                        let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena,
+                            shorthand.name,
+                        );
                         self.emit_assignment_separator(first);
                         self.write(&name);
                         self.write(" = ");
@@ -1136,9 +1139,11 @@ impl<'a> Printer<'a> {
                                         .get_property_assignment(other_node)
                                         .and_then(|p| self.get_property_key_text(p.name)),
                                     k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                                        self.arena
-                                            .get_shorthand_property(other_node)
-                                            .map(|s| self.get_identifier_text(s.name))
+                                        self.arena.get_shorthand_property(other_node).map(|s| {
+                                            crate::transforms::emit_utils::identifier_text_or_empty(
+                                                self.arena, s.name,
+                                            )
+                                        })
                                     }
                                     _ => None,
                                 };
@@ -1249,7 +1254,9 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn get_property_key_text(&self, name_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(name_idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
-            Some(self.get_identifier_text(name_idx))
+            Some(crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena, name_idx,
+            ))
         } else if node.kind == SyntaxKind::StringLiteral as u16 {
             // For string keys like { "name": value }
             self.get_string_literal_text(name_idx)

@@ -297,7 +297,10 @@ impl<'a> ES5SpreadTransformer<'a> {
 
         // We need to cache the object to avoid double evaluation
         let object_expr = self.transform_expression(access.expression)?;
-        let method_name = self.get_identifier_text(access.name_or_argument);
+        let method_name = crate::transforms::emit_utils::identifier_text_or_empty(
+            self.arena,
+            access.name_or_argument,
+        );
 
         let temp_var = self.next_temp_var();
         let args_array = self.build_spread_args_array(args)?;
@@ -487,7 +490,8 @@ impl<'a> ES5SpreadTransformer<'a> {
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let prop = self.arena.get_shorthand_property(node)?;
-                let name = self.get_identifier_text(prop.name);
+                let name =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop.name);
                 Some(IRProperty {
                     key: IRPropertyKey::Identifier(name.clone()),
                     value: IRNode::id(&name),
@@ -543,7 +547,10 @@ impl<'a> ES5SpreadTransformer<'a> {
             let Some(param_data) = self.arena.get_parameter(param_node) else {
                 continue;
             };
-            let name = self.get_identifier_text(param_data.name);
+            let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                param_data.name,
+            );
             if !name.is_empty() {
                 result.push(if param_data.dot_dot_dot_token {
                     IRParam::rest(&name)
@@ -569,10 +576,6 @@ impl<'a> ES5SpreadTransformer<'a> {
             .iter()
             .map(|&idx| IRNode::ASTRef(idx))
             .collect()
-    }
-
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     fn transform_expression(&self, idx: NodeIndex) -> Option<IRNode> {
@@ -602,7 +605,10 @@ impl<'a> ES5SpreadTransformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let object = self.transform_expression(access.expression)?;
-                let property = self.get_identifier_text(access.name_or_argument);
+                let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    access.name_or_argument,
+                );
                 Some(IRNode::prop(object, &property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {

@@ -85,7 +85,8 @@ impl<'a> EnumTransformer<'a> {
         };
 
         // Get enum name
-        let name = self.get_identifier_text(enum_data.name);
+        let name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
         if name.is_empty() {
             return;
         }
@@ -197,7 +198,8 @@ impl<'a> EnumTransformer<'a> {
             return String::new();
         }
 
-        let name = self.get_identifier_text(enum_data.name);
+        let name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
         if name.is_empty() {
             return String::new();
         }
@@ -377,10 +379,6 @@ impl<'a> EnumTransformer<'a> {
             k if k == SyntaxKind::AsteriskAsteriskToken as u16 => "**",
             _ => "/* op */",
         }
-    }
-
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Check if an identifier refers to a const enum

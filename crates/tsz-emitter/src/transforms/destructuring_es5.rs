@@ -233,7 +233,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 // Check for rest pattern
                 if binding_elem.dot_dot_dot_token {
                     // Rest: ...rest -> rest = source.slice(index)
-                    let name = self.get_identifier_text(binding_elem.name);
+                    let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binding_elem.name,
+                    );
                     if !name.is_empty() {
                         let slice_call = IRNode::call(
                             IRNode::prop(IRNode::id(source), "slice"),
@@ -259,7 +262,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 }
 
                 // Simple binding
-                let name = self.get_identifier_text(binding_elem.name);
+                let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    binding_elem.name,
+                );
                 if !name.is_empty() {
                     let access =
                         IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
@@ -318,7 +324,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 // Check for rest pattern
                 if binding_elem.dot_dot_dot_token {
                     // Rest: ...others -> others = __rest(source, ["a", "b", ...])
-                    let name = self.get_identifier_text(binding_elem.name);
+                    let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binding_elem.name,
+                    );
                     if !name.is_empty() {
                         let excluded_array: Vec<IRNode> =
                             rest_excluded.iter().map(IRNode::string).collect();
@@ -354,7 +363,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
                 // Get property name (for non-computed or for rest tracking)
                 let prop_name = if binding_elem.property_name.is_none() {
-                    self.get_identifier_text(binding_elem.name)
+                    crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binding_elem.name,
+                    )
                 } else if !is_computed {
                     self.get_property_name_text(binding_elem.property_name)
                 } else {
@@ -389,7 +401,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 }
 
                 // Get binding name (might differ from property name with renaming)
-                let binding_name = self.get_identifier_text(binding_elem.name);
+                let binding_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    binding_elem.name,
+                );
                 if binding_name.is_empty() {
                     continue;
                 }
@@ -606,7 +621,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     if let Some(prop) = self.arena.get_shorthand_property(element_node) {
-                        let name = self.get_identifier_text(prop.name);
+                        let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena, prop.name,
+                        );
                         rest_excluded.push(name.clone());
 
                         let access = IRNode::prop(IRNode::id(source), &name);
@@ -680,10 +697,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
     // Helper methods
 
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
-    }
-
     fn get_property_name_text(&self, idx: NodeIndex) -> String {
         let Some(node) = self.arena.get(idx) else {
             return String::new();
@@ -731,7 +744,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let object = self.transform_expression(access.expression)?;
-                let property = self.get_identifier_text(access.name_or_argument);
+                let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    access.name_or_argument,
+                );
                 Some(IRNode::prop(object, &property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {

@@ -165,7 +165,9 @@ impl<'a> AsyncES5Transformer<'a> {
                 let name = if func.name.is_none() {
                     None
                 } else {
-                    Some(self.get_identifier_text(func.name))
+                    Some(crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, func.name,
+                    ))
                 };
                 let params = self.collect_parameters(&func.parameters);
                 let await_default_param_name =
@@ -610,7 +612,8 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         if let Some(decl) = self.arena.get_variable_declaration(node) {
-            let name = self.get_identifier_text(decl.name);
+            let name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name);
 
             // Check if initializer contains await
             if decl.initializer.is_some()
@@ -1104,7 +1107,8 @@ impl<'a> AsyncES5Transformer<'a> {
             if name_node.kind != SyntaxKind::Identifier as u16 {
                 continue;
             }
-            let name = self.get_identifier_text(param.name);
+            let name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
             if !name.is_empty() {
                 return Some(name);
             }

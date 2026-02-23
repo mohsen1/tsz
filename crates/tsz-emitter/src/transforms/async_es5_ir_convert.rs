@@ -12,11 +12,6 @@ use tsz_scanner::SyntaxKind;
 use super::async_es5_ir::AsyncES5Transformer;
 
 impl<'a> AsyncES5Transformer<'a> {
-    /// Get identifier text from a node
-    pub fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
-    }
-
     /// Collect parameter names from a parameter list
     pub fn collect_parameters(&self, params: &tsz_parser::parser::NodeList) -> Vec<String> {
         let mut result = Vec::new();
@@ -24,7 +19,9 @@ impl<'a> AsyncES5Transformer<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
-                result.push(self.get_identifier_text(param.name));
+                result.push(crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena, param.name,
+                ));
             }
         }
         result
@@ -59,7 +56,7 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This { captured: false },
 
             k if k == SyntaxKind::Identifier as u16 => {
-                let text = self.get_identifier_text(idx);
+                let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
                 IRNode::Identifier(text)
             }
 
@@ -84,7 +81,10 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     let obj = self.expression_to_ir(access.expression);
-                    let prop = self.get_identifier_text(access.name_or_argument);
+                    let prop = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        access.name_or_argument,
+                    );
                     IRNode::PropertyAccess {
                         object: Box::new(obj),
                         property: prop,
@@ -284,7 +284,9 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     if let Some(sp) = self.arena.get_shorthand_property(prop_node) {
-                        let name = self.get_identifier_text(sp.name);
+                        let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena, sp.name,
+                        );
                         props.push(IRProperty {
                             key: IRPropertyKey::Identifier(name.clone()),
                             value: IRNode::Identifier(name),
@@ -318,9 +320,9 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => {
-                IRPropertyKey::Identifier(self.get_identifier_text(idx))
-            }
+            k if k == SyntaxKind::Identifier as u16 => IRPropertyKey::Identifier(
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx),
+            ),
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
                     IRPropertyKey::StringLiteral(lit.text.clone())
@@ -420,7 +422,9 @@ impl<'a> AsyncES5Transformer<'a> {
         let name = if func.name.is_none() {
             None
         } else {
-            Some(self.get_identifier_text(func.name))
+            Some(crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena, func.name,
+            ))
         };
 
         // Convert parameters
@@ -497,7 +501,8 @@ impl<'a> AsyncES5Transformer<'a> {
             if param_node.kind == syntax_kind_ext::PARAMETER
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
-                let name = self.get_identifier_text(param.name);
+                let name =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
                 if param.dot_dot_dot_token {
                     params.push(IRParam::rest(name));
                 } else {
@@ -583,7 +588,9 @@ impl<'a> AsyncES5Transformer<'a> {
                         if let Some(decl_node) = self.arena.get(decl_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                         {
-                            let name = self.get_identifier_text(decl.name);
+                            let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                                self.arena, decl.name,
+                            );
                             let init = if decl.initializer.is_none() {
                                 None
                             } else {

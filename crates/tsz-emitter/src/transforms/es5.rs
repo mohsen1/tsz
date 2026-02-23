@@ -77,7 +77,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let class_name = if let Some(name) = override_name {
             name.to_string()
         } else {
-            self.get_identifier_text(class_data.name)
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, class_data.name)
         };
         self.class_name = class_name.clone();
 
@@ -417,7 +417,8 @@ impl<'a> ES5ClassTransformer<'a> {
             IRNode::this()
         };
 
-        let prop_name = self.get_identifier_text(prop_data.name);
+        let prop_name =
+            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, prop_data.name);
         let target = IRNode::prop(receiver, &prop_name);
         let value = self.transform_expression(prop_data.initializer)?;
 
@@ -521,7 +522,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     continue;
                 }
 
-                let prop_name = self.get_identifier_text(prop_data.name);
+                let prop_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    prop_data.name,
+                );
                 if let Some(value) = self.transform_expression(prop_data.initializer) {
                     let target = IRNode::prop(IRNode::id(class_name), &prop_name);
                     nodes.push(IRNode::expr_stmt(IRNode::assign(target, value)));
@@ -544,7 +548,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            let name = self.get_identifier_text(param_data.name);
+            let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                param_data.name,
+            );
             if name.is_empty() {
                 continue;
             }
@@ -676,7 +683,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        let name = self.get_identifier_text(var_decl.name);
+                        let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena,
+                            var_decl.name,
+                        );
                         let initializer = if var_decl.initializer.is_none() {
                             None
                         } else {
@@ -777,7 +787,10 @@ impl<'a> ES5ClassTransformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(expr_node)?;
                 let object = self.transform_expression(access.expression)?;
-                let property = self.get_identifier_text(access.name_or_argument);
+                let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    access.name_or_argument,
+                );
                 Some(IRNode::prop(object, &property))
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
@@ -806,10 +819,6 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     // Helper methods
-
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
-    }
 
     fn get_method_name(&self, name_idx: NodeIndex) -> IRMethodName {
         let Some(name_node) = self.arena.get(name_idx) else {
@@ -1288,15 +1297,14 @@ impl<'a> ES5AsyncTransformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(expr_node)?;
                 let object = self.transform_expression(access.expression)?;
-                let property = self.get_identifier_text(access.name_or_argument);
+                let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    access.name_or_argument,
+                );
                 Some(IRNode::prop(object, &property))
             }
             _ => Some(IRNode::ASTRef(expr_idx)),
         }
-    }
-
-    fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Check if body contains any await expressions
