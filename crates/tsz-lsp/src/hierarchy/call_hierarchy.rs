@@ -54,6 +54,7 @@ define_lsp_provider!(binder CallHierarchyProvider, "Provider for call hierarchy 
 impl<'a> CallHierarchyProvider<'a> {
     const fn is_call_hierarchy_callable_kind(kind: u16) -> bool {
         kind == syntax_kind_ext::METHOD_SIGNATURE
+            || kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
     }
 
     fn is_call_hierarchy_callable_node(&self, node_idx: NodeIndex) -> bool {
@@ -196,7 +197,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 } else if target_member_container_hint.is_none() {
                     continue;
                 }
-            } else if !self.is_inside_call_expression(idx) {
+            } else if !self.is_inside_call_or_decorator_reference(idx) {
                 // Function-like targets should remain call-expression driven.
                 continue;
             } else if target_kind == SymbolKind::Function && self.is_property_access_name(idx) {
@@ -205,7 +206,10 @@ impl<'a> CallHierarchyProvider<'a> {
                 continue;
             }
 
-            if !target_is_member_like && let Some(target_symbol) = target_symbol_id {
+            if !target_is_member_like
+                && !self.is_inside_decorator_reference(idx)
+                && let Some(target_symbol) = target_symbol_id
+            {
                 let reference_symbol = self
                     .binder
                     .node_symbols
@@ -240,6 +244,8 @@ impl<'a> CallHierarchyProvider<'a> {
                 let caller_idx = self
                     .class_parent_for_constructor(containing_func)
                     .unwrap_or(containing_func);
+                callers.entry(caller_idx.0).or_default().push(range);
+            } else if let Some(caller_idx) = self.decorated_declaration_caller(idx) {
                 callers.entry(caller_idx.0).or_default().push(range);
             } else {
                 script_from_ranges.push(range);
@@ -333,6 +339,10 @@ impl<'a> CallHierarchyProvider<'a> {
             FxHashMap::default();
 
         for call_idx in call_nodes {
+            if !self.call_expression_belongs_to_callable(call_idx, func_idx) {
+                continue;
+            }
+
             let call_node = match self.arena.get(call_idx) {
                 Some(n) => n,
                 None => continue,
@@ -371,6 +381,14 @@ impl<'a> CallHierarchyProvider<'a> {
                     (item, Vec::new())
                 });
                 entry.1.push(call_range);
+            } else if let Some((decl_idx, name)) =
+                self.resolve_static_block_local_symbol(callee_ident, func_idx)
+            {
+                let entry = callees.entry(decl_idx.0).or_insert_with(|| {
+                    let item = self.make_call_hierarchy_item_for_declaration(decl_idx, &name);
+                    (item, Vec::new())
+                });
+                entry.1.push(call_range);
             } else if let Some(ident_node) = self.arena.get(callee_ident) {
                 // Last-resort fallback: no symbol found at all
                 if let Some(ident_data) = self.arena.get_identifier(ident_node) {
@@ -402,7 +420,84 @@ impl<'a> CallHierarchyProvider<'a> {
             }
         }
 
+        results.sort_by(|a, b| {
+            let a_start = a
+                .from_ranges
+                .iter()
+                .map(|r| (r.start.line, r.start.character))
+                .min()
+                .unwrap_or((u32::MAX, u32::MAX));
+            let b_start = b
+                .from_ranges
+                .iter()
+                .map(|r| (r.start.line, r.start.character))
+                .min()
+                .unwrap_or((u32::MAX, u32::MAX));
+            a_start
+                .cmp(&b_start)
+                .then_with(|| a.to.name.cmp(&b.to.name))
+        });
+
         results
+    }
+
+    fn call_expression_belongs_to_callable(
+        &self,
+        call_idx: NodeIndex,
+        callable_idx: NodeIndex,
+    ) -> bool {
+        let mut current = call_idx;
+        loop {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return true;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return callable_idx.is_none();
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.is_function_like()
+                || Self::is_call_hierarchy_callable_kind(parent_node.kind)
+            {
+                return parent == callable_idx;
+            }
+            current = parent;
+        }
+    }
+
+    fn resolve_static_block_local_symbol(
+        &self,
+        ident_idx: NodeIndex,
+        callable_idx: NodeIndex,
+    ) -> Option<(NodeIndex, String)> {
+        let static_block_idx = if self
+            .arena
+            .get(callable_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
+        {
+            callable_idx
+        } else {
+            self.enclosing_static_block(callable_idx)?
+        };
+        let name = self.get_identifier_text(ident_idx)?;
+        let block_node = self.arena.get(static_block_idx)?;
+        let block = self.arena.get_block(block_node)?;
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let function = self.arena.get_function(stmt_node)?;
+            if !function.name.is_some() {
+                continue;
+            }
+            if self.get_identifier_text(function.name).as_deref() == Some(name.as_str()) {
+                return Some((stmt_idx, name));
+            }
+        }
+        None
     }
 
     // -----------------------------------------------------------------------
@@ -646,6 +741,13 @@ impl<'a> CallHierarchyProvider<'a> {
     }
 
     fn container_name_for_callable(&self, callable_idx: NodeIndex) -> Option<String> {
+        let callable_node = self.arena.get(callable_idx)?;
+        if callable_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            || self.enclosing_static_block(callable_idx).is_some()
+        {
+            return None;
+        }
+
         let mut current = callable_idx;
         loop {
             let ext = self.arena.get_extended(current)?;
@@ -668,6 +770,27 @@ impl<'a> CallHierarchyProvider<'a> {
                 if module_decl.name.is_some() {
                     return self.get_identifier_text(module_decl.name);
                 }
+            }
+            current = parent;
+        }
+    }
+
+    fn enclosing_static_block(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return Some(parent);
+            }
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return None;
             }
             current = parent;
         }
@@ -834,6 +957,54 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
+    fn is_inside_decorator_reference(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        for _ in 0..8 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::DECORATOR {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn decorated_declaration_caller(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        if !self.is_inside_decorator_reference(node_idx) {
+            return None;
+        }
+        let mut current = node_idx;
+        for _ in 0..12 {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(parent);
+            }
+            if parent_node.is_function_like()
+                || Self::is_call_hierarchy_callable_kind(parent_node.kind)
+            {
+                return Some(parent);
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn enclosing_namespace_name(&self, node_idx: NodeIndex) -> Option<String> {
         let mut current = node_idx;
         loop {
@@ -853,11 +1024,15 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Check if a node is inside a `CallExpression` (i.e., used as the callee or argument).
-    fn is_inside_call_expression(&self, node_idx: NodeIndex) -> bool {
+    /// Check if a node is used in a call-like reference context.
+    ///
+    /// Includes:
+    /// - `CallExpression`/`NewExpression` references
+    /// - Decorator references (`@foo`, `@foo()`, `@ns.foo`)
+    fn is_inside_call_or_decorator_reference(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
-        // Walk up a few levels to see if we hit a CallExpression
-        for _ in 0..5 {
+        // Walk up a few levels to see if we hit a reference context.
+        for _ in 0..8 {
             if let Some(ext) = self.arena.get_extended(current) {
                 let parent = ext.parent;
                 if parent.is_none() {
@@ -869,6 +1044,9 @@ impl<'a> CallHierarchyProvider<'a> {
                     }
                     // Also count NewExpression as a "call"
                     if parent_node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                        return true;
+                    }
+                    if parent_node.kind == syntax_kind_ext::DECORATOR {
                         return true;
                     }
                 }
@@ -926,6 +1104,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 // Constructors don't have a name node, return the function node itself
                 None
             }
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => None,
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 let accessor = self.arena.get_accessor(node)?;
                 if accessor.name.is_none() {
@@ -977,6 +1156,7 @@ impl<'a> CallHierarchyProvider<'a> {
                     Some(accessor.body)
                 }
             }
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => Some(func_idx),
             _ => None,
         }
     }
@@ -1081,6 +1261,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 .and_then(|name_idx| self.get_identifier_text(name_idx))
                 .unwrap_or_else(|| "<method>".to_string()),
             k if k == syntax_kind_ext::CONSTRUCTOR => "constructor".to_string(),
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => "static {}".to_string(),
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
                     let name = self
@@ -1121,6 +1302,7 @@ impl<'a> CallHierarchyProvider<'a> {
             k if k == syntax_kind_ext::METHOD_DECLARATION => SymbolKind::Method,
             k if k == syntax_kind_ext::METHOD_SIGNATURE => SymbolKind::Method,
             k if k == syntax_kind_ext::CONSTRUCTOR => SymbolKind::Constructor,
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => SymbolKind::Constructor,
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 SymbolKind::Property
             }
@@ -1157,6 +1339,12 @@ impl<'a> CallHierarchyProvider<'a> {
             } else if let Some(name_idx) = self.get_function_name_idx(func_idx) {
                 self.identifier_selection_range(name_idx)
                     .unwrap_or_else(|| self.get_range(name_idx))
+            } else if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                let start = self.line_map.offset_to_position(node.pos, self.source_text);
+                let end = self
+                    .line_map
+                    .offset_to_position(node.pos.saturating_add(6), self.source_text);
+                Range::new(start, end)
             } else {
                 // For constructors or anonymous functions, use a small range at the start
                 let start = self.line_map.offset_to_position(node.pos, self.source_text);
@@ -1407,7 +1595,8 @@ impl<'a> CallHierarchyProvider<'a> {
         let mut current = node_idx;
         for _ in 0..8 {
             let node = self.arena.get(current)?;
-            if node.kind == SyntaxKind::Identifier as u16 && self.is_inside_call_expression(current)
+            if node.kind == SyntaxKind::Identifier as u16
+                && self.is_inside_call_or_decorator_reference(current)
             {
                 return Some(current);
             }

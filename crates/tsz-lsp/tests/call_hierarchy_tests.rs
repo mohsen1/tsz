@@ -52,6 +52,57 @@ fn test_prepare_on_method_declaration() {
 }
 
 #[test]
+fn test_prepare_on_class_static_block() {
+    let source =
+        "class C {\nstatic {\n  function foo() { bar(); }\n  function bar() {}\n  foo();\n}\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "static" keyword (line 1, col 1).
+    let pos = Position::new(1, 1);
+    let item = provider
+        .prepare(root, pos)
+        .expect("Should find call hierarchy item for static block");
+
+    assert_eq!(item.name, "static {}");
+    assert_eq!(item.kind, SymbolKind::Constructor);
+    assert_eq!(item.container_name, None);
+    assert_eq!(item.selection_range.start, Position::new(1, 0));
+    assert_eq!(item.selection_range.end, Position::new(1, 6));
+}
+
+#[test]
+fn test_prepare_nested_function_in_static_block_has_no_class_container() {
+    let source = "class C {\n  static {\n    function bar() {}\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(2, 13);
+    let item = provider
+        .prepare(root, pos)
+        .expect("Should prepare nested function inside static block");
+
+    assert_eq!(item.name, "bar");
+    assert_eq!(item.container_name, None);
+}
+
+#[test]
 fn test_prepare_not_on_function() {
     let source = "const x = 1;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -271,6 +322,57 @@ fn test_outgoing_calls_multiple() {
 }
 
 #[test]
+fn test_outgoing_calls_for_static_block_include_only_direct_calls() {
+    let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {}\n    foo();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let pos = Position::new(1, 3);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert_eq!(
+        calls.len(),
+        1,
+        "Expected only one direct outgoing call from static block body"
+    );
+    assert_eq!(calls[0].to.name, "foo");
+    assert_eq!(calls[0].to.selection_range.start, Position::new(2, 13));
+    assert_eq!(calls[0].from_ranges[0].start, Position::new(7, 4));
+}
+
+#[test]
+fn test_outgoing_calls_for_function_nested_in_static_block_resolve_sibling_declaration() {
+    let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {\n    }\n\n    foo();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at foo declaration name.
+    let pos = Position::new(2, 13);
+    let calls = provider.outgoing_calls(root, pos);
+
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].to.name, "bar");
+    assert_eq!(calls[0].to.selection_range.start, Position::new(6, 13));
+    assert_eq!(calls[0].from_ranges[0].start, Position::new(3, 6));
+}
+
+#[test]
 fn test_outgoing_calls_no_calls() {
     let source = "function empty() {\n  const x = 1;\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -318,6 +420,56 @@ fn test_incoming_calls_simple() {
     assert!(
         caller_item.is_some(),
         "Should find incoming call from 'caller'"
+    );
+}
+
+#[test]
+fn test_incoming_calls_include_decorator_references() {
+    let source = "@bar\nclass Foo {\n}\n\nfunction bar() {\n  baz();\n}\n\nfunction baz() {\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "bar" declaration name.
+    let pos = Position::new(4, 10);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|call| call.from.name == "Foo"),
+        "Expected decorator-based incoming call from class 'Foo', got: {calls:?}"
+    );
+}
+
+#[test]
+fn test_incoming_calls_inside_static_block_report_static_block_caller() {
+    let source = "class C {\n  static {\n    function foo() {\n      bar();\n    }\n\n    function bar() {}\n    foo();\n  }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at "foo" declaration name.
+    let pos = Position::new(2, 13);
+    let calls = provider.incoming_calls(root, pos);
+
+    assert!(
+        calls.iter().any(|call| {
+            call.from.name == "static {}" && call.from.kind == SymbolKind::Constructor
+        }),
+        "Expected static block caller entry for foo(), got: {calls:?}"
     );
 }
 
