@@ -3321,6 +3321,44 @@ fn compile_missing_file_in_include_pattern_reports_custom_config_path() {
 }
 
 #[test]
+fn compile_missing_file_in_include_pattern_prefers_ts18003_over_type_root_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015"
+          },
+          "include": ["src/**/*.ts"],
+          "exclude": ["node_modules"]
+        }"#,
+    );
+    write_file(
+        &base.join("node_modules/@types/lib-extender/index.d.ts"),
+        r#"declare var lib: () => void;
+declare namespace lib {}
+export = lib;
+declare module "lib" {
+    export function fn(): void;
+}"#,
+    );
+
+    let args = default_args();
+    let compilation = compile(&args, base).expect("Should return Ok with diagnostics");
+
+    assert!(
+        compilation.diagnostics.iter().any(|d| d.code == 18003),
+        "Expected TS18003 when include pattern has no matching source files"
+    );
+    assert!(
+        !compilation.diagnostics.iter().any(|d| d.code == 2649),
+        "TS2649 from @types files should not be reported when there are no root inputs"
+    );
+}
+
+#[test]
 fn compile_missing_single_file_via_cli_args_returns_error() {
     // Test that passing a non-existent file via CLI args returns an error
     let temp = TempDir::new().expect("temp dir");
