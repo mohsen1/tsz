@@ -544,8 +544,28 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       // Normalize sourceMappingURL filenames since we use temp file names
       const normalizeSourceMapUrl = (s: string) =>
         s.replace(/\/\/# sourceMappingURL=\S+/g, '//# sourceMappingURL=output.js.map');
-      const expected = normalizeSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim());
-      const actual = normalizeSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim());
+      // Normalize duplicate "use strict" in preamble: tsc emits double "use strict"
+      // when the source already has one and alwaysStrict is enabled. Our emitter may
+      // emit only one. Normalize both sides to single "use strict" for comparison.
+      const dedupeUseStrict = (s: string): string => {
+        const lines = s.split('\n');
+        const out: string[] = [];
+        let seen = false;
+        let preambleDone = false;
+        for (const line of lines) {
+          const t = line.trim();
+          const isUS = t === '"use strict";' || t === "'use strict';";
+          if (!preambleDone && isUS) {
+            if (!seen) { out.push(line); seen = true; }
+            continue;
+          }
+          if (t !== '') preambleDone = true;
+          out.push(line);
+        }
+        return out.join('\n');
+      };
+      const expected = dedupeUseStrict(normalizeSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim()));
+      const actual = dedupeUseStrict(normalizeSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim()));
       result.jsMatch = expected === actual;
 
       if (!result.jsMatch) {
