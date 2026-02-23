@@ -589,9 +589,18 @@ expression name (when available via `expression_text()`) or TS2571 fallback.
 - **TS2300 (remaining false positives, 4 tests)**: `unusedTypeParameters8.ts` (cross-file class/interface merge — only triggers in multi-file mode), `constructorFunctionMergeWithClass.ts` (JS constructor+class merge), `numericNamedPropertyDuplicates.ts` / `stringNamedPropertyDuplicates.ts` (fingerprint mismatch: property name quoting and line number differences, not error-code level).
 - **TS2300 (remaining missing, 6 tests)**: JSDoc @typedef/@import duplicate detection (4 tests), type param vs local interface clash (1 test), unique symbol computed property duplicates in classes (1 test). Each has a distinct root cause.
 - **TS18003**: `TypeScript/tests/cases/compiler/tripleSlashReferenceAbsoluteWindowsPath.ts` — still missing TS18003 because `@Filename: C:\...` is materialized inside tmpdir as a local file; fixing needs virtual-drive path semantics in conformance harness, not a small checker/driver patch.
-- **TS5052**: `TypeScript/tests/cases/compiler/checkJsFiles6.ts` — now emits TS18003 after preserving explicit `allowJs: false`, but still misses TS5052 because config validation does not report `checkJs`/`allowJs` incompatibility when `allowJs` is explicitly false.
+
+## TS5052 — checkJs requires allowJs (Fixed)
+
+**Status**: Fixed. `checkJsFiles6.ts` now passes.
+**Error code:** TS5052 ("Option 'checkJs' cannot be specified without specifying option 'allowJs'.")
+**Fix**:
+1. Added TS5052 validation in `parse_tsconfig_with_diagnostics` (`src/config.rs`) for `checkJs: true` when `allowJs` is not truthy, including dual-site diagnostics when `allowJs` is explicitly present.
+2. Fixed CLI no-input path (`crates/tsz-cli/src/driver.rs`) to preserve config diagnostics when emitting TS18003, so TS5052 is no longer dropped on empty-input projects.
 
 ## Deferred issues from this run (2026-02-23, offset 25%)
 
 - **TS18046**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of58.ts` — still emits a false-positive unknown-type diagnostic in `for..of`; likely needs deeper iterator/flow type narrowing parity in solver/checker.
 - **TS2322/TS2339/TS2345 (high-volume)**: `TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts` (representative) — highest-impact mismatches remain assignability/property access core logic and require broader solver relation work, not a safe minimal patch in this session.
+- **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of8.ts` — still missing TS2454 (`v; for (var v of [0]) {}`); unresolved identifier fallback in single-file/no-import mode bypasses flow-based definite assignment for bare expression statements.
+- **TS2454**: `TypeScript/tests/cases/conformance/es6/for-ofStatements/for-of22.ts` — same root cause as above for pre-loop read of `var` from for-of header.

@@ -819,40 +819,14 @@ fn compile_inner(
     // Determine which cache to use: local cache from BuildInfo, or provided cache, or none
     // When cache is None, we can use local_cache; otherwise we use the provided cache
     if file_paths.is_empty() {
-        // Emit TS18003: No inputs were found in config file.
-        // Match tsc: use the resolved config path shown to the compiler.
-        let config_name = tsconfig_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|| "tsconfig.json".to_string());
-        let include_str = discovery
-            .include
-            .as_ref()
-            .filter(|v| !v.is_empty())
-            .map(|v| {
-                v.iter()
-                    .map(|s| format!("\"{s}\""))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .unwrap_or_default();
-        let exclude_str = discovery
-            .exclude
-            .as_ref()
-            .filter(|v| !v.is_empty())
-            .map(|v| {
-                v.iter()
-                    .map(|s| format!("\"{s}\""))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
-            .unwrap_or_default();
-        let message = format!(
-            "No inputs were found in config file '{config_name}'. Specified 'include' paths were '[{include_str}]' and 'exclude' paths were '[{exclude_str}]'."
+        let diagnostics = no_input_diagnostics_for_config(
+            config_diagnostics,
+            tsconfig_path.as_deref(),
+            discovery.include.as_deref(),
+            discovery.exclude.as_deref(),
         );
         return Ok(CompilationResult {
-            // tsc emits TS18003 without file position (file="", pos=0).
-            diagnostics: vec![Diagnostic::error(String::new(), 0, 0, message, 18003)],
+            diagnostics,
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
@@ -1162,6 +1136,43 @@ fn config_error_result(file_path: Option<&Path>, message: String, code: u32) -> 
         files_read: Vec::new(),
         file_infos: Vec::new(),
     }
+}
+
+pub(super) fn no_input_diagnostics_for_config(
+    mut config_diagnostics: Vec<Diagnostic>,
+    tsconfig_path: Option<&Path>,
+    include: Option<&[String]>,
+    exclude: Option<&[String]>,
+) -> Vec<Diagnostic> {
+    // Emit TS18003: No inputs were found in config file.
+    // Match tsc: use the resolved config path shown to the compiler.
+    let config_name = tsconfig_path
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "tsconfig.json".to_string());
+    let include_str = include
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            v.iter()
+                .map(|s| format!("\"{s}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let exclude_str = exclude
+        .filter(|v| !v.is_empty())
+        .map(|v| {
+            v.iter()
+                .map(|s| format!("\"{s}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let message = format!(
+        "No inputs were found in config file '{config_name}'. Specified 'include' paths were '[{include_str}]' and 'exclude' paths were '[{exclude_str}]'."
+    );
+    // tsc emits TS18003 without file position (file="", pos=0).
+    config_diagnostics.push(Diagnostic::error(String::new(), 0, 0, message, 18003));
+    config_diagnostics
 }
 
 fn check_module_resolution_compatibility(

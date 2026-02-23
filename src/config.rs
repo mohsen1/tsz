@@ -1193,6 +1193,41 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
+        // `checkJs` requires `allowJs` to be explicitly enabled.
+        if option_is_truthy(compiler_opts.get("checkJs"))
+            && !option_is_truthy(compiler_opts.get("allowJs"))
+        {
+            let msg = format_message(
+                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                &["checkJs", "allowJs"],
+            );
+
+            // Always emit at the checkJs key.
+            let check_js_start = find_key_offset_in_source(&stripped, "checkJs");
+            let check_js_len = "checkJs".len() as u32 + 2;
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                check_js_start,
+                check_js_len,
+                msg.clone(),
+                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+            ));
+
+            // If allowJs is explicitly present, emit at allowJs too (tsc parity).
+            if compiler_opts.contains_key("allowJs") {
+                let allow_js_start = find_key_offset_in_source(&stripped, "allowJs");
+                let allow_js_len = "allowJs".len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    allow_js_start,
+                    allow_js_len,
+                    msg,
+                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                ));
+            }
+        }
+
         // TS5053: Option '{0}' cannot be specified with option '{1}'.
         // tsc emits for each conflicting key, pointing at the key's position.
         // The message always names the pair (A, B) regardless of which key is pointed at.
@@ -2934,6 +2969,42 @@ mod tests {
             codes.contains(&5053),
             "Expected TS5053 for allowJs with isolatedDeclarations, got: {:?}",
             codes
+        );
+    }
+
+    #[test]
+    fn test_ts5052_check_js_requires_allow_js() {
+        let source = r#"{"compilerOptions":{"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
+        assert_eq!(
+            count, 1,
+            "Expected one TS5052 diagnostic when allowJs is missing, got: {:?}",
+            parsed.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_ts5052_check_js_with_allow_js_false_reports_both_sites() {
+        let source = r#"{"compilerOptions":{"allowJs":false,"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
+        assert_eq!(
+            count, 2,
+            "Expected two TS5052 diagnostics (allowJs/checkJs), got: {:?}",
+            parsed.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_ts5052_not_emitted_when_check_js_and_allow_js_true() {
+        let source = r#"{"compilerOptions":{"allowJs":true,"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "Should not emit TS5052 when allowJs is true, got: {:?}",
+            parsed.diagnostics
         );
     }
 
