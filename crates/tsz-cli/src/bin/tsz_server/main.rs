@@ -32,6 +32,7 @@
 mod check;
 mod handlers_code_fixes;
 mod handlers_completions;
+mod handlers_completions_display;
 mod handlers_completions_snippets;
 mod handlers_diagnostics;
 mod handlers_editing;
