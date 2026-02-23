@@ -705,3 +705,22 @@ Investigated but punted:
   Reason: same cross-file namespace alias/re-export navigation parity gap as `_types`.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
   Reason: remaining failure still needs deeper CommonJS `export =`/`import = require(...)` completion + codefix edit synthesis parity.
+
+## 2026-02-23 (module-namespace resolver traversal follow-up)
+
+Completed in this pass:
+- Fixed resolver reference traversal in `crates/tsz-lsp/src/resolver/children.rs` to visit import/export clause/specifier nodes (`IMPORT_CLAUSE`, `NAMED_IMPORTS`, `NAMED_EXPORTS`, `NAMESPACE_IMPORT`, `IMPORT_SPECIFIER`, `EXPORT_SPECIFIER`) instead of skipping those subtrees.
+- Extended module-namespace string-literal symbol lookup fallback in `crates/tsz-lsp/src/resolver/mod.rs` so quoted import/export specifier names can resolve through specifier name/property symbols when the parent node symbol is absent.
+- Added focused resolver unit coverage in `crates/tsz-lsp/tests/resolver_tests.rs`:
+  - `test_find_references_includes_module_namespace_string_literals`
+- Verification:
+  - `cargo nextest run -p tsz-lsp` passed (`735` tests).
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `197/200` (no sampled regressions).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: remaining parity gap requires project-wide tsserver definition/references/rename behavior for quoted module namespace identifiers; current handlers still bind/query a single file per request.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same cross-file tsserver request-shape/aggregation limitation as `_types` for string-literal module namespace identifiers.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
+  Reason: still requires deeper CommonJS/`export =` auto-import completion candidate modeling and `import = require(...)` edit synthesis parity.

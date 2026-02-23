@@ -1974,6 +1974,39 @@ fn test_open_external_project_populates_auto_import_code_fixes() {
 }
 
 #[test]
+fn test_open_external_project_tracks_root_files_without_inline_content() {
+    let mut server = make_server();
+
+    let open_external = make_request(
+        "openExternalProject",
+        serde_json::json!({
+            "projectFileName": "/project.csproj",
+            "rootFiles": [
+                { "fileName": "/virtual/index.ts" },
+                { "fileName": "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts" }
+            ]
+        }),
+    );
+    let open_resp = server.handle_tsserver_request(open_external);
+    assert!(open_resp.success);
+
+    let tracked = server
+        .external_project_files
+        .get("/project.csproj")
+        .expect("expected tracked external project files");
+    assert!(
+        tracked.iter().any(|path| path == "/virtual/index.ts"),
+        "expected virtual root file path to be tracked, got {tracked:?}"
+    );
+    assert!(
+        tracked
+            .iter()
+            .any(|path| path == "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts"),
+        "expected node_modules root file path to be tracked, got {tracked:?}"
+    );
+}
+
+#[test]
 fn test_open_external_project_module_none_es5_blocks_auto_import_completions() {
     let mut server = make_server();
 

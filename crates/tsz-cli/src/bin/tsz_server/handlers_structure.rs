@@ -465,8 +465,8 @@ impl Server {
                             .or_else(|| std::fs::read_to_string(file_name).ok());
                         if let Some(content) = content {
                             self.open_files.insert(file_name.to_string(), content);
-                            tracked_files.push(file_name.to_string());
                         }
+                        tracked_files.push(file_name.to_string());
                     }
                 }
                 if !project_name.is_empty() {
@@ -506,8 +506,8 @@ impl Server {
                                     .or_else(|| std::fs::read_to_string(file_name).ok());
                                 if let Some(content) = content {
                                     self.open_files.insert(file_name.to_string(), content);
-                                    tracked_files.push(file_name.to_string());
                                 }
+                                tracked_files.push(file_name.to_string());
                             }
                         }
                         if !project_name.is_empty() {
