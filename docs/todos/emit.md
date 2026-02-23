@@ -1,8 +1,22 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9811/13623 = 72.0% JS, ~777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9827/13623 = 72.1% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Comments between last statement and closing brace displaced outside block** (+1 JS):
+  Comments on lines after the last statement but before the block's closing `}` were being
+  emitted after the `}` instead of inside the block. For example, `function foo() { return;\n
+  // comment\n}` emitted the comment after `}`. Root cause: the statement loop in `emit_block`
+  only emitted leading comments before each statement, but comments appearing after the last
+  statement and before `}` were never claimed by any statement's leading-comment phase. They
+  leaked past `}` and were emitted by the outer statement loop. Fix: after the statement loop,
+  scan backwards from `node.end` to find the closing `}` position, then emit any remaining
+  comments whose position falls before `}`. Three unit tests added.
+  Test fixed: `controlFlowCommaExpressionAssertionWithinTernary`.
+  Also improves ~17 other multi-issue tests where this was one of multiple diffs.
+  JS: 9826→9827, DTS unchanged, zero regressions.
+
+### Previously Fixed (This Branch)
 - **Non-block else body put on new indented line** (+3 JS):
   tsc puts non-block, non-if else bodies on a new indented line (`else\n    return;`),
   but tsz was emitting them on the same line (`else return;`). Root cause: the else branch
