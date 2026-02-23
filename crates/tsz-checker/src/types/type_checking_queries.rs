@@ -1269,7 +1269,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip if type may contain null/undefined (optional params, union with undefined)
-        if tsz_solver::type_contains_nullish(self.ctx.types.as_type_database(), ty) {
+        if tsz_solver::is_nullish_type(self.ctx.types.as_type_database(), ty) {
             return;
         }
 
