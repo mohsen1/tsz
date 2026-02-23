@@ -1867,6 +1867,7 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "noImplicitThis"
         | "noImplicitUseStrict"
         | "noLib"
+        | "libReplacement"
         | "noPropertyAccessFromIndexSignature"
         | "noResolve"
         | "noStrictGenericChecks"
@@ -3142,6 +3143,17 @@ mod tests {
         let json = r#"{"strict": "invalid"}"#;
         let result: Result<CompilerOptions, _> = serde_json::from_str(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ts5024_emitted_for_lib_replacement_string_value() {
+        let source = r#"{"compilerOptions":{"libReplacement":"true"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5024),
+            "Expected TS5024 for libReplacement string value, got: {codes:?}"
+        );
     }
 
     #[test]

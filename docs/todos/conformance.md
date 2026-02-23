@@ -6171,3 +6171,15 @@ Both attempts were reverted to avoid leaving partial/non-improving behavior in t
 
 ### Commit
 `6b2c64a5b` — `fix: use actual mapped type parameter name and modifiers in diagnostics`
+
+- **TS2688 false positives (26 tests, 14 single-code)**: Our `/// <reference types="..." />`
+  resolver doesn't handle: (a) `node_modules` walk-up from referencing file, (b) `package.json`
+  `types`/`typings` fields for non-`index.d.ts` entries, (c) Node16+ `exports` resolution,
+  (d) scoped `@types` mangling (`@beep/boop` → `@types/beep__boop`). MEDIUM-HIGH difficulty.
+- **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — still missing TS2454 on catch destructuring paths; needs CFG assignment edges for catch-binding destructures.
+- **TS2454**: `TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2.ts` — still missing TS2454 for nested destructuring defaults; requires deeper flow joins for destructuring initializers.
+- **TS2300 (remaining false positives, 4 tests)**: `unusedTypeParameters8.ts` (cross-file class/interface merge — only triggers in multi-file mode), `constructorFunctionMergeWithClass.ts` (JS constructor+class merge), `numericNamedPropertyDuplicates.ts` / `stringNamedPropertyDuplicates.ts` (fingerprint mismatch: property name quoting and line number differences, not error-code level).
+- **TS2300 (remaining missing, 6 tests)**: JSDoc @typedef/@import duplicate detection (4 tests), type param vs local interface clash (1 test), unique symbol computed property duplicates in classes (1 test). Each has a distinct root cause.
+- **TS18003**: `TypeScript/tests/cases/compiler/tripleSlashReferenceAbsoluteWindowsPath.ts` — still missing TS18003 because `@Filename: C:\...` is materialized inside tmpdir as a local file; fixing needs virtual-drive path semantics in conformance harness, not a small checker/driver patch.
+- **TS5052**: `TypeScript/tests/cases/compiler/checkJsFiles6.ts` — now emits TS18003 after preserving explicit `allowJs: false`, but still misses TS5052 because config validation does not report `checkJs`/`allowJs` incompatibility when `allowJs` is explicitly false.
+- **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — attempted targeted `try`-destructuring fallback in checker did not move conformance output; root issue appears deeper in flow-node assignment modeling for destructuring, not a boundary guard.

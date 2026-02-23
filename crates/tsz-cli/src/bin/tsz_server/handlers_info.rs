@@ -1084,8 +1084,53 @@ impl Server {
         let mut groups: Vec<RefGroup> = Vec::new();
         let mut group_index_by_key: rustc_hash::FxHashMap<String, usize> =
             rustc_hash::FxHashMap::default();
+        let mut seen_refs_global: rustc_hash::FxHashSet<(String, u32, u32)> =
+            rustc_hash::FxHashSet::default();
 
         for seed_loc in locs {
+            let mut use_seed = false;
+            let mut seed_source_text = String::new();
+            if let Some(seed_source) = self
+                .open_files
+                .get(&seed_loc.file_path)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(&seed_loc.file_path).ok())
+            {
+                seed_source_text = seed_source.clone();
+                let line_text = seed_source
+                    .lines()
+                    .nth(seed_loc.range.start.line as usize)
+                    .unwrap_or("")
+                    .trim_start();
+                let is_export_line = line_text.starts_with("export ");
+                let is_import_line = line_text.starts_with("import ");
+                let is_quoted_seed = self.is_quoted_import_or_export_specifier_location(&seed_loc);
+
+                // Group seeds around symbol-producing locations:
+                // - quoted names from export specifiers
+                // - local alias identifiers from import specifiers
+                use_seed =
+                    (is_quoted_seed && is_export_line) || (!is_quoted_seed && is_import_line);
+            }
+            if !use_seed {
+                continue;
+            }
+            let seed_line_map = LineMap::build(&seed_source_text);
+            let seed_start = seed_line_map
+                .position_to_offset(seed_loc.range.start, &seed_source_text)
+                .unwrap_or(0) as usize;
+            let seed_end = seed_line_map
+                .position_to_offset(seed_loc.range.end, &seed_source_text)
+                .unwrap_or(seed_start as u32) as usize;
+            let seed_text = seed_source_text
+                .get(seed_start..seed_end)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if seed_text.is_empty() {
+                continue;
+            }
+
             let (definition, def_file, def_start, def_len) =
                 self.build_alias_definition_from_location(&seed_loc);
             let group_key = format!("{def_file}:{def_start}:{def_len}");
@@ -1113,6 +1158,11 @@ impl Server {
                     let loc_line_map = LineMap::build(&loc_source);
                     if let Some(start_off) =
                         loc_line_map.position_to_offset(loc.range.start, &loc_source)
+                        && Self::is_quoted_import_or_export_specifier_offset(
+                            &loc_arena,
+                            &loc_source,
+                            start_off,
+                        )
                         && let Some(inner_range) = Self::quoted_specifier_inner_range_at_offset(
                             &loc_arena,
                             &loc_source,
@@ -1139,6 +1189,17 @@ impl Server {
                 let len = end.saturating_sub(start);
                 let key = (loc.file_path.clone(), start, len);
                 if !groups[group_idx].seen_refs.insert(key) {
+                    continue;
+                }
+                let global_key = (loc.file_path.clone(), start, len);
+                if !seen_refs_global.insert(global_key) {
+                    continue;
+                }
+                let loc_text = loc_source
+                    .get(start as usize..end as usize)
+                    .unwrap_or_default()
+                    .trim();
+                if loc_text != seed_text {
                     continue;
                 }
 
@@ -1204,6 +1265,11 @@ impl Server {
                 .get("fileName")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
+            let a_is_query_file = a_file == file;
+            let b_is_query_file = b_file == file;
+            if a_is_query_file != b_is_query_file {
+                return b_is_query_file.cmp(&a_is_query_file);
+            }
             let file_cmp = a_file.cmp(b_file);
             if file_cmp != std::cmp::Ordering::Equal {
                 return file_cmp;
@@ -1241,40 +1307,160 @@ impl Server {
         &mut self,
         loc: &tsz_common::position::Location,
     ) -> (serde_json::Value, String, u32, u32) {
-        let source_text = self
+        fn extract_alias_rhs(display: &str) -> Option<String> {
+            if let Some((_, rhs)) = display.rsplit_once(" = ") {
+                return Some(rhs.trim().to_string());
+            }
+            if let Some((_, rhs)) = display.rsplit_once(": ") {
+                return Some(rhs.trim().to_string());
+            }
+            None
+        }
+
+        let mut source_text = self
             .open_files
             .get(&loc.file_path)
             .cloned()
             .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
             .unwrap_or_default();
+        let mut target_range = loc.range;
+        let mut parsed = self.parse_and_bind_file(&loc.file_path);
+        if let Some((arena, _binder, _root, source)) = parsed.as_ref() {
+            source_text = source.clone();
+            let lm = LineMap::build(&source_text);
+            if let Some(offset) = lm.position_to_offset(loc.range.start, &source_text) {
+                let node_idx =
+                    tsz::lsp::utils::find_node_at_or_before_offset(arena, offset, &source_text);
+                let spec_idx = if Self::find_ancestor_of_kind(
+                    arena,
+                    node_idx,
+                    tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+                )
+                .is_some()
+                {
+                    Self::find_ancestor_of_kind(
+                        arena,
+                        node_idx,
+                        tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER,
+                    )
+                } else {
+                    Self::find_ancestor_of_kind(
+                        arena,
+                        node_idx,
+                        tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
+                    )
+                };
+                if spec_idx.is_some()
+                    && let Some(spec_node) = arena.get(spec_idx)
+                    && let Some(spec) = arena.get_specifier(spec_node)
+                    && spec.name.is_some()
+                    && let Some(alias_node) = arena.get(spec.name)
+                {
+                    target_range = tsz_common::position::Range::new(
+                        lm.offset_to_position(alias_node.pos, &source_text),
+                        lm.offset_to_position(alias_node.end, &source_text),
+                    );
+                }
+            }
+        }
+
         let line_map = LineMap::build(&source_text);
         let start = line_map
-            .position_to_offset(loc.range.start, &source_text)
+            .position_to_offset(target_range.start, &source_text)
             .unwrap_or(0);
         let end = line_map
-            .position_to_offset(loc.range.end, &source_text)
+            .position_to_offset(target_range.end, &source_text)
             .unwrap_or(start);
         let len = end.saturating_sub(start);
 
-        let display = self
-            .parse_and_bind_file(&loc.file_path)
-            .and_then(|(arena, binder, root, source)| {
-                let lm = LineMap::build(&source);
+        let display = parsed
+            .take()
+            .and_then(|(arena, binder, root, _source)| {
+                let lm = LineMap::build(&source_text);
                 let interner = TypeInterner::new();
                 let hover = HoverProvider::new(
                     &arena,
                     &binder,
                     &lm,
                     &interner,
-                    &source,
+                    &source_text,
                     loc.file_path.clone(),
                 );
                 let mut type_cache = None;
                 hover
-                    .get_hover(root, loc.range.start, &mut type_cache)
+                    .get_hover(root, target_range.start, &mut type_cache)
                     .map(|h| h.display_string)
             })
             .unwrap_or_else(|| "alias".to_string());
+        let mut display = display;
+        if display == "alias" || display.starts_with("(alias) module ") {
+            let line_text = source_text
+                .lines()
+                .nth(target_range.start.line as usize)
+                .unwrap_or("")
+                .trim_start();
+            let import_or_export = if line_text.starts_with("export ") {
+                "export"
+            } else if line_text.starts_with("import ") {
+                "import"
+            } else {
+                ""
+            };
+            let keyword = if line_text.contains("{ type ") || line_text.starts_with("type ") {
+                "type"
+            } else {
+                "const"
+            };
+            let alias_start = line_map
+                .position_to_offset(target_range.start, &source_text)
+                .unwrap_or(0) as usize;
+            let alias_end = line_map
+                .position_to_offset(target_range.end, &source_text)
+                .unwrap_or(alias_start as u32) as usize;
+            let alias_name = source_text
+                .get(alias_start..alias_end)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let canonical_rhs = self.parse_and_bind_file(&loc.file_path).and_then(
+                |(arena, _binder, _root, parsed_source)| {
+                    let lm = LineMap::build(&parsed_source);
+                    let query_off = lm.position_to_offset(loc.range.start, &parsed_source)?;
+                    let canonical_loc = self.canonical_definition_for_alias_position(
+                        &loc.file_path,
+                        &arena,
+                        &parsed_source,
+                        query_off,
+                    )?;
+                    let (canon_arena, canon_binder, canon_root, canon_source) =
+                        self.parse_and_bind_file(&canonical_loc.file_path)?;
+                    let canon_lm = LineMap::build(&canon_source);
+                    let interner = TypeInterner::new();
+                    let hover = HoverProvider::new(
+                        &canon_arena,
+                        &canon_binder,
+                        &canon_lm,
+                        &interner,
+                        &canon_source,
+                        canonical_loc.file_path.clone(),
+                    );
+                    let mut type_cache = None;
+                    hover
+                        .get_hover(canon_root, canonical_loc.range.start, &mut type_cache)
+                        .and_then(|h| extract_alias_rhs(&h.display_string))
+                },
+            );
+            if !alias_name.is_empty()
+                && !import_or_export.is_empty()
+                && let Some(rhs) = canonical_rhs
+            {
+                display = if keyword == "type" {
+                    format!("(alias) type {alias_name} = {rhs}\n{import_or_export} {alias_name}")
+                } else {
+                    format!("(alias) const {alias_name}: {rhs}\n{import_or_export} {alias_name}")
+                };
+            }
+        }
 
         let def = serde_json::json!({
             "containerKind": "",
