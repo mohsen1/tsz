@@ -1069,3 +1069,17 @@
     a collision-avoidance issue in the unique name generator — the emitter's `make_unique_name`
     always appends `_N` suffix, while tsc only does so when there's an actual collision. Low
     impact per test but affects ~10 tests as a sole diff.
+
+32. **Parser `declare` modifier threading for import/export/await/using (~4 tests)**: The parser's
+    `look_ahead_is_declare_before_declaration` (state_statements.rs:640) is missing several keywords:
+    `ImportKeyword`, `ExportKeyword`, `DeclareKeyword`, `AwaitKeyword`, `UsingKeyword`. This causes
+    `declare import a = b;` to be parsed as two statements: expression `declare;` + import-equals.
+    Session 2026-02-23 added an emitter workaround that suppresses the spurious `declare;` artifacts
+    via source-text analysis (+3 JS: declareAlreadySeen, declareModifierOnImport1,
+    exportAssignmentWithDeclareModifier). However, a proper parser fix is needed for full parity:
+    - `functionsWithModifiersInBlocks1` — `declare function` inside block scopes
+    - `awaitUsingDeclarations.11` — `declare await using y: null;` (should be fully erased)
+    - `usingDeclarations.13` — `declare using y: null;` (should be fully erased)
+    The parser fix requires modifying `parse_ambient_declaration_with_modifiers` (state_declarations.rs:1102)
+    to handle ImportKeyword/ExportKeyword/AwaitKeyword/UsingKeyword after `declare`, and threading the
+    declare modifier through `parse_import_equals_declaration` and `parse_import_declaration`.
