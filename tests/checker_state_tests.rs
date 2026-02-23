@@ -5641,15 +5641,28 @@ obj.foo;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let count = checker
+    // Property access on unknown now emits TS18046 ("'value' is of type 'unknown'.")
+    // instead of TS2339. Property access on object still emits TS2339.
+    let ts18046_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18046)
+        .count();
+    let ts2339_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 2339)
         .count();
     assert_eq!(
-        count, 2,
-        "Expected two 2339 errors (one for unknown.foo, one for object.foo), got: {:?}",
+        ts18046_count, 1,
+        "Expected one TS18046 error for unknown.foo, got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected one TS2339 error for object.foo, got: {:?}",
         checker.ctx.diagnostics
     );
 }

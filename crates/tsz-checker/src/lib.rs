@@ -123,6 +123,9 @@ mod symbol_resolver_stability_tests;
 #[path = "../tests/ts1214_let_strict_mode_tests.rs"]
 mod ts1214_let_strict_mode_tests;
 #[cfg(test)]
+#[path = "../tests/ts18046_unknown_type_tests.rs"]
+mod ts18046_unknown_type_tests;
+#[cfg(test)]
 #[path = "../tests/ts2300_tests.rs"]
 mod ts2300_tests;
 #[cfg(test)]

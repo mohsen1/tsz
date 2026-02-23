@@ -322,9 +322,59 @@ impl<'a> CheckerState<'a> {
     /// Some grammar-recovery scenarios continue checking and should still emit
     /// type/value mismatch diagnostics even with parse errors.
     fn has_type_only_value_in_parse_recovery_context(&self, name: &str, idx: NodeIndex) -> bool {
-        // Recovery for async-generator computed members (`async * [yield] ...`) should still
-        // report TS2693.
-        if name != "yield" {
+        // Recovery for async-generator computed members (`async * [yield] ...`) should
+        // still report TS2693.
+        if name == "yield" {
+            let mut guard = 0;
+            let mut current = Some(idx);
+            let mut seen_computed_property_name = false;
+
+            while let Some(current_idx) = current {
+                if guard > 64 {
+                    break;
+                }
+                guard += 1;
+
+                let Some(ext) = self.ctx.arena.get_extended(current_idx) else {
+                    break;
+                };
+
+                let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                    break;
+                };
+
+                if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    seen_computed_property_name = true;
+                } else if parent.kind == syntax_kind_ext::METHOD_DECLARATION
+                    && seen_computed_property_name
+                {
+                    return true;
+                }
+
+                current = Some(ext.parent);
+            }
+
+            return false;
+        }
+
+        // Recovery for malformed type-literal indexers (`[number]: ...`) should still
+        // report TS2693 even when unrelated parse errors exist in the file.
+        let is_primitive_type_keyword = matches!(
+            name,
+            "number"
+                | "string"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "undefined"
+                | "null"
+                | "any"
+                | "unknown"
+                | "never"
+                | "object"
+                | "bigint",
+        );
+        if !is_primitive_type_keyword {
             return false;
         }
 
@@ -348,8 +398,9 @@ impl<'a> CheckerState<'a> {
 
             if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                 seen_computed_property_name = true;
-            } else if parent.kind == syntax_kind_ext::METHOD_DECLARATION
-                && seen_computed_property_name
+            } else if seen_computed_property_name
+                && (parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || parent.kind == syntax_kind_ext::METHOD_DECLARATION)
             {
                 return true;
             }
@@ -419,5 +470,62 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions::default();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn emits_ts2693_for_recovered_computed_type_keyword() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+namespace m1 {
+  export class C2 {
+    public get p(arg) {
+      return 0;
+    }
+  }
+
+  export function f4(arg1: {
+    [number]: C1;
+  }) {}
+}
+
+class C1 {}
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected TS2693 for recovered computed type keyword, got: {diagnostics:?}",
+        );
     }
 }

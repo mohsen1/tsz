@@ -1,4 +1,5 @@
 use super::super::Printer;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;

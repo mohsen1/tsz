@@ -587,6 +587,18 @@ impl<'a> CheckerState<'a> {
                         _ => "?",
                     };
 
+                    // TS18046: unknown cannot be used with bitwise operators
+                    if left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN {
+                        if left_type == TypeId::UNKNOWN {
+                            self.error_is_of_type_unknown(left_idx);
+                        }
+                        if right_type == TypeId::UNKNOWN {
+                            self.error_is_of_type_unknown(right_idx);
+                        }
+                        type_stack.push(TypeId::ERROR);
+                        continue;
+                    }
+
                     let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
                         left_idx, right_idx, left_type, right_type, op_str,
                     );
@@ -652,6 +664,22 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             };
+
+            // TS18046: Emit "'x' is of type 'unknown'" when unknown is used with
+            // arithmetic, relational, or bitwise operators. Equality operators (==, !=,
+            // ===, !==) are allowed on unknown and do not trigger TS18046.
+            let is_non_equality_op = !matches!(op_str, "==" | "!=" | "===" | "!==");
+            if is_non_equality_op && (left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN)
+            {
+                if left_type == TypeId::UNKNOWN {
+                    self.error_is_of_type_unknown(left_idx);
+                }
+                if right_type == TypeId::UNKNOWN {
+                    self.error_is_of_type_unknown(right_idx);
+                }
+                type_stack.push(TypeId::ERROR);
+                continue;
+            }
 
             // Check for boxed primitive types in arithmetic operations BEFORE evaluating types.
             // Boxed types (Number, String, Boolean) are interface types from lib.d.ts
