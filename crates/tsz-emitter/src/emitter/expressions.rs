@@ -59,8 +59,33 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Assignment and comma operators accept AssignmentExpression operands,
+        // which includes YieldExpression. So yield-from-await doesn't need
+        // parens in those positions. Only non-assignment, non-comma binary
+        // operators need the in_binary_operand flag to trigger yield wrapping.
+        let op = binary.operator_token;
+        let is_assignment_or_comma = op == SyntaxKind::CommaToken as u16
+            || op == SyntaxKind::EqualsToken as u16
+            || op == SyntaxKind::PlusEqualsToken as u16
+            || op == SyntaxKind::MinusEqualsToken as u16
+            || op == SyntaxKind::AsteriskEqualsToken as u16
+            || op == SyntaxKind::SlashEqualsToken as u16
+            || op == SyntaxKind::PercentEqualsToken as u16
+            || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || op == SyntaxKind::AmpersandEqualsToken as u16
+            || op == SyntaxKind::CaretEqualsToken as u16
+            || op == SyntaxKind::BarEqualsToken as u16
+            || op == SyntaxKind::BarBarEqualsToken as u16
+            || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || op == SyntaxKind::QuestionQuestionEqualsToken as u16;
+
         let prev_in_binary = self.ctx.flags.in_binary_operand;
-        self.ctx.flags.in_binary_operand = true;
+        if !is_assignment_or_comma {
+            self.ctx.flags.in_binary_operand = true;
+        }
         self.emit(binary.left);
 
         // Check if there's a line break between the operator and the right operand
@@ -1587,6 +1612,78 @@ mod tests {
         assert!(
             output.contains(r#"import("./lib")"#),
             "Dynamic import inside async function must emit 'import' keyword.\nOutput:\n{output}"
+        );
+    }
+
+    /// When async functions are lowered to generator functions (ES2015 target),
+    /// `await expr` becomes `yield expr`. Yield has lower precedence than most
+    /// operators, so it needs parens inside binary operators like `||`:
+    /// `await p || a` → `(yield p) || a`. But assignment RHS and comma
+    /// expression operands accept `AssignmentExpression` (which includes yield),
+    /// so no extra parens are needed there.
+    #[test]
+    fn yield_from_await_no_extra_parens_in_assignment_rhs() {
+        let source = r#"async function func() { o.a = await p; }"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("o.a = yield p;"),
+            "yield-from-await in assignment RHS must NOT have extra parens.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(yield p)"),
+            "yield-from-await in assignment RHS should not be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// Yield-from-await in comma expression LHS should not have extra parens.
+    /// `(await p, a)` → `(yield p, a)`, NOT `((yield p), a)`.
+    #[test]
+    fn yield_from_await_no_extra_parens_in_comma_expr() {
+        let source = r#"async function func() { var b = (await p, a); }"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(yield p, a)"),
+            "yield-from-await in comma expression must NOT have extra parens.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("((yield p)"),
+            "yield-from-await should not be double-wrapped.\nOutput:\n{output}"
+        );
+    }
+
+    /// Yield-from-await inside a binary operator like `||` still NEEDS parens.
+    /// `await p || a` → `(yield p) || a` (otherwise it would parse as `yield (p || a)`).
+    #[test]
+    fn yield_from_await_keeps_parens_in_binary_operator() {
+        let source = r#"async function func() { var b = await p || a; }"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(yield p) || a"),
+            "yield-from-await in || operand MUST have parens for correct precedence.\nOutput:\n{output}"
         );
     }
 }
