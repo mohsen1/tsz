@@ -622,3 +622,47 @@ fn class_body_inner_comment_preserved() {
         "Leading comment of class member should be preserved.\nOutput:\n{output}"
     );
 }
+
+/// Trailing comment after closing `}` of an empty single-line class body must be
+/// preserved.  Previously, `skip_trailing_same_line_comments` on the opening `{`
+/// incorrectly consumed the comment because it used `node.end` (past the next
+/// newline) as the scan boundary, making it think there was a newline between `{`
+/// and the first member — when in fact the `{` and `}` are adjacent and the comment
+/// follows `}`.
+#[test]
+fn empty_class_trailing_comment_preserved() {
+    let source =
+        "class Gen extends base() {}  // Error, T not in scope\nclass Spec extends Gen {}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("} // Error, T not in scope"),
+        "Trailing comment after empty class `}}` should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Multi-line class body opening brace comment should still be suppressed.
+#[test]
+fn multiline_class_opening_brace_comment_still_suppressed() {
+    let source = "class C { // opening comment\n    foo() { }\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("// opening comment"),
+        "Comment on multi-line class opening brace should be suppressed.\nOutput:\n{output}"
+    );
+}
