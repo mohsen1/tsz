@@ -1,8 +1,34 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9864/13623 = 72.4% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9872/13623 = 72.5% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Namespace IIFE parameter not renamed for variable/import-equals conflicts** (+9 JS):
+  `namespace_body_has_name_conflict` only checked class, function, enum, and module
+  declarations. Variable declarations (`export var m`) and import-equals declarations
+  (`import M = Z.M`) were missed, so the IIFE parameter wasn't suffixed with `_1` when
+  it should have been. Fix: add `VARIABLE_STATEMENT` and `IMPORT_EQUALS_DECLARATION`
+  scanning to the conflict checker. For variables, traverse the 3-level AST
+  (`VARIABLE_STATEMENT` → `VARIABLE_DECLARATION_LIST` → `VARIABLE_DECLARATION`).
+  Two unit tests added.
+  Tests fixed: `importAndVariableDeclarationConflict1-4`,
+  `collisionCodeGenModuleWithMemberVariable`,
+  `moduleSharesNameWithImportDeclarationInsideIt/3/4`, plus 1 more.
+  JS: 9863→9872, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session
+- **Namespace IIFE param rename for deeply nested declarations** (~3 tests):
+  `moduleSharesNameWithImportDeclarationInsideIt5/6` and `privacyGloImportParseErrors`
+  have conflicts from declarations inside nested namespaces/blocks (e.g.,
+  `namespace m2 { namespace m4 { import m2 = require(...) } }`). The current checker
+  only scans direct children of the namespace body. tsc scans recursively. Needs deep
+  AST traversal which risks false positives on block-scoped declarations.
+- **`nameCollisionWithBlockScopedVariable1`**: Has `{ let M = 0; }` inside a block within
+  namespace M. tsc renames IIFE param to `M_1`. Requires scanning inside nested blocks,
+  which has scope implications (block-scoped `let` shouldn't necessarily trigger a rename
+  for the function-scoped IIFE param — but tsc does it anyway).
+
+### Previously Fixed This Session
 - **Comments inside erased type annotations leaking into JS output** (+10 JS):
   When a variable, parameter, or function has a type annotation containing interior
   comments (e.g., `var v: { (x: number); // comment }`), erasing the type left those
@@ -1193,11 +1219,11 @@
     lightweight type-aware import analysis pass before emit, or (b) running emit tests with check
     enabled. ~81 tests show this as the sole diff; ~128 more have it as one of multiple diffs.
 
-31. **Namespace parameter naming `m_1` vs `m` (~10 tests)**: tsc uses `m` as the parameter name
-    for namespace IIFEs (`(function(m) { ... })(M || (M = {}))`) while tsz emits `m_1`. This is
-    a collision-avoidance issue in the unique name generator — the emitter's `make_unique_name`
-    always appends `_N` suffix, while tsc only does so when there's an actual collision. Low
-    impact per test but affects ~10 tests as a sole diff.
+31. ~~**Namespace parameter naming `m_1` vs `m` (~10 tests)**~~ — **PARTIALLY FIXED**: The
+    `namespace_body_has_name_conflict` function was missing variable and import-equals
+    declarations. Added those, fixing 9 tests. Remaining ~3 tests involve deeply-nested
+    declarations (declarations inside nested namespaces or blocks) which require recursive
+    AST traversal. See "Skipped / Investigated This Session" above.
 
 32. **Parser `declare` modifier threading for import/export/await/using (~4 tests)**: The parser's
     `look_ahead_is_declare_before_declaration` (state_statements.rs:640) is missing several keywords:
