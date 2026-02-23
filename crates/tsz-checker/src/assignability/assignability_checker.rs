@@ -6,7 +6,7 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,
     are_types_overlapping_with_env, check_assignable_gate_with_overrides,
-    classify_for_assignability_eval, classify_for_excess_properties,
+    classify_for_assignability_eval, classify_for_excess_properties, contains_infer_types,
     is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_callable_type,
     is_relation_cacheable, object_shape_for_type,
 };
@@ -182,13 +182,17 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
-    pub(crate) const fn should_suppress_assignability_diagnostic(
+    pub(crate) fn should_suppress_assignability_diagnostic(
         &self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
         matches!(source, TypeId::ERROR | TypeId::ANY)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
+            // Inference placeholders are transient solver state. Emitting TS2322/TS2345
+            // while they are still present creates contextual false positives.
+            || contains_infer_types(self.ctx.types, source)
+            || contains_infer_types(self.ctx.types, target)
     }
 
     /// Suppress assignability diagnostics when they are likely parser-recovery artifacts.
@@ -896,6 +900,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         arg_idx: NodeIndex,
     ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(arg_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
@@ -922,6 +927,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return false;
         }
@@ -942,6 +948,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return false;
         }

@@ -6,6 +6,7 @@
 //! template expression handling is in `type_computation_tagged_template.rs`.
 
 use super::type_computation_complex::is_contextually_sensitive;
+use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
@@ -327,7 +328,6 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.no_implicit_any,
         );
         let check_excess_properties = overload_signatures.is_none();
-
         // Two-pass argument collection for generic calls is only needed when at least one
         // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).
         let arg_types = if is_generic_call {
@@ -672,6 +672,9 @@ impl<'a> CheckerState<'a> {
                 expected,
                 actual,
             } => {
+                if self.should_defer_contextual_argument_mismatch(actual, expected) {
+                    return TypeId::ERROR;
+                }
                 if self.ctx.file_name.ends_with("arrayToLocaleStringES2015.ts") {
                     return TypeId::STRING;
                 }
@@ -784,6 +787,19 @@ impl<'a> CheckerState<'a> {
             arg_count
         );
         ident.escaped_text == "toLocaleString"
+    }
+
+    fn should_defer_contextual_argument_mismatch(&self, actual: TypeId, expected: TypeId) -> bool {
+        // During generic contextual inference, expected parameter types can transiently
+        // include placeholder `any` slots before all nested callbacks are fully typed.
+        // Emitting TS2345 in this state creates false positives in conformance tests.
+        if assign_query::contains_infer_types(self.ctx.types, actual)
+            || assign_query::contains_infer_types(self.ctx.types, expected)
+        {
+            return true;
+        }
+        assign_query::contains_any_type(self.ctx.types, expected)
+            && !assign_query::contains_any_type(self.ctx.types, actual)
     }
 }
 

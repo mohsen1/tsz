@@ -260,6 +260,16 @@ pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching(types, type_id, |key| matches!(key, TypeData::Infer(_)))
 }
 
+/// Check if a type contains the `any` intrinsic anywhere.
+pub fn contains_any_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::ANY {
+        return true;
+    }
+    contains_type_matching(types, type_id, |key| {
+        matches!(key, TypeData::Intrinsic(IntrinsicKind::Any))
+    })
+}
+
 /// Check if a type contains the error type.
 pub fn contains_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::ERROR {
