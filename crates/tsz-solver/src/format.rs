@@ -242,19 +242,7 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref())
             }
             TypeData::TypeParameter(info) => self.atom(info.name).to_string(),
-            TypeData::Lazy(def_id) => {
-                // Try to get the type name from the definition store
-                if let Some(def_store) = self.def_store {
-                    if let Some(def) = def_store.get(*def_id) {
-                        // Use the definition name if available
-                        self.format_def_name(&def)
-                    } else {
-                        format!("Lazy({})", def_id.0)
-                    }
-                } else {
-                    format!("Lazy({})", def_id.0)
-                }
-            }
+            TypeData::Lazy(def_id) => self.format_def_id(*def_id, "Lazy"),
             TypeData::Recursive(idx) => {
                 format!("Recursive({idx})")
             }
@@ -275,25 +263,13 @@ impl<'a> TypeFormatter<'a> {
                 // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str = if let Some(TypeData::Lazy(def_id)) = base_key {
-                    if let Some(def_store) = self.def_store {
-                        if let Some(def) = def_store.get(def_id) {
-                            let name = self.format_def_name(&def);
-                            trace!(
-                                def_id = %def_id.0,
-                                name = %name,
-                                kind = ?def.kind,
-                                type_params_count = def.type_params.len(),
-                                "Application base resolved from DefId"
-                            );
-                            name
-                        } else {
-                            trace!(def_id = %def_id.0, "DefId not found in store");
-                            format!("Lazy({})", def_id.0)
-                        }
-                    } else {
-                        trace!(def_id = %def_id.0, "No def_store available");
-                        format!("Lazy({})", def_id.0)
-                    }
+                    let name = self.format_def_id(def_id, "Lazy");
+                    trace!(
+                        def_id = %def_id.0,
+                        name = %name,
+                        "Application base resolved from DefId"
+                    );
+                    name
                 } else {
                     let formatted = self.format(app.base);
                     trace!(
@@ -353,19 +329,7 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("{}<{}>", kind_name, self.format(*type_arg))
             }
-            TypeData::Enum(def_id, _member_type) => {
-                // Try to get the enum name from the definition store
-                if let Some(def_store) = self.def_store {
-                    if let Some(def) = def_store.get(*def_id) {
-                        // Use the definition name if available
-                        self.format_def_name(&def)
-                    } else {
-                        format!("Enum({})", def_id.0)
-                    }
-                } else {
-                    format!("Enum({})", def_id.0)
-                }
-            }
+            TypeData::Enum(def_id, _member_type) => self.format_def_id(*def_id, "Enum"),
             TypeData::ModuleNamespace(sym) => {
                 let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
                     name
@@ -677,6 +641,16 @@ impl<'a> TypeFormatter<'a> {
         }
         result.push('`');
         result
+    }
+
+    /// Resolve a `DefId` to a human-readable name via the definition store,
+    /// falling back to `"<prefix>(<raw_id>)"` if unavailable.
+    fn format_def_id(&mut self, def_id: crate::def::DefId, fallback_prefix: &str) -> String {
+        if let Some(def_store) = self.def_store
+            && let Some(def) = def_store.get(def_id) {
+                return self.format_def_name(&def);
+            }
+        format!("{}({})", fallback_prefix, def_id.0)
     }
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.

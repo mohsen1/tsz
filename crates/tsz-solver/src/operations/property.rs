@@ -173,16 +173,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     pub fn with_resolver(db: &'a dyn QueryDatabase, _resolver: &dyn TypeResolver) -> Self {
         // Note: resolver parameter is currently unused but kept for API compatibility
-        // TODO: Integrate resolver into PropertyAccessEvaluator if needed
-        PropertyAccessEvaluator {
-            db,
-            no_unchecked_indexed_access: false,
-            guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::PropertyAccess,
-            )),
-            current_prop_name: RefCell::new(None),
-            current_prop_atom: RefCell::new(None),
-        }
+        Self::new(db)
     }
 
     pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
