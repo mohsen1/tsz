@@ -163,6 +163,41 @@ impl NodeArena {
         }
     }
 
+    /// Check if a function-like node is immediately invoked (IIFE pattern).
+    ///
+    /// Detects patterns like `(function() {})()`, `(() => expr)()`,
+    /// `((fn))()` (arbitrary paren nesting), and `new (function() {})()`.
+    #[must_use]
+    pub fn is_immediately_invoked(&self, func_idx: NodeIndex) -> bool {
+        use super::syntax_kind_ext::{CALL_EXPRESSION, NEW_EXPRESSION, PARENTHESIZED_EXPRESSION};
+
+        let mut current = func_idx;
+        // Guard against pathological nesting depth
+        for _ in 0..100 {
+            let Some(ext) = self.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.get(ext.parent) else {
+                return false;
+            };
+            if parent_node.kind == PARENTHESIZED_EXPRESSION {
+                current = ext.parent;
+                continue;
+            }
+            if (parent_node.kind == CALL_EXPRESSION || parent_node.kind == NEW_EXPRESSION)
+                && let Some(call) = self.get_call_expr(parent_node)
+                && call.expression == current
+            {
+                return true;
+            }
+            return false;
+        }
+        false
+    }
+
     /// Get access expression data (property access or element access).
     /// Returns None if node is not an access expression or has no data.
     #[inline]
