@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::lazy_def_id as get_lazy_def_id;
-pub(crate) use super::common::{callable_shape_for_type, is_type_parameter};
+pub(crate) use super::common::{callable_shape_for_type, is_type_parameter_like};
 pub(crate) use tsz_solver::type_queries::{
     BaseInstanceMergeKind, ConstructorTypeKind, SignatureTypeKind, StaticPropertySource,
 };

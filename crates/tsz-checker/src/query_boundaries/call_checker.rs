@@ -19,7 +19,7 @@ pub(crate) fn tuple_elements_for_type(
 }
 
 pub(crate) fn is_type_parameter_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter(db, type_id)
+    tsz_solver::type_queries::is_type_parameter_like(db, type_id)
 }
 
 pub(crate) fn lazy_def_id_for_type(

@@ -50,7 +50,7 @@ fn exposes_state_checking_boundary_queries() {
         union_members(&types, union),
         Some(vec![TypeId::NUMBER, TypeId::STRING])
     );
-    assert!(is_type_parameter(&types, type_param));
+    assert!(is_type_parameter_like(&types, type_param));
     assert!(is_only_null_or_undefined(&types, null_or_undefined));
     let found = find_property_in_object_by_str(&types, object_with_optional, "foo")
         .expect("expected property in object_with_optional");

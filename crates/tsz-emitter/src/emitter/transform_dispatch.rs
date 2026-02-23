@@ -349,35 +349,37 @@ impl<'a> Printer<'a> {
                     // For non-default exported enums in CJS, fold exports.Name into
                     // the IIFE tail: (E || (exports.E = E = {})) instead of a
                     // separate `exports.E = E;` statement after the IIFE.
-                    if node.kind == syntax_kind_ext::ENUM_DECLARATION && !is_default
-                        && let Some(enum_decl) = self.arena.get_enum(node) {
-                            let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                            if !enum_name.is_empty() {
-                                let mut enum_emitter = EnumES5Emitter::new(self.arena);
-                                enum_emitter.set_indent_level(self.writer.indent_level());
-                                if let Some(text) = self.source_text_for_map() {
-                                    enum_emitter.set_source_text(text);
-                                }
-                                let mut output = enum_emitter.emit_enum(idx);
-                                // Fold exports binding into IIFE tail
-                                let from = format!("({enum_name} || ({enum_name} = {{}}))");
-                                let to = format!(
-                                    "({enum_name} || (exports.{enum_name} = {enum_name} = {{}}))"
-                                );
-                                output = output.replacen(&from, &to, 1);
-                                // Handle namespace merge: strip var prefix if name
-                                // was already declared
-                                if self.declared_namespace_names.contains(&enum_name) {
-                                    let var_prefix = format!("var {enum_name};\n");
-                                    if output.starts_with(&var_prefix) {
-                                        output = output[var_prefix.len()..].to_string();
-                                    }
-                                }
-                                self.declared_namespace_names.insert(enum_name);
-                                self.write(output.trim_end_matches('\n'));
-                                return;
+                    if node.kind == syntax_kind_ext::ENUM_DECLARATION
+                        && !is_default
+                        && let Some(enum_decl) = self.arena.get_enum(node)
+                    {
+                        let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                        if !enum_name.is_empty() {
+                            let mut enum_emitter = EnumES5Emitter::new(self.arena);
+                            enum_emitter.set_indent_level(self.writer.indent_level());
+                            if let Some(text) = self.source_text_for_map() {
+                                enum_emitter.set_source_text(text);
                             }
+                            let mut output = enum_emitter.emit_enum(idx);
+                            // Fold exports binding into IIFE tail
+                            let from = format!("({enum_name} || ({enum_name} = {{}}))");
+                            let to = format!(
+                                "({enum_name} || (exports.{enum_name} = {enum_name} = {{}}))"
+                            );
+                            output = output.replacen(&from, &to, 1);
+                            // Handle namespace merge: strip var prefix if name
+                            // was already declared
+                            if self.declared_namespace_names.contains(&enum_name) {
+                                let var_prefix = format!("var {enum_name};\n");
+                                if output.starts_with(&var_prefix) {
+                                    output = output[var_prefix.len()..].to_string();
+                                }
+                            }
+                            self.declared_namespace_names.insert(enum_name);
+                            self.write(output.trim_end_matches('\n'));
+                            return;
                         }
+                    }
 
                     // For non-default function declarations, the preamble already
                     // emitted `exports.X = X;` (function declarations are hoisted).

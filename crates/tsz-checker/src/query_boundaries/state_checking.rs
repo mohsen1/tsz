@@ -5,7 +5,7 @@ use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
     array_element_type, contains_type_parameters, intersection_members, is_mapped_type,
-    is_string_type, is_type_parameter, object_shape_for_type as object_shape, tuple_elements,
+    is_string_type, is_type_parameter_like, object_shape_for_type as object_shape, tuple_elements,
     union_members,
 };
 
