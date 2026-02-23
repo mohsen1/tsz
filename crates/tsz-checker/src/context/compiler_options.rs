@@ -3,6 +3,7 @@
 //! These methods provide convenient access to the `CheckerOptions` flags
 //! and derive solver configuration (`JudgeConfig`, `CompatChecker`) from them.
 
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::judge::JudgeConfig;
 
 use super::CheckerContext;
@@ -15,6 +16,19 @@ impl<'a> CheckerContext<'a> {
     /// Check if strict mode is enabled.
     pub const fn is_strict_mode(&self) -> bool {
         self.compiler_options.strict
+    }
+
+    /// Check if the current file is a declaration file (.d.ts, .d.mts, .d.cts).
+    pub fn is_declaration_file(&self) -> bool {
+        self.file_name.ends_with(".d.ts")
+            || self.file_name.ends_with(".d.mts")
+            || self.file_name.ends_with(".d.cts")
+    }
+
+    /// Check if a declaration is ambient (in a `.d.ts` file, has `declare` keyword,
+    /// AMBIENT node flag, or is inside an ambient context like `declare module`).
+    pub fn is_ambient_declaration(&self, idx: NodeIndex) -> bool {
+        self.is_declaration_file() || self.arena.is_in_ambient_context(idx)
     }
 
     /// Check if the current file is a JavaScript file (.js, .jsx, .mjs, .cjs).

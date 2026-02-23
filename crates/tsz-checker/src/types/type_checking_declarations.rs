@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the declaration is in an ambient context.
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
-        self.ctx.file_name.ends_with(".d.ts") || self.ctx.arena.is_in_ambient_context(var_idx)
+        self.ctx.is_ambient_declaration(var_idx)
     }
 
     // 19. Type and Name Checking Utilities (8 functions)
