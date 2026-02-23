@@ -118,6 +118,8 @@ let jsEditor = null;
 let wasm = null;
 let libFiles = {};
 let checkTimeout = null;
+let lspParser = null;
+let lspParserState = null;
 
 const statusEl = document.getElementById("playground-status");
 const exampleSelect = document.getElementById("example-select");
@@ -174,6 +176,24 @@ async function loadMonaco() {
           noSemanticValidation: true,
           noSyntaxValidation: true,
         });
+        // Disable Monaco/TS worker language features so editor intelligence comes from TSZ.
+        if (typeof monaco.languages.typescript.typescriptDefaults.setModeConfiguration === "function") {
+          monaco.languages.typescript.typescriptDefaults.setModeConfiguration({
+            completionItems: false,
+            hovers: false,
+            signatureHelp: false,
+            documentSymbols: false,
+            definitions: false,
+            references: false,
+            documentHighlights: false,
+            rename: false,
+            diagnostics: false,
+            selectionRanges: false,
+            inlayHints: false,
+            semanticTokens: false,
+            codeActions: false,
+          });
+        }
 
         jsEditor = monaco.editor.create(document.getElementById("js-output-editor"), {
           value: "",
@@ -194,6 +214,8 @@ async function loadMonaco() {
 
         editor.onDidChangeModelContent(() => scheduleCheck());
 
+        registerTszProviders();
+
         // Track dark mode changes
         window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
           monaco.editor.setTheme(e.matches ? "vs-dark" : "vs");
@@ -204,6 +226,213 @@ async function loadMonaco() {
     };
     script.onerror = reject;
     document.head.appendChild(script);
+  });
+}
+
+function toLspPosition(position) {
+  return {
+    line: Math.max(0, position.lineNumber - 1),
+    character: Math.max(0, position.column - 1),
+  };
+}
+
+function toMonacoRange(range) {
+  if (!range || !range.start || !range.end) return undefined;
+  return new monaco.Range(
+    range.start.line + 1,
+    range.start.character + 1,
+    range.end.line + 1,
+    range.end.character + 1
+  );
+}
+
+function getCurrentCompilerOptions() {
+  return {
+    strict: strictCheck.checked,
+    soundMode: soundCheck.checked,
+  };
+}
+
+function disposeLspParser() {
+  if (lspParser && typeof lspParser.free === "function") {
+    lspParser.free();
+  }
+  lspParser = null;
+  lspParserState = null;
+}
+
+function ensureLspParser() {
+  if (!wasm || !editor) return null;
+
+  const code = editor.getValue();
+  const options = getCurrentCompilerOptions();
+  const state = JSON.stringify({
+    code,
+    strict: options.strict,
+    soundMode: options.soundMode,
+    libCount: Object.keys(libFiles).length,
+  });
+
+  if (lspParser && lspParserState === state) {
+    return lspParser;
+  }
+
+  disposeLspParser();
+
+  try {
+    const parser = new wasm.Parser("input.ts", code);
+    parser.setCompilerOptions(JSON.stringify(options));
+    for (const [name, content] of Object.entries(libFiles)) {
+      parser.addLibFile(name, content);
+    }
+    parser.parseSourceFile();
+
+    lspParser = parser;
+    lspParserState = state;
+    return lspParser;
+  } catch (e) {
+    console.warn("Failed to build TSZ parser for LSP features:", e);
+    disposeLspParser();
+    return null;
+  }
+}
+
+function completionKindToMonaco(kind) {
+  switch (kind) {
+    case "Function": return monaco.languages.CompletionItemKind.Function;
+    case "Class": return monaco.languages.CompletionItemKind.Class;
+    case "Method": return monaco.languages.CompletionItemKind.Method;
+    case "Parameter": return monaco.languages.CompletionItemKind.Variable;
+    case "Property": return monaco.languages.CompletionItemKind.Property;
+    case "Keyword": return monaco.languages.CompletionItemKind.Keyword;
+    case "Interface": return monaco.languages.CompletionItemKind.Interface;
+    case "Enum": return monaco.languages.CompletionItemKind.Enum;
+    case "TypeAlias": return monaco.languages.CompletionItemKind.Struct;
+    case "Module": return monaco.languages.CompletionItemKind.Module;
+    case "TypeParameter": return monaco.languages.CompletionItemKind.TypeParameter;
+    case "Constructor": return monaco.languages.CompletionItemKind.Constructor;
+    case "Variable":
+    default:
+      return monaco.languages.CompletionItemKind.Variable;
+  }
+}
+
+function registerTszProviders() {
+  monaco.languages.registerHoverProvider("typescript", {
+    provideHover(model, position) {
+      if (!editor || model !== editor.getModel()) return null;
+      const parser = ensureLspParser();
+      if (!parser) return null;
+
+      try {
+        const pos = toLspPosition(position);
+        const hover = parser.getHoverAtPosition(pos.line, pos.character);
+        if (!hover) return null;
+
+        const contents = Array.isArray(hover.contents)
+          ? hover.contents.map(c => ({ value: String(c) }))
+          : [];
+        return {
+          range: toMonacoRange(hover.range),
+          contents,
+        };
+      } catch (e) {
+        console.warn("TSZ hover failed:", e);
+        return null;
+      }
+    },
+  });
+
+  monaco.languages.registerCompletionItemProvider("typescript", {
+    triggerCharacters: [".", "\"", "'", "/", "@", "<"],
+    provideCompletionItems(model, position) {
+      if (!editor || model !== editor.getModel()) return { suggestions: [] };
+      const parser = ensureLspParser();
+      if (!parser) return { suggestions: [] };
+
+      try {
+        const pos = toLspPosition(position);
+        const result = parser.getCompletionsAtPosition(pos.line, pos.character);
+        const entries = result && Array.isArray(result.entries) ? result.entries : [];
+        const suggestions = entries.map(entry => {
+          const insertText = entry.insert_text || entry.label;
+          return {
+            label: entry.label,
+            kind: completionKindToMonaco(entry.kind),
+            detail: entry.detail || undefined,
+            documentation: entry.documentation ? { value: String(entry.documentation) } : undefined,
+            sortText: entry.sort_text || undefined,
+            filterText: entry.label,
+            insertText,
+            insertTextRules: entry.is_snippet
+              ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+              : monaco.languages.CompletionItemInsertTextRule.None,
+            range: undefined,
+          };
+        });
+        return { suggestions };
+      } catch (e) {
+        console.warn("TSZ completions failed:", e);
+        return { suggestions: [] };
+      }
+    },
+  });
+
+  monaco.languages.registerSignatureHelpProvider("typescript", {
+    signatureHelpTriggerCharacters: ["(", ","],
+    signatureHelpRetriggerCharacters: [","],
+    provideSignatureHelp(model, position) {
+      if (!editor || model !== editor.getModel()) {
+        return {
+          value: { signatures: [], activeSignature: 0, activeParameter: 0 },
+          dispose: () => {},
+        };
+      }
+      const parser = ensureLspParser();
+      if (!parser) {
+        return {
+          value: { signatures: [], activeSignature: 0, activeParameter: 0 },
+          dispose: () => {},
+        };
+      }
+
+      try {
+        const pos = toLspPosition(position);
+        const help = parser.getSignatureHelpAtPosition(pos.line, pos.character);
+        if (!help || !Array.isArray(help.signatures) || help.signatures.length === 0) {
+          return {
+            value: { signatures: [], activeSignature: 0, activeParameter: 0 },
+            dispose: () => {},
+          };
+        }
+
+        const signatures = help.signatures.map(sig => ({
+          label: sig.label,
+          documentation: sig.documentation ? { value: String(sig.documentation) } : undefined,
+          parameters: Array.isArray(sig.parameters)
+            ? sig.parameters.map(p => ({
+                label: p.label,
+                documentation: p.documentation ? { value: String(p.documentation) } : undefined,
+              }))
+            : [],
+        }));
+
+        return {
+          value: {
+            signatures,
+            activeSignature: help.active_signature || 0,
+            activeParameter: help.active_parameter || 0,
+          },
+          dispose: () => {},
+        };
+      } catch (e) {
+        console.warn("TSZ signature help failed:", e);
+        return {
+          value: { signatures: [], activeSignature: 0, activeParameter: 0 },
+          dispose: () => {},
+        };
+      }
+    },
   });
 }
 
@@ -268,6 +497,8 @@ function runCheck() {
   const start = performance.now();
 
   try {
+    ensureLspParser();
+
     const program = new wasm.TsProgram();
     program.setCompilerOptions(JSON.stringify({ strict, soundMode }));
 
@@ -393,6 +624,7 @@ exampleSelect.addEventListener("change", () => {
       soundCheck.checked = false;
     }
     editor.setValue(code);
+    disposeLspParser();
   }
 });
 
