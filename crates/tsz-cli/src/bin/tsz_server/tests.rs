@@ -3780,6 +3780,115 @@ x;"
 }
 
 #[test]
+fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+        ]
+        .join("\n"),
+    );
+    let (arena, _binder, _root, source_text) = server
+        .parse_and_bind_file("/bar.ts")
+        .expect("expected parse_and_bind_file for /bar.ts");
+    let line_map = tsz::lsp::position::LineMap::build(&source_text);
+    let probe_pos = Server::tsserver_to_lsp_position(1, 14);
+    let probe_off = line_map
+        .position_to_offset(probe_pos, &source_text)
+        .expect("offset at marker");
+    let alias_query = server.debug_alias_query_target(&arena, &source_text, probe_off);
+    let direct_resolve = server.debug_resolve_export_alias_definition("/bar.ts", "./foo", "__<alias>");
+    let probe_node = tsz::lsp::utils::find_node_at_or_before_offset(&arena, probe_off, &source_text);
+    let probe_kind = arena
+        .get(probe_node)
+        .map(|n| n.kind)
+        .unwrap_or_default();
+    let mut chain = Vec::new();
+    let mut walk = probe_node;
+    while walk.is_some() {
+        if let Some(node) = arena.get(walk) {
+            chain.push(node.kind);
+        }
+        let Some(ext) = arena.get_extended(walk) else {
+            break;
+        };
+        walk = ext.parent;
+    }
+    let canonical = server.canonical_definition_for_alias_position(
+        "/bar.ts",
+        &arena,
+        &source_text,
+        probe_off,
+    );
+    assert!(
+        canonical.is_some(),
+        "expected canonical definition for alias specifier (off={probe_off}, kind={probe_kind}, chain={chain:?}, alias_query={alias_query:?}, direct_resolve={direct_resolve:?})"
+    );
+
+    let definition_req = make_request(
+        "definition",
+        serde_json::json!({
+            "file": "/bar.ts",
+            "line": 1,
+            "offset": 14
+        }),
+    );
+    let definition_resp = server.handle_tsserver_request(definition_req);
+    assert!(definition_resp.success);
+    let definition_body = definition_resp
+        .body
+        .expect("definition should return body")
+        .as_array()
+        .cloned()
+        .expect("definition response should be an array");
+    assert!(
+        definition_body.iter().any(|entry| {
+            entry.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")
+        }),
+        "expected alias definition to include /foo.ts, got: {definition_body:?}"
+    );
+
+    let references_req = make_request(
+        "references",
+        serde_json::json!({
+            "file": "/bar.ts",
+            "line": 1,
+            "offset": 14
+        }),
+    );
+    let references_resp = server.handle_tsserver_request(references_req);
+    assert!(references_resp.success);
+    let references_body = references_resp
+        .body
+        .expect("references should return body");
+    let refs = references_body["refs"]
+        .as_array()
+        .cloned()
+        .expect("references should have refs");
+    assert!(
+        refs.iter()
+            .filter_map(|entry| entry.get("file").and_then(serde_json::Value::as_str))
+            .any(|file| file == "/foo.ts"),
+        "expected refs to include /foo.ts, got: {refs:?}"
+    );
+}
+
+#[test]
 fn test_check_options_experimental_decorators_deserialize() {
     // Verify that experimentalDecorators in JSON is correctly deserialized
     let json = r#"{"experimentalDecorators": true}"#;

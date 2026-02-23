@@ -1,5 +1,7 @@
 //! Navigation, definition, and reference handlers for tsz-server.
 
+use std::path::{Path, PathBuf};
+
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
@@ -7,10 +9,12 @@ use tsz::lsp::highlighting::DocumentHighlightProvider;
 use tsz::lsp::hover::HoverProvider;
 use tsz::lsp::implementation::GoToImplementationProvider;
 use tsz::lsp::position::LineMap;
+use tsz::lsp::project::Project;
 use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
 use tsz::lsp::symbols::document_symbols::DocumentSymbolProvider;
 use tsz::parser::node::NodeAccess;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 
 /// Bundled context for a parsed file, reducing parameter count in helpers.
@@ -24,6 +28,340 @@ struct ParsedFileContext<'a> {
 }
 
 impl Server {
+    fn build_project_for_file(&self, file_name: &str) -> Option<Project> {
+        let mut files = self.open_files.clone();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if files.contains_key(path) {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    files.insert(path.clone(), content);
+                }
+            }
+        }
+        if !files.contains_key(file_name)
+            && let Ok(content) = std::fs::read_to_string(file_name)
+        {
+            files.insert(file_name.to_string(), content);
+        }
+        Self::add_project_config_files(&mut files, file_name);
+        if files.is_empty() {
+            return None;
+        }
+
+        let mut project = Project::new();
+        project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
+        project.set_auto_imports_allowed_without_tsconfig(
+            self.auto_imports_allowed_for_inferred_projects,
+        );
+        project.set_import_module_specifier_ending(
+            self.completion_import_module_specifier_ending.clone(),
+        );
+        project.set_import_module_specifier_preference(self.import_module_specifier_preference.clone());
+        project
+            .set_auto_import_file_exclude_patterns(self.auto_import_file_exclude_patterns.clone());
+        project.set_auto_import_specifier_exclude_regexes(
+            self.auto_import_specifier_exclude_regexes.clone(),
+        );
+        for (path, text) in files {
+            project.set_file(path, text);
+        }
+        Some(project)
+    }
+
+    fn find_ancestor_of_kind(
+        arena: &tsz::parser::node::NodeArena,
+        mut node_idx: tsz::parser::NodeIndex,
+        kind: u16,
+    ) -> tsz::parser::NodeIndex {
+        while node_idx.is_some() {
+            let Some(node) = arena.get(node_idx) else {
+                break;
+            };
+            if node.kind == kind {
+                return node_idx;
+            }
+            let Some(ext) = arena.get_extended(node_idx) else {
+                break;
+            };
+            node_idx = ext.parent;
+        }
+        tsz::parser::NodeIndex::NONE
+    }
+
+    fn node_text_opt(source_text: &str, node: &tsz::parser::node::Node) -> Option<String> {
+        if node.end <= node.pos || node.end as usize > source_text.len() {
+            return None;
+        }
+        Some(source_text[node.pos as usize..node.end as usize].to_string())
+    }
+
+    fn unquote(text: &str) -> String {
+        text.trim()
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| text.trim().strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+            .unwrap_or(text.trim())
+            .to_string()
+    }
+
+    fn resolve_module_to_file(&self, from_file: &str, module_specifier: &str) -> Option<String> {
+        fn normalize_path(path: &Path) -> String {
+            let mut out = PathBuf::new();
+            for comp in path.components() {
+                match comp {
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        out.pop();
+                    }
+                    other => out.push(other.as_os_str()),
+                }
+            }
+            if out.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                out.to_string_lossy().to_string()
+            }
+        }
+
+        let spec = module_specifier.trim();
+        if !spec.starts_with('.') {
+            return None;
+        }
+        let base_dir = Path::new(from_file).parent()?;
+        let joined = base_dir.join(spec);
+        let mut candidates = Vec::new();
+        candidates.push(joined.clone());
+        for ext in [".ts", ".tsx", ".d.ts", ".mts", ".cts", ".js", ".jsx"] {
+            candidates.push(PathBuf::from(format!("{}{}", joined.display(), ext)));
+        }
+        for idx in [
+            "index.ts",
+            "index.tsx",
+            "index.d.ts",
+            "index.mts",
+            "index.cts",
+            "index.js",
+            "index.jsx",
+        ] {
+            candidates.push(joined.join(idx));
+        }
+        for candidate in candidates {
+            let candidate_str = normalize_path(&candidate);
+            if self.open_files.contains_key(&candidate_str) || candidate.exists() {
+                return Some(candidate_str);
+            }
+        }
+        None
+    }
+
+    fn alias_query_target(
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        offset: u32,
+    ) -> Option<(String, String)> {
+        let node_idx = tsz::lsp::utils::find_node_at_or_before_offset(arena, offset, source_text);
+        if node_idx.is_none() {
+            return None;
+        }
+        let mut specifier_idx =
+            Self::find_ancestor_of_kind(arena, node_idx, tsz::parser::syntax_kind_ext::IMPORT_SPECIFIER);
+        if specifier_idx.is_none() {
+            specifier_idx = Self::find_ancestor_of_kind(
+                arena,
+                node_idx,
+                tsz::parser::syntax_kind_ext::EXPORT_SPECIFIER,
+            );
+        }
+        if specifier_idx.is_none() {
+            return None;
+        }
+        let specifier_node = arena.get(specifier_idx)?;
+        let spec_data = arena.get_specifier(specifier_node)?;
+        let alias_name = if spec_data.property_name.is_some() {
+            let property_node = arena.get(spec_data.property_name)?;
+            if property_node.kind == SyntaxKind::StringLiteral as u16 {
+                Self::unquote(&Self::node_text_opt(source_text, property_node)?)
+            } else {
+                let name_node = arena.get(spec_data.name)?;
+                if name_node.kind != SyntaxKind::StringLiteral as u16 {
+                    return None;
+                }
+                Self::unquote(&Self::node_text_opt(source_text, name_node)?)
+            }
+        } else {
+            let name_node = arena.get(spec_data.name)?;
+            if name_node.kind != SyntaxKind::StringLiteral as u16 {
+                return None;
+            }
+            Self::unquote(&Self::node_text_opt(source_text, name_node)?)
+        };
+        let ext = arena.get_extended(specifier_idx)?;
+        if ext.parent.is_none() {
+            return None;
+        }
+        let import_decl = Self::find_ancestor_of_kind(
+            arena,
+            specifier_idx,
+            tsz::parser::syntax_kind_ext::IMPORT_DECLARATION,
+        );
+        if import_decl.is_some()
+            && let Some(import_node) = arena.get(import_decl)
+            && let Some(import_data) = arena.get_import_decl(import_node)
+            && let Some(module_node) = arena.get(import_data.module_specifier)
+            && let Some(module_text) = Self::node_text_opt(source_text, module_node)
+        {
+            return Some((Self::unquote(&module_text), alias_name));
+        }
+        let export_decl = Self::find_ancestor_of_kind(
+            arena,
+            specifier_idx,
+            tsz::parser::syntax_kind_ext::EXPORT_DECLARATION,
+        );
+        if export_decl.is_some()
+            && let Some(export_node) = arena.get(export_decl)
+            && let Some(export_data) = arena.get_export_decl(export_node)
+            && export_data.module_specifier.is_some()
+            && let Some(module_node) = arena.get(export_data.module_specifier)
+            && let Some(module_text) = Self::node_text_opt(source_text, module_node)
+        {
+            return Some((Self::unquote(&module_text), alias_name));
+        }
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_alias_query_target(
+        &self,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        offset: u32,
+    ) -> Option<(String, String)> {
+        let _ = self;
+        Self::alias_query_target(arena, source_text, offset)
+    }
+
+    fn resolve_export_alias_definition(
+        &self,
+        from_file: &str,
+        module_specifier: &str,
+        export_name: &str,
+        depth: usize,
+    ) -> Option<tsz_common::position::Location> {
+        if depth > 8 {
+            return None;
+        }
+        let target_file = self.resolve_module_to_file(from_file, module_specifier)?;
+        let (arena, binder, root, source_text) = self.parse_and_bind_file(&target_file)?;
+        let line_map = LineMap::build(&source_text);
+
+        let mut line_start = 0usize;
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("export") || !trimmed.contains('{') || !trimmed.contains('}') {
+                line_start += line.len() + 1;
+                continue;
+            }
+            let Some(open_brace) = trimmed.find('{') else {
+                line_start += line.len() + 1;
+                continue;
+            };
+            let Some(close_brace) = trimmed[open_brace + 1..].find('}') else {
+                line_start += line.len() + 1;
+                continue;
+            };
+            let close_brace = open_brace + 1 + close_brace;
+            let clause = &trimmed[open_brace + 1..close_brace];
+            let module_spec = Self::extract_quoted_after(trimmed, " from ");
+
+            for segment in clause.split(',') {
+                let part = segment.trim().strip_prefix("type ").unwrap_or(segment.trim());
+                let Some((left_raw, right_raw)) = part.split_once(" as ") else {
+                    continue;
+                };
+                let left = left_raw.trim();
+                let right = right_raw.trim();
+                if Self::unquote(right) != export_name {
+                    continue;
+                }
+
+                let next_name = Self::unquote(left);
+                if let Some(module_name) = module_spec.clone() {
+                    return self.resolve_export_alias_definition(
+                        &target_file,
+                        &module_name,
+                        &next_name,
+                        depth + 1,
+                    );
+                }
+
+                let token_pos_in_line = line.find(left)?;
+                let token_start = (line_start + token_pos_in_line) as u32;
+                let token_end = token_start + left.len() as u32;
+                let token_position = line_map.offset_to_position(token_start, &source_text);
+                let provider =
+                    GoToDefinition::new(&arena, &binder, &line_map, target_file.clone(), &source_text);
+                if let Some(defs) = provider.get_definition(root, token_position)
+                    && let Some(first) = defs.first()
+                {
+                    return Some(first.clone());
+                }
+
+                let range = tsz_common::position::Range::new(
+                    line_map.offset_to_position(token_start, &source_text),
+                    line_map.offset_to_position(token_end, &source_text),
+                );
+                return Some(tsz_common::position::Location::new(target_file, range));
+            }
+
+            line_start += line.len() + 1;
+        }
+
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_resolve_export_alias_definition(
+        &self,
+        from_file: &str,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<tsz_common::position::Location> {
+        self.resolve_export_alias_definition(from_file, module_specifier, export_name, 0)
+    }
+
+    pub(crate) fn canonical_definition_for_alias_position(
+        &self,
+        file: &str,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        offset: u32,
+    ) -> Option<tsz_common::position::Location> {
+        let (module_specifier, alias_name) = Self::alias_query_target(arena, source_text, offset)?;
+        self.resolve_export_alias_definition(file, &module_specifier, &alias_name, 0)
+    }
+
+    fn definition_info_from_location(&self, loc: &tsz_common::position::Location) -> Option<serde_json::Value> {
+        let (arena, binder, root, source_text) = self.parse_and_bind_file(&loc.file_path)?;
+        let line_map = LineMap::build(&source_text);
+        let provider = GoToDefinition::new(
+            &arena,
+            &binder,
+            &line_map,
+            loc.file_path.clone(),
+            &source_text,
+        );
+        let infos = provider
+            .get_definition_info(root, loc.range.start)
+            .unwrap_or_default();
+        let picked = infos
+            .iter()
+            .find(|info| info.location.range == loc.range)
+            .or_else(|| infos.first())?;
+        Some(Self::definition_info_to_json(picked, &loc.file_path))
+    }
+
     fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {
         let idx = offset as usize;
         if idx > source_text.len() {
@@ -305,6 +643,13 @@ impl Server {
             if Self::is_offset_inside_comment(&source_text, offset) {
                 return None;
             }
+            if let Some(canonical_loc) =
+                self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
+            {
+                if let Some(def) = self.definition_info_from_location(&canonical_loc) {
+                    return Some(serde_json::json!([def]));
+                }
+            }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let mut infos = provider
@@ -348,6 +693,20 @@ impl Server {
             let offset = line_map.position_to_offset(position, &source_text)?;
             if Self::is_offset_inside_comment(&source_text, offset) {
                 return None;
+            }
+            if let Some(canonical_loc) =
+                self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
+            {
+                if let Some(definition) = self.definition_info_from_location(&canonical_loc) {
+                    let text_span = serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(position),
+                        "end": Self::lsp_to_tsserver_position(position),
+                    });
+                    return Some(serde_json::json!({
+                        "definitions": [definition],
+                        "textSpan": text_span,
+                    }));
+                }
             }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
@@ -452,6 +811,44 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            let query_offset = line_map.position_to_offset(position, &source_text)?;
+            if let Some(mut project) = self.build_project_for_file(&file)
+                && let Some(canonical_loc) = self
+                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset)
+                && let Some(locs) = project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
+            {
+                let definition_locs = vec![canonical_loc];
+                let refs: Vec<serde_json::Value> = locs
+                    .iter()
+                    .filter_map(|loc| {
+                        let source = self
+                            .open_files
+                            .get(&loc.file_path)
+                            .cloned()
+                            .or_else(|| std::fs::read_to_string(&loc.file_path).ok())?;
+                        let line_text = source
+                            .lines()
+                            .nth(loc.range.start.line as usize)
+                            .unwrap_or("")
+                            .to_string();
+                        let is_definition = definition_locs.iter().any(|def| {
+                            def.file_path == loc.file_path && def.range == loc.range
+                        });
+                        Some(serde_json::json!({
+                            "file": loc.file_path,
+                            "start": Self::lsp_to_tsserver_position(loc.range.start),
+                            "end": Self::lsp_to_tsserver_position(loc.range.end),
+                            "lineText": line_text,
+                            "isWriteAccess": false,
+                            "isDefinition": is_definition,
+                        }))
+                    })
+                    .collect();
+                return Some(serde_json::json!({
+                    "refs": refs,
+                    "symbolName": "",
+                }));
+            }
             let provider = FindReferences::new(&arena, &binder, &line_map, file, &source_text);
             let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
 
@@ -544,6 +941,7 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            let query_offset = line_map.position_to_offset(position, &source_text)?;
             let provider =
                 RenameProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
 
@@ -567,6 +965,47 @@ impl Server {
                 .position_to_offset(info.trigger_span.end, &source_text)
                 .unwrap_or(0) as usize;
             let trigger_length = end_offset.saturating_sub(start_offset);
+
+            if let Some(mut project) = self.build_project_for_file(&file)
+                && let Some(canonical_loc) = self
+                    .canonical_definition_for_alias_position(&file, &arena, &source_text, query_offset)
+                && let Some(locs) = project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
+            {
+                let mut grouped: rustc_hash::FxHashMap<String, Vec<serde_json::Value>> =
+                    rustc_hash::FxHashMap::default();
+                for loc in locs {
+                    grouped
+                        .entry(loc.file_path.clone())
+                        .or_default()
+                        .push(serde_json::json!({
+                            "start": Self::lsp_to_tsserver_position(loc.range.start),
+                            "end": Self::lsp_to_tsserver_position(loc.range.end),
+                        }));
+                }
+                let locs_json: Vec<serde_json::Value> = grouped
+                    .into_iter()
+                    .map(|(file_name, file_locs)| {
+                        serde_json::json!({
+                            "file": file_name,
+                            "locs": file_locs,
+                        })
+                    })
+                    .collect();
+                return Some(serde_json::json!({
+                    "info": {
+                        "canRename": true,
+                        "displayName": info.display_name,
+                        "fullDisplayName": info.full_display_name,
+                        "kind": info.kind,
+                        "kindModifiers": info.kind_modifiers,
+                        "triggerSpan": {
+                            "start": Self::lsp_to_tsserver_position(info.trigger_span.start),
+                            "length": trigger_length
+                        }
+                    },
+                    "locs": locs_json
+                }));
+            }
 
             // Get rename locations from references with symbol info
             let find_refs =
