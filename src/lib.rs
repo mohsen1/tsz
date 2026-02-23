@@ -360,6 +360,10 @@ struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_target_or_module")]
     target: Option<u32>,
 
+    /// Specify module code generation mode (accepts string like `ESNext` or numeric).
+    #[serde(default, deserialize_with = "deserialize_target_or_module")]
+    module: Option<u32>,
+
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_lib: Option<bool>,
@@ -559,6 +563,22 @@ impl CompilerOptions {
         }
     }
 
+    const fn resolve_module(&self) -> crate::common::ModuleKind {
+        match self.module {
+            Some(1) => crate::common::ModuleKind::CommonJS,
+            Some(2) => crate::common::ModuleKind::AMD,
+            Some(3) => crate::common::ModuleKind::UMD,
+            Some(4) => crate::common::ModuleKind::System,
+            Some(5) => crate::common::ModuleKind::ES2015,
+            Some(6) => crate::common::ModuleKind::ES2020,
+            Some(7) => crate::common::ModuleKind::ES2022,
+            Some(99) => crate::common::ModuleKind::ESNext,
+            Some(100) => crate::common::ModuleKind::Node16,
+            Some(199) => crate::common::ModuleKind::NodeNext,
+            _ => crate::common::ModuleKind::None,
+        }
+    }
+
     /// Convert to `CheckerOptions` for type checking.
     pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let strict = self.strict.unwrap_or(false);
@@ -579,7 +599,7 @@ impl CompilerOptions {
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
             target: self.resolve_target(),
-            module: crate::common::ModuleKind::None,
+            module: self.resolve_module(),
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
 
@@ -598,7 +618,7 @@ impl CompilerOptions {
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,
-            module_explicitly_set: false,
+            module_explicitly_set: self.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
         }
