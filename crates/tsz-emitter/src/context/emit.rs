@@ -167,15 +167,6 @@ impl ModuleTransformState {
         self.commonjs_mode = true;
     }
 
-    /// Exit `CommonJS` module mode
-    pub fn exit_commonjs(&mut self) {
-        self.commonjs_mode = false;
-        self.pending_exports.clear();
-        self.hoisted_func_exports.clear();
-        self.module_temp_counter = 0;
-        self.module_temp_counters.clear();
-    }
-
     /// Add an export name
     pub fn add_export(&mut self, name: String) {
         self.pending_exports.push(name);

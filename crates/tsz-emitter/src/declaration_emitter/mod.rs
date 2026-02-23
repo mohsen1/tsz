@@ -249,14 +249,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.binder = binder;
     }
 
-    /// Set the map of required imports for auto-generation.
-    ///
-    /// Maps module specifier to list of symbol names to import from that module.
-    /// Pre-calculated in driver where `MergedProgram` is available.
-    pub fn set_required_imports(&mut self, imports: FxHashMap<String, Vec<String>>) {
-        self.required_imports = imports;
-    }
-
     /// Set the current file's arena and path for distinguishing local vs foreign symbols.
     ///
     /// This enables `UsageAnalyzer` to track which symbols need imports.

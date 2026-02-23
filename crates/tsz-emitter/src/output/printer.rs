@@ -167,20 +167,6 @@ pub fn print_with_source_map(
     printer.finish()
 }
 
-/// Print an AST to a writer (streaming output).
-///
-/// This is more efficient for large files as it avoids building
-/// the entire output string in memory.
-pub fn print_to_writer<W: Write>(
-    arena: &NodeArena,
-    root: NodeIndex,
-    options: PrintOptions,
-    writer: &mut W,
-) -> io::Result<()> {
-    let output = print_to_string(arena, root, options);
-    writer.write_all(output.as_bytes())
-}
-
 // =============================================================================
 // Printer - Main Interface
 // =============================================================================
@@ -299,29 +285,6 @@ pub fn lower_and_print(arena: &NodeArena, root: NodeIndex, options: PrintOptions
 
     // Create printer with transforms
     let mut printer = Printer::with_transforms(arena, transforms, options);
-    printer.print(root);
-    printer.finish()
-}
-
-/// Lower and print with source map support.
-pub fn lower_and_print_with_source_map(
-    arena: &NodeArena,
-    root: NodeIndex,
-    source_text: &str,
-    source_name: &str,
-    output_name: &str,
-    options: PrintOptions,
-) -> PrintResult {
-    // Create emit context for lowering
-    let emit_ctx = EmitContext::with_options(options.to_printer_options());
-
-    // Run lowering pass
-    let transforms = LoweringPass::new(arena, &emit_ctx).run(root);
-
-    // Create printer with transforms
-    let mut printer = Printer::with_transforms(arena, transforms, options);
-    printer.set_source_text(source_text);
-    printer.enable_source_map(source_name, output_name);
     printer.print(root);
     printer.finish()
 }

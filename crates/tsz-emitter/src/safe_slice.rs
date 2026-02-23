@@ -64,32 +64,6 @@ pub fn byte_at(s: &str, pos: usize) -> Option<u8> {
     s.as_bytes().get(pos).copied()
 }
 
-/// Find the next character boundary at or after a position.
-pub const fn next_boundary(s: &str, pos: usize) -> usize {
-    if pos >= s.len() {
-        return s.len();
-    }
-
-    let mut boundary = pos;
-    while boundary < s.len() && !s.is_char_boundary(boundary) {
-        boundary += 1;
-    }
-    boundary
-}
-
-/// Find the previous character boundary at or before a position.
-pub const fn prev_boundary(s: &str, pos: usize) -> usize {
-    if pos == 0 || pos > s.len() {
-        return 0;
-    }
-
-    let mut boundary = pos;
-    while boundary > 0 && !s.is_char_boundary(boundary) {
-        boundary -= 1;
-    }
-    boundary
-}
-
 #[cfg(test)]
 #[path = "../tests/safe_slice.rs"]
 mod tests;

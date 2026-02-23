@@ -195,22 +195,6 @@ fn test_safe_byte_at() {
     assert_eq!(safe_slice::byte_at(s, 5), None);
 }
 
-#[test]
-fn test_boundary_helpers() {
-    let s = "hello 🦀 world";
-
-    // next_boundary finds valid UTF-8 boundaries
-    assert_eq!(safe_slice::next_boundary(s, 0), 0);
-    assert_eq!(safe_slice::next_boundary(s, 6), 6); // Start of emoji
-    assert_eq!(safe_slice::next_boundary(s, 7), 10); // Mid-emoji -> end of emoji
-    assert_eq!(safe_slice::next_boundary(s, 100), s.len());
-
-    // prev_boundary finds valid UTF-8 boundaries
-    assert_eq!(safe_slice::prev_boundary(s, 10), 10); // End of emoji
-    assert_eq!(safe_slice::prev_boundary(s, 9), 6); // Mid-emoji -> start of emoji
-    assert_eq!(safe_slice::prev_boundary(s, 0), 0);
-}
-
 // =============================================================================
 // Streaming Writer Tests
 // =============================================================================
