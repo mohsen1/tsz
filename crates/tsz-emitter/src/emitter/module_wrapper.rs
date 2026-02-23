@@ -510,7 +510,7 @@ impl<'a> Printer<'a> {
             let dep_var = if let Some(local_name) = chosen {
                 local_name
             } else {
-                let base = crate::transforms::module_commonjs::sanitize_module_name(dep);
+                let base = crate::transforms::emit_utils::sanitize_module_name(dep);
                 format!("{base}_{}", idx + 1)
             };
             dep_vars.insert(dep.clone(), dep_var);
