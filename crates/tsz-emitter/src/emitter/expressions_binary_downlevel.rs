@@ -440,7 +440,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let value_temp = self.get_temp_var_name();
+        let value_temp = self.make_unique_name_hoisted();
         self.write("(");
         self.write(&value_temp);
         self.write(" = ");

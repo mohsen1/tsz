@@ -323,7 +323,7 @@ impl<'a> Printer<'a> {
             self.emit(callee);
             self.emit_call_arguments(node, args.as_ref());
         } else {
-            let temp = self.get_temp_var_name();
+            let temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&temp);
             self.write(" = ");
@@ -349,7 +349,7 @@ impl<'a> Printer<'a> {
         };
 
         if !has_optional_call_token {
-            let this_temp = self.get_temp_var_name();
+            let this_temp = self.make_unique_name_hoisted();
             self.write("(");
             self.write(&this_temp);
             self.write(" = ");
@@ -376,8 +376,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let this_temp = self.get_temp_var_name();
-        let func_temp = self.get_temp_var_name();
+        let this_temp = self.make_unique_name_hoisted();
+        let func_temp = self.make_unique_name_hoisted();
 
         self.write("(");
         self.write(&func_temp);
@@ -801,7 +801,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let base_temp = self.get_temp_var_name();
+        let base_temp = self.make_unique_name_hoisted();
         self.write("(");
         self.write(&base_temp);
         self.write(" = ");
@@ -829,7 +829,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let base_temp = self.get_temp_var_name();
+        let base_temp = self.make_unique_name_hoisted();
         self.write("(");
         self.write(&base_temp);
         self.write(" = ");
@@ -1521,6 +1521,60 @@ mod tests {
         assert!(
             !output.contains("(x()).foo"),
             "Should not have redundant parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When lowering nullish coalescing (`??`) to ES2019 and below for complex
+    /// (non-identifier) LHS expressions, the emitter uses a temp variable:
+    /// `(temp = f()) !== null && temp !== void 0 ? temp : 'fallback'`
+    /// This temp must be declared as `var _a;` at the top of the enclosing scope.
+    #[test]
+    fn nullish_coalescing_emits_hoisted_temp_var_decl() {
+        // Top-level: hoisted temp goes at file scope
+        let source = "let gg = f() ?? 'foo';\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a;"),
+            "Nullish coalescing lowering must emit `var _a;` for the hoisted temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = f())"),
+            "Nullish coalescing lowering must use temp in assignment.\nOutput:\n{output}"
+        );
+    }
+
+    /// When lowering optional property access (`?.`) to ES2019 and below for
+    /// complex base expressions, the emitter uses a temp variable:
+    /// `(temp = expr) === null || temp === void 0 ? void 0 : temp.prop`
+    /// This temp must be declared as `var _a;` at the top of the enclosing scope.
+    #[test]
+    fn optional_chain_emits_hoisted_temp_var_decl() {
+        // Multi-line function body to exercise the function-scoped hoisting path
+        let source = "function h() {\n    let x = getObj()?.value;\n    return x;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a;"),
+            "Optional chain lowering must emit `var _a;` for the hoisted temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = getObj())"),
+            "Optional chain lowering must use temp in assignment.\nOutput:\n{output}"
         );
     }
 }
