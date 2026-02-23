@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9668/13623 = 71.0% JS, 777/1989 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 5108/7163 = 71.3% JS, 415/1035 = 40.1% DTS)
 
 ### Fixed This Session
+- **Suppress trailing comments on function body opening braces** (+15 JS):
+  tsc does NOT emit trailing comments on the opening `{` of function/method/constructor/arrow bodies
+  (e.g., `function foo(x: number) { // comment` → `function foo(x) {`), but DOES preserve them on
+  control-flow blocks (`if`, `for`, `while`, `try`, `catch`). tsz was emitting these comments for
+  all block types. Fix: in `emit_block()`, check the `is_function_body_block` flag. For function
+  body blocks, call `skip_trailing_same_line_comments()` (new helper) to advance `comment_emit_idx`
+  past same-line comments without emitting them. Also reset `emitting_function_body_block` to false
+  at the start of `emit_block()` so nested control-flow blocks inside functions still get their
+  trailing comments preserved. Three unit tests added: function body comment suppressed, method body
+  suppressed with inner if-block comment preserved, arrow function body comment suppressed.
+  Tests fixed: `collisionRestParameterClassMethod`, `collisionArgumentsArrowFunctions`,
+  `forInStrictNullChecksNoError`, `contextualSignatureInstantiation4`, and ~11 others.
+  JS: 5093→5108, DTS: unchanged, zero regressions.
+
+### Previously Fixed
 - **Computed property name side-effect emission for erased class members** (+11 JS):
   When a class property declaration has a computed name (like `[Symbol.iterator]: Type`) and is
   type-only (erased in JS output), tsc emits the computed name expression as a standalone
