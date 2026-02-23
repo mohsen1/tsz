@@ -820,7 +820,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::IsUnknown => {
-                    // TS18046: "'x' is of type 'unknown'."
+                    // TS18046: 'x' is of type 'unknown'.
                     self.error_is_of_type_unknown(access.expression);
                     TypeId::ERROR
                 }

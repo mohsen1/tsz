@@ -4522,11 +4522,11 @@ fn test_references_full_quoted_alias_returns_multiple_symbol_groups() {
     );
     assert!(
         entries.iter().any(|entry| {
-            entry["references"]
-                .as_array()
-                .is_some_and(|refs| refs.iter().any(|r| {
+            entry["references"].as_array().is_some_and(|refs| {
+                refs.iter().any(|r| {
                     r.get("fileName").and_then(serde_json::Value::as_str) == Some("/bar.ts")
-                }))
+                })
+            })
         }),
         "expected at least one group with /bar.ts references: {entries:?}"
     );

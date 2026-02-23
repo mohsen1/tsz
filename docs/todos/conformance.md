@@ -404,7 +404,7 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7932/12574 (63.1%) — full suite (estimated +4 from TS2481)
+## Current score: 7932/12574 (63.1%) — full suite
 
 ### Session progress (7928 → ~7932, +4 tests):
 - **TS2481**: Implemented "Cannot initialize outer scoped variable in the same scope as block
@@ -550,8 +550,40 @@ type covers the implicit any. `expression_result_is_unused()` helper mirrors tsc
   suppress TS7057, but our checker's contextual type propagation may not reach the yield
   expression in all cases. The conformance tests pass, suggesting the common paths work.
 
+## TS18046 — 'x' is of type 'unknown' (Partial, property access only)
+
+**Status**: Partially implemented. +2 tests passing in offset 6000 slice (3928→3930).
+**Error code:** TS18046 ("'{0}' is of type 'unknown'.")
+**Fix**: Changed `PropertyAccessResult::IsUnknown` handling from emitting TS2339 (wrong code)
+to TS18046 (correct code) across 4 files:
+- `type_computation_access.rs` (2 sites: dot access, element access)
+- `property_access_type.rs` (1 site: main property access path)
+- `state_type_analysis_computed_helpers.rs` (1 site: private identifier access)
+Added `error_is_of_type_unknown()` helper in `operator_errors.rs` that emits TS18046 with
+expression name (when available via `expression_text()`) or TS2571 fallback.
+
+### Deferred TS18046 paths (not implemented)
+- **Call expressions** (`x()` on unknown): Reverted. Our type system resolves unresolved
+  imports as `TypeId::UNKNOWN`, so adding TS18046 for calls caused false positives on
+  multi-file tests (e.g., `esModuleInteropImportTSLibHasImport.ts`). Requires distinguishing
+  user-declared `unknown` from resolution-fallback `unknown`.
+- **Constructor expressions** (`new x()` on unknown): Same issue as calls.
+- **Binary operations** (`x + 1`, `x >= 0` on unknown): Reverted. Iterator values from
+  `arguments` resolve to `unknown` in our system, causing false TS18046 on
+  `argumentsObjectIterator01_ES6.ts`. Equality operators (`==`, `===`, `!=`, `!==`) should
+  remain allowed.
+- **Unary operations** (`-x`, `+x` on unknown): Same issue — operand types from incomplete
+  resolution trigger false positives.
+- **Root cause**: Our solver uses `TypeId::UNKNOWN` both for genuine user-declared `unknown`
+  types AND as a fallback for unresolved types. Until we can distinguish these cases (e.g.,
+  via a separate `TypeId::UNRESOLVED` or a flag), call/op TS18046 will cause regressions.
+
 ## Deferred from this run (2026-02-23)
 
+- **TS2688 false positives (26 tests, 14 single-code)**: Our `/// <reference types="..." />`
+  resolver doesn't handle: (a) `node_modules` walk-up from referencing file, (b) `package.json`
+  `types`/`typings` fields for non-`index.d.ts` entries, (c) Node16+ `exports` resolution,
+  (d) scoped `@types` mangling (`@beep/boop` → `@types/beep__boop`). MEDIUM-HIGH difficulty.
 - **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — still missing TS2454 on catch destructuring paths; needs CFG assignment edges for catch-binding destructures.
 - **TS2454**: `TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2.ts` — still missing TS2454 for nested destructuring defaults; requires deeper flow joins for destructuring initializers.
 - **TS2300 (remaining false positives, 4 tests)**: `unusedTypeParameters8.ts` (cross-file class/interface merge — only triggers in multi-file mode), `constructorFunctionMergeWithClass.ts` (JS constructor+class merge), `numericNamedPropertyDuplicates.ts` / `stringNamedPropertyDuplicates.ts` (fingerprint mismatch: property name quoting and line number differences, not error-code level).

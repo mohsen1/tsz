@@ -917,3 +917,58 @@ const make = () => {
         checker.ctx.diagnostics
     );
 }
+
+#[test]
+fn test_unknown_property_access_emits_ts18046() {
+    let source = r"
+function f(x: unknown) {
+    x.foo;
+    x[10];
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18046_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18046)
+        .count();
+    assert!(
+        ts18046_count >= 2,
+        "Expected at least 2 TS18046 for property/element access on unknown, got {ts18046_count}. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+    // Should NOT emit TS2339 for unknown type accesses
+    let ts2339_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .count();
+    assert_eq!(
+        ts2339_count, 0,
+        "Expected no TS2339 for unknown property access (should be TS18046), got {ts2339_count}"
+    );
+}
+
+// NOTE: TS18046 for calls, binary ops, and unary ops on unknown is deferred.
+// Our type system sometimes resolves non-unknown types (e.g., iterator values,
+// unresolved imports) as TypeId::UNKNOWN. Adding TS18046 in those paths causes
+// false positives. Property access TS18046 is safe because it replaces existing
+// TS2339 errors (wrong code → correct code), so no tests flip from pass to fail.

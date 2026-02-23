@@ -13,6 +13,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use std::sync::RwLock;
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::debug;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
@@ -974,12 +976,12 @@ impl BinderState {
         // Debug: log what's going into file_locals
         #[cfg(not(target_arch = "wasm32"))]
         if std::env::var("BIND_DEBUG").is_ok() {
-            tracing::debug!(
+            debug!(
                 "[FILE_LOCALS] Root scope has {} symbols",
                 root_scope_symbols.len()
             );
             for (name, _) in root_scope_symbols.iter() {
-                tracing::debug!("[FILE_LOCALS]   - {}", name);
+                debug!("[FILE_LOCALS]   - {}", name);
             }
         }
 

@@ -430,10 +430,11 @@ impl<'a> Printer<'a> {
                         // initializers. emit_class_es6_with_options consumes this field
                         // at the class-body boundary.
                         if let Some(name_id) = names.first()
-                            && let Some(ident) = self.arena.identifiers.get(*name_id as usize) {
-                                self.pending_commonjs_class_export_name =
-                                    Some(ident.escaped_text.clone());
-                            }
+                            && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
+                        {
+                            self.pending_commonjs_class_export_name =
+                                Some(ident.escaped_text.clone());
+                        }
                         let prev_module = self.ctx.options.module;
                         self.ctx.options.module = ModuleKind::None;
                         let export_name = names.first().copied();
@@ -923,10 +924,10 @@ impl<'a> Printer<'a> {
                     // Use deferred export mechanism for class declarations so
                     // exports.X = X; appears before lowered static blocks/IIFEs.
                     if let Some(name_id) = names.first()
-                        && let Some(ident) = self.arena.identifiers.get(*name_id as usize) {
-                            self.pending_commonjs_class_export_name =
-                                Some(ident.escaped_text.clone());
-                        }
+                        && let Some(ident) = self.arena.identifiers.get(*name_id as usize)
+                    {
+                        self.pending_commonjs_class_export_name = Some(ident.escaped_text.clone());
+                    }
                     let prev_module = self.ctx.options.module;
                     self.ctx.options.module = ModuleKind::None;
                     let export_name = names.first().copied();
