@@ -459,6 +459,40 @@ declare namespace E { class foobar extends D.bar { foo(): void; } }",
     );
 }
 
+/// Test that duplicate getters in object literals emit TS1118 (not TS1117).
+#[test]
+fn duplicate_getter_in_object_literal_emits_ts1118() {
+    let diagnostics = verify_errors(
+        "var x = { get a() { return 0; }, set a(v: number) {}, get a() { return 0; } };",
+        &[],
+    );
+    let ts1118 = diagnostics.iter().filter(|d| d.code == 1118).count();
+    assert!(ts1118 > 0, "Duplicate getters should produce TS1118");
+    let ts1117 = diagnostics.iter().filter(|d| d.code == 1117).count();
+    assert_eq!(ts1117, 0, "Duplicate getters should NOT produce TS1117");
+}
+
+/// Test that duplicate setters in object literals emit TS1118.
+#[test]
+fn duplicate_setter_in_object_literal_emits_ts1118() {
+    let diagnostics = verify_errors("var x = { set a(v: number) {}, set a(v: number) {} };", &[]);
+    let ts1118 = diagnostics.iter().filter(|d| d.code == 1118).count();
+    assert!(ts1118 > 0, "Duplicate setters should produce TS1118");
+}
+
+/// Test that getter+setter pair does NOT emit TS1117 or TS1118.
+#[test]
+fn getter_setter_pair_in_object_literal_no_error() {
+    let diagnostics = verify_errors(
+        "var x = { get a() { return 0; }, set a(v: number) {} };",
+        &[],
+    );
+    let ts1117 = diagnostics.iter().filter(|d| d.code == 1117).count();
+    let ts1118 = diagnostics.iter().filter(|d| d.code == 1118).count();
+    assert_eq!(ts1117, 0, "Getter+setter pair should NOT produce TS1117");
+    assert_eq!(ts1118, 0, "Getter+setter pair should NOT produce TS1118");
+}
+
 /// Test that exported and non-exported classes with the same name in merging
 /// namespaces do NOT produce TS2300. tsc allows this because they occupy
 /// different visibility scopes.
