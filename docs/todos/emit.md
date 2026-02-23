@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9744/13623 = 71.5% JS, 777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current 9751/13623 = 71.6% JS, 776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **String enum member detection and self-reference qualification** (+7 JS, +1 DTS):
+  Two enum IIFE emission bugs fixed:
+  (1) `is_string_literal` only checked `StringLiteral` kind. tsc treats template literals
+  (`NoSubstitutionTemplateLiteral`, `TemplateExpression`), string concatenation (`"x" + expr`),
+  parenthesized strings, and references to other string-valued members as syntactically string
+  (no reverse mapping). Renamed to `is_syntactically_string` with recursive checking.
+  String members tracked in a `HashSet` so cross-references like `H = A` (where A is string)
+  also skip reverse mapping.
+  (2) Enum member self-references not qualified: bare identifiers referencing sibling members
+  (`a.b`) must be `Foo.a.b` inside the IIFE. Added `member_names` tracking and qualification
+  logic in `transform_expression`. Six unit tests added.
+  Tests fixed: `computedEnumMemberSyntacticallyString(isolatedmodules=false/true)`,
+  `computedEnumMemberSyntacticallyString2(isolatedmodules=false/true)`, and others.
+  JS: 9744→9751, DTS: 775→776, zero regressions.
+
+### Previously Fixed
 - **Preserve inner comments in empty function/constructor bodies and static block IIFEs** (+21 JS):
   tsc preserves comments inside otherwise-empty function/method/constructor bodies when those
   comments are on a different line from the opening `{` (not trailing same-line comments, which
