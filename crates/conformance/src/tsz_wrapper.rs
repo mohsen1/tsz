@@ -293,6 +293,10 @@ pub fn parse_tsz_output(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
+    // Filter out diagnostics from .lib/ files (e.g., react16.d.ts).
+    // tsc does not load these test helper libraries, so our diagnostics from
+    // them are false positives. Filter before parsing to avoid counting them.
+    let combined = filter_lib_diagnostics(&combined, project_root);
     let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     let mut error_codes = parse_error_codes_from_text(&combined);
     apply_ts5110_fixup(&mut error_codes, &options);
@@ -851,6 +855,49 @@ fn copy_tsconfig_to_root_if_needed(
     Ok(())
 }
 
+/// Filter out diagnostic lines originating from `.lib/` test helper files.
+///
+/// tsc does not resolve `/.lib/react16.d.ts` references in conformance tests
+/// (it emits TS6053 "file not found" instead), so any diagnostics our runner
+/// produces from those files are false positives. This filters them out before
+/// error code and fingerprint parsing.
+fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
+    let root_str = project_root.to_string_lossy().replace('\\', "/");
+    let canon_root = project_root
+        .canonicalize()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+
+    text.lines()
+        .filter(|line| {
+            // Skip lines that are diagnostics from .lib/ files.
+            // Diagnostic format: <filepath>(<line>,<col>): error TS<code>: <message>
+            // The filepath may be absolute (containing project_root) or relative.
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return true;
+            }
+            // Check for relative .lib/ path at start of diagnostic
+            if trimmed.starts_with(".lib/") {
+                return false;
+            }
+            // Check for absolute path containing .lib/
+            if !root_str.is_empty() && trimmed.contains(&format!("{}/.lib/", root_str)) {
+                return false;
+            }
+            if !canon_root.is_empty() && trimmed.contains(&format!("{}/.lib/", canon_root)) {
+                return false;
+            }
+            // Also check /private/var variant on macOS
+            if trimmed.contains("/.lib/") && trimmed.contains("error TS") {
+                return false;
+            }
+            true
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
@@ -1245,8 +1292,12 @@ pub fn parse_batch_output(
         };
     }
 
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(text, project_root);
-    let mut error_codes = parse_error_codes_from_text(text);
+    // Filter out diagnostics from .lib/ files (e.g., react16.d.ts).
+    // tsc does not load these test helper libraries, so our diagnostics from
+    // them are false positives.
+    let text = filter_lib_diagnostics(text, project_root);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
+    let mut error_codes = parse_error_codes_from_text(&text);
     apply_ts5110_fixup(&mut error_codes, &options);
 
     CompilationResult {
