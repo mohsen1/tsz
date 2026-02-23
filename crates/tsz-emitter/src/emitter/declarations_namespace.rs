@@ -303,20 +303,20 @@ impl<'a> Printer<'a> {
                     let decl_lists = var_stmt.declarations.nodes.clone();
                     for &list_idx in &decl_lists {
                         if let Some(list_node) = self.arena.get(list_idx)
-                            && let Some(decl_list) = self.arena.get_variable(list_node) {
-                                let decls = decl_list.declarations.nodes.clone();
-                                for &decl_idx in &decls {
-                                    if let Some(decl_node) = self.arena.get(decl_idx)
-                                        && let Some(vd) =
-                                            self.arena.get_variable_declaration(decl_node)
-                                        {
-                                            let name = self.get_identifier_text_idx(vd.name);
-                                            if name == ns_name {
-                                                return true;
-                                            }
-                                        }
+                            && let Some(decl_list) = self.arena.get_variable(list_node)
+                        {
+                            let decls = decl_list.declarations.nodes.clone();
+                            for &decl_idx in &decls {
+                                if let Some(decl_node) = self.arena.get(decl_idx)
+                                    && let Some(vd) = self.arena.get_variable_declaration(decl_node)
+                                {
+                                    let name = self.get_identifier_text_idx(vd.name);
+                                    if name == ns_name {
+                                        return true;
+                                    }
                                 }
                             }
+                        }
                     }
                 }
                 continue;
