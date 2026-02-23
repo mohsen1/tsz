@@ -124,28 +124,7 @@ impl<'a> CheckerState<'a> {
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
         let node = self.ctx.arena.get(idx)?;
-        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
-        if jsdoc.is_none() {
-            let mut current = idx;
-            for _ in 0..4 {
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                let parent = ext.parent;
-                if parent.is_none() {
-                    break;
-                }
-                let Some(parent_node) = self.ctx.arena.get(parent) else {
-                    break;
-                };
-                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
-                if jsdoc.is_some() {
-                    break;
-                }
-                current = parent;
-            }
-        }
-        let jsdoc = jsdoc?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
@@ -244,28 +223,7 @@ impl<'a> CheckerState<'a> {
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
         let node = self.ctx.arena.get(idx)?;
-        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
-        if jsdoc.is_none() {
-            let mut current = idx;
-            for _ in 0..4 {
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                let parent = ext.parent;
-                if parent.is_none() {
-                    break;
-                }
-                let Some(parent_node) = self.ctx.arena.get(parent) else {
-                    break;
-                };
-                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
-                if jsdoc.is_some() {
-                    break;
-                }
-                current = parent;
-            }
-        }
-        let jsdoc = jsdoc?;
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
         let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
@@ -435,70 +393,6 @@ impl<'a> CheckerState<'a> {
                                 readonly: false,
                             });
                             return Some(factory.object_with_index(shape));
-                        }
-                    }
-                }
-
-                // Narrow support for conformance-critical pattern:
-                //   {[K in keyof T]: (value: T[K]) => void }
-                // which appears in paramTagTypeResolution2.ts
-                tracing::debug!("CHECKING MAPPED TYPE FOR: {type_expr}");
-                if type_expr.starts_with("{[")
-                    && type_expr.contains("in keyof")
-                    && type_expr.contains("=>")
-                {
-                    let expr = type_expr.replace(" ", "");
-                    if expr.starts_with("{[")
-                        && expr.ends_with("}")
-                        && let Some(in_idx) = expr.find("inkeyof")
-                    {
-                        let k_name = &expr[2..in_idx];
-                        if let Some(close_bracket) = expr.find("]:") {
-                            let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
-                            tracing::debug!("K: {k_name}, T: {t_name}");
-
-                            let k_atom = self.ctx.types.intern_string(k_name);
-                            if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
-                                use tsz_solver::{
-                                    FunctionShape, MappedType, ParamInfo, TypeParamInfo,
-                                };
-
-                                let keyof_t_id = factory.keyof(t_id);
-                                let k_param = TypeParamInfo {
-                                    name: k_atom,
-                                    constraint: Some(keyof_t_id),
-                                    default: None,
-                                    is_const: false,
-                                };
-
-                                // Construct template: `(value: T[K]) => void`
-                                let k_id = factory.type_param(k_param.clone());
-                                let t_k_id = factory.index_access(t_id, k_id);
-                                let func_shape = FunctionShape {
-                                    type_params: Vec::new(),
-                                    params: vec![ParamInfo {
-                                        name: Some(self.ctx.types.intern_string("value")),
-                                        type_id: t_k_id,
-                                        optional: false,
-                                        rest: false,
-                                    }],
-                                    this_type: None,
-                                    return_type: TypeId::VOID,
-                                    type_predicate: None,
-                                    is_constructor: false,
-                                    is_method: false,
-                                };
-                                let template_id = factory.function(func_shape);
-
-                                return Some(factory.mapped(MappedType {
-                                    type_param: k_param,
-                                    constraint: keyof_t_id,
-                                    name_type: None,
-                                    template: template_id,
-                                    readonly_modifier: None,
-                                    optional_modifier: None,
-                                }));
-                            }
                         }
                     }
                 }
@@ -1297,32 +1191,40 @@ impl<'a> CheckerState<'a> {
             return Some(get_jsdoc_content(comment, source_text));
         }
 
-        // Try leading comments before the function node
-        if let Some(content) = self.try_leading_jsdoc(comments, func_node.pos, source_text) {
-            return Some(content);
-        }
+        // Try leading comments, then walk up the parent chain for
+        // `const f = value => ...` where JSDoc is on the `const` line.
+        self.try_jsdoc_with_ancestor_walk(func_idx, comments, source_text)
+    }
 
-        // Walk up the parent chain: function -> variable declaration -> variable
-        // declaration list -> variable statement, looking for JSDoc at each level.
-        // This handles `const f = value => ...` where JSDoc is on the `const` line.
-        let mut current = func_idx;
+    /// Try to find a leading JSDoc comment for a node, walking up to 4 ancestors.
+    ///
+    /// First checks `idx` itself, then walks the parent chain up to 4 levels.
+    /// Returns the first JSDoc content found, or `None`.
+    fn try_jsdoc_with_ancestor_walk(
+        &self,
+        idx: NodeIndex,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        let jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
+        if jsdoc.is_some() {
+            return jsdoc;
+        }
+        let mut current = idx;
         for _ in 0..4 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
+            let ext = self.ctx.arena.get_extended(current)?;
             let parent = ext.parent;
             if parent.is_none() {
                 break;
             }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-            if let Some(content) = self.try_leading_jsdoc(comments, parent_node.pos, source_text) {
-                return Some(content);
+            let parent_node = self.ctx.arena.get(parent)?;
+            let jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+            if jsdoc.is_some() {
+                return jsdoc;
             }
             current = parent;
         }
-
         None
     }
 
@@ -1392,38 +1294,9 @@ impl<'a> CheckerState<'a> {
         };
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
-        let node = match self.ctx.arena.get(idx) {
-            Some(n) => n,
-            None => return false,
-        };
 
-        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
-        if jsdoc.is_none() {
-            let mut current = idx;
-            for _ in 0..4 {
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                let parent = ext.parent;
-                if parent.is_none() {
-                    break;
-                }
-                let Some(parent_node) = self.ctx.arena.get(parent) else {
-                    break;
-                };
-                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
-                if jsdoc.is_some() {
-                    break;
-                }
-                current = parent;
-            }
-        }
-
-        if let Some(content) = jsdoc {
-            content.contains("@override")
-        } else {
-            false
-        }
+        self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)
+            .is_some_and(|content| content.contains("@override"))
     }
 
     /// Check if a `JSDoc` comment has a `@param {type}` annotation for the given parameter name.

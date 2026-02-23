@@ -154,17 +154,18 @@ impl<'a> Printer<'a> {
         if (unary.operator == SyntaxKind::PlusToken as u16
             || unary.operator == SyntaxKind::MinusToken as u16)
             && let Some(operand_node) = self.arena.get(unary.operand)
-                && operand_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                    && let Some(inner) = self.arena.get_unary_expr(operand_node) {
-                        let same_sign = inner.operator == unary.operator;
-                        let is_update = (unary.operator == SyntaxKind::PlusToken as u16
-                            && inner.operator == SyntaxKind::PlusPlusToken as u16)
-                            || (unary.operator == SyntaxKind::MinusToken as u16
-                                && inner.operator == SyntaxKind::MinusMinusToken as u16);
-                        if same_sign || is_update {
-                            self.write_space();
-                        }
-                    }
+            && operand_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(inner) = self.arena.get_unary_expr(operand_node)
+        {
+            let same_sign = inner.operator == unary.operator;
+            let is_update = (unary.operator == SyntaxKind::PlusToken as u16
+                && inner.operator == SyntaxKind::PlusPlusToken as u16)
+                || (unary.operator == SyntaxKind::MinusToken as u16
+                    && inner.operator == SyntaxKind::MinusMinusToken as u16);
+            if same_sign || is_update {
+                self.write_space();
+            }
+        }
         // Set flag so yield-from-await knows to wrap in parens
         // e.g., `!await x` → `!(yield x)` not `!yield x`
         let prev = self.ctx.flags.in_binary_operand;
