@@ -1248,17 +1248,28 @@ impl Server {
         display: &str,
         parameter_index: usize,
     ) -> Option<String> {
-        let close = display.rfind("):")?;
-        let open = display[..close].rfind('(')?;
-        let params = display[open + 1..close].trim();
-        if params.is_empty() {
-            return None;
+        if let Some(close) = display.rfind("):")
+            && let Some(open) = display[..close].rfind('(')
+        {
+            let params = display[open + 1..close].trim();
+            if params.is_empty() {
+                return None;
+            }
+            let param = Self::split_top_level_bytes(params, b',')
+                .into_iter()
+                .nth(parameter_index)?;
+            let (_, ty) = param.split_once(':')?;
+            let ty = Self::normalize_parameter_type_text(ty.trim());
+            if ty != "any" {
+                return Some(ty);
+            }
         }
-        let param = Self::split_top_level_bytes(params, b',')
-            .into_iter()
-            .nth(parameter_index)?;
-        let (_, ty) = param.split_once(':')?;
-        let ty = Self::normalize_parameter_type_text(ty.trim());
+
+        // Fallback for property/variable quickinfo displays where the callable type
+        // appears after a declaration prefix, e.g.
+        // `(property) C.foo: (a: number, b: string) => void`.
+        let (_, type_text) = display.split_once(": ")?;
+        let ty = Self::contextual_parameter_type_from_text(type_text, parameter_index)?;
         (ty != "any").then_some(ty)
     }
 
@@ -1281,6 +1292,33 @@ impl Server {
         }
         let start = cursor + 1;
         (start < end).then_some(start as u32)
+    }
+
+    fn assignment_lhs_property_offset_before_function(
+        source_text: &str,
+        function_pos: u32,
+    ) -> Option<u32> {
+        let bytes = source_text.as_bytes();
+        let mut cursor = function_pos as i32 - 1;
+        while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
+            cursor -= 1;
+        }
+        if cursor < 0 || bytes[cursor as usize] != b'=' {
+            return None;
+        }
+        cursor -= 1;
+        while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
+            cursor -= 1;
+        }
+        let end = cursor + 1;
+        while cursor >= 0 && Self::is_js_identifier_char(bytes[cursor as usize]) {
+            cursor -= 1;
+        }
+        let start = cursor + 1;
+        if start >= end {
+            return None;
+        }
+        Some(start as u32)
     }
 
     fn nearest_identifier_offset(source_text: &str, base_offset: u32) -> Option<u32> {
@@ -1325,6 +1363,13 @@ impl Server {
         if let Some(prop_offset) =
             Self::property_name_offset_before_function(source_text, function_node.pos)
             && prop_offset < len
+        {
+            probes.push(prop_offset);
+        }
+        if let Some(prop_offset) =
+            Self::assignment_lhs_property_offset_before_function(source_text, function_node.pos)
+            && prop_offset < len
+            && !probes.contains(&prop_offset)
         {
             probes.push(prop_offset);
         }

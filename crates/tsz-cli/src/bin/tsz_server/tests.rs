@@ -947,6 +947,39 @@ fn test_quickinfo_contextual_object_literal_array_property_name() {
 }
 
 #[test]
+fn test_quickinfo_contextual_class_property_assignment_function_parameter() {
+    let mut server = make_server();
+    let source = "class C {\n    foo: (i: number, s: string) => string;\n    constructor() {\n        this.foo = function(/*36*/i, s) {\n            return s;\n        }\n    }\n}\n";
+    server
+        .open_files
+        .insert("/test.ts".to_string(), source.to_string());
+
+    let fourth_line = source
+        .lines()
+        .nth(3)
+        .expect("source should contain assignment line");
+    let identifier_offset = fourth_line
+        .find("/*36*/i")
+        .expect("marker+identifier should exist in assignment line")
+        as u32
+        + "/*36*/".len() as u32
+        + 1;
+
+    let req = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 4, "offset": identifier_offset}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body["displayString"].as_str().unwrap_or(""),
+        "(parameter) i: number"
+    );
+    assert_eq!(body["kind"].as_str().unwrap_or(""), "parameter");
+}
+
+#[test]
 fn test_prepare_call_hierarchy_class_property_arrow_function() {
     let mut server = make_server();
     server.open_files.insert(
