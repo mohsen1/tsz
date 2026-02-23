@@ -2779,6 +2779,46 @@ fn test_completion_info_class_member_snippet_includes_import_code_action() {
 }
 
 #[test]
+fn test_completion_info_member_probe_handles_marker_comment_after_dot() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x./*1*/\n    }\n}\n"
+            .to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/a.ts",
+            "line": 8,
+            "offset": 11
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|entry| entry.get("name").and_then(serde_json::Value::as_str))
+        .collect();
+
+    assert!(
+        names.contains(&"foo"),
+        "expected static class member `foo` from marker-adjacent member completion, got {names:?}"
+    );
+    assert!(
+        names.contains(&"f"),
+        "expected merged namespace member `f` from marker-adjacent member completion, got {names:?}"
+    );
+}
+
+#[test]
 fn test_completion_info_accepts_top_level_class_member_snippet_preferences() {
     let mut server = make_server();
     server.open_files.insert(
@@ -4446,6 +4486,54 @@ fn test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol() {
         defs.iter()
             .any(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo")),
         "expected type-only quoted alias definition to resolve to exported symbol `foo`, got: {defs:?}"
+    );
+}
+
+#[test]
+fn test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_ambient() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "definition",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 3,
+            "offset": 18
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let defs = resp
+        .body
+        .expect("definition should return body")
+        .as_array()
+        .cloned()
+        .expect("definition response should be an array");
+    let foo_def = defs
+        .iter()
+        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some("foo"))
+        .expect("expected foo definition entry");
+    assert_eq!(
+        foo_def
+            .get("isAmbient")
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "non-declare quoted alias definition should not be ambient: {foo_def:?}"
+    );
+    assert_eq!(
+        foo_def.get("isLocal").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "non-declare quoted alias definition should be local: {foo_def:?}"
     );
 }
 

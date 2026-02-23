@@ -512,7 +512,9 @@ impl<'a> Completions<'a> {
         }
 
         // 5. Check for member completion (after a dot)
-        if let Some(expr_idx) = self.member_completion_target(node_idx, offset)
+        if let Some(expr_idx) = self
+            .member_completion_target(node_idx, offset)
+            .or_else(|| self.marker_comment_member_completion_target(offset))
             && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
         {
             return if items.is_empty() { None } else { Some(items) };
@@ -790,6 +792,76 @@ impl<'a> Completions<'a> {
         None
     }
 
+    fn marker_comment_member_completion_target(&self, offset: u32) -> Option<NodeIndex> {
+        let bytes = self.source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len == 0 {
+            return None;
+        }
+        let mut cursor = offset.min(len);
+
+        loop {
+            while cursor > 0 && bytes[(cursor - 1) as usize].is_ascii_whitespace() {
+                cursor -= 1;
+            }
+
+            if cursor >= 2
+                && bytes[(cursor - 2) as usize] == b'*'
+                && bytes[(cursor - 1) as usize] == b'/'
+            {
+                cursor -= 2;
+                while cursor >= 2 {
+                    if bytes[(cursor - 2) as usize] == b'/' && bytes[(cursor - 1) as usize] == b'*'
+                    {
+                        cursor -= 2;
+                        break;
+                    }
+                    cursor -= 1;
+                }
+                continue;
+            }
+
+            break;
+        }
+
+        if cursor == 0 || bytes[(cursor - 1) as usize] != b'.' {
+            return None;
+        }
+
+        let dot = cursor - 1;
+        let mut ident_end = dot;
+        while ident_end > 0 && bytes[(ident_end - 1) as usize].is_ascii_whitespace() {
+            ident_end -= 1;
+        }
+        let mut ident_start = ident_end;
+        while ident_start > 0 {
+            let ch = bytes[(ident_start - 1) as usize];
+            if ch == b'_' || ch == b'$' || ch.is_ascii_alphanumeric() {
+                ident_start -= 1;
+            } else {
+                break;
+            }
+        }
+        if ident_start >= ident_end {
+            return None;
+        }
+
+        let mut current = find_node_at_offset(self.arena, ident_end.saturating_sub(1));
+        while current.is_some() {
+            let node = self.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16
+                && node.pos <= ident_start
+                && node.end >= ident_end
+            {
+                return Some(current);
+            }
+            let ext = self.arena.get_extended(current)?;
+            current = ext.parent;
+        }
+
+        None
+    }
+
     fn get_member_completions(
         &self,
         expr_idx: NodeIndex,
@@ -842,6 +914,7 @@ impl<'a> Completions<'a> {
 
         let mut items = Vec::new();
         let mut seen_names = FxHashSet::default();
+        let mut annotation_target_symbol = None;
 
         // Type-qualified member access (`A.B`) should prefer namespace/module exports
         // instead of instance/member shape properties.
@@ -881,7 +954,7 @@ impl<'a> Completions<'a> {
 
         if items.is_empty()
             && let Some(sym_id) = self.resolve_member_target_symbol(expr_idx)
-            && let Some(type_annotation) = self.variable_type_annotation_node(sym_id)
+            && let Some(type_annotation) = self.symbol_type_annotation_node(sym_id)
         {
             let mut visited = FxHashSet::default();
             let mut props: FxHashMap<String, PropertyCompletion> = FxHashMap::default();
@@ -899,6 +972,7 @@ impl<'a> Completions<'a> {
                 && let Some(type_ref) = self.arena.get_type_ref(type_annotation_node)
                 && let Some(type_symbol_id) = self.resolve_member_target_symbol(type_ref.type_name)
             {
+                annotation_target_symbol = Some(type_symbol_id);
                 let annotation_symbol_type = checker.get_type_of_symbol(type_symbol_id);
                 self.collect_properties_for_type(
                     annotation_symbol_type,
@@ -907,6 +981,30 @@ impl<'a> Completions<'a> {
                     &mut visited,
                     &mut props,
                 );
+            } else if props.is_empty()
+                && let Some(type_annotation_node) = self.arena.get(type_annotation)
+                && type_annotation_node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(type_query) = self.arena.get_type_query(type_annotation_node)
+            {
+                let query_expr_type = checker.get_type_of_node(type_query.expr_name);
+                self.collect_properties_for_type(
+                    query_expr_type,
+                    interner,
+                    &mut checker,
+                    &mut visited,
+                    &mut props,
+                );
+                annotation_target_symbol = self.resolve_member_target_symbol(type_query.expr_name);
+                if let Some(type_symbol_id) = annotation_target_symbol {
+                    let annotation_symbol_type = checker.get_type_of_symbol(type_symbol_id);
+                    self.collect_properties_for_type(
+                        annotation_symbol_type,
+                        interner,
+                        &mut checker,
+                        &mut visited,
+                        &mut props,
+                    );
+                }
             }
             for (name, info) in props {
                 let kind = if info.is_method {
@@ -929,6 +1027,17 @@ impl<'a> Completions<'a> {
         if let Some(target_symbol_id) = self.resolve_member_target_symbol(expr_idx) {
             self.append_namespace_export_member_completions(
                 target_symbol_id,
+                &mut checker,
+                !qualified_name_target,
+                &mut seen_names,
+                &mut items,
+            );
+        }
+        if let Some(annotation_symbol_id) = annotation_target_symbol
+            && Some(annotation_symbol_id) != self.resolve_member_target_symbol(expr_idx)
+        {
+            self.append_namespace_export_member_completions(
+                annotation_symbol_id,
                 &mut checker,
                 !qualified_name_target,
                 &mut seen_names,
@@ -1002,7 +1111,7 @@ impl<'a> Completions<'a> {
         }
     }
 
-    fn variable_type_annotation_node(&self, sym_id: tsz_binder::SymbolId) -> Option<NodeIndex> {
+    fn symbol_type_annotation_node(&self, sym_id: tsz_binder::SymbolId) -> Option<NodeIndex> {
         let symbol = self.binder.symbols.get(sym_id)?;
         let decl = if symbol.value_declaration.is_some() {
             symbol.value_declaration
@@ -1010,14 +1119,21 @@ impl<'a> Completions<'a> {
             *symbol.declarations.first()?
         };
         let node = self.arena.get(decl)?;
-        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return None;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let var_decl = self.arena.get_variable_declaration(node)?;
+            return var_decl
+                .type_annotation
+                .is_some()
+                .then_some(var_decl.type_annotation);
         }
-        let var_decl = self.arena.get_variable_declaration(node)?;
-        var_decl
-            .type_annotation
-            .is_some()
-            .then_some(var_decl.type_annotation)
+        if node.kind == syntax_kind_ext::PARAMETER {
+            let param = self.arena.get_parameter(node)?;
+            return param
+                .type_annotation
+                .is_some()
+                .then_some(param.type_annotation);
+        }
+        None
     }
 
     fn is_qualified_name_member_target(&self, expr_idx: NodeIndex) -> bool {
@@ -1118,7 +1234,7 @@ impl<'a> Completions<'a> {
 
             let kind = self.determine_completion_kind(export_symbol);
             let mut item = CompletionItem::new(name.clone(), kind);
-            item.sort_text = Some(sort_priority::MEMBER.to_string());
+            item.sort_text = Some(sort_priority::LOCATION_PRIORITY.to_string());
 
             let export_type = checker.get_type_of_symbol(export_id);
             let detail = checker.format_type(export_type);
@@ -1139,6 +1255,55 @@ impl<'a> Completions<'a> {
 
             seen_names.insert(name);
             items.push(item);
+        }
+
+        if is_class {
+            let static_member_entries: Vec<(String, tsz_binder::SymbolId)> = symbol
+                .members
+                .as_ref()
+                .map(|members| {
+                    members
+                        .iter()
+                        .map(|(name, id)| (name.clone(), *id))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for (name, member_id) in static_member_entries {
+                if seen_names.contains(&name) {
+                    continue;
+                }
+                let Some(member_symbol) = self.binder.symbols.get(member_id) else {
+                    continue;
+                };
+                if (member_symbol.flags & symbol_flags::STATIC) == 0 {
+                    continue;
+                }
+                if (member_symbol.flags & (symbol_flags::PRIVATE | symbol_flags::PROTECTED)) != 0 {
+                    continue;
+                }
+
+                let kind = self.determine_completion_kind(member_symbol);
+                let mut item = CompletionItem::new(name.clone(), kind);
+                item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
+                let member_type = checker.get_type_of_symbol(member_id);
+                let detail = checker.format_type(member_type);
+                if !detail.is_empty() {
+                    item = item.with_detail(detail);
+                } else if let Some(detail) = self.get_symbol_detail(member_symbol) {
+                    item = item.with_detail(detail);
+                }
+                if let Some(modifiers) = self.build_kind_modifiers(member_symbol) {
+                    item.kind_modifiers = Some(modifiers);
+                }
+                if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+
+                seen_names.insert(name);
+                items.push(item);
+            }
         }
 
         if allow_class_prototype && is_class && !seen_names.contains("prototype") {

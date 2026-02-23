@@ -259,6 +259,21 @@ Investigated but punted:
   Reason: same adapter/global completion-surface parity gap as `autoImportFileExcludePatterns2.ts`; needs deeper completion list source harmonization.
 - `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fails exact completion-list equality.
 
+## 2026-02-23
+
+Completed in this pass:
+- Improved marker-adjacent member completion parity for `cloduleTypeOf1`-style `x./*n*/` cursors by:
+  - adding marker-comment-aware member-target fallback in `crates/tsz-lsp/src/completions.rs`,
+  - extending `typeof`-parameter member completion fallback to include merged namespace exports and class static members,
+  - tightening tsserver completion probe fallback to numeric marker comments only (to avoid over-surfacing completions in non-marker contexts).
+- Added focused unit coverage:
+  - `crates/tsz-lsp/tests/completions_tests.rs` (marker-comment + `typeof C` member completion parity),
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (tsserver `completionInfo` marker-comment probe behavior).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/cloduleTypeOf1.ts`: now advances past completion failure but still fails quick-info at marker `3` (`(local var) r: C` vs expected `(local var) r: C<number>`).
+  Reason: remaining gap appears in constructor/new-expression generic instantiation quick-info typing (`new x<number>()`) rather than completion entry surfacing; requires a dedicated quick-info/type-resolution follow-up.
+
 ## 2026-02-23 (quick info property-access follow-up)
 
 Completed in this pass:
@@ -982,3 +997,17 @@ Investigated but punted:
   Reason: remaining mismatch is still in `findAllReferences` symbol-group/detail serialization parity (`defId/contextId` grouping and definition payload shape), beyond this targeted rename/reference-location alignment.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
   Reason: same unresolved `references-full` definition/detail grouping parity as values variant; current changes improve span/alias coverage but do not yet match TypeScript’s referenced-symbol entry construction contract.
+
+## 2026-02-23
+
+Completed in this pass:
+- Tightened `references-full` quoted-alias fallback gating in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` so quoted import/export specifier queries always use the alias-chain path (even when a direct symbol resolves).
+- Normalized alias-definition metadata in `crates/tsz-cli/src/bin/tsz_server/handlers_info_alias.rs` to avoid incorrectly marking non-`declare` quoted-alias canonical targets as ambient/non-local.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_definition_type_only_quoted_alias_marks_non_declare_target_as_local_non_ambient`
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`: still creates a local baseline (find-all-references grouping/details mismatch for quoted alias chains).
+  Reason: requires fuller tsserver `references-full` parity for multi-symbol alias-chain grouping (separate def/ref buckets for exported quoted alias + imported aliases), which is broader than this small metadata/fallback gate patch.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still creates a local baseline (same alias-chain references/definitions parity gap).
+  Reason: blocked by the same `references-full` multi-symbol alias-chain modeling gap as `_types`.

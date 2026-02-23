@@ -756,7 +756,11 @@ impl Server {
                 FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let symbol_refs = ref_provider.find_references_with_symbol(root, position);
 
-            let use_quoted_alias_fallback = match &symbol_refs {
+            let use_quoted_alias_fallback = Self::is_quoted_import_or_export_specifier_offset(
+                &arena,
+                &source_text,
+                query_offset,
+            ) || match &symbol_refs {
                 Some((_symbol_id, refs)) => refs.is_empty(),
                 None => true,
             };
