@@ -11,7 +11,7 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
-use crate::application::ApplicationEvaluator;
+use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
