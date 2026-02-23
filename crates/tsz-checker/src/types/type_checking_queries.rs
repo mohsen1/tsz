@@ -63,12 +63,9 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Check if the current file is a JavaScript file (.js, .jsx, .mjs, .cjs).
-    /// Used for `TS8xxx` JS grammar checks.
+    /// Delegates to `CheckerContext::is_js_file()`.
     pub(crate) fn is_js_file(&self) -> bool {
-        self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs")
+        self.ctx.is_js_file()
     }
 
     /// Check if a node has the `declare` modifier.

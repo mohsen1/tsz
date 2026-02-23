@@ -29,10 +29,7 @@ impl<'a> CheckerState<'a> {
         self.check_modifier_combinations(&prop.modifiers);
 
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
+        let is_js_file = self.is_js_file();
         tracing::debug!(is_js_file, file_name = %self.ctx.file_name, "Checking if JS file for TS8009/TS8010");
 
         if is_js_file {

@@ -476,11 +476,7 @@ impl<'a> CheckerState<'a> {
         // Example:
         //   /** @type {string} */
         //   C.prototype = 12;
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if is_js_file
+        if self.is_js_file()
             && self.ctx.compiler_options.check_js
             && let Some(jsdoc_left_type) = self
                 .jsdoc_type_annotation_for_node_direct(expr_idx)

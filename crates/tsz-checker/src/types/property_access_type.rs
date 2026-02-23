@@ -583,8 +583,7 @@ impl<'a> CheckerState<'a> {
                     }
                     // In JS checkJs mode, CommonJS `module.exports` accesses are valid.
                     if property_name == "exports"
-                        && (self.ctx.file_name.ends_with(".js")
-                            || self.ctx.file_name.ends_with(".jsx"))
+                        && self.is_js_file()
                         && let Some(obj_node) = self.ctx.arena.get(access.expression)
                         && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
                         && ident.escaped_text == "module"
@@ -611,8 +610,6 @@ impl<'a> CheckerState<'a> {
                     // JavaScript files allow dynamic property assignment on 'this' without errors.
                     // In JS files, accessing a property on 'this' that doesn't exist should not error
                     // and should return 'any' type, matching TypeScript's behavior.
-                    let is_js_file =
-                        self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
                     let is_this_access =
                         if let Some(obj_node) = self.ctx.arena.get(access.expression) {
                             obj_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
@@ -620,7 +617,7 @@ impl<'a> CheckerState<'a> {
                             false
                         };
 
-                    if is_js_file && is_this_access {
+                    if self.is_js_file() && is_this_access {
                         // Allow dynamic property on 'this' in JavaScript files
                         return TypeId::ANY;
                     }

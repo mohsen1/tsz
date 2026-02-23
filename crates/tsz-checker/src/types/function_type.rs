@@ -267,10 +267,7 @@ impl<'a> CheckerState<'a> {
 
                 let is_this_param = name == Some(this_atom);
 
-                let is_js_file = self.ctx.file_name.ends_with(".js")
-                    || self.ctx.file_name.ends_with(".jsx")
-                    || self.ctx.file_name.ends_with(".mjs")
-                    || self.ctx.file_name.ends_with(".cjs");
+                let is_js_file = self.is_js_file();
                 let contextual_type = if let Some(ref helper) = ctx_helper {
                     helper.get_parameter_type(contextual_index)
                 } else {
@@ -412,13 +409,9 @@ impl<'a> CheckerState<'a> {
 
                 // Check if optional or has initializer
                 // In JS files, parameters without type annotations are implicitly optional
-                let is_js_file = self.ctx.file_name.ends_with(".js")
-                    || self.ctx.file_name.ends_with(".jsx")
-                    || self.ctx.file_name.ends_with(".mjs")
-                    || self.ctx.file_name.ends_with(".cjs");
                 let optional = param.question_token
                     || param.initializer.is_some()
-                    || (is_js_file && param.type_annotation.is_none());
+                    || (self.is_js_file() && param.type_annotation.is_none());
                 let rest = param.dot_dot_dot_token;
 
                 // Under strictNullChecks, optional parameters (with `?`) get
@@ -977,13 +970,9 @@ impl<'a> CheckerState<'a> {
         // Only add if the function doesn't already have a rest parameter.
         // For function declarations, the body wasn't checked yet (it's checked in
         // check_function_declaration), so we also pre-walk the body for `arguments`.
-        let is_js_file_for_rest = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
         let uses_arguments = self.ctx.js_body_uses_arguments
             || (is_function_declaration && self.body_has_arguments_reference(body));
-        if is_js_file_for_rest && uses_arguments && !params.last().is_some_and(|p| p.rest) {
+        if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
             params.push(ParamInfo {
                 name: None,
                 type_id: TypeId::ANY,

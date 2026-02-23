@@ -305,11 +305,9 @@ impl<'a> CheckerState<'a> {
             };
 
             // In JS files, parameters without type annotations are implicitly optional
-            let is_js_file =
-                self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
             let optional = param.question_token
                 || param.initializer.is_some()
-                || (is_js_file && param.type_annotation.is_none());
+                || (self.is_js_file() && param.type_annotation.is_none());
             let rest = param.dot_dot_dot_token;
 
             // Check for "this" parameter by name
