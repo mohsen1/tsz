@@ -5183,9 +5183,10 @@ mod tests {
         server
             .open_files
             .insert(current_path.clone(), "autorun".to_string());
-        server
-            .external_project_files
-            .insert("/tsconfig.json".to_string(), vec![current_path.clone(), dep_path]);
+        server.external_project_files.insert(
+            "/tsconfig.json".to_string(),
+            vec![current_path.clone(), dep_path],
+        );
 
         assert!(
             server.has_potential_auto_import_symbol(&current_path, "autorun"),
@@ -5217,7 +5218,8 @@ mod tests {
             reports_deprecated: None,
         }];
 
-        let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+        let candidates =
+            server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
         assert!(
             candidates.iter().any(|candidate| {
                 candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
@@ -5254,7 +5256,8 @@ mod tests {
             reports_deprecated: None,
         }];
 
-        let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+        let candidates =
+            server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
         assert!(
             candidates.iter().any(|candidate| {
                 candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
@@ -6379,8 +6382,7 @@ mod tests {
             .expect("expected diagnostics array");
         assert!(
             diagnostics.iter().any(|diag| {
-                diag.get("code")
-                    .and_then(serde_json::Value::as_u64)
+                diag.get("code").and_then(serde_json::Value::as_u64)
                     == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
             }),
             "expected synthetic cannot-find-name diagnostic, got {diagnostics:?}"
