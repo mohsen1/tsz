@@ -818,18 +818,6 @@ fn compile_inner(
 
     // Determine which cache to use: local cache from BuildInfo, or provided cache, or none
     // When cache is None, we can use local_cache; otherwise we use the provided cache
-    let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
-
-    // Add type definition files (e.g., @types packages) to the source file list.
-    // Note: lib.d.ts files are NOT added here - they are loaded separately via
-    // lib preloading + checker lib contexts. This prevents them from
-    // being type-checked as regular source files (which would emit spurious errors).
-    if !type_files.is_empty() {
-        let mut merged = std::collections::BTreeSet::new();
-        merged.extend(file_paths);
-        merged.extend(type_files);
-        file_paths = merged.into_iter().collect();
-    }
     if file_paths.is_empty() {
         // Emit TS18003: No inputs were found in config file.
         // Match tsc: use the resolved config path shown to the compiler.
@@ -869,6 +857,19 @@ fn compile_inner(
             files_read: Vec::new(),
             file_infos: Vec::new(),
         });
+    }
+
+    let (type_files, unresolved_types) = collect_type_root_files(&base_dir, &resolved);
+
+    // Add type definition files (e.g., @types packages) to the source file list.
+    // Note: lib.d.ts files are NOT added here - they are loaded separately via
+    // lib preloading + checker lib contexts. This prevents them from
+    // being type-checked as regular source files (which would emit spurious errors).
+    if !type_files.is_empty() {
+        let mut merged = std::collections::BTreeSet::new();
+        merged.extend(file_paths);
+        merged.extend(type_files);
+        file_paths = merged.into_iter().collect();
     }
 
     let changed_set = changed_paths.map(|paths| {
