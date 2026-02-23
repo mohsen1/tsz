@@ -259,6 +259,43 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Emit comments between the last statement and the closing `}`.
+        // tsc preserves comments like `// trailing note` that appear on lines
+        // after the last statement but before the block's closing brace.
+        // Without this, such comments leak outside the block.
+        if !self.ctx.options.remove_comments
+            && let Some(text) = self.source_text {
+                let bytes = text.as_bytes();
+                let end = (node.end as usize).min(bytes.len());
+                // Scan backwards from node.end to find the closing `}`
+                let mut closing_brace_pos = end;
+                let mut i = end;
+                while i > 0 {
+                    i -= 1;
+                    if bytes[i] == b'}' {
+                        closing_brace_pos = i;
+                        break;
+                    }
+                }
+                // Emit any comments that end before the closing brace position
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c = &self.all_comments[self.comment_emit_idx];
+                    if (c.end as usize) <= closing_brace_pos {
+                        let comment_text =
+                            crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                        let c_trailing = c.has_trailing_new_line;
+                        let c_pos = c.pos;
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        if c_trailing {
+                            self.write_line();
+                        }
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
         self.decrease_indent();
         // Map closing `}` to its source position for accurate debugger stepping
         self.map_closing_brace(node);
@@ -1959,6 +1996,65 @@ mod tests {
         assert!(
             output.contains("declare;"),
             "Legitimate `declare;` expression should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comment on the line after the last statement but before `}` should stay
+    /// inside the block, not be displaced outside it.
+    #[test]
+    fn comment_before_closing_brace_stays_inside_function() {
+        let source = "function foo(x: number): void {\n    return;\n    // trailing comment\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("    // trailing comment\n}"),
+            "Comment before closing brace should stay inside the function body.\nOutput:\n{output}"
+        );
+    }
+
+    /// Comment after `return` and before `}` in a complex expression function
+    /// should stay inside the block.
+    #[test]
+    fn comment_before_closing_brace_after_return_expression() {
+        let source = "function foo(p: number | null): number | null {\n    return p !== undefined ? p : null;\n    // Still typed as number | null\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("    // Still typed as number | null\n}"),
+            "Comment before closing brace should stay inside the function.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multiple comments between the last statement and `}` should all stay inside.
+    #[test]
+    fn multiple_comments_before_closing_brace() {
+        let source = "function foo(): void {\n    const x = 1;\n    // first comment\n    // second comment\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("    // first comment\n    // second comment\n}"),
+            "Multiple comments before closing brace should stay inside.\nOutput:\n{output}"
         );
     }
 }
