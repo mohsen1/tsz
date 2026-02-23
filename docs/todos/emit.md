@@ -1,8 +1,41 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9884/13623 = 72.6% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5218/7163 = 72.8% JS, ~415/1039 = 39.9% DTS)
 
 ### Fixed This Session
+- **CJS-exported namespace IIFE used ES5 emitter at ES2015+ targets, converting let/const to var** (+18 JS):
+  `export namespace N { let x = 1; const y = 2; }` inside CommonJS modules emitted `var x = 1;`
+  and `var y = 2;` inside the IIFE body, even when targeting ES2015+. Root cause: in
+  `transform_dispatch.rs`, the `CommonJSExport` handler for `MODULE_DECLARATION` unconditionally
+  routed through `NamespaceES5Emitter`, whose IR printer only knows about `var`. Fix: added a
+  `target_es5` gate — ES5 targets continue using the ES5 emitter, but ES2015+ targets now use
+  the regular `emit_namespace_iife` path (which reads `let`/`const`/`var` from node flags) with
+  `pending_cjs_namespace_export_fold = true` so the IIFE tail correctly folds `exports.N` into
+  the closing `(N || (exports.N = N = {}))` pattern. Also handles the `should_declare_var`
+  flag by pre-populating `declared_namespace_names` when the name was already declared by a
+  merged class/enum/function. Two unit tests added.
+  Tests fixed: `moduleAugmentationDeclarationEmit1`, `moduleAugmentationExtendFileModule1`,
+  `defaultDeclarationEmitShadowedNamedCorrectly`, `classStaticBlock24(module=commonjs/amd/umd)`,
+  and 14 others.
+  JS: 5200→5218, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session
+- **`"use strict"` emission for outFile/emitDeclarationOnly tests** (~156 tests total with extra
+  `"use strict"` in diff): Many are runner-side issues — the test runner defaults `alwaysStrict`
+  to `true` matching TS6 behavior, but the baselines were generated with different defaults. Some
+  are `emitDeclarationOnly` tests where tsz shouldn't emit JS at all but does. Some are `outFile`
+  tests where the runner compares against the wrong output section. Not an emitter bug.
+- **Comment displacement** (~170+ exclusive tests): Still the single largest JS emit failure
+  category. Each sub-pattern needs individual investigation.
+- **`__decorate` / legacy decorator emit** (~73 tests): Decorator transform emit not yet
+  implemented in the emitter.
+- **Enum value substitution** (~60 tests): tsc substitutes enum member access with computed
+  values (e.g., `0 /* E.A */`), tsz doesn't. Requires checker/solver to provide enum constant
+  values to the emitter.
+- **`__awaiter` / async function lowering** (~50 tests): Complex async transform differences
+  including parameter default hoisting and `arguments` capture.
+
+### Previously Fixed This Session
 - **CJS `exports.default` not hoisted to preamble for named default function exports** (+12 JS):
   `export default function func()` should have `exports.default = func;` in the CJS preamble
   (right after `Object.defineProperty`), not at the function's source position. JS function

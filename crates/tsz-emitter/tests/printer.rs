@@ -785,3 +785,75 @@ fn test_function_param_type_annotation_comments_not_leaked() {
         "Comments from inside erased param type should not appear, got: {output}"
     );
 }
+
+// =========================================================================
+// CJS exported namespace: let/const preservation at ES2015+ targets
+// =========================================================================
+
+#[test]
+fn test_cjs_exported_namespace_preserves_let_const_es2015() {
+    // CJS-exported namespaces at ES2015+ should preserve let/const inside IIFE bodies.
+    // Previously, these were incorrectly routed through the ES5 namespace emitter
+    // which always emits `var`.
+    let source = r#"export namespace N {
+    let a = 1;
+    const b = 2;
+    var c = 3;
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es6()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("let a = 1;"),
+        "CJS namespace at ES2015+ should preserve 'let', got: {output}"
+    );
+    assert!(
+        output.contains("const b = 2;"),
+        "CJS namespace at ES2015+ should preserve 'const', got: {output}"
+    );
+    assert!(
+        output.contains("var c = 3;"),
+        "CJS namespace at ES2015+ should preserve 'var', got: {output}"
+    );
+    // The IIFE tail should fold exports.N
+    assert!(
+        output.contains("exports.N = N = {}"),
+        "CJS namespace should fold export into IIFE tail, got: {output}"
+    );
+}
+
+#[test]
+fn test_cjs_exported_namespace_uses_var_at_es5() {
+    // CJS-exported namespaces at ES5 should still use `var` for everything.
+    let source = r#"export namespace N {
+    let a = 1;
+    const b = 2;
+}"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..PrintOptions::es5()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("var a = 1;"),
+        "CJS namespace at ES5 should use 'var' for let, got: {output}"
+    );
+    assert!(
+        output.contains("var b = 2;"),
+        "CJS namespace at ES5 should use 'var' for const, got: {output}"
+    );
+}
