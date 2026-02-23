@@ -686,3 +686,22 @@ Investigated but punted:
   Reason: still require broader cross-file rename/definition/reference bridge parity for arbitrary module namespace identifiers.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
   Reason: still needs deeper CommonJS/export-equals auto-import completion + codefix synthesis parity (`import = require(...)` style candidates/edits).
+
+## 2026-02-23 (duplicate-constructor diagnostic parity follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/addFunctionInDuplicatedConstructorClassBody.ts` by tightening synthetic missing-name detection in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs` so method-like declarations (`fn() {}` / `fn(): T {}`) are not misclassified as unresolved call expressions.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_code_fixes.rs`:
+  - `semantic_diagnostics_sync_does_not_add_missing_name_for_class_method_declaration`
+  - extended `parse_identifier_call_expression_ignores_keywords` with method-declaration regression assertions.
+- Verification:
+  - `cargo nextest run -p tsz-cli parse_identifier_call_expression_ignores_keywords semantic_diagnostics_sync_does_not_add_missing_name_for_class_method_declaration` passed.
+  - `./scripts/run-fourslash.sh --skip-ts-build --max=200` improved from `196/200` to `197/200` passing.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: still requires broader project-backed cross-file definition/references/rename parity in tsserver bridge paths (current single-file binding in relevant request flow is insufficient).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same cross-file namespace alias/re-export navigation parity gap as `_types`.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`
+  Reason: remaining failure still needs deeper CommonJS `export =`/`import = require(...)` completion + codefix edit synthesis parity.
