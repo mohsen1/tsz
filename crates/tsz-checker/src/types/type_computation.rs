@@ -96,6 +96,8 @@ impl<'a> CheckerState<'a> {
         // Get condition type for type computation
         let condition_type = self.get_type_of_node(cond.condition);
         self.check_truthy_or_falsy_with_type(cond.condition, condition_type);
+        // TS2774: check for non-nullable callable tested for truthiness
+        self.check_callable_truthiness(cond.condition, Some(cond.when_true));
 
         // Apply contextual typing to each branch for better inference,
         // but don't check assignability here - that happens at the call site.

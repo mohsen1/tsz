@@ -378,6 +378,18 @@ impl<'a> CheckerState<'a> {
             // Logical AND: `a && b`
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                 self.check_truthy_or_falsy_with_type(left_idx, left_type);
+                // TS2774: check for non-nullable callable tested for truthiness
+                // Only check at the top-level binary expression (not nested ones)
+                // to avoid duplicate diagnostics when this is inside an if-condition.
+                if let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
+                    && let Some(parent) = self.ctx.arena.get(parent_idx)
+                    && parent.kind != syntax_kind_ext::BINARY_EXPRESSION
+                    && parent.kind != syntax_kind_ext::IF_STATEMENT
+                    && parent.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION
+                    && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                {
+                    self.check_callable_truthiness(idx, None);
+                }
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;

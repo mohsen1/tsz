@@ -76,6 +76,10 @@ pub trait StatementCheckCallbacks {
     /// Check if a condition expression is always truthy/falsy (TS2872/TS2873).
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex);
 
+    /// TS2774: Check if a non-nullable function type is tested for truthiness
+    /// without being called in the body.
+    fn check_callable_truthiness(&mut self, cond_expr: NodeIndex, body: Option<NodeIndex>);
+
     /// Check if a condition is statically true
     fn is_true_condition(&self, condition_idx: NodeIndex) -> bool;
 
@@ -316,6 +320,8 @@ impl StatementChecker {
                     state.get_type_of_node(expression);
                     // TS2872/TS2873: check if condition is always truthy/falsy
                     state.check_truthy_or_falsy(expression);
+                    // TS2774: check for non-nullable callable tested for truthiness
+                    state.check_callable_truthiness(expression, Some(then_stmt));
 
                     let condition_is_true = state.is_true_condition(expression);
                     let condition_is_false = state.is_false_condition(expression);

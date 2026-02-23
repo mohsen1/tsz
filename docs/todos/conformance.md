@@ -461,6 +461,11 @@ Main value: removes TS2430/TS6053 noise from analysis output.
 - **checkJs**: Removed redundant checker.check_js propagation that broke JSDoc (+11)
 - **TS2524→TS1109**: Emit TS1109 instead of TS2524 for bare await in parameter defaults (+38)
 - **TS2304 suppression**: File-level real syntax error detection replaces dead node flags (+66)
+- **TS2774**: Truthiness check for uncalled functions in conditionals (+5)
+  - Fires when a non-nullish callable is used in if/ternary/&& without being invoked
+  - Guards: requires strictNullChecks, skips optional params (nullish type), skips when called in body
+  - Handles identifiers via symbol resolution, property accesses via structural chain matching
+  - Deferred: complex cases in truthinessCallExpressionCoercion2/3 and uncalledFunctionChecksInConditional1/2
 
 ## TS6082 — Only 'amd' and 'system' modules alongside --outFile (Implemented)
 
