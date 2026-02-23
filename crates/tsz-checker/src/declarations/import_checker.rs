@@ -1056,12 +1056,9 @@ impl<'a> CheckerState<'a> {
         // the shape of CJS modules and `export = X` is valid in declarations.
         // Ambient module declarations (`declare module "M" { export = X; }`) are
         // also exempt — they describe external module shapes.
-        // JS files (.js, .jsx) are exempt — they get TS8003 instead.
-        // CJS-extension files (.cts, .cjs) are explicitly CommonJS — export= is valid.
-        let is_js_file =
-            self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
-        let is_cjs_extension =
-            self.ctx.file_name.ends_with(".cts") || self.ctx.file_name.ends_with(".cjs");
+        // JS files (.js, .jsx, .mjs, .cjs) are exempt — they get TS8003 instead.
+        // CJS-extension files (.cts) are explicitly CommonJS — export= is valid.
+        let is_cjs_extension = self.ctx.file_name.ends_with(".cts");
 
         let is_system_module = matches!(
             self.ctx.compiler_options.module,
@@ -1072,7 +1069,7 @@ impl<'a> CheckerState<'a> {
 
         if (is_es_module || is_system_module)
             && !is_declaration_file
-            && !is_js_file
+            && !self.is_js_file()
             && !is_cjs_extension
         {
             for &export_idx in &export_assignment_indices {

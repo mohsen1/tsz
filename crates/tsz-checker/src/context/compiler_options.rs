@@ -17,6 +17,14 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.strict
     }
 
+    /// Check if the current file is a JavaScript file (.js, .jsx, .mjs, .cjs).
+    pub fn is_js_file(&self) -> bool {
+        self.file_name.ends_with(".js")
+            || self.file_name.ends_with(".jsx")
+            || self.file_name.ends_with(".mjs")
+            || self.file_name.ends_with(".cjs")
+    }
+
     /// Check if noImplicitAny is enabled for the current file.
     /// For JavaScript files, noImplicitAny only applies when checkJs is also enabled.
     /// This allows TS7006 to fire in .js files with --checkJs --strict.
@@ -25,13 +33,8 @@ impl<'a> CheckerContext<'a> {
             return false;
         }
 
-        let is_js_file = self.file_name.ends_with(".js")
-            || self.file_name.ends_with(".jsx")
-            || self.file_name.ends_with(".mjs")
-            || self.file_name.ends_with(".cjs");
-
         // JS files get noImplicitAny errors only when checkJs is enabled
-        if is_js_file {
+        if self.is_js_file() {
             self.compiler_options.check_js
         } else {
             true

@@ -116,11 +116,7 @@ impl<'a> CheckerState<'a> {
     /// // The JSDoc annotation can be used for type inference
     /// ```
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if is_js_file && !self.ctx.compiler_options.check_js {
+        if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
         }
 
@@ -193,11 +189,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         idx: NodeIndex,
     ) -> Option<TypeId> {
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if is_js_file && !self.ctx.compiler_options.check_js {
+        if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
         }
 
@@ -244,11 +236,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract and parse `JSDoc` `@satisfies` annotations for a given node.
     pub(crate) fn jsdoc_satisfies_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if is_js_file && !self.ctx.compiler_options.check_js {
+        if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
         }
 
@@ -1279,11 +1267,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the raw `JSDoc` content (without `/**` and `*/` delimiters).
     pub(crate) fn get_jsdoc_for_function(&self, func_idx: NodeIndex) -> Option<String> {
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if is_js_file && !self.ctx.compiler_options.check_js {
+        if self.is_js_file() && !self.ctx.compiler_options.check_js {
             return None;
         }
         self.find_jsdoc_for_function(func_idx)
@@ -1398,11 +1382,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node has a `/** @override */` JSDoc annotation.
     pub(crate) fn has_jsdoc_override_tag(&self, idx: NodeIndex) -> bool {
-        let is_js_file = self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs");
-        if !is_js_file {
+        if !self.is_js_file() {
             return false;
         }
 

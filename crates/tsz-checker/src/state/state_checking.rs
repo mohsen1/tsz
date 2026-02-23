@@ -952,7 +952,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let has_module_indicator = self.source_file_has_module_indicator(source_file);
-        let force_js_module_check = self.is_js_like_file() && has_module_indicator;
+        let force_js_module_check = self.is_js_file() && has_module_indicator;
 
         if !is_external_module && !force_js_module_check {
             return;
@@ -1126,13 +1126,6 @@ impl<'a> CheckerState<'a> {
         patterns.iter().any(|pattern| text.contains(pattern))
     }
 
-    fn is_js_like_file(&self) -> bool {
-        self.ctx.file_name.ends_with(".js")
-            || self.ctx.file_name.ends_with(".jsx")
-            || self.ctx.file_name.ends_with(".mjs")
-            || self.ctx.file_name.ends_with(".cjs")
-    }
-
     fn emit_top_level_await_text_fallback(
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -1149,7 +1142,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_module_indicator = self.source_file_has_module_indicator(source_file);
-        let is_js_like_file = self.is_js_like_file();
+        let is_js_like_file = self.is_js_file();
 
         let import_patterns = [
             "import await from",
