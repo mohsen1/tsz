@@ -652,12 +652,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Report errors for duplicates
+        // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
+        // (both first and subsequent), not just the second+.
         for (name, indices) in seen_properties {
             if indices.len() > 1 {
-                // Report TS2300 for subsequent occurrences only (matching tsc behavior)
-                // Skip the first declaration as it's valid
-                for &idx in indices.iter().skip(1) {
+                for &idx in indices.iter() {
                     // Get the name node for precise error location
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
                     self.error_at_node_msg(
