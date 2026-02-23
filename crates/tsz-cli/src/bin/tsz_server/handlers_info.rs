@@ -766,66 +766,16 @@ impl Server {
             };
             if use_quoted_alias_fallback {
                 if let Some(mut project) = self.build_project_for_file(&file)
-                    && let Some(locs) = self.quoted_alias_chain_references(
+                    && let Some(entries) = self.build_quoted_alias_referenced_symbols(
                         &mut project,
                         &file,
                         &arena,
                         &source_text,
                         query_offset,
                         position,
-                        false,
                     )
                 {
-                    let canonical_loc = self.canonical_definition_for_alias_position(
-                        &file,
-                        &arena,
-                        &source_text,
-                        query_offset,
-                    );
-                    let definition = canonical_loc
-                        .as_ref()
-                        .and_then(|loc| self.definition_info_from_location(loc))
-                        .map(|definition| self.normalize_references_full_definition(definition))
-                        .unwrap_or_else(|| Self::build_fallback_definition(&file, "alias", ""));
-                    let cursor_offset = line_map
-                        .position_to_offset(position, &source_text)
-                        .unwrap_or(0);
-                    let references: Vec<serde_json::Value> = locs
-                        .iter()
-                        .map(|loc| {
-                            let source = self
-                                .open_files
-                                .get(&loc.file_path)
-                                .cloned()
-                                .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
-                                .unwrap_or_default();
-                            let lm = LineMap::build(&source);
-                            let start =
-                                lm.position_to_offset(loc.range.start, &source).unwrap_or(0);
-                            let end = lm
-                                .position_to_offset(loc.range.end, &source)
-                                .unwrap_or(start);
-                            let is_definition = canonical_loc.as_ref().is_some_and(|def| {
-                                loc.file_path == def.file_path
-                                    && loc.range == def.range
-                                    && cursor_offset >= start
-                                    && cursor_offset < end
-                            });
-                            serde_json::json!({
-                                "fileName": loc.file_path,
-                                "textSpan": {
-                                    "start": start,
-                                    "length": end.saturating_sub(start),
-                                },
-                                "isWriteAccess": false,
-                                "isDefinition": is_definition,
-                            })
-                        })
-                        .collect();
-                    return Some(serde_json::json!([{
-                        "definition": definition,
-                        "references": references,
-                    }]));
+                    return Some(serde_json::json!(entries));
                 }
             }
 
@@ -1072,6 +1022,242 @@ impl Server {
             }]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn build_quoted_alias_referenced_symbols(
+        &mut self,
+        project: &mut Project,
+        file: &str,
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        query_offset: u32,
+        query_position: tsz_common::position::Position,
+    ) -> Option<Vec<serde_json::Value>> {
+        let locs = self.quoted_alias_chain_references(
+            project,
+            file,
+            arena,
+            source_text,
+            query_offset,
+            query_position,
+            false,
+        )?;
+        let line_map = LineMap::build(source_text);
+        let cursor_offset = line_map
+            .position_to_offset(query_position, source_text)
+            .unwrap_or(0);
+
+        #[derive(Default)]
+        struct RefGroup {
+            definition: serde_json::Value,
+            references: Vec<serde_json::Value>,
+            seen_refs: rustc_hash::FxHashSet<(String, u32, u32)>,
+        }
+
+        let mut groups: Vec<RefGroup> = Vec::new();
+        let mut group_index_by_key: rustc_hash::FxHashMap<String, usize> =
+            rustc_hash::FxHashMap::default();
+
+        for seed_loc in locs {
+            let (definition, def_file, def_start, def_len) =
+                self.build_alias_definition_from_location(&seed_loc);
+            let group_key = format!("{def_file}:{def_start}:{def_len}");
+            let group_idx = if let Some(idx) = group_index_by_key.get(&group_key).copied() {
+                idx
+            } else {
+                let idx = groups.len();
+                groups.push(RefGroup {
+                    definition,
+                    ..RefGroup::default()
+                });
+                group_index_by_key.insert(group_key, idx);
+                idx
+            };
+
+            let mut symbol_refs = project
+                .find_references(&seed_loc.file_path, seed_loc.range.start)
+                .unwrap_or_default();
+            symbol_refs.push(seed_loc);
+
+            for mut loc in symbol_refs {
+                if let Some((loc_arena, _binder, _root, loc_source)) =
+                    self.parse_and_bind_file(&loc.file_path)
+                {
+                    let loc_line_map = LineMap::build(&loc_source);
+                    if let Some(start_off) =
+                        loc_line_map.position_to_offset(loc.range.start, &loc_source)
+                        && let Some(inner_range) = Self::quoted_specifier_inner_range_at_offset(
+                            &loc_arena,
+                            &loc_source,
+                            start_off,
+                        )
+                    {
+                        loc.range = inner_range;
+                    }
+                }
+
+                let loc_source = self
+                    .open_files
+                    .get(&loc.file_path)
+                    .cloned()
+                    .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
+                    .unwrap_or_default();
+                let loc_line_map = LineMap::build(&loc_source);
+                let start = loc_line_map
+                    .position_to_offset(loc.range.start, &loc_source)
+                    .unwrap_or(0);
+                let end = loc_line_map
+                    .position_to_offset(loc.range.end, &loc_source)
+                    .unwrap_or(start);
+                let len = end.saturating_sub(start);
+                let key = (loc.file_path.clone(), start, len);
+                if !groups[group_idx].seen_refs.insert(key) {
+                    continue;
+                }
+
+                let is_definition = loc.file_path == file
+                    && start <= cursor_offset
+                    && cursor_offset < end
+                    && loc.file_path == def_file
+                    && start == def_start
+                    && len == def_len;
+
+                groups[group_idx].references.push(serde_json::json!({
+                    "fileName": loc.file_path,
+                    "textSpan": {
+                        "start": start,
+                        "length": len,
+                    },
+                    "isWriteAccess": false,
+                    "isDefinition": is_definition,
+                }));
+            }
+        }
+
+        if groups.is_empty() {
+            return None;
+        }
+
+        for group in &mut groups {
+            group.references.sort_by(|a, b| {
+                let a_file = a
+                    .get("fileName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let b_file = b
+                    .get("fileName")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let file_cmp = a_file.cmp(b_file);
+                if file_cmp != std::cmp::Ordering::Equal {
+                    return file_cmp;
+                }
+                let a_start = a
+                    .get("textSpan")
+                    .and_then(|span| span.get("start"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                let b_start = b
+                    .get("textSpan")
+                    .and_then(|span| span.get("start"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                a_start.cmp(&b_start)
+            });
+        }
+
+        groups.sort_by(|a, b| {
+            let a_file = a
+                .definition
+                .get("fileName")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let b_file = b
+                .definition
+                .get("fileName")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let file_cmp = a_file.cmp(b_file);
+            if file_cmp != std::cmp::Ordering::Equal {
+                return file_cmp;
+            }
+            let a_start = a
+                .definition
+                .get("textSpan")
+                .and_then(|span| span.get("start"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let b_start = b
+                .definition
+                .get("textSpan")
+                .and_then(|span| span.get("start"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            a_start.cmp(&b_start)
+        });
+
+        Some(
+            groups
+                .into_iter()
+                .filter(|group| !group.references.is_empty())
+                .map(|group| {
+                    serde_json::json!({
+                        "definition": group.definition,
+                        "references": group.references,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn build_alias_definition_from_location(
+        &mut self,
+        loc: &tsz_common::position::Location,
+    ) -> (serde_json::Value, String, u32, u32) {
+        let source_text = self
+            .open_files
+            .get(&loc.file_path)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(&loc.file_path).ok())
+            .unwrap_or_default();
+        let line_map = LineMap::build(&source_text);
+        let start = line_map
+            .position_to_offset(loc.range.start, &source_text)
+            .unwrap_or(0);
+        let end = line_map
+            .position_to_offset(loc.range.end, &source_text)
+            .unwrap_or(start);
+        let len = end.saturating_sub(start);
+
+        let display = self
+            .parse_and_bind_file(&loc.file_path)
+            .and_then(|(arena, binder, root, source)| {
+                let lm = LineMap::build(&source);
+                let interner = TypeInterner::new();
+                let hover =
+                    HoverProvider::new(&arena, &binder, &lm, &interner, &source, loc.file_path.clone());
+                let mut type_cache = None;
+                hover
+                    .get_hover(root, loc.range.start, &mut type_cache)
+                    .map(|h| h.display_string)
+            })
+            .unwrap_or_else(|| "alias".to_string());
+
+        let def = serde_json::json!({
+            "containerKind": "",
+            "containerName": "",
+            "kind": "alias",
+            "name": display,
+            "displayParts": Self::parse_display_string_to_parts(&display, "alias", "alias"),
+            "fileName": loc.file_path.clone(),
+            "textSpan": { "start": start, "length": len },
+        });
+        (
+            def,
+            loc.file_path.clone(),
+            start,
+            len,
+        )
     }
 
     pub(crate) fn build_fallback_definition(
