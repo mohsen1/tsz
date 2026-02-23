@@ -216,6 +216,33 @@ pub fn find_common_base_type(
     Some(first_base)
 }
 
+/// Get the effective read type of a property, adding `undefined` if the property is optional.
+///
+/// When a property is marked as optional (`prop.optional == true`), its read type
+/// should include `undefined` to match TypeScript's behavior. This consolidates the
+/// previously duplicated `optional_property_type` methods from `PropertyAccessEvaluator`,
+/// `TypeEvaluator`, `CallEvaluator`, and `InferenceContext`.
+///
+/// Note: `SubtypeChecker` has its own version that respects `exactOptionalPropertyTypes`.
+pub fn optional_property_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
+    if prop.optional {
+        db.union2(prop.type_id, TypeId::UNDEFINED)
+    } else {
+        prop.type_id
+    }
+}
+
+/// Get the effective write type of a property, adding `undefined` if the property is optional.
+///
+/// Similar to [`optional_property_type`] but uses the property's `write_type` field instead.
+pub fn optional_property_write_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
+    if prop.optional {
+        db.union2(prop.write_type, TypeId::UNDEFINED)
+    } else {
+        prop.write_type
+    }
+}
+
 #[cfg(test)]
 #[path = "../tests/utils_tests.rs"]
 mod tests;

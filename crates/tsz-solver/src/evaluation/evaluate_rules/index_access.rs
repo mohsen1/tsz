@@ -863,11 +863,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional {
-            self.interner().union2(prop.type_id, TypeId::UNDEFINED)
-        } else {
-            prop.type_id
-        }
+        crate::utils::optional_property_type(self.interner(), prop)
     }
 
     pub(crate) fn add_undefined_if_unchecked(&self, type_id: TypeId) -> TypeId {

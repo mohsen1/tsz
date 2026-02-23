@@ -692,11 +692,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional {
-            self.interner().union2(prop.type_id, TypeId::UNDEFINED)
-        } else {
-            prop.type_id
-        }
+        crate::utils::optional_property_type(self.interner(), prop)
     }
 
     fn resolve_apparent_property(

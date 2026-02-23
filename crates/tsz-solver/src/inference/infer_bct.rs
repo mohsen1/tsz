@@ -556,19 +556,11 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional {
-            self.interner.union2(prop.type_id, TypeId::UNDEFINED)
-        } else {
-            prop.type_id
-        }
+        crate::utils::optional_property_type(self.interner, prop)
     }
 
     fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
-        if prop.optional {
-            self.interner.union2(prop.write_type, TypeId::UNDEFINED)
-        } else {
-            prop.write_type
-        }
+        crate::utils::optional_property_write_type(self.interner, prop)
     }
 
     fn is_subtype_with_method_variance(
