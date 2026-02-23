@@ -629,3 +629,21 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-23 (quickinfo contextual function-array parameter follow-up)
+
+Completed in this pass:
+- Improved tsserver quickinfo contextual parameter extraction for function-array property types by normalizing callable type text before parameter slicing in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` (handles `((n: number, s: string) => string)[]` instead of collapsing to `number, s: string`).
+- Extended assignment-LHS property probing for contextual quickinfo recovery to support wrapped RHS function expressions (`x.y = [function(...) {}]` / `x.y = (function(...) {})`).
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs`:
+  - `assignment_lhs_property_offset_before_function_supports_array_wrapped_rhs`
+  - `contextual_parameter_type_from_text_extracts_function_array_parameter`
+- Verification:
+  - `cargo nextest run -p tsz-cli` passed (`416` tests).
+  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` moved failure from marker `61` (`(parameter) n: any`) to marker `64`.
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remained `195/200` passing (no sampled regression).
+  - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1150` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `64`: expected `(property) IBar.foo: IFoo`, got empty quick info).
+  Reason: declaration-site/object-literal member quickinfo fallback for contextual `IBar` property names still misses this assignment path and needs a dedicated member-property resolver follow-up in tsserver `handlers_info`.
