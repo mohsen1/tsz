@@ -33,6 +33,7 @@ mod check;
 mod handlers_code_fixes;
 mod handlers_code_fixes_imports;
 mod handlers_code_fixes_jsdoc;
+mod handlers_code_fixes_utils;
 mod handlers_completions;
 mod handlers_completions_display;
 mod handlers_completions_snippets;

@@ -7,7 +7,7 @@
 //! verbatim-CommonJS auto-import codepath.
 
 use super::Server;
-use super::handlers_code_fixes::{
+use super::handlers_code_fixes_utils::{
     extract_quoted_text, find_jsdoc_import_line, import_spec_sort_key, import_specs_are_sorted,
     is_path_excluded_with_patterns, parse_inserted_import_spec, parse_named_import_line,
     relative_module_path_candidates, reorder_import_candidates_for_package_roots,
@@ -149,7 +149,8 @@ impl Server {
         else {
             return false;
         };
-        let source_imports = super::handlers_code_fixes::parse_named_import_map(&source_content);
+        let source_imports =
+            super::handlers_code_fixes_utils::parse_named_import_map(&source_content);
         let Some(reexport_source) = source_imports.get(symbol_name) else {
             return false;
         };
