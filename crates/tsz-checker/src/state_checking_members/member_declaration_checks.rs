@@ -844,20 +844,50 @@ impl<'a> CheckerState<'a> {
                         // they are standalone declarations, not overload signatures.
                         let is_abstract = self.has_abstract_modifier(&method.modifiers);
                         if method.body.is_none() && !is_abstract && !method.question_token {
-                            // Method overload signature - check for implementation
+                            // Method overload signature - check for implementation.
+                            // TSC only reports TS2391 on the LAST overload in a consecutive
+                            // group with the same name, so skip ahead to find it.
                             let method_name = self.get_method_name_from_node(member_idx);
-                            // TSC reports at the method name node, not the declaration
-                            let error_node = if method.name.is_some() {
-                                method.name
-                            } else {
-                                member_idx
-                            };
                             if let Some(name) = method_name {
+                                // Advance past consecutive bodyless method overloads with the same name.
+                                let mut last_overload_i = i;
+                                let mut j = i + 1;
+                                while j < members.len() {
+                                    let next_idx = members[j];
+                                    let Some(next_node) = self.ctx.arena.get(next_idx) else {
+                                        break;
+                                    };
+                                    if next_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                                        && let Some(next_method) =
+                                            self.ctx.arena.get_method_decl(next_node)
+                                        && next_method.body.is_none()
+                                    {
+                                        let next_name = self.get_method_name_from_node(next_idx);
+                                        if next_name.as_deref() == Some(name.as_str()) {
+                                            last_overload_i = j;
+                                            j += 1;
+                                            continue;
+                                        }
+                                    }
+                                    break;
+                                }
+
+                                // Report at the last overload in the group
+                                let report_member_idx = members[last_overload_i];
+                                let report_error_node = self
+                                    .ctx
+                                    .arena
+                                    .get(report_member_idx)
+                                    .and_then(|n| self.ctx.arena.get_method_decl(n))
+                                    .map(|m| m.name)
+                                    .filter(|n| n.is_some())
+                                    .unwrap_or(report_member_idx);
+
                                 let (has_impl, impl_name, impl_idx) =
-                                    self.find_method_impl(members, i + 1, &name);
+                                    self.find_method_impl(members, last_overload_i + 1, &name);
                                 if !has_impl {
                                     self.error_at_node(
-                                        error_node,
+                                        report_error_node,
                                         "Function implementation is missing or not immediately following the declaration.",
                                         diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                     );
@@ -867,11 +897,11 @@ impl<'a> CheckerState<'a> {
                                     // Implementation has wrong name — report at the
                                     // implementation's name node, and only on the last
                                     // overload (the one immediately preceding the implementation).
-                                    let impl_member_idx = impl_idx.unwrap_or(i + 1);
-                                    if impl_member_idx == i + 1 {
+                                    let impl_member_idx = impl_idx.unwrap_or(last_overload_i + 1);
+                                    if impl_member_idx == last_overload_i + 1 {
                                         let impl_node_idx = members[impl_member_idx];
                                         let expected_display = self
-                                            .get_method_name_for_diagnostic(member_idx)
+                                            .get_method_name_for_diagnostic(report_member_idx)
                                             .unwrap_or_else(|| name.clone());
                                         let impl_error_node = self
                                             .ctx
@@ -890,6 +920,9 @@ impl<'a> CheckerState<'a> {
                                         );
                                     }
                                 }
+                                // Skip past all overloads we already processed
+                                i = last_overload_i + 1;
+                                continue;
                             }
                         }
                     }

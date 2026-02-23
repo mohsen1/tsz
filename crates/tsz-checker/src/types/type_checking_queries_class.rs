@@ -627,14 +627,49 @@ impl<'a> CheckerState<'a> {
                     i += 1;
                     continue;
                 }
-                // Function overload signature - check for implementation
+                // Function overload signature - check for implementation.
+                // TSC only reports TS2391 on the LAST overload in a consecutive
+                // group with the same name, so skip ahead to find it.
                 let func_name = self.get_function_name_from_node(stmt_idx);
                 if let Some(name) = func_name {
+                    // Advance past consecutive bodyless overloads with the same name.
+                    let mut last_overload_i = i;
+                    let mut j = i + 1;
+                    while j < statements.len() {
+                        let next_idx = statements[j];
+                        let Some(next_node) = self.ctx.arena.get(next_idx) else {
+                            break;
+                        };
+                        if next_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                            && let Some(next_func) = self.ctx.arena.get_function(next_node)
+                            && next_func.body.is_none()
+                        {
+                            let next_name = self.get_function_name_from_node(next_idx);
+                            if next_name.as_deref() == Some(name.as_str()) {
+                                last_overload_i = j;
+                                j += 1;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+
+                    // Report at the last overload in the group
+                    let report_stmt_idx = statements[last_overload_i];
+                    let report_error_node = self
+                        .ctx
+                        .arena
+                        .get(report_stmt_idx)
+                        .and_then(|n| self.ctx.arena.get_function(n))
+                        .map(|f| f.name)
+                        .filter(|n| n.is_some())
+                        .unwrap_or(report_stmt_idx);
+
                     let (has_impl, impl_name, impl_idx) =
-                        self.find_function_impl(statements, i + 1, &name);
+                        self.find_function_impl(statements, last_overload_i + 1, &name);
                     if !has_impl {
                         self.error_at_node(
-                                    error_node,
+                                    report_error_node,
                                     "Function implementation is missing or not immediately following the declaration.",
                                     diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                 );
@@ -660,13 +695,16 @@ impl<'a> CheckerState<'a> {
                             let impl_is_declared = self.is_ambient_declaration(impl_idx);
                             if is_declared != impl_is_declared {
                                 self.error_at_node(
-                                    error_node,
+                                    report_error_node,
                                     crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                                     crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                                 );
                             }
                         }
                     }
+                    // Skip past all overloads we already processed
+                    i = last_overload_i + 1;
+                    continue;
                 }
             }
             i += 1;
