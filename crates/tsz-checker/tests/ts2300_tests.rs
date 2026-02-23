@@ -218,13 +218,45 @@ fn method_overloads_are_allowed() {
     assert!(ts2300_errors.is_empty());
 }
 
-/// Test that duplicate properties in interfaces emit TS2300 only on subsequent declarations.
+/// Test that duplicate properties in interfaces emit TS2300 on ALL occurrences
+/// (both first and subsequent). tsc reports all declarations as duplicates in interfaces.
 #[test]
 fn duplicate_interface_properties() {
     verify_errors(
         "interface Foo { x: number; x: string; }",
-        &[(1, 28, "Duplicate identifier 'x'.")],
+        &[
+            (1, 17, "Duplicate identifier 'x'."),
+            (1, 28, "Duplicate identifier 'x'."),
+        ],
     );
+}
+
+/// Test that string-literal and identifier interface properties with the same name
+/// are detected as duplicates (both occurrences reported).
+#[test]
+fn duplicate_interface_string_literal_and_identifier() {
+    verify_errors(
+        "interface Album { \"artist\": string; artist: string; }",
+        &[
+            (1, 19, "Duplicate identifier 'artist'."),
+            (1, 37, "Duplicate identifier 'artist'."),
+        ],
+    );
+}
+
+/// Test that three duplicate interface properties produce TS2300 on all three.
+#[test]
+fn triple_duplicate_interface_properties() {
+    let diagnostics = verify_errors(
+        "interface I { a: number; a: string; a: boolean; }",
+        &[
+            (1, 15, "Duplicate identifier 'a'."),
+            (1, 26, "Duplicate identifier 'a'."),
+            (1, 37, "Duplicate identifier 'a'."),
+        ],
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(ts2300, 3, "All three occurrences should have TS2300");
 }
 
 /// Test that interface merging is allowed (no TS2300).
