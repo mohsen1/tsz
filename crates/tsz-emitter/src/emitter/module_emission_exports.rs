@@ -406,6 +406,26 @@ impl<'a> Printer<'a> {
                             break;
                         }
                         self.write(emit_text);
+                    } else if !export.is_default_export
+                        && !self.ctx.module_state.has_export_assignment
+                        && let Some(enum_decl) = self.arena.get_enum(clause_node)
+                        && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
+                    {
+                        // For non-default CJS exported enums, fold exports.Name into
+                        // the IIFE tail: (E || (exports.E = E = {}))
+                        // This matches tsc's compact form instead of a separate
+                        // exports.E = E; statement.
+                        let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
+                        enum_emitter.set_indent_level(self.writer.indent_level());
+                        if let Some(text) = self.source_text {
+                            enum_emitter.set_source_text(text);
+                        }
+                        let mut output = enum_emitter.emit_enum(export.export_clause);
+                        let from = format!("({name} || ({name} = {{}}))");
+                        let to = format!("({name} || (exports.{name} = {name} = {{}}))");
+                        output = output.replacen(&from, &to, 1);
+                        let emit_text = output.trim_end_matches('\n');
+                        self.write(emit_text);
                     } else {
                         self.emit_enum_declaration(clause_node, export.export_clause);
                         self.write_line();

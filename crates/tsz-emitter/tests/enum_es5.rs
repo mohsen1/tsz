@@ -137,3 +137,33 @@ fn test_enum_with_property_access() {
     // Property access should be preserved
     assert!(output.contains("E.B"), "Should preserve property access");
 }
+
+#[test]
+fn test_cjs_exported_enum_iife_tail_folding() {
+    // Verify that the IIFE tail `(E || (E = {}))` produced by emit_enum
+    // can be folded into the CJS export form `(E || (exports.E = E = {}))`.
+    // This matches tsc's compact output for `export enum E { ... }` under CommonJS.
+    let output = emit_enum_legacy("enum E { A, B }");
+
+    // The raw output should contain the plain IIFE tail (no exports binding)
+    assert!(
+        output.contains("(E || (E = {}))"),
+        "Raw enum output should have plain IIFE tail, got: {output}"
+    );
+
+    // Apply the same string replacement used in transform_dispatch/module_emission_exports
+    let name = "E";
+    let from = format!("({name} || ({name} = {{}}))");
+    let to = format!("({name} || (exports.{name} = {name} = {{}}))");
+    let folded = output.replacen(&from, &to, 1);
+
+    assert!(
+        folded.contains("(E || (exports.E = E = {}))"),
+        "Folded output should have CJS IIFE tail, got: {folded}"
+    );
+    // The replacement should only affect the IIFE tail, not the body
+    assert!(
+        folded.contains("E[E[\"A\"] = 0] = \"A\""),
+        "Body should be unchanged after folding"
+    );
+}

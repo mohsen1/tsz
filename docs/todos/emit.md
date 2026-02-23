@@ -1,8 +1,19 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5113/7163 = 71.4% JS, 416/1035 = 40.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 5184/7258 = 71.4% JS, 420/1047 = 40.1% DTS)
 
 ### Fixed This Session
+- **CJS exported enum IIFE tail folding** (+6 JS):
+  tsc emits `})(E || (exports.E = E = {}));` for CommonJS exported enums, folding the `exports.`
+  binding into the IIFE tail. tsz was emitting the IIFE with `(E || (E = {}))` and a separate
+  `exports.E = E;` statement afterwards. Fix: in `transform_dispatch.rs` (EmitDirective::CommonJSExport
+  path) and `module_emission_exports.rs` (non-AMD/UMD CJS path), apply string replacement on the
+  EnumES5Emitter output to fold `exports.Name` into the IIFE tail expression. This mirrors the
+  existing approach used for AMD/UMD enum exports. Also handles namespace merge by stripping
+  `var E;\n` prefix when the name was already declared. One unit test added verifying the
+  string replacement pattern. JS: 5178→5184, zero regressions.
+
+### Previously Fixed
 - **Preserve multiline conditional expression formatting** (+5 JS, +1 DTS):
   tsc preserves line breaks in ternary expressions (e.g., `a ? b :\n    c;` or `a\n    ? b\n    : c;`).
   tsz was collapsing all conditional expressions to single-line `a ? b : c` format. Fix: in
