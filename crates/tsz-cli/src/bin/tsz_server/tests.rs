@@ -4364,7 +4364,10 @@ fn test_references_full_quoted_alias_definition_uses_file_name_and_text_span_sha
         .get("textSpan")
         .expect("definition should expose tsserver textSpan");
     assert!(
-        text_span.get("start").and_then(serde_json::Value::as_u64).is_some()
+        text_span
+            .get("start")
+            .and_then(serde_json::Value::as_u64)
+            .is_some()
             && text_span
                 .get("length")
                 .and_then(serde_json::Value::as_u64)
