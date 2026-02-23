@@ -331,10 +331,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     pub(super) fn is_binding_pattern_idx(&self, idx: NodeIndex) -> bool {
-        self.arena.get(idx).is_some_and(|node| {
-            node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-        })
+        self.arena.get(idx).is_some_and(|n| n.is_binding_pattern())
     }
 
     pub(super) fn call_spread_needs_spread_array(&self, args: &[NodeIndex]) -> bool {

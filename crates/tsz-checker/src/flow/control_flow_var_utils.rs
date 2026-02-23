@@ -355,16 +355,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if a node is a binding pattern (array or object destructuring pattern)
     fn is_binding_pattern(&self, node: NodeIndex) -> bool {
-        if node.is_none() {
-            return false;
-        }
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-        matches!(
-            node_data.kind,
-            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        )
+        self.arena.get(node).is_some_and(|n| n.is_binding_pattern())
     }
 
     /// Check if a node contains a destructuring pattern (array/object literal with binding elements).
