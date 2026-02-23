@@ -1129,6 +1129,43 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS6082: Only 'amd' and 'system' modules are supported alongside --outFile.
+        // When outFile is set with a non-amd/system module, emit at both the module and outFile keys.
+        if let Some(serde_json::Value::String(out_file_value)) = compiler_opts.get("outFile")
+            && !out_file_value.is_empty()
+            && !option_is_truthy(compiler_opts.get("emitDeclarationOnly"))
+            && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
+        {
+            let mod_normalized =
+                normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+            if !matches!(mod_normalized.as_str(), "amd" | "system") {
+                let msg = format_message(
+                    diagnostic_messages::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
+                    &["outFile"],
+                );
+                // Emit at the "module" key (matching tsc behavior)
+                let start_module = find_key_offset_in_source(&stripped, "module");
+                let module_key_len = "module".len() as u32 + 2; // include quotes
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start_module,
+                    module_key_len,
+                    msg.clone(),
+                    diagnostic_codes::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
+                ));
+                // Emit at the "outFile" key (matching tsc behavior)
+                let start_outfile = find_key_offset_in_source(&stripped, "outFile");
+                let outfile_key_len = "outFile".len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start_outfile,
+                    outfile_key_len,
+                    msg,
+                    diagnostic_codes::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
+                ));
+            }
+        }
+
         // TS5069: Option '{0}' cannot be specified without specifying option '{1}' or option '{2}'.
         let requires_decl_or_composite: &[&str] = &[
             "emitDeclarationOnly",
@@ -2971,6 +3008,89 @@ mod tests {
             !codes.contains(&5098),
             "Should NOT emit TS5098 with bundler moduleResolution, got: {:?}",
             codes
+        );
+    }
+
+    #[test]
+    fn test_ts6082_outfile_with_commonjs() {
+        let source = r#"{"compilerOptions":{"module":"commonjs","outFile":"all.js"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&6082),
+            "Expected TS6082 for outFile+commonjs, got: {codes:?}"
+        );
+        // Should emit twice — once at "module" key, once at "outFile" key
+        let count = codes.iter().filter(|&&c| c == 6082).count();
+        assert_eq!(
+            count, 2,
+            "Expected two TS6082 diagnostics (module + outFile keys), got {count}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_outfile_with_umd() {
+        let source = r#"{"compilerOptions":{"module":"umd","outFile":"all.js"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&6082),
+            "Expected TS6082 for outFile+umd, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_outfile_with_es6() {
+        let source = r#"{"compilerOptions":{"module":"es6","outFile":"all.js"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&6082),
+            "Expected TS6082 for outFile+es6, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_not_emitted_for_amd() {
+        let source = r#"{"compilerOptions":{"module":"amd","outFile":"all.js"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6082),
+            "Should NOT emit TS6082 for outFile+amd, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_not_emitted_for_system() {
+        let source = r#"{"compilerOptions":{"module":"system","outFile":"all.js"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6082),
+            "Should NOT emit TS6082 for outFile+system, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_not_emitted_with_emit_declaration_only() {
+        let source = r#"{"compilerOptions":{"module":"commonjs","outFile":"all.js","emitDeclarationOnly":true,"declaration":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6082),
+            "Should NOT emit TS6082 when emitDeclarationOnly is true, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts6082_not_emitted_without_outfile() {
+        let source = r#"{"compilerOptions":{"module":"commonjs"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&6082),
+            "Should NOT emit TS6082 without outFile, got: {codes:?}"
         );
     }
 }
