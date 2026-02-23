@@ -39,6 +39,26 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 self.ctx.error(node.pos, 6, message, code);
             }
 
+            // TS2397: Declaration name conflicts with built-in global identifier.
+            // Namespaces named `globalThis` or `undefined` conflict with built-in globals.
+            if let Some(name_node) = self.ctx.arena.get(module.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.as_str();
+                if name == "globalThis" || name == "undefined" {
+                    let message = format_message(
+                        diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                        &[name],
+                    );
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        message,
+                        diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    );
+                }
+            }
+
             // TS2668: 'export' modifier cannot be applied to ambient modules
             // This only applies to string-literal-named ambient modules (declare module "foo"),
             // not to namespace-form modules (declare namespace Foo)
