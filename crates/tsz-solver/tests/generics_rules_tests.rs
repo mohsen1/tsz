@@ -473,39 +473,12 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
     env.insert_def_kind(subject_def, DefKind::Interface);
 
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
-    let source_app = application_id(&interner, source).expect("source app id");
-    let target_app = application_id(&interner, target).expect("target app id");
 
-    let source_expanded = checker.try_expand_application(source_app);
-    let target_expanded = checker.try_expand_application(target_app);
-    if let (Some(source_expanded), Some(target_expanded)) = (source_expanded, target_expanded) {
-        let _ = checker.check_subtype(source_expanded, target_expanded);
-        if let Some(source_nested_app) = application_id(&interner, source_expanded)
-            && let Some(target_nested_app) = application_id(&interner, target_expanded)
-        {
-            let _ = checker
-                .check_application_to_application_subtype(source_nested_app, target_nested_app);
-        }
-        if let Some(shape_id) = object_shape_id(&interner, source_expanded) {
-            let source_nested = interner
-                .object_shape(shape_id)
-                .properties
-                .first()
-                .map(|prop| prop.type_id);
-            if let Some(source_nested) = source_nested
-                && let Some(target_nested) =
-                    object_shape_id(&interner, target_expanded).and_then(|target_shape| {
-                        interner
-                            .object_shape(target_shape)
-                            .properties
-                            .first()
-                            .map(|prop| prop.type_id)
-                    })
-            {
-                let _ = checker.check_subtype(source_nested, target_nested);
-            }
-        }
-    }
-
-    assert!(checker.check_subtype(source, target).is_true());
+    // ISubject<{y:string}> should be assignable to IObservable<{x:string}> via
+    // coinductive cycle detection: recursive expansion of the shared base
+    // IObservable hits the same (DefId, DefId) pair and terminates as CycleDetected (true).
+    assert!(
+        checker.check_subtype(source, target).is_true(),
+        "ISubject<bar> should be subtype of IObservable<foo> via structural expansion with coinductive recursion"
+    );
 }
