@@ -419,7 +419,18 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7932/12574 (63.1%) — full suite
+## Current score: ~7935/12574 (63.1%) — full suite (estimated from first-6000 +3)
+
+### Session progress (~7932 → ~7935, +3 tests):
+- **TS2300 (interface duplicate reporting)**: Fixed `check_duplicate_interface_members` to report
+  TS2300 on ALL occurrences of duplicate properties (both first and subsequent), matching tsc
+  behavior. Previously used `skip(1)` which only flagged the second+ occurrence. tsc reports all
+  occurrences for interfaces (unlike classes where only subsequent are flagged).
+  - Tests passing: `duplicateStringNamedProperty1.ts`, `duplicateInterfaceMembers1.ts`, +1 more
+  - Added 3 unit tests: string-literal vs identifier, triple duplicates, updated existing test
+  - First-6000 score: 3994 → 3997 (66.6%)
+
+## Previous score: 7932/12574 (63.1%) — full suite
 
 ### Session progress (7928 → ~7932, +4 tests):
 - **TS2481**: Implemented "Cannot initialize outer scoped variable in the same scope as block
