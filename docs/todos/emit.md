@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9855/13623 = 72.3% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9853/13623 = 72.3% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **`declare using`, `declare await using`, and `declare export` not parsed as ambient declarations** (+3 JS):
+  The parser's `look_ahead_is_declare_before_declaration` and `parse_ambient_declaration` did not
+  handle `UsingKeyword`, `AwaitKeyword`, or `ExportKeyword` after `declare`. This caused
+  `declare using y: null;` to be split into two statements: a bare `declare;` expression statement
+  (suppressed by the emitter's `is_declare_modifier_artifact` check) plus a `using y;` variable
+  statement that was incorrectly emitted. Similarly, `declare export function f() {}` split into
+  `declare;` + `export function f() {}`. Fix: added the three keywords to the lookahead match in
+  `state_statements.rs` and corresponding handler arms in `parse_ambient_declaration` in
+  `state_declarations.rs` that attach the `declare` modifier to the resulting VARIABLE_STATEMENT or
+  FUNCTION_DECLARATION. The emitter's existing `DeclareKeyword` modifier check then correctly erases
+  them. Three unit tests added in `state_declaration_tests.rs`.
+  Tests fixed: `functionsWithModifiersInBlocks1`, `awaitUsingDeclarations.11`, `usingDeclarations.13`.
+  JS: 9850→9853, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Missing `var _a;` hoisted declaration for optional chain/nullish coalescing temps** (+20 JS):
   When lowering `?.` and `??` operators to ES2019 and below for complex (non-identifier)
   expressions, temp variables like `_a` are used in ternary expressions
@@ -839,13 +854,12 @@
   seems rare (such expressions usually span multiple lines), and no tests currently fail from this.
   Fix would require checking for accumulated hoisted temps after single-line emit and forcing a
   multi-line rewrite, or pre-scanning the AST to detect if temps will be needed.
-- **`declare;` emitted as standalone statement (~7 tests)**: Ambient declarations like
-  `declare import a = b;`, `declare declare var x;`, and `declare export function f() {}` emit
-  the `declare` keyword as a standalone expression statement `declare;` instead of being fully
-  erased. Affects `declareModifierOnImport1`, `exportAssignmentWithDeclareModifier`,
-  `declareAlreadySeen`, `functionsWithModifiersInBlocks1`, `importDeclWithDeclareModifier`,
-  `awaitUsingDeclarations.11`, `usingDeclarations.13`. Requires fixing the modifier/statement
-  erasure logic to properly handle the `declare` keyword when the declaration is ambient.
+- ~~**`declare;` emitted as standalone statement (~7 tests)**~~ — **PARTIALLY FIXED**: `declare using`,
+  `declare await using`, and `declare export function` now parse correctly as ambient declarations.
+  Three tests fixed (see "Fixed This Session"). Remaining: `importDeclWithDeclareModifier` fails for
+  a different reason (import parsing in `--noCheck` mode), `exportAssignmentWithDeclareModifier` fails
+  due to `export =` CJS module.exports emit. `declareModifierOnImport1` and `declareAlreadySeen`
+  already pass.
 - **Enum computed property name `[e]` resolved to empty string (~6 tests)**: Enum members
   with computed names like `[e] = 1` emit `E[E[""] = 1] = "";` instead of `E[E[e] = 1] = e;`.
   The enum IIFE emitter isn't handling the computed name expression — it falls back to empty
