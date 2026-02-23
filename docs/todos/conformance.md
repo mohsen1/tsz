@@ -436,6 +436,13 @@ error-code level only.
   conformance tests closer to passing.
 - **TS5103 (ignoreDeprecations '5.5')**: Extended valid `ignoreDeprecations` values to include
   `"5.5"` in addition to `"5.0"`, matching tsc 6.0 behavior.
+- **TS2839**: Implemented "This condition will always return '{0}' since JavaScript compares
+  objects by reference, not value." for equality comparisons involving object literals.
+  Checks ObjectLiteral, ArrayLiteral, RegExp, FunctionExpr, ClassExpr on either side.
+  In JS files, only strict equality (===, !==) triggers; in TS files, all four operators.
+  - Test passing: `conditionalEqualityOnLiteralObjects.ts` (+1 error-code-level conformance)
+  - Added 6 unit tests: strict eq/neq, loose eq in TS, one-sided literal, non-literal no error,
+    JS file strict-only behavior
 
 ### Investigation findings (2025-02-23):
 - Most remaining failures at fingerprint level are due to missing diagnostics (not false positives).
