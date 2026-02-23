@@ -372,3 +372,56 @@ fn arguments_parameter_with_rest_no_ts2300() {
         "arguments param with rest should NOT produce TS2300"
     );
 }
+
+/// Test that multiple `export default class C` does NOT produce TS2300.
+/// tsc emits only TS2528 ("A module cannot have multiple default exports"),
+/// not TS2300 for the class name.
+#[test]
+fn export_default_class_duplicates_no_ts2300() {
+    let diagnostics = verify_errors(
+        "export default class C {} export default class C {}",
+        &[], // TS2300 should NOT be emitted
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "export default class duplicates should NOT produce TS2300 (TS2528 handles it)"
+    );
+    // TS2528 should be emitted instead
+    let ts2528 = diagnostics.iter().filter(|d| d.code == 2528).count();
+    assert!(
+        ts2528 > 0,
+        "Should emit TS2528 for multiple default exports"
+    );
+}
+
+/// Test that duplicate well-known Symbol properties in interfaces do NOT produce TS2300.
+/// tsc allows duplicate Symbol-keyed properties because symbols are structurally unique.
+#[test]
+fn duplicate_symbol_property_in_interface_no_ts2300() {
+    let diagnostics = verify_errors(
+        "interface I { [Symbol.isConcatSpreadable]: string; [Symbol.isConcatSpreadable]: string; }",
+        &[], // No TS2300 expected for Symbol properties
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "Duplicate Symbol properties in interfaces should NOT produce TS2300"
+    );
+}
+
+/// Test that exported and non-exported classes with the same name in merging
+/// namespaces do NOT produce TS2300. tsc allows this because they occupy
+/// different visibility scopes.
+#[test]
+fn namespace_exported_and_non_exported_class_no_ts2300() {
+    let diagnostics = verify_errors(
+        "namespace A { export class Point { x: number; } } namespace A { class Point { y: number; } }",
+        &[], // No TS2300 expected
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "Exported + non-exported class in merging namespaces should NOT produce TS2300"
+    );
+}

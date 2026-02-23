@@ -399,9 +399,20 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7892/12574 (62.8%) — full suite
+## Current score: 7894/12574 (62.8%) — full suite
 
-### Session progress (7886 → 7892, +6 tests):
+### Session progress (7892 → 7894, +2 tests):
+- **TS2300 false positives**: Suppressed three categories of false TS2300 emissions:
+  1. Export default class duplicates: skip TS2300 when all duplicate class declarations are
+     `export default` — TS2528 ("A module cannot have multiple default exports") handles it.
+  2. Well-known Symbol properties in interfaces: skip `[Symbol.xxx]` computed property names
+     from interface duplicate checking (tsc allows duplicate symbol-keyed properties).
+  3. Namespace exported/non-exported class merge: skip TS2300 when class declarations in
+     merging namespaces differ in export visibility (one exported, one not). tsc allows this.
+  - Tests affected: `multipleDefaultExports03.ts`, `symbolProperty37.ts`,
+    `TwoInternalModulesThatMergeEachWithExportedAndNonExportedClassesOfTheSameName.ts`.
+
+### Previous session progress (7886 → 7892, +6 tests):
 - **TS7057**: Emit TS7057 ("yield expression implicitly results in an 'any' type...") when
   noImplicitAny is enabled, generator lacks return type, and yield result is consumed.
   Implemented `expression_result_is_unused` helper mirroring tsc's utility — walks up through
@@ -510,3 +521,5 @@ type covers the implicit any. `expression_result_is_unused()` helper mirrors tsc
 
 - **TS2454**: `TypeScript/tests/cases/compiler/controlFlowDestructuringVariablesInTryCatch.ts` — still missing TS2454 on catch destructuring paths; needs CFG assignment edges for catch-binding destructures.
 - **TS2454**: `TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfObjectBindingPatternDefaultValues2.ts` — still missing TS2454 for nested destructuring defaults; requires deeper flow joins for destructuring initializers.
+- **TS2300 (remaining false positives, 4 tests)**: `unusedTypeParameters8.ts` (cross-file class/interface merge — only triggers in multi-file mode), `constructorFunctionMergeWithClass.ts` (JS constructor+class merge), `numericNamedPropertyDuplicates.ts` / `stringNamedPropertyDuplicates.ts` (fingerprint mismatch: property name quoting and line number differences, not error-code level).
+- **TS2300 (remaining missing, 6 tests)**: JSDoc @typedef/@import duplicate detection (4 tests), type param vs local interface clash (1 test), unique symbol computed property duplicates in classes (1 test). Each has a distinct root cause.
