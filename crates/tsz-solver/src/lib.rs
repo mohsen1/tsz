@@ -11,7 +11,6 @@
 //! - O(1) type equality via interning (`TypeId` comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
-mod application;
 mod caches;
 pub mod canonicalize;
 pub mod classes;
@@ -66,7 +65,6 @@ pub use visitors::visitor::{
     walk_referenced_types,
 };
 
-pub use application::*;
 pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats};
 pub use canonicalize::*;
@@ -84,6 +82,7 @@ pub use diagnostics::{
 pub use evaluation::evaluate::*;
 pub use format::TypeFormatter;
 pub use inference::infer::*;
+pub use instantiation::application::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_type,
     substitute_this_type,
