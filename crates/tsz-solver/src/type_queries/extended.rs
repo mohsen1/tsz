@@ -1198,14 +1198,6 @@ pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> Name
     }
 }
 
-/// Unwrap readonly type wrapper if present.
-pub fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    match db.lookup(type_id) {
-        Some(TypeData::ReadonlyType(inner)) => inner,
-        _ => type_id,
-    }
-}
-
 // =============================================================================
 // Literal Type Creation Helpers
 // =============================================================================
