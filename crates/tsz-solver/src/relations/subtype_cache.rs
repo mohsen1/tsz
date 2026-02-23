@@ -188,16 +188,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_def_id = extract_def_id(self.interner, target);
 
         let def_pair = if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
-            // Skip same-base Application cycle detection to avoid false positives
-            // (e.g., Array<number> vs Array<string> share the same base)
-            if s_def == t_def
-                && application_id(self.interner, source).is_some()
-                && application_id(self.interner, target).is_some()
-            {
-                None
-            } else {
-                Some((s_def, t_def))
-            }
+            Some((s_def, t_def))
         } else {
             None
         };
