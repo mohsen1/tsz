@@ -4111,6 +4111,88 @@ fn test_rename_from_export_quoted_alias_filters_non_specifier_locations() {
 }
 
 #[test]
+fn test_rename_quoted_alias_marker_offset_uses_literal_only_locations() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"/*RENAME*/__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+        ]
+        .join("\n"),
+    );
+
+    // Offset lands inside the comment marker in the quoted export alias string literal.
+    let req = make_request(
+        "rename",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 19
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("rename should return body");
+    let groups = body["locs"]
+        .as_array()
+        .expect("rename should include grouped locations");
+    assert!(
+        groups
+            .iter()
+            .any(|g| g.get("file").and_then(serde_json::Value::as_str) == Some("/foo.ts")),
+        "expected /foo.ts rename locations: {groups:?}"
+    );
+    assert!(!groups.is_empty(), "expected rename locations: {groups:?}");
+
+    for group in groups {
+        let file = group["file"]
+            .as_str()
+            .expect("group.file should be a string");
+        let source = server
+            .open_files
+            .get(file)
+            .expect("source file should exist");
+        let lines: Vec<&str> = source.lines().collect();
+        for loc in group["locs"]
+            .as_array()
+            .expect("group.locs should be an array")
+        {
+            let line = loc["start"]["line"]
+                .as_u64()
+                .expect("start.line should be numeric")
+                .saturating_sub(1) as usize;
+            let line_text = lines.get(line).copied().unwrap_or_default();
+            assert!(
+                line_text.contains("import {") || line_text.contains("export {"),
+                "rename should stay on import/export specifiers, got line: {line_text}"
+            );
+            assert!(
+                !line_text.contains("\"<other>\""),
+                "rename for __<alias> should not include <other> aliases, got line: {line_text}"
+            );
+            assert!(
+                loc.get("contextStart").is_some() && loc.get("contextEnd").is_some(),
+                "rename locations should carry context spans for fourslash baseline wrapping: {loc:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs() {
     let mut server = make_server();
     server.open_files.insert(
@@ -4154,10 +4236,14 @@ fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs
         !entries.is_empty(),
         "expected at least one referenced symbol"
     );
-    let refs = entries[0]["references"]
-        .as_array()
-        .cloned()
-        .expect("referenced symbol should include references");
+    let mut refs: Vec<serde_json::Value> = Vec::new();
+    for symbol_entry in &entries {
+        let symbol_refs = symbol_entry["references"]
+            .as_array()
+            .cloned()
+            .expect("referenced symbol should include references");
+        refs.extend(symbol_refs);
+    }
     assert!(
         refs.iter().any(|entry| {
             entry.get("fileName").and_then(serde_json::Value::as_str) == Some("/bar.ts")
@@ -4181,6 +4267,91 @@ fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs
     assert!(
         has_inner_alias_span,
         "expected at least one /foo.ts reference span to map to inner alias text"
+    );
+}
+
+#[test]
+fn test_references_full_quoted_alias_includes_symbol_alias_references_when_available() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "type foo = \"foo\";",
+            "export { type foo as \"__<alias>\" };",
+            "import { type \"__<alias>\" as bar } from \"./foo\";",
+            "const testBar: bar = \"foo\";",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { type \"__<alias>\" as first } from \"./foo\";",
+            "export { type \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { type \"<other>\" as second } from \"./bar\";",
+            "const testFirst: first = \"foo\";",
+            "const testSecond: second = \"foo\";",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references-full",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 24
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references-full should return body");
+    let entries = body
+        .as_array()
+        .cloned()
+        .expect("references-full response should be array");
+    assert!(
+        !entries.is_empty(),
+        "expected at least one referenced symbol entry"
+    );
+    let mut seen_bar_alias = false;
+    let mut seen_first_alias = false;
+    let mut all_refs: Vec<serde_json::Value> = Vec::new();
+    for symbol_entry in &entries {
+        let refs = symbol_entry["references"]
+            .as_array()
+            .cloned()
+            .expect("referenced symbol should include references");
+        for entry in refs {
+            let file = entry
+                .get("fileName")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let source = server
+                .open_files
+                .get(file)
+                .expect("reference file should be open");
+            let start = entry["textSpan"]["start"].as_u64().unwrap_or(0) as usize;
+            let len = entry["textSpan"]["length"].as_u64().unwrap_or(0) as usize;
+            let end = start.saturating_add(len);
+            let text = source.get(start..end).unwrap_or_default();
+            if text == "bar" {
+                seen_bar_alias = true;
+            }
+            if text == "first" {
+                seen_first_alias = true;
+            }
+            all_refs.push(entry);
+        }
+    }
+
+    assert!(
+        seen_bar_alias,
+        "expected symbol references to include imported alias 'bar': {all_refs:?}"
+    );
+    assert!(
+        seen_first_alias,
+        "expected symbol references to include cross-file imported alias 'first': {all_refs:?}"
     );
 }
 

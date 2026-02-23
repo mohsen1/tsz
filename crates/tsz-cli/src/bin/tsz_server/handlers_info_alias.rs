@@ -555,18 +555,18 @@ impl Server {
                         let Some(spec) = arena.get_specifier_at(spec_idx) else {
                             continue;
                         };
-                        let symbol_idx = if spec.property_name.is_some() {
+                        let string_symbol_idx = if spec.property_name.is_some() {
                             spec.property_name
                         } else {
                             spec.name
                         };
-                        let Some(symbol_node) = arena.get(symbol_idx) else {
+                        let Some(symbol_node) = arena.get(string_symbol_idx) else {
                             continue;
                         };
                         if symbol_node.kind != SyntaxKind::StringLiteral as u16 {
                             continue;
                         }
-                        let Some(text) = arena.get_literal_text(symbol_idx) else {
+                        let Some(text) = arena.get_literal_text(string_symbol_idx) else {
                             continue;
                         };
                         if !names.contains(text) {
@@ -584,6 +584,24 @@ impl Server {
                                 line_map.offset_to_position(inner_end, &source_text),
                             ),
                         ));
+                        let counterpart_idx = if string_symbol_idx == spec.property_name {
+                            spec.name
+                        } else {
+                            spec.property_name
+                        };
+                        if counterpart_idx.is_some()
+                            && let Some(counterpart_node) = arena.get(counterpart_idx)
+                            && (counterpart_node.kind == SyntaxKind::Identifier as u16
+                                || counterpart_node.kind == SyntaxKind::PrivateIdentifier as u16)
+                        {
+                            out.push(tsz_common::position::Location::new(
+                                file_path.clone(),
+                                tsz_common::position::Range::new(
+                                    line_map.offset_to_position(counterpart_node.pos, &source_text),
+                                    line_map.offset_to_position(counterpart_node.end, &source_text),
+                                ),
+                            ));
+                        }
                     }
                 } else if stmt_node.kind == tsz::parser::syntax_kind_ext::EXPORT_DECLARATION {
                     let Some(export) = arena.get_export_decl(stmt_node) else {
@@ -624,6 +642,27 @@ impl Server {
                                     line_map.offset_to_position(inner_end, &source_text),
                                 ),
                             ));
+                            let counterpart_idx = if symbol_idx == spec.property_name {
+                                spec.name
+                            } else {
+                                spec.property_name
+                            };
+                            if counterpart_idx.is_some()
+                                && let Some(counterpart_node) = arena.get(counterpart_idx)
+                                && (counterpart_node.kind == SyntaxKind::Identifier as u16
+                                    || counterpart_node.kind
+                                        == SyntaxKind::PrivateIdentifier as u16)
+                            {
+                                out.push(tsz_common::position::Location::new(
+                                    file_path.clone(),
+                                    tsz_common::position::Range::new(
+                                        line_map
+                                            .offset_to_position(counterpart_node.pos, &source_text),
+                                        line_map
+                                            .offset_to_position(counterpart_node.end, &source_text),
+                                    ),
+                                ));
+                            }
                         }
                     }
                 }
@@ -1322,9 +1361,29 @@ impl Server {
             .find('\n')
             .map_or(source_text.len(), |i| idx + i);
         let line_text = source_text[line_start..line_end].trim_start();
-        if !line_text.starts_with("import ") {
+        if !line_text.starts_with("import ") && !line_text.starts_with("export ") {
             return None;
         }
         Some((line_start as u32, line_end as u32))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+
+    #[test]
+    fn import_statement_context_span_accepts_export_specifier_lines() {
+        let source = "const foo = 1;\nexport { foo as \"__<alias>\" };\n";
+        let anchor = source
+            .find("__<alias>")
+            .expect("expected alias literal in source") as u32;
+        let span = Server::import_statement_context_span(source, anchor)
+            .expect("expected context span for export specifier line");
+        let line = &source[span.0 as usize..span.1 as usize];
+        assert!(
+            line.trim_start().starts_with("export "),
+            "expected export statement context, got: {line:?}"
+        );
     }
 }

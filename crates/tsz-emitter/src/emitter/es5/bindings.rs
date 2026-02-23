@@ -1,6 +1,4 @@
 use super::super::Printer;
-#[cfg(not(target_arch = "wasm32"))]
-use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1049,7 +1047,7 @@ impl<'a> Printer<'a> {
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-            debug!("emit_es5_destructuring_with_read_node entered");
+            tracing::debug!("emit_es5_destructuring_with_read_node entered");
         }
 
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
@@ -1131,11 +1129,14 @@ impl<'a> Printer<'a> {
             #[cfg(not(target_arch = "wasm32"))]
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
-                debug!(
+                tracing::debug!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
-                    index, elem.name, unwrapped_name, elem_kind
+                    index,
+                    elem.name,
+                    unwrapped_name,
+                    elem_kind
                 );
-                debug!(
+                tracing::debug!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
                     self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
                     SyntaxKind::Identifier as u16
@@ -1172,9 +1173,11 @@ impl<'a> Printer<'a> {
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                         #[cfg(not(target_arch = "wasm32"))]
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                            debug!(
+                            tracing::debug!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",
-                                index, unwrapped_name.0, elem_source
+                                index,
+                                unwrapped_name.0,
+                                elem_source
                             );
                         }
                         self.write(", ");
