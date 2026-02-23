@@ -1,8 +1,27 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9751/13623 = 71.6% JS, 776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current 9761/13623 = 71.7% JS, 776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **CJS export deduplication for decorated classes and export= suppression** (+14 JS):
+  Two CJS export emission bugs fixed:
+  (1) Decorated exported classes (`@dec export class A {}`) produced duplicate `exports.A = A;`
+  lines. Both `pending_commonjs_class_export_name` (consumed in `emit_class_es6_with_options`)
+  and `emit_legacy_class_decorator_assignment` (with `emit_commonjs_pre_assignment=true`)
+  independently emitted the pre-assignment. Fix: clear `pending_commonjs_class_export_name`
+  before entering the decorator path in `module_emission_exports.rs`.
+  (2) `export = f` with `export function f()` produced spurious `exports.f = f;` in the CJS
+  preamble. When `export =` is present, `module.exports` replaces the entire exports object,
+  so hoisted function export assignments are incorrect. Fix: suppress `func_exports` when
+  `has_export_assignment` is true in `source_file.rs`, while preserving `void 0` initialization
+  for non-function exports (matching tsc behavior where `exports.C = void 0;` is still emitted).
+  Three unit tests added.
+  Tests fixed: `emitHelpersWithLocalCollisions(module=commonjs/node16/node18/node20/nodenext/none/umd)`,
+  `decoratedClassExportsCommonJS2`, `decoratorOnClass2/3(target=es2015)`,
+  `es5ExportEquals(target=es2015/es5)`, `usingDeclarationsWithLegacyClassDecorators.2/8(module=commonjs,target=esnext)`.
+  JS: 9747→9761, DTS: 776 (unchanged), zero regressions.
+
+### Previously Fixed
 - **String enum member detection and self-reference qualification** (+7 JS, +1 DTS):
   Two enum IIFE emission bugs fixed:
   (1) `is_string_literal` only checked `StringLiteral` kind. tsc treats template literals
@@ -625,6 +644,25 @@
 
 ### Investigated but Deferred
 
+- **`declare;` emitted as standalone statement (~7 tests)**: Ambient declarations like
+  `declare import a = b;`, `declare declare var x;`, and `declare export function f() {}` emit
+  the `declare` keyword as a standalone expression statement `declare;` instead of being fully
+  erased. Affects `declareModifierOnImport1`, `exportAssignmentWithDeclareModifier`,
+  `declareAlreadySeen`, `functionsWithModifiersInBlocks1`, `importDeclWithDeclareModifier`,
+  `awaitUsingDeclarations.11`, `usingDeclarations.13`. Requires fixing the modifier/statement
+  erasure logic to properly handle the `declare` keyword when the declaration is ambient.
+- **Enum computed property name `[e]` resolved to empty string (~6 tests)**: Enum members
+  with computed names like `[e] = 1` emit `E[E[""] = 1] = "";` instead of `E[E[e] = 1] = e;`.
+  The enum IIFE emitter isn't handling the computed name expression — it falls back to empty
+  string. Affects `parserComputedPropertyName16/26/30/34`, `parserES5ComputedPropertyName6`.
+- **`export { X }` of type-only global emits spurious `exports.X = X;` (~1 test)**: When
+  `export {X}` re-exports a global ambient class declaration, `exports.X = X;` is emitted but
+  tsc omits it because `X` has no runtime value. Requires checking if the re-exported symbol
+  has a runtime value. Affects `exportSpecifierForAGlobal`.
+- **`export function` overload with `declare` prefix emits spurious hoisted export (~1 test)**:
+  `overloadModifiersMustAgree` has `declare function bar(); export function bar(s); function bar() {}`
+  where the `export` on a non-implementation overload causes `exports.bar = bar;` in the preamble.
+  tsc doesn't emit this because the export is on the overload signature, not the implementation.
 - **Class field lowering drops inter-field comments (~3 sole-fix tests)**: When class fields like
   `Field: number = this.num;` are lowered into the constructor body (targets < ES2022), comments
   between field declarations (e.g., `// Or swap these two lines`) are not carried into the lowered
