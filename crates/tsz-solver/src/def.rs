@@ -302,29 +302,9 @@ impl DefinitionInfo {
         self
     }
 
-    /// Set implemented interfaces.
-    pub fn with_implements(mut self, interfaces: Vec<DefId>) -> Self {
-        self.implements = interfaces;
-        self
-    }
-
-    /// Set exports for a namespace/module.
-    pub fn with_exports(mut self, exports: Vec<(Atom, DefId)>) -> Self {
-        self.exports = exports;
-        self
-    }
-
     /// Add an export to the namespace/module.
     pub fn add_export(&mut self, name: Atom, def_id: DefId) {
         self.exports.push((name, def_id));
-    }
-
-    /// Look up an export by name.
-    pub fn get_export(&self, name: Atom) -> Option<DefId> {
-        self.exports
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, d)| *d)
     }
 
     /// Set file ID for debugging.
@@ -452,28 +432,9 @@ impl DefinitionStore {
         self.definitions.get(&id).and_then(|r| r.body)
     }
 
-    /// Get the instance shape for a class/interface.
-    pub fn get_instance_shape(&self, id: DefId) -> Option<Arc<ObjectShape>> {
-        self.definitions
-            .get(&id)
-            .and_then(|r| r.instance_shape.clone())
-    }
-
-    /// Get the static shape for a class.
-    pub fn get_static_shape(&self, id: DefId) -> Option<Arc<ObjectShape>> {
-        self.definitions
-            .get(&id)
-            .and_then(|r| r.static_shape.clone())
-    }
-
     /// Get parent class `DefId` for a class.
     pub fn get_extends(&self, id: DefId) -> Option<DefId> {
         self.definitions.get(&id).and_then(|r| r.extends)
-    }
-
-    /// Get implemented interfaces for a class/interface.
-    pub fn get_implements(&self, id: DefId) -> Option<Vec<DefId>> {
-        self.definitions.get(&id).map(|r| r.implements.clone())
     }
 
     /// Update the body `TypeId` for a definition (for lazy evaluation).
@@ -514,21 +475,9 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.exports.clone())
     }
 
-    /// Get enum members for an enum `DefId`.
-    pub fn get_enum_members(&self, id: DefId) -> Option<Vec<(Atom, EnumMemberValue)>> {
-        self.definitions.get(&id).map(|r| r.enum_members.clone())
-    }
-
     /// Get the name of a definition.
     pub fn get_name(&self, id: DefId) -> Option<Atom> {
         self.definitions.get(&id).map(|r| r.name)
-    }
-
-    /// Update exports for a definition (for lazy population).
-    pub fn set_exports(&self, id: DefId, exports: Vec<(Atom, DefId)>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.exports = exports;
-        }
     }
 
     /// Add an export to an existing definition.
@@ -536,18 +485,6 @@ impl DefinitionStore {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.add_export(name, export_def);
         }
-    }
-
-    /// Update enum members for a definition (for lazy population).
-    pub fn set_enum_members(&self, id: DefId, members: Vec<(Atom, EnumMemberValue)>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.enum_members = members;
-        }
-    }
-
-    /// Get all `DefIds` (for debugging/testing).
-    pub fn all_ids(&self) -> Vec<DefId> {
-        self.definitions.iter().map(|r| *r.key()).collect()
     }
 
     /// Find a `DefId` by its instance shape.
