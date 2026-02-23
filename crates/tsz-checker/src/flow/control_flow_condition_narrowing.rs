@@ -450,17 +450,12 @@ impl<'a> FlowAnalyzer<'a> {
     /// access results. Discriminant guards (like `obj.kind === "a"`) should only
     /// narrow the base object (`obj`), not property access results (like `obj.value`).
     fn is_property_or_element_access(&self, node: NodeIndex) -> bool {
-        let node = self.skip_parenthesized_non_recursive(node);
+        let node = self.arena.skip_parenthesized(node);
         let Some(node_data) = self.arena.get(node) else {
             return false;
         };
         node_data.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node_data.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    }
-
-    /// Skip parentheses (non-recursive to avoid issues with circular references).
-    fn skip_parenthesized_non_recursive(&self, idx: NodeIndex) -> NodeIndex {
-        self.arena.skip_parenthesized(idx)
     }
 
     pub(crate) fn const_condition_initializer(

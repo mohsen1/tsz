@@ -891,7 +891,7 @@ impl<'a> CheckerState<'a> {
         } else {
             return false;
         };
-        let other = self.skip_parenthesized_expression(other);
+        let other = self.ctx.arena.skip_parenthesized(other);
         let Some(other_node) = self.ctx.arena.get(other) else {
             return false;
         };
