@@ -22,8 +22,7 @@ use tsz_solver::types::{
 };
 use tsz_solver::{QueryDatabase, TypeDatabase};
 
-#[path = "lower_advanced.rs"]
-mod lower_advanced;
+mod advanced;
 
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
