@@ -1,8 +1,19 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9801/13623 = 71.9% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5161/7163 = 72.1% JS, ~416/1039 = 40.0% DTS)
 
 ### Fixed This Session
+- **Paren preservation for call expressions in new-callee position** (+2 JS, +2 DTS):
+  When `new (x() as any)` had its type assertion stripped, the emitter incorrectly removed
+  the parens around `x()`, producing `new x()`. This changes semantics: `new x()` constructs
+  `x`, while `new (x())` calls `x()` then constructs the result. Root cause: `CALL_EXPRESSION`
+  was unconditionally in the `can_strip` whitelist in `emit_parenthesized`. Added
+  `paren_in_new_callee` flag (mirroring existing `paren_in_access_position`) that is set when
+  emitting the callee of a `NEW_EXPRESSION`. When set, `CALL_EXPRESSION` is excluded from the
+  strippable set. Three unit tests added. Tests fixed: `asOpEmitParens` and related.
+  JS: 5159→5161, DTS: 414→416, zero regressions.
+
+### Previously Fixed (This Branch)
 - **Type assertion paren stripping for call/new expressions** (+3 JS):
   When a type assertion wraps a call or new expression, the emitter failed to strip
   the now-redundant parentheses: `(<any>a.b()).c` → `(a.b()).c` (should be `a.b().c`),
