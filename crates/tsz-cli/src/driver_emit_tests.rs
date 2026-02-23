@@ -2,6 +2,7 @@ use super::*;
 use std::path::Path;
 
 use crate::config::JsxEmit;
+use tempfile::tempdir;
 
 // ─── js_extension_for tests ──────────────────────────────────────────────────
 
@@ -62,4 +63,30 @@ fn test_js_extension_for_cjs_input() {
 fn test_js_extension_for_unknown_ext() {
     assert_eq!(js_extension_for(Path::new("file.txt"), None), None);
     assert_eq!(js_extension_for(Path::new("file.rs"), None), None);
+}
+
+#[test]
+fn test_normalize_type_roots_keeps_existing_absolute_root() {
+    let temp = tempdir().unwrap();
+    let types_dir = temp.path().join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    let absolute = canonicalize_or_owned(&types_dir);
+
+    let normalized = normalize_type_roots(temp.path(), Some(vec![absolute.clone()])).unwrap();
+
+    assert_eq!(normalized, vec![absolute]);
+}
+
+#[test]
+fn test_normalize_type_roots_maps_missing_absolute_root_to_base_dir() {
+    let temp = tempdir().unwrap();
+    let base_dir = canonicalize_or_owned(temp.path());
+    let types_dir = base_dir.join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    let expected = canonicalize_or_owned(&types_dir);
+
+    let normalized =
+        normalize_type_roots(&base_dir, Some(vec![Path::new("/types").to_path_buf()])).unwrap();
+
+    assert_eq!(normalized, vec![expected]);
 }

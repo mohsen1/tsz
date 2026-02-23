@@ -245,12 +245,22 @@ pub(crate) fn resolve_type_package_entry_with_mode(
 }
 
 pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
-    let candidate = base_dir.join("node_modules").join("@types");
-    if candidate.is_dir() {
-        vec![canonicalize_or_owned(&candidate)]
-    } else {
-        Vec::new()
+    let mut roots = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut current = Some(base_dir.to_path_buf());
+
+    while let Some(dir) = current {
+        let candidate = dir.join("node_modules").join("@types");
+        if candidate.is_dir() {
+            let canonical = canonicalize_or_owned(&candidate);
+            if seen.insert(canonical.clone()) {
+                roots.push(canonical);
+            }
+        }
+        current = dir.parent().map(Path::to_path_buf);
     }
+
+    roots
 }
 
 pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
