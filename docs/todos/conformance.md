@@ -399,9 +399,13 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7869/12574 (62.6%) — full suite
+## Current score: 7886/12574 (62.7%) — full suite
 
-### Session progress (7867 → 7869, +2 tests):
+### Session progress (7869 → 7886, +17 tests):
+- **TS6082**: Emit TS6082 when --outFile is set with a module kind other than amd or system.
+  Diagnostics emitted at both the "module" and "outFile" tsconfig keys, matching tsc behavior. (+17)
+
+### Previous session progress (7867 → 7869, +2 tests):
 - **TS2430/TS6053 (.lib/ filtering)**: Filter diagnostics from `.lib/` test library files
   in the conformance runner (+2)
 
@@ -457,6 +461,22 @@ Main value: removes TS2430/TS6053 noise from analysis output.
 - **checkJs**: Removed redundant checker.check_js propagation that broke JSDoc (+11)
 - **TS2524→TS1109**: Emit TS1109 instead of TS2524 for bare await in parameter defaults (+38)
 - **TS2304 suppression**: File-level real syntax error detection replaces dead node flags (+66)
+
+## TS6082 — Only 'amd' and 'system' modules alongside --outFile (Implemented)
+
+**Status**: Implemented. +17 tests passing (7869→7886, 62.7%).
+**Error code:** TS6082 ("Only 'amd' and 'system' modules are supported alongside --outFile.")
+**Fix**: Added validation in `parse_tsconfig_with_diagnostics` (src/config.rs) that checks
+when `outFile` is set with a non-amd/system module kind (and `emitDeclarationOnly` is not set).
+Emits TS6082 at both the `"module"` and `"outFile"` tsconfig keys, matching tsc's dual-emission
+behavior via `createDiagnosticForOptionName`.
+
+### Remaining TS6082 issues
+- **commonSourceDir5.ts**: Expects TS6082 + TS18003. TS6082 now emitted but TS18003 still
+  missing (Windows-style path issue in conformance runner).
+- When `module` is NOT explicitly set but there are external modules, tsc emits TS6089
+  ("Cannot compile modules using option '{0}' unless the '--module' flag is 'amd' or 'system'.")
+  instead of TS6082. This case is not yet implemented.
 
 ## Deferred from this run (2026-02-23)
 
