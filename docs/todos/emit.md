@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9800/13623 = 71.9% JS, ~777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9801/13623 = 71.9% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Type assertion paren stripping for call/new expressions** (+3 JS):
+  When a type assertion wraps a call or new expression, the emitter failed to strip
+  the now-redundant parentheses: `(<any>a.b()).c` → `(a.b()).c` (should be `a.b().c`),
+  `(<any>new a)` → `(new a)` (should be `new a`). Root cause: the `can_strip` whitelist
+  in `emit_parenthesized_expression` did not include `CALL_EXPRESSION` or `NEW_EXPRESSION`.
+  Fix: added `CALL_EXPRESSION` to `can_strip` (always safe — call precedence is higher than
+  member access). Added `NEW_EXPRESSION` with context awareness: a new `paren_in_access_position`
+  flag on Printer is set by property access, element access, and call expression emitters before
+  emitting their base expression. `NEW_EXPRESSION` only strips parens when NOT in access position,
+  preserving `(new a).b` (which differs semantically from `new a.b`). Four unit tests added.
+  Tests fixed include: `castParentheses`, `typeAssertions`.
+
+### Previously Fixed (This Branch)
 - **Empty class body trailing comment preserved** (+6 JS sole-fix, ~45 total affected):
   For empty single-line class bodies like `class C {} // comment`, the opening-brace comment
   suppression logic incorrectly consumed the trailing comment after `}`. Root cause: the
