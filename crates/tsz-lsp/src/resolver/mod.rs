@@ -66,14 +66,35 @@ impl<'a> ScopeWalker<'a> {
             .get(&parent.0)
             .copied()
             .or_else(|| {
+                let resolve_specifier_symbol = |node_idx: NodeIndex| {
+                    self.binder
+                        .node_symbols
+                        .get(&node_idx.0)
+                        .copied()
+                        .or_else(|| {
+                            let node = self.arena.get(node_idx)?;
+                            if node.kind == SyntaxKind::Identifier as u16
+                                || node.kind == SyntaxKind::PrivateIdentifier as u16
+                            {
+                                self.binder.resolve_identifier(self.arena, node_idx)
+                            } else {
+                                None
+                            }
+                        })
+                };
                 let spec = self.arena.get_specifier(parent_node)?;
-                if spec.name.is_some() {
-                    self.binder.node_symbols.get(&spec.name.0).copied()
-                } else if spec.property_name.is_some() {
-                    self.binder.node_symbols.get(&spec.property_name.0).copied()
+                let from_name = if spec.name.is_some() {
+                    resolve_specifier_symbol(spec.name)
                 } else {
                     None
-                }
+                };
+                from_name.or_else(|| {
+                    if spec.property_name.is_some() {
+                        resolve_specifier_symbol(spec.property_name)
+                    } else {
+                        None
+                    }
+                })
             })
     }
 

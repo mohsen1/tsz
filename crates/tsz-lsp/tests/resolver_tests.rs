@@ -93,3 +93,45 @@ bar;
         "expected find_references to include both quoted import/export specifier references"
     );
 }
+
+#[test]
+fn test_resolve_export_module_namespace_string_literal_uses_property_symbol_fallback() {
+    let source = r#"
+const foo = "foo";
+export { foo as "__<alias>" };
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let export_literal = arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind == SyntaxKind::StringLiteral as u16 {
+                let node_idx = tsz_parser::NodeIndex(idx as u32);
+                if arena.get_literal_text(node_idx) == Some("__<alias>") {
+                    return Some(node_idx);
+                }
+            }
+            None
+        })
+        .expect("expected export string-literal alias node");
+
+    let mut walker = ScopeWalker::new(arena, &binder);
+    let resolved = walker
+        .resolve_node(root, export_literal)
+        .expect("quoted export alias should resolve to an existing symbol");
+    let foo_symbol = binder
+        .file_locals
+        .get("foo")
+        .expect("foo symbol should be bound in file locals");
+    assert_eq!(
+        resolved, foo_symbol,
+        "export-side quoted alias should resolve via the specifier property symbol when alias literal has no direct symbol"
+    );
+}
