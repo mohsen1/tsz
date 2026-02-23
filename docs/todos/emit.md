@@ -1,8 +1,32 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9853/13623 = 72.3% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~1532/2112 = 72.5% JS, ~116/296 = 39.2% DTS)
 
 ### Fixed This Session
+- **Consecutive unary `+`/`-` operators collapsed into `++`/`--`** (+1 JS):
+  When emitting nested prefix unary expressions like `+(+y)`, the two `+`
+  characters were emitted without a space, producing `++y` (pre-increment) instead
+  of `+ +y` (two separate unary plus operations). This is a semantic correctness bug:
+  `++y` mutates `y` while `+ +y` does not. Same issue with `- -y` → `--y`.
+  Root cause: `emit_prefix_unary` in `expressions.rs` wrote the operator and then
+  directly emitted the operand without checking if the operand started with the same
+  operator character. Fix: after writing `+` or `-`, check if the operand is also a
+  `PREFIX_UNARY_EXPRESSION` with the same sign (or `++`/`--`) and insert a space.
+  Three unit tests added.
+  Test fixed: `prefixIncrementAsOperandOfPlusExpression`.
+  JS: 1531→1532, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session
+- **`asiArith` binary operator multi-line formatting**: tsc places the binary operator
+  on its own indented line when the source has newlines between the left operand and the
+  operator (`x\n    +\n        + +y`). tsz puts the operator on the same line as the left
+  operand (`x +\n    + +y`). Attempted a `has_newline_before_op` fix but it caused
+  regressions in other binary expression formatting (net -1 test). Needs more careful
+  analysis of how tsc decides operator-line vs operand-line placement across all binary
+  expression formatting patterns. The semantic correctness issue (space between unary
+  operators) is fixed; this is purely a formatting parity issue.
+
+### Previously Fixed
 - **`declare using`, `declare await using`, and `declare export` not parsed as ambient declarations** (+3 JS):
   The parser's `look_ahead_is_declare_before_declaration` and `parse_ambient_declaration` did not
   handle `UsingKeyword`, `AwaitKeyword`, or `ExportKeyword` after `declare`. This caused
