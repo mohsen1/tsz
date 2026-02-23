@@ -1,8 +1,33 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~1532/2112 = 72.5% JS, ~116/296 = 39.2% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9864/13623 = 72.4% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Comments inside erased type annotations leaking into JS output** (+10 JS):
+  When a variable, parameter, or function has a type annotation containing interior
+  comments (e.g., `var v: { (x: number); // comment }`), erasing the type left those
+  comments in the output. Two root causes: (1) `skip_comments_in_range` was not called
+  for erased type annotation regions on variable declarations, function parameters,
+  function return types, or method return types. (2) `emit_trailing_comment_after_semicolon`
+  did a naive backward scan from `node.end` and found semicolons inside erased type literals.
+  Fix: call `skip_comments_in_range` at all four type-erasure sites (guarded by
+  `!in_declaration_emit`). For variable statements, added `variable_statement_effective_end`
+  which computes a scan boundary excluding erased type annotation ranges. Also added
+  `emit_trailing_comment_after_semicolon_in_range` variant accepting custom range bounds.
+  Three unit tests added.
+  Tests fixed: `collisionRestParameterInType` and 9 others.
+  JS: 9854→9864, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session
+- **Comment displacement across many tests (~170+ exclusive)**: The second largest category
+  of JS emit failures is comment handling (comments displaced, wrong line, or stripped).
+  Many involve complex interactions between comment tracking (`comment_emit_idx`), statement
+  interleaving, and various emit paths. Each subpattern (trailing comments on arrow function
+  bodies, comments between erased overload signatures, `/*#__PURE__*/` annotations) needs
+  individual investigation. Not a single-fix pattern.
+- **`asiArith` binary operator multi-line formatting**: Already documented in prior session.
+
+### Previously Fixed
 - **Consecutive unary `+`/`-` operators collapsed into `++`/`--`** (+1 JS):
   When emitting nested prefix unary expressions like `+(+y)`, the two `+`
   characters were emitted without a space, producing `++y` (pre-increment) instead
