@@ -419,7 +419,34 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7939/12574 (63.1%) — full suite
+## Current score: 3005/5997 (50.1%) — first-6000 fingerprint-level
+
+**Note**: Conformance runner now uses fingerprint-level comparison (code + file + line + column
++ message) instead of error-code-level. This is stricter and reduced the apparent pass rate.
+The actual compiler behavior has not regressed — previous sessions' scores (~66%) were at
+error-code level only.
+
+### Session progress (2025-02-23):
+- **TS2506 (false positive)**: Removed spurious TS2506 from `class_type.rs` recursion guard.
+  The `class_instance_resolution_set` is a recursion prevention mechanism, not a cycle detector.
+  True TS2506 cycle detection is handled by DFS in `class_inheritance.rs`. Added regression test.
+- **TS1118 (duplicate get/set accessors)**: When an object literal has two getters or two setters
+  with the same name, now correctly emits TS1118 (accessor-specific) instead of TS1117 (generic
+  property duplicate). Getter+setter pairs remain allowed. Added 3 unit tests. Moves 6
+  conformance tests closer to passing.
+- **TS5103 (ignoreDeprecations '5.5')**: Extended valid `ignoreDeprecations` values to include
+  `"5.5"` in addition to `"5.0"`, matching tsc 6.0 behavior.
+
+### Investigation findings (2025-02-23):
+- Most remaining failures at fingerprint level are due to missing diagnostics (not false positives).
+  Only 1 test in first 1000 has false-positive-only failure.
+- Top missing fingerprint codes: TS2564 (22), TS2369 (13), TS1183 (13), TS2304 (12), TS2322 (12).
+- TS2369 is already emitted for arrow functions in unit tests, but conformance wrapper may not
+  preserve `// @target: es2015` correctly in all cases.
+- Config-level diagnostics (TS18003, TS5095, TS5024) appear as missing due to tsconfig formatting
+  differences (JSON key ordering, line offsets) between our generated tsconfig and the cache.
+
+## Previous score: 7939/12574 (63.1%) — full suite error-code-level
 
 ### Session progress (7935 → 7939, +4 tests):
 - **TS2721/TS2722/TS2723**: Implemented "Cannot invoke an object which is possibly
@@ -434,7 +461,7 @@ Main value: removes TS2430/TS6053 noise from analysis output.
     expected in a `.js` file; our JS/salsa module resolution doesn't match the test harness
     file naming
 
-## Previous score: ~7935/12574 (63.1%) — full suite (estimated from first-6000 +3)
+## Previous score: ~7935/12574 (63.1%) — full suite error-code-level (estimated from first-6000 +3)
 
 ### Session progress (~7932 → ~7935, +3 tests):
 - **TS2300 (interface duplicate reporting)**: Fixed `check_duplicate_interface_members` to report
