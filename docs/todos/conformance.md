@@ -416,7 +416,18 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7947/12574 (63.2%) — full suite fingerprint-level
+## Current score: 4010/5997 (66.9%) — first-6000; 7955/12574 (63.3%) — full suite
+
+### Session progress (2026-02-23, TS2397):
+- **TS2397 (implemented)**: Emit "Declaration name conflicts with built-in global identifier '{0}'"
+  for `var undefined`, `namespace globalThis`, and `var globalThis` declarations. Checks:
+  - `undefined`: any non-type (value) declaration in file locals emits TS2397. Interfaces, type
+    aliases, enums, classes, and type parameters are excluded.
+  - `globalThis`: any declaration in non-module (script) file locals emits TS2397. Module-scoped
+    globalThis declarations (files with import/export) are allowed.
+  - Tests passing: `extendGlobalThis2.ts`, `undefinedTypeAssignment3.ts`, `globalThisCollision.ts`
+    plus 5 more multi-code tests. +8 total conformance.
+  - Added 9 unit tests covering var/let/namespace, type exclusions, module scope suppression.
 
 ### Session progress (2026-02-23, TS2454 compound ops):
 - **TS2454 compound read-write fix (+7 tests, 7940→7947)**: Compound read-write operations
@@ -443,6 +454,17 @@ Main value: removes TS2430/TS6053 noise from analysis output.
 + message) instead of error-code-level. This is stricter and reduced the apparent pass rate.
 The actual compiler behavior has not regressed — previous sessions' scores (~66%) were at
 error-code level only.
+
+### Session progress (2026-02-23, TS2397):
+- **TS2397 (implemented)**: Emit "Declaration name conflicts with built-in global identifier '{0}'"
+  for `var undefined`, `namespace globalThis`, and `var globalThis` declarations. Checks:
+  - `undefined`: any non-type (value) declaration in file locals emits TS2397. Interfaces, type
+    aliases, enums, classes, and type parameters are excluded.
+  - `globalThis`: any declaration in non-module (script) file locals emits TS2397. Module-scoped
+    globalThis declarations (files with import/export) are allowed.
+  - Tests passing: `extendGlobalThis2.ts`, `undefinedTypeAssignment3.ts`, `globalThisCollision.ts`
+    plus 5 more multi-code tests. +8 total conformance.
+  - Added 9 unit tests covering var/let/namespace, type exclusions, module scope suppression.
 
 ### Session progress (2026-02-23, TS5097):
 - **TS5097 (implemented)**: Emit "An import path can only end with a '{ext}' extension when
