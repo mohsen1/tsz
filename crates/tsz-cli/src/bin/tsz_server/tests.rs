@@ -4311,6 +4311,75 @@ fn test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs
 }
 
 #[test]
+fn test_references_full_quoted_alias_definition_uses_file_name_and_text_span_shape() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        [
+            "const foo = \"foo\";",
+            "export { foo as \"__<alias>\" };",
+            "import { \"__<alias>\" as bar } from \"./foo\";",
+            "if (bar !== \"foo\") throw bar;",
+        ]
+        .join("\n"),
+    );
+    server.open_files.insert(
+        "/bar.ts".to_string(),
+        [
+            "import { \"__<alias>\" as first } from \"./foo\";",
+            "export { \"__<alias>\" as \"<other>\" } from \"./foo\";",
+            "import { \"<other>\" as second } from \"./bar\";",
+            "if (first !== \"foo\") throw first;",
+            "if (second !== \"foo\") throw second;",
+        ]
+        .join("\n"),
+    );
+
+    let req = make_request(
+        "references-full",
+        serde_json::json!({
+            "file": "/foo.ts",
+            "line": 2,
+            "offset": 19
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("references-full should return body");
+    let entries = body
+        .as_array()
+        .expect("references-full response should be array");
+    let first = entries
+        .first()
+        .expect("expected at least one referenced symbol");
+    let definition = first
+        .get("definition")
+        .expect("referenced symbol should include definition");
+
+    assert!(
+        definition.get("fileName").is_some(),
+        "definition should expose tsserver fileName in references-full: {definition:?}"
+    );
+    let text_span = definition
+        .get("textSpan")
+        .expect("definition should expose tsserver textSpan");
+    assert!(
+        text_span.get("start").and_then(serde_json::Value::as_u64).is_some()
+            && text_span
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .is_some(),
+        "textSpan should include numeric start/length: {text_span:?}"
+    );
+    assert!(
+        definition.get("file").is_none()
+            && definition.get("start").is_none()
+            && definition.get("end").is_none(),
+        "references-full definition should not use definition-command fields: {definition:?}"
+    );
+}
+
+#[test]
 fn test_references_full_quoted_alias_includes_symbol_alias_references_when_available() {
     let mut server = make_server();
     server.open_files.insert(

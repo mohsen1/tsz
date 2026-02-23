@@ -1094,6 +1094,9 @@ impl Server {
                 normalized.is_local = true;
             }
         }
+        if !normalized.is_ambient {
+            normalized.is_local = true;
+        }
         Some(Self::definition_info_to_json(&normalized, &loc.file_path))
     }
 
