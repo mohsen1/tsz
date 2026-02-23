@@ -1437,7 +1437,6 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustc_hash::FxHashMap;
     use tsz::lsp::completions::CompletionItemKind;
 
     #[test]
