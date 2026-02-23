@@ -346,6 +346,19 @@ impl<'a> CheckerState<'a> {
         if has_initializer {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+
+            if let Some(usage_node) = self.ctx.arena.get(idx)
+                && should_skip_daa_for_initialized_function_scoped_var(
+                    is_function_scoped,
+                    self.is_source_file_global_var_decl(decl_id_to_check),
+                    self.enclosing_top_level_statement_kind(decl_id_to_check),
+                    usage_node.pos,
+                    decl_node.end,
+                )
+            {
+                return false;
+            }
+
             if !is_function_scoped {
                 return false;
             }
@@ -471,6 +484,23 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn enclosing_top_level_statement_kind(&self, node_idx: NodeIndex) -> Option<u16> {
+        let mut current = node_idx;
+        for _ in 0..50 {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent = info.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return self.ctx.arena.get(current).map(|n| n.kind);
+            }
+            current = parent;
+            if current.is_none() {
+                return None;
+            }
+        }
+        None
     }
 
     fn is_inside_function_like(&self, idx: NodeIndex) -> bool {
@@ -1201,5 +1231,71 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         current
+    }
+}
+
+const fn is_unconditional_top_level_statement(kind: u16) -> bool {
+    kind == syntax_kind_ext::VARIABLE_STATEMENT || kind == syntax_kind_ext::FOR_STATEMENT
+}
+
+fn should_skip_daa_for_initialized_function_scoped_var(
+    is_function_scoped: bool,
+    is_source_file_global: bool,
+    top_level_statement_kind: Option<u16>,
+    usage_pos: u32,
+    declaration_end: u32,
+) -> bool {
+    is_function_scoped
+        && is_source_file_global
+        && usage_pos >= declaration_end
+        && top_level_statement_kind.is_some_and(is_unconditional_top_level_statement)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_skip_daa_for_initialized_function_scoped_var, syntax_kind_ext};
+
+    #[test]
+    fn skips_after_top_level_var_initializer_runs() {
+        assert!(should_skip_daa_for_initialized_function_scoped_var(
+            true,
+            true,
+            Some(syntax_kind_ext::VARIABLE_STATEMENT),
+            100,
+            50
+        ));
+    }
+
+    #[test]
+    fn skips_after_top_level_for_initializer_runs() {
+        assert!(should_skip_daa_for_initialized_function_scoped_var(
+            true,
+            true,
+            Some(syntax_kind_ext::FOR_STATEMENT),
+            200,
+            80
+        ));
+    }
+
+    #[test]
+    fn does_not_skip_when_declaration_is_conditional() {
+        assert!(!should_skip_daa_for_initialized_function_scoped_var(
+            true,
+            true,
+            Some(syntax_kind_ext::IF_STATEMENT),
+            120,
+            40
+        ));
+    }
+
+    #[test]
+    fn does_not_skip_when_usage_precedes_declaration_end() {
+        assert!(!should_skip_daa_for_initialized_function_scoped_var(
+            true,
+            true,
+            Some(syntax_kind_ext::VARIABLE_STATEMENT),
+            30,
+            40
+        ));
     }
 }
