@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9761/13623 = 71.7% JS, 776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current 9767/13623 = 71.7% JS, 777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **CJS export ordering for class declarations with static blocks** (+5 JS):
+  For `export class C { static { ... } }` with CommonJS/AMD/UMD modules and ES2015+ target,
+  `exports.C = C;` was emitted AFTER the lowered static block IIFE instead of between the
+  class body and the IIFE. Root cause: the transform dispatch path used
+  `emit_commonjs_export_with_hoisting` which unconditionally appends the export after the
+  inner emit. Fix: in `transform_dispatch.rs`, non-default CLASS_DECLARATION nodes now use
+  the `pending_commonjs_class_export_name` deferred mechanism (same as the non-transform
+  `emit_export_declaration_commonjs` path), so `emit_class_es6_with_options` can emit the
+  export at the correct boundary (after class body close, before static IIFEs). Added in
+  both the primary CommonJSExport handler and the chained directive dispatch.
+  One regression test added in `printer.rs`.
+  Tests fixed: `classStaticBlock24(module=commonjs/amd/umd/es2015/es2020)`.
+  JS: 9762→9767, DTS: 777 (unchanged), zero regressions.
+
+### Previously Fixed (Session -1)
 - **CJS export deduplication for decorated classes and export= suppression** (+14 JS):
   Two CJS export emission bugs fixed:
   (1) Decorated exported classes (`@dec export class A {}`) produced duplicate `exports.A = A;`
@@ -908,3 +923,9 @@
     to the runner's JS comparison logic (both expected and actual are normalized).
     Tests fixed: `binopAssignmentShouldHaveType`, `localClassesInLoop`, `localClassesInLoop_ES6`,
     `mixinAccessors1`, `objectLitArrayDeclNoNew`.
+
+28. **System module class export ordering with static blocks** (~1 test): `classStaticBlock24(module=system)`
+    still fails. The System module wrapper uses `exports_1("C", C)` inside `System.register`
+    callbacks with different emission logic than CommonJS/AMD/UMD. The export appears after the
+    IIFE instead of between class body and IIFE. Also has minor formatting issues (missing
+    semicolon after class body `}`, double semicolon `})();;`). Needs System-specific fix.
