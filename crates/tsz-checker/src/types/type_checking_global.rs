@@ -569,17 +569,41 @@ impl<'a> CheckerState<'a> {
             // Explicit duplicate-class guard: class declarations cannot merge
             // with other class declarations (only with namespaces/interfaces).
             // Emit TS2300 for duplicate class declarations in the same symbol set.
-            let local_class_decls: Vec<NodeIndex> = declarations
+            let local_class_decls: Vec<(NodeIndex, bool)> = declarations
                 .iter()
                 .filter(|(_, flags, is_local, _)| *is_local && (flags & symbol_flags::CLASS) != 0)
-                .map(|(decl_idx, _, _, _)| *decl_idx)
+                .map(|(decl_idx, _, _, is_exported)| (*decl_idx, *is_exported))
                 .collect();
             if local_class_decls.len() > 1 {
+                // Skip TS2300 when all class declarations are `export default` —
+                // TS2528 ("A module cannot have multiple default exports") handles this.
+                let all_default_exports = local_class_decls.iter().all(|&(decl_idx, _)| {
+                    self.ctx
+                        .arena
+                        .get_extended(decl_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .and_then(|parent| self.ctx.arena.get_export_decl(parent))
+                        .is_some_and(|export_data| export_data.is_default_export)
+                });
+                if all_default_exports {
+                    continue;
+                }
+
+                // Skip TS2300 when class declarations in merging namespaces differ
+                // in export visibility (one exported, one non-exported). tsc allows
+                // an exported class and a non-exported class with the same name to
+                // coexist in merging namespace declarations.
+                let has_exported = local_class_decls.iter().any(|&(_, exp)| exp);
+                let has_non_exported = local_class_decls.iter().any(|&(_, exp)| !exp);
+                if has_exported && has_non_exported {
+                    continue;
+                }
+
                 let message = format_message(
                     diagnostic_messages::DUPLICATE_IDENTIFIER,
                     &[&symbol.escaped_name],
                 );
-                for decl_idx in local_class_decls {
+                for (decl_idx, _) in local_class_decls {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                     self.error_at_node(
                         error_node,

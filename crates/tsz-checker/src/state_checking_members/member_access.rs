@@ -643,6 +643,11 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(name) = name {
+                // tsc does not flag duplicate well-known Symbol properties in interfaces
+                // (e.g., [Symbol.isConcatSpreadable]) because symbols are structurally unique.
+                if name.starts_with("[Symbol.") {
+                    continue;
+                }
                 seen_properties.entry(name).or_default().push(member_idx);
             }
         }
