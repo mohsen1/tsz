@@ -785,9 +785,7 @@ impl Server {
                     let definition = canonical_loc
                         .as_ref()
                         .and_then(|loc| self.definition_info_from_location(loc))
-                        .map(|definition| {
-                            self.normalize_references_full_definition(definition)
-                        })
+                        .map(|definition| self.normalize_references_full_definition(definition))
                         .unwrap_or_else(|| Self::build_fallback_definition(&file, "alias", ""));
                     let cursor_offset = line_map
                         .position_to_offset(position, &source_text)
