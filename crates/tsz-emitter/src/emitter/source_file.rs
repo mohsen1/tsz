@@ -256,15 +256,24 @@ impl<'a> Printer<'a> {
         // reaching here (line ~647), so conditions below only affect:
         //   - non-module scripts under any module kind
         //   - outFile bundles with pre-existing define() wrappers
-        let should_emit_use_strict = !source_has_use_strict
-            && ((is_top_level_cjs && is_file_module)
-                || (is_amd_or_umd && is_file_module && !has_define_wrapper_stmt)
-                || (self.ctx.options.always_strict
-                    && !has_define_wrapper_stmt
-                    && self.ctx.original_module_kind.is_none()
-                    && !(is_es_module_output && is_file_module)));
+        // Whether we need "use strict" at the top of this output.
+        let needs_use_strict_cjs = is_top_level_cjs && is_file_module;
+        let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_define_wrapper_stmt;
+        let needs_use_strict_always = self.ctx.options.always_strict
+            && !has_define_wrapper_stmt
+            && self.ctx.original_module_kind.is_none()
+            && !(is_es_module_output && is_file_module);
 
-        if should_emit_use_strict {
+        let should_emit_use_strict = !source_has_use_strict
+            && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
+
+        // When the source has its own "use strict" prologue AND this is a CJS
+        // module file, we must emit "use strict" at the correct position (before
+        // __esModule marker / exports preamble) and skip the source's own
+        // directive during statement iteration to avoid duplication.
+        let skip_source_use_strict = source_has_use_strict && needs_use_strict_cjs;
+
+        if should_emit_use_strict || skip_source_use_strict {
             self.write("\"use strict\";");
             self.write_line();
         }
@@ -490,6 +499,31 @@ impl<'a> Printer<'a> {
         let mut has_deferred_empty_export = false;
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                // Skip source-level "use strict" prologue when we already emitted it
+                // at the correct position (before __esModule/exports preamble).
+                if skip_source_use_strict && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                    && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
+                        && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+                            && expr_node.kind == SyntaxKind::StringLiteral as u16 {
+                                let is_strict = if let Some(lit) = self.arena.get_literal(expr_node)
+                                {
+                                    lit.text == "use strict"
+                                } else if let Some(text) = self.source_text {
+                                    let s = crate::safe_slice::slice(
+                                        text,
+                                        expr_node.pos as usize,
+                                        expr_node.end as usize,
+                                    );
+                                    s == "\"use strict\"" || s == "'use strict'"
+                                } else {
+                                    false
+                                };
+                                if is_strict {
+                                    self.skip_comments_for_erased_node(stmt_node);
+                                    continue;
+                                }
+                            }
+
                 if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                     && self.export_assignment_identifier_is_type_only(stmt_node, &source.statements)
                 {
