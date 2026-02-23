@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9653/13623 = 70.9% JS, 777/1989 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9668/13623 = 71.0% JS, 777/1989 = 39.1% DTS)
 
 ### Fixed This Session
+- **Computed property name side-effect emission for erased class members** (+11 JS):
+  When a class property declaration has a computed name (like `[Symbol.iterator]: Type`) and is
+  type-only (erased in JS output), tsc emits the computed name expression as a standalone
+  side-effect statement after the class body (e.g., `Symbol.iterator;`). This preserves potential
+  runtime side effects from property accesses, calls, assignments, etc. tsz was dropping these
+  entirely. Fix: collect computed property name expressions from erased property declarations
+  during the class member loop, then emit them as `expr;` statements after the class closing `}`.
+  Only expressions with potential side effects are emitted — simple identifiers (`x`), string
+  literals (`"a"`), numeric literals, and private identifiers are skipped (no observable effects).
+  Three unit tests added: property access emitted, identifier not emitted, string literal not emitted.
+  Tests fixed: `symbolProperty9`, `symbolProperty10`, `symbolProperty12`, `symbolProperty13`,
+  `symbolProperty14`, `symbolProperty16`, `symbolDeclarationEmit1`, `for-of27`,
+  `indexSignatureWithInitializer`, `parserES5SymbolProperty5(target=es2015)`, `parserSymbolProperty5`.
+  JS: 9658→9668, DTS: unchanged, zero regressions.
+
+### Previously Fixed
 - **Extra parens around yield-from-await in assignment/comma expressions** (+11 JS, +1 DTS):
   When async functions are lowered to generators (ES2015 target), `await expr` becomes `yield expr`.
   The `in_binary_operand` flag in `emit_binary_expression` was set for ALL binary operators,
@@ -516,6 +532,17 @@
 
 ### Investigated but Deferred
 
+- **Computed property name side-effects with hoisted temp variables (~6 multi-issue tests)**: When a class
+  has MULTIPLE computed properties (both erased and non-erased), tsc hoists all computed name expressions
+  into a single comma expression with temp variables to preserve evaluation order (e.g.,
+  `[(_a = Symbol(), Symbol(), Symbol())]() { }`). Our emitter does not do this hoisting — it evaluates
+  computed names in-place. This only matters for classes with multiple computed properties where some are
+  erased and some are kept. Affects `symbolProperty6`, `symbolProperty7`, `parserComputedPropertyName1`,
+  `parserES5SymbolProperty6`, `computedPropertyNames42_ES5(target=es5)`. Requires implementing temp
+  variable hoisting for computed property name expressions.
+- **`reExportJsFromTs` flaky test**: Multi-file test where the runner sometimes compares the `.js` input
+  file output vs the `.ts` compilation output. The baseline has two `constants.js` entries; runner
+  file-selection logic is non-deterministic. Not a code issue.
 - **ESM `export var N;` missing for first namespace declaration at ES5 (~2 tests)**: At ES5 target,
   `export namespace N { export var x = 1; }` should emit `export var N;\n(function (N) {...})(N || (N = {}));`.
   Instead, tsz emits `export (function (N) {...})(N || (N = {}))` — the `var N;` declaration is missing

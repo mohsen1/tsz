@@ -418,6 +418,10 @@ impl<'a> Printer<'a> {
         let needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         let mut deferred_static_blocks: Vec<NodeIndex> = Vec::new();
+        // Collect computed property name expressions from erased type-only members.
+        // tsc emits these as standalone side-effect statements after the class body
+        // (e.g., `[Symbol.iterator]: Type` → erased member, but `Symbol.iterator;` emitted).
+        let mut computed_property_side_effects: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
@@ -729,6 +733,30 @@ impl<'a> Printer<'a> {
                     _ => false,
                 };
                 if is_erased {
+                    // When an erased property has a computed name whose expression
+                    // could have runtime side effects, tsc emits the expression as
+                    // a standalone statement after the class body.
+                    // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
+                    // Only expressions that might have observable effects are emitted:
+                    // property accesses, element accesses, calls, assignments, etc.
+                    // Simple identifiers and literals are NOT emitted (no side effects).
+                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && let Some(p) = self.arena.get_property_decl(member_node)
+                            && let Some(name_node) = self.arena.get(p.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && let Some(computed) = self.arena.get_computed_property(name_node)
+                            && let Some(expr_node) = self.arena.get(computed.expression)
+                        {
+                            let k = expr_node.kind;
+                            let is_side_effect_free = k == SyntaxKind::Identifier as u16
+                                || k == SyntaxKind::StringLiteral as u16
+                                || k == SyntaxKind::NumericLiteral as u16
+                                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                                || k == SyntaxKind::PrivateIdentifier as u16;
+                            if !is_side_effect_free {
+                                computed_property_side_effects.push(computed.expression);
+                            }
+                        }
                     self.skip_comments_for_erased_node(member_node);
                     continue;
                 }
@@ -937,6 +965,14 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
         self.write("}");
         if assignment_prefix.is_some() {
+            self.write(";");
+        }
+
+        // Emit computed property name side-effect statements for erased members.
+        // e.g., `[Symbol.iterator]: Type` → `Symbol.iterator;`
+        for expr_idx in &computed_property_side_effects {
+            self.write_line();
+            self.emit_expression(*expr_idx);
             self.write(";");
         }
 
@@ -1681,6 +1717,79 @@ mod tests {
         assert!(
             output.contains("foo"),
             "Bodyless non-abstract accessor should be emitted (tsc parity).\nOutput:\n{output}"
+        );
+    }
+
+    /// Erased computed property names with potential side effects (property access)
+    /// must be emitted as standalone expression statements after the class body.
+    /// e.g., `[Symbol.iterator]: Type` → class body erased, then `Symbol.iterator;`
+    #[test]
+    fn computed_property_side_effect_property_access() {
+        let source = "class C {\n    [Symbol.iterator]: any;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("}\nSymbol.iterator;"),
+            "Computed property access expression should be emitted as side-effect statement.\nOutput:\n{output}"
+        );
+    }
+
+    /// Simple identifier computed property names should NOT produce side-effect
+    /// statements — tsc does not emit them (no observable side effects).
+    #[test]
+    fn computed_property_no_side_effect_for_identifier() {
+        let source = "class C {\n    [x]: string;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("x;"),
+            "Simple identifier computed property should NOT produce side-effect statement.\nOutput:\n{output}"
+        );
+    }
+
+    /// String literal computed property names should NOT produce side-effect
+    /// statements — string literals have no observable side effects.
+    #[test]
+    fn computed_property_no_side_effect_for_string_literal() {
+        let source = "class C {\n    [\"a\"]: string;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("\"a\";"),
+            "String literal computed property should NOT produce side-effect statement.\nOutput:\n{output}"
         );
     }
 }
