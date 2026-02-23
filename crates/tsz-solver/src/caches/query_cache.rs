@@ -560,33 +560,15 @@ impl TypeDatabase for QueryCache<'_> {
     }
 }
 
-/// Implement `TypeResolver` for `QueryCache` with default noop implementations.
+/// Implement `TypeResolver` for `QueryCache` with noop resolution.
 ///
 /// `QueryCache` doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or `DefIds`. This implementation
-/// returns None for all resolution operations.
+/// so it cannot resolve symbol references or `DefIds`. Only `resolve_ref`
+/// (required) is explicitly implemented; all other resolution methods
+/// inherit the trait's default `None`/`false` behavior. The three boxed/array
+/// methods delegate to the underlying interner.
 impl TypeResolver for QueryCache<'_> {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        None
-    }
-
-    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        None
-    }
-
-    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
-        None
-    }
-
-    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
-        None
-    }
-
-    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
-        None
-    }
-
-    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
         None
     }
 

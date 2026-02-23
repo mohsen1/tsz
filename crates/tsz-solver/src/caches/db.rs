@@ -348,34 +348,15 @@ impl TypeDatabase for TypeInterner {
     }
 }
 
-/// Implement `TypeResolver` for `TypeInterner` with default noop implementations.
+/// Implement `TypeResolver` for `TypeInterner` with noop resolution.
 ///
 /// `TypeInterner` doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or `DefIds`. This implementation
-/// returns None for all resolution operations, which is the correct behavior
-/// for contexts that don't have access to type binding information.
+/// so it cannot resolve symbol references or `DefIds`. Only `resolve_ref`
+/// (required) is explicitly implemented; all other resolution methods
+/// inherit the trait's default `None`/`false` behavior. The three boxed/array
+/// methods delegate to `TypeInterner`'s own inherent methods.
 impl TypeResolver for TypeInterner {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        None
-    }
-
-    fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        None
-    }
-
-    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
-        None
-    }
-
-    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
-        None
-    }
-
-    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
-        None
-    }
-
-    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
         None
     }
 
