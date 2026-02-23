@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5161/7163 = 72.1% JS, ~416/1039 = 40.0% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5163/7163 = 72.1% JS, ~416/1039 = 40.0% DTS)
 
 ### Fixed This Session
+- **ES5 destructuring: parenthesize `new` expressions before property access** (+2 JS):
+  When lowering `var { x } = <any>new Foo` to ES5 property access form (`var x = expr.x`),
+  `new Foo` without arguments must be wrapped in parens: `(new Foo).x`. Without parens,
+  `new Foo.x` is parsed as `new (Foo.x)` due to JS operator precedence (MemberExpression
+  binds tighter than NewExpression without arguments). Added `emit_for_property_access`,
+  `initializer_needs_parens_for_access`, and `unwrap_type_assertion_idx` helpers to
+  `es5/bindings.rs`. The logic unwraps type assertions to find the underlying expression kind,
+  then checks if it's a `NEW_EXPRESSION` without arguments. Also changed
+  `unwrap_type_assertion_kind` to `pub(super)` for cross-module reuse. Two unit tests added.
+  Tests fixed: `destructuringTypeAssertionsES5_6`, `destructuringTypeAssertionsES5_7`.
+  JS: 5161→5163, DTS: 416 (unchanged), zero regressions.
+
+### Previously Fixed (This Branch)
 - **Paren preservation for call expressions in new-callee position** (+2 JS, +2 DTS):
   When `new (x() as any)` had its type assertion stripped, the emitter incorrectly removed
   the parens around `x()`, producing `new x()`. This changes semantics: `new x()` constructs
