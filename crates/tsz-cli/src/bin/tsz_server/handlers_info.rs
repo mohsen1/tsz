@@ -910,28 +910,34 @@ impl Server {
 
     fn normalize_quickinfo_display_string(display: &str) -> String {
         let trimmed = display.trim();
-        if !trimmed.starts_with("function(") {
-            return trimmed.to_string();
-        }
-        let Some(ret_sep) = trimmed.rfind("): ") else {
-            return trimmed.to_string();
+        let normalized = if trimmed.starts_with("function(") {
+            let Some(ret_sep) = trimmed.rfind("): ") else {
+                return Self::normalize_call_signature_colon_spacing(trimmed);
+            };
+            let ret = trimmed[ret_sep + 3..].trim();
+            let params_with_name = &trimmed["function(".len()..ret_sep];
+            let params_clean = params_with_name
+                .split(") =>")
+                .next()
+                .unwrap_or(params_with_name)
+                .trim();
+            let Some((name, ty)) = params_clean.split_once(':') else {
+                return Self::normalize_call_signature_colon_spacing(trimmed);
+            };
+            let name = name.trim();
+            if name.is_empty() {
+                return Self::normalize_call_signature_colon_spacing(trimmed);
+            }
+            let ty = Self::normalize_parameter_type_text(ty);
+            format!("function({name}: {ty}): {ret}")
+        } else {
+            trimmed.to_string()
         };
-        let ret = trimmed[ret_sep + 3..].trim();
-        let params_with_name = &trimmed["function(".len()..ret_sep];
-        let params_clean = params_with_name
-            .split(") =>")
-            .next()
-            .unwrap_or(params_with_name)
-            .trim();
-        let Some((name, ty)) = params_clean.split_once(':') else {
-            return trimmed.to_string();
-        };
-        let name = name.trim();
-        if name.is_empty() {
-            return trimmed.to_string();
-        }
-        let ty = Self::normalize_parameter_type_text(ty);
-        format!("function({name}: {ty}): {ret}")
+        Self::normalize_call_signature_colon_spacing(&normalized)
+    }
+
+    fn normalize_call_signature_colon_spacing(display: &str) -> String {
+        display.replace(") :", "):")
     }
 
     fn strip_outer_parens(mut text: &str) -> &str {
@@ -3371,5 +3377,20 @@ impl Server {
             request,
             Some(serde_json::json!({"refs": [], "symbolName": ""})),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+
+    #[test]
+    fn normalize_quickinfo_display_string_normalizes_object_call_signature_spacing() {
+        let display = "var c3t7: {\n    (n: number) : number;\n    (s1: string) : number;\n}";
+        let normalized = Server::normalize_quickinfo_display_string(display);
+        assert_eq!(
+            normalized,
+            "var c3t7: {\n    (n: number): number;\n    (s1: string): number;\n}"
+        );
     }
 }
