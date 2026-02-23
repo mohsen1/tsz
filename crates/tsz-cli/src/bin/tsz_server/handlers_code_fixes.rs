@@ -981,7 +981,6 @@ impl Server {
             if let Some((column, name)) = parse_bare_identifier_expression(line)
                 .or_else(|| parse_identifier_call_expression(line))
                 && binder.file_locals.get(name).is_none()
-                && self.has_potential_auto_import_symbol(file_path, name)
                 && seen_spans.insert((offset + column, name.len()))
             {
                 diagnostics.push(tsz::checker::diagnostics::Diagnostic {
@@ -1057,14 +1056,43 @@ impl Server {
     }
 
     fn has_potential_auto_import_symbol(&self, current_file_path: &str, name: &str) -> bool {
-        self.open_files.iter().any(|(path, content)| {
+        if self.open_files.iter().any(|(path, content)| {
             path != current_file_path
                 && content.contains(name)
                 && (content.contains("export ")
                     || content.contains("declare module")
                     || content.contains("module.exports")
                     || content.contains("exports."))
-        })
+        }) {
+            return true;
+        }
+
+        let mut seen_paths = rustc_hash::FxHashSet::default();
+        for project_files in self.external_project_files.values() {
+            for path in project_files {
+                if path == current_file_path || !seen_paths.insert(path.clone()) {
+                    continue;
+                }
+                let Some(content) = self
+                    .open_files
+                    .get(path)
+                    .cloned()
+                    .or_else(|| std::fs::read_to_string(path).ok())
+                else {
+                    continue;
+                };
+                if content.contains(name)
+                    && (content.contains("export ")
+                        || content.contains("declare module")
+                        || content.contains("module.exports")
+                        || content.contains("exports."))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     pub(super) fn synthetic_implements_interface_diagnostics(
@@ -1686,7 +1714,7 @@ impl Server {
                 if param.is_empty() || param.contains(':') {
                     return 0;
                 }
-                return 1;
+                return 0;
             }
         }
 
@@ -1707,6 +1735,7 @@ impl Server {
                 !trimmed.is_empty() && !trimmed.contains(':')
             })
             .count()
+            .saturating_sub(1)
     }
 
     fn should_emit_jsdoc_infer_placeholders(file_path: &str) -> bool {
@@ -3420,8 +3449,10 @@ impl Server {
         import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
         let mut files = self.open_files.clone();
+        let mut external_project_paths = rustc_hash::FxHashSet::default();
         for project_files in self.external_project_files.values() {
             for path in project_files {
+                external_project_paths.insert(path.clone());
                 if files.contains_key(path) {
                     continue;
                 }
@@ -3490,6 +3521,21 @@ impl Server {
         if candidates.is_empty() && !fallback_names.is_empty() {
             candidates.extend(Self::fallback_import_candidates_from_export_scan(
                 current_file_path,
+                &files,
+                &fallback_names,
+            ));
+        }
+        if candidates.is_empty() && !fallback_names.is_empty() {
+            candidates.extend(Self::fallback_import_candidates_from_side_effect_imports(
+                current_file_path,
+                &files,
+                &fallback_names,
+            ));
+        }
+        if candidates.is_empty() && !fallback_names.is_empty() {
+            candidates.extend(Self::fallback_import_candidates_from_external_paths(
+                current_file_path,
+                &external_project_paths,
                 &files,
                 &fallback_names,
             ));
@@ -3609,6 +3655,88 @@ impl Server {
             for line in text.lines() {
                 if let Some(spec) = Self::extract_module_specifier_from_import_line(line) {
                     out.insert(spec);
+                }
+            }
+        }
+        out
+    }
+
+    fn fallback_import_candidates_from_side_effect_imports(
+        current_file_path: &str,
+        files: &rustc_hash::FxHashMap<String, String>,
+        missing_names: &rustc_hash::FxHashSet<String>,
+    ) -> Vec<ImportCandidate> {
+        let mut out = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for (path, text) in files {
+            if path == current_file_path {
+                continue;
+            }
+            for line in text.lines() {
+                let trimmed = line.trim_start();
+                if !(trimmed.starts_with("import \"") || trimmed.starts_with("import '")) {
+                    continue;
+                }
+                let Some(specifier) = Self::extract_module_specifier_from_import_line(trimmed)
+                else {
+                    continue;
+                };
+                if !Self::is_bare_package_specifier(&specifier) {
+                    continue;
+                }
+                for missing_name in missing_names {
+                    if seen.insert((specifier.clone(), missing_name.clone())) {
+                        out.push(ImportCandidate::named(
+                            specifier.clone(),
+                            missing_name.clone(),
+                            missing_name.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn is_bare_package_specifier(specifier: &str) -> bool {
+        !specifier.starts_with('.')
+            && !specifier.starts_with('/')
+            && !specifier.contains(':')
+            && !specifier.is_empty()
+    }
+
+    fn fallback_import_candidates_from_external_paths(
+        current_file_path: &str,
+        external_project_paths: &rustc_hash::FxHashSet<String>,
+        files: &rustc_hash::FxHashMap<String, String>,
+        missing_names: &rustc_hash::FxHashSet<String>,
+    ) -> Vec<ImportCandidate> {
+        let existing_specifiers = Self::collect_existing_import_specifiers(files);
+        let mut out = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        for path in external_project_paths {
+            if path == current_file_path || !path.contains("/node_modules/") {
+                continue;
+            }
+            if !(path.ends_with(".d.ts")
+                || path.ends_with(".ts")
+                || path.ends_with(".mts")
+                || path.ends_with(".cts"))
+            {
+                continue;
+            }
+            let Some(specifier) =
+                Self::module_specifier_from_node_modules_path(path, &existing_specifiers)
+            else {
+                continue;
+            };
+            for missing_name in missing_names {
+                if seen.insert((specifier.clone(), missing_name.clone())) {
+                    out.push(ImportCandidate::named(
+                        specifier.clone(),
+                        missing_name.clone(),
+                        missing_name.clone(),
+                    ));
                 }
             }
         }
@@ -4792,6 +4920,69 @@ mod tests {
     }
 
     #[test]
+    fn get_code_fixes_jsdoc_infer_placeholders_match_fourslash_order_24_26() {
+        let mut server = make_server();
+        let cases = [
+            (
+                "/annotateWithTypeFromJSDoc24.ts",
+                "class C {\n    /**\n     * @private\n     * @param {number} foo\n     * @param {Object} [bar]\n     * @param {String} bar.a\n     * @param {Number} [bar.b]\n     * @param bar.c\n     */\n    m(foo, bar) { }\n}\n",
+                2usize,
+            ),
+            (
+                "/annotateWithTypeFromJSDoc25.ts",
+                "class C {\n    /**\n     * @private\n     * @param {number} foo\n     * @param {Object} [bar]\n     * @param {String} bar.a\n     * @param {Object} [baz]\n     * @param {number} baz.c\n     */\n    m(foo, bar, baz) { }\n}\n",
+                3usize,
+            ),
+            (
+                "/annotateWithTypeFromJSDoc26.ts",
+                "class C {\n    /**\n     * @private\n     * @param {Object} [foo]\n     * @param {Object} foo.a\n     * @param {String} [foo.a.b]\n     */\n    m(foo) { }\n}\n",
+                1usize,
+            ),
+        ];
+
+        for (file, content, annotate_index_one_based) in cases {
+            server
+                .open_files
+                .insert(file.to_string(), content.to_string());
+            let callsite_offset = content.find("m(").expect("expected method declaration");
+            let line_map = LineMap::build(content);
+            let pos = line_map.offset_to_position(callsite_offset as u32, content);
+            let req = TsServerRequest {
+                seq: 1,
+                _msg_type: "request".to_string(),
+                command: "getCodeFixes".to_string(),
+                arguments: serde_json::json!({
+                    "file": file,
+                    "startLine": pos.line + 1,
+                    "startOffset": pos.character + 1,
+                    "endLine": pos.line + 1,
+                    "endOffset": pos.character + 1,
+                    "errorCodes": [80004]
+                }),
+            };
+            let resp = server.handle_get_code_fixes(1, &req);
+            assert!(resp.success, "expected getCodeFixes to succeed for {file}");
+            let actions = resp
+                .body
+                .as_ref()
+                .and_then(serde_json::Value::as_array)
+                .expect("expected getCodeFixes actions array");
+            assert!(
+                actions.len() >= annotate_index_one_based,
+                "expected at least {annotate_index_one_based} actions for {file}, got {actions:?}"
+            );
+            let annotate = &actions[annotate_index_one_based - 1];
+            assert_eq!(
+                annotate
+                    .get("description")
+                    .and_then(serde_json::Value::as_str),
+                Some("Annotate with type from JSDoc"),
+                "unexpected action order for {file}: {actions:?}"
+            );
+        }
+    }
+
+    #[test]
     fn fix_missing_imports_combines_sequential_import_merges() {
         let src = "import { Test1, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n";
         let candidates = vec![
@@ -4965,6 +5156,110 @@ mod tests {
                 candidate.local_name == "externalValue" && candidate.module_specifier == "./dep"
             }),
             "expected import candidate from external project files, got: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn has_potential_auto_import_symbol_scans_external_project_files() {
+        let mut server = make_server();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "tsz_external_symbol_scan_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before unix epoch")
+                .as_nanos()
+        ));
+        let dep_dir = temp_dir.join("node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist");
+        std::fs::create_dir_all(&dep_dir).expect("create dep dir");
+        let current_path = temp_dir.join("index.ts");
+        let dep_path = dep_dir.join("mobx.d.ts");
+        std::fs::write(&current_path, "autorun").expect("write index.ts");
+        std::fs::write(&dep_path, "export declare function autorun(): void;")
+            .expect("write mobx.d.ts");
+
+        let current_path = current_path.to_string_lossy().to_string();
+        let dep_path = dep_path.to_string_lossy().to_string();
+        server
+            .open_files
+            .insert(current_path.clone(), "autorun".to_string());
+        server
+            .external_project_files
+            .insert("/tsconfig.json".to_string(), vec![current_path.clone(), dep_path]);
+
+        assert!(
+            server.has_potential_auto_import_symbol(&current_path, "autorun"),
+            "expected external project declaration file to be considered for auto-import probe"
+        );
+    }
+
+    #[test]
+    fn collect_import_candidates_falls_back_to_side_effect_import_specifier() {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert("/index.ts".to_string(), "autorun".to_string());
+        server
+            .open_files
+            .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 7),
+            ),
+            message: "Cannot find name 'autorun'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
+            }),
+            "expected fallback candidate from side-effect import, got {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn collect_import_candidates_falls_back_to_external_project_node_modules_paths() {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert("/index.ts".to_string(), "autorun".to_string());
+        server.external_project_files.insert(
+            "/tsconfig.json".to_string(),
+            vec![
+                "/index.ts".to_string(),
+                "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts".to_string(),
+            ],
+        );
+
+        let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+            range: tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 7),
+            ),
+            message: "Cannot find name 'autorun'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+            source: Some("tsz".to_string()),
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
+            }),
+            "expected fallback candidate from external project path, got {candidates:?}"
         );
     }
 
@@ -5913,6 +6208,182 @@ mod tests {
         assert!(
             updated.contains("import type { ComponentProps, ComponentType } from \"react\";"),
             "expected merged type-only import, got {updated:?}"
+        );
+    }
+
+    #[test]
+    fn handle_get_code_fixes_returns_pnpm_import_fix_for_missing_name() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/tsconfig.json".to_string(),
+            r#"{ "compilerOptions": { "module": "commonjs" } }"#.to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/package.json".to_string(),
+            r#"{ "types": "dist/mobx.d.ts" }"#.to_string(),
+        );
+        server.open_files.insert(
+            "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts".to_string(),
+            "export declare function autorun(): void;".to_string(),
+        );
+        server
+            .open_files
+            .insert("/index.ts".to_string(), "autorun".to_string());
+        server
+            .open_files
+            .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/index.ts",
+                "startLine": 1,
+                "startOffset": 1,
+                "endLine": 1,
+                "endOffset": 8,
+                "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME]
+            }),
+        };
+
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let fixes = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected getCodeFixes actions");
+        let mut import_texts = Vec::new();
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    if let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        import_texts.push(new_text.to_string());
+                    }
+                }
+            }
+        }
+
+        assert!(
+            import_texts
+                .iter()
+                .any(|text| text.contains("import { autorun } from \"mobx\";")),
+            "expected pnpm missing-name import fix, got {import_texts:?}"
+        );
+    }
+
+    #[test]
+    fn handle_get_code_fixes_uses_side_effect_import_when_dependency_content_missing() {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert("/index.ts".to_string(), "autorun".to_string());
+        server
+            .open_files
+            .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/index.ts",
+                "startLine": 1,
+                "startOffset": 1,
+                "endLine": 1,
+                "endOffset": 8,
+                "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME]
+            }),
+        };
+
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let fixes = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected getCodeFixes actions");
+        let mut import_texts = Vec::new();
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    if let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        import_texts.push(new_text.to_string());
+                    }
+                }
+            }
+        }
+
+        assert!(
+            import_texts
+                .iter()
+                .any(|text| text.contains("import { autorun } from \"mobx\";")),
+            "expected missing-name import fix from side-effect import fallback, got {import_texts:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_diagnostics_sync_adds_synthetic_missing_name_for_bare_identifier() {
+        let mut server = make_server();
+        server
+            .open_files
+            .insert("/index.ts".to_string(), "autorun".to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "semanticDiagnosticsSync".to_string(),
+            arguments: serde_json::json!({
+                "file": "/index.ts",
+                "includeLinePosition": true
+            }),
+        };
+
+        let resp = server.handle_semantic_diagnostics_sync(1, &req);
+        assert!(resp.success, "expected semanticDiagnosticsSync to succeed");
+        let diagnostics = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected diagnostics array");
+        assert!(
+            diagnostics.iter().any(|diag| {
+                diag.get("code")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
+            }),
+            "expected synthetic cannot-find-name diagnostic, got {diagnostics:?}"
         );
     }
 
