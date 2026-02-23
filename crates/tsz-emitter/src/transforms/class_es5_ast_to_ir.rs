@@ -878,26 +878,9 @@ impl<'a> AstToIr<'a> {
     }
 
     fn get_property_key(&self, idx: NodeIndex) -> Option<IRPropertyKey> {
-        let node = self.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            let name = get_identifier_text(self.arena, idx)?;
-            Some(IRPropertyKey::Identifier(name))
-        } else if node.kind == SyntaxKind::StringLiteral as u16 {
-            self.arena
-                .get_literal(node)
-                .map(|lit| IRPropertyKey::StringLiteral(lit.text.clone()))
-        } else if node.kind == SyntaxKind::NumericLiteral as u16 {
-            self.arena
-                .get_literal(node)
-                .map(|lit| IRPropertyKey::NumericLiteral(lit.text.clone()))
-        } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            self.arena.get_computed_property(node).map(|computed| {
-                IRPropertyKey::Computed(Box::new(self.convert_expression(computed.expression)))
-            })
-        } else {
-            None
-        }
+        crate::transforms::emit_utils::get_property_key(self.arena, idx, |expr_idx| {
+            Some(self.convert_expression(expr_idx))
+        })
     }
 
     fn convert_function_expression(&self, idx: NodeIndex) -> IRNode {
