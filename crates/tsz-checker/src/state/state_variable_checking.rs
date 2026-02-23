@@ -172,7 +172,7 @@ impl<'a> CheckerState<'a> {
             || expr_type == TypeId::UNKNOWN
             || expr_type == TypeId::OBJECT
             || expr_type == TypeId::NEVER
-            || query::is_type_parameter(self.ctx.types, expr_type)
+            || query::is_type_parameter_like(self.ctx.types, expr_type)
             || query::is_object_like_type(self.ctx.types, expr_type)
             // Also allow union types that contain valid types
             || self.for_in_expr_type_is_valid_union(expr_type);
@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
             for &member in &members {
                 if member == TypeId::ANY
                     || member == TypeId::UNKNOWN
-                    || query::is_type_parameter(self.ctx.types, member)
+                    || query::is_type_parameter_like(self.ctx.types, member)
                     || query::is_object_like_type(self.ctx.types, member)
                 {
                     return true;

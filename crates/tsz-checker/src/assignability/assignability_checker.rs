@@ -1060,7 +1060,7 @@ impl<'a> CheckerState<'a> {
                         // If a union member has no object shape and is a type parameter
                         // or the `object` intrinsic, it accepts any properties, so EPC
                         // should not apply.
-                        if tsz_solver::type_queries::is_type_parameter(
+                        if tsz_solver::type_queries::is_type_parameter_like(
                             self.ctx.types,
                             resolved_member,
                         ) || resolved_member == TypeId::OBJECT

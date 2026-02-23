@@ -39,5 +39,5 @@ fn classifies_resolution_and_signature_paths() {
         get_application_info(&types, app),
         Some((TypeId::STRING, vec![TypeId::NUMBER]))
     );
-    assert!(is_type_parameter(&types, type_param));
+    assert!(is_type_parameter_like(&types, type_param));
 }

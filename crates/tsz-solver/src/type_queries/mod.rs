@@ -212,7 +212,10 @@ pub fn is_uninstantiated_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) 
 /// a type parameter that has been bound to a specific index in a generic
 /// signature — it should still be treated as "unresolved" for purposes like
 /// excess property checking and constraint validation.
-pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+///
+/// Use this instead of `visitor_predicates::is_type_parameter` when you need
+/// to treat bound (de Bruijn indexed) parameters as type-parameter-like.
+pub fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
         Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))

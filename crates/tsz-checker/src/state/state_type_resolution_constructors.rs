@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
             let base_type = self.get_type_of_node(expr_idx);
 
             // Check if this is a type parameter
-            if query::is_type_parameter(self.ctx.types, base_type) {
+            if query::is_type_parameter_like(self.ctx.types, base_type) {
                 extends_type_param = Some(base_type);
                 break;
             }

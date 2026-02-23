@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::relations::freshness;
 
         // Excess property checks do not apply to type parameters (even with constraints).
-        if query::is_type_parameter(self.ctx.types, target) {
+        if query::is_type_parameter_like(self.ctx.types, target) {
             return;
         }
 
@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
                     // If a union member has no object shape and is a type parameter
                     // or the `object` intrinsic, it conceptually accepts any properties,
                     // so excess property checking should not apply at all.
-                    if query::is_type_parameter(self.ctx.types, resolved_member)
+                    if query::is_type_parameter_like(self.ctx.types, resolved_member)
                         || resolved_member == TypeId::OBJECT
                     {
                         return;
