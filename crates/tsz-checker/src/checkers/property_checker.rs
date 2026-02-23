@@ -240,10 +240,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Entity name expressions (identifiers, property access chains) are always OK
-        if self.is_entity_name_expression(computed.expression) {
-            return;
-        }
+        let is_entity_name = self.is_entity_name_expression(computed.expression);
 
         // Literal expressions (string, number, no-substitution template) are always OK
         // since they inherently have literal types
@@ -257,7 +254,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Always evaluate the expression to trigger side-effect diagnostics (e.g., TS2585
+        // for `Symbol` at ES5 target). Entity name expressions skip the TS1169/TS1170
+        // structural error but still need type evaluation.
         let expr_type = self.get_type_of_node(computed.expression);
+
+        // Entity name expressions (identifiers, property access chains) are always
+        // structurally OK for computed property names — skip the TS1169/TS1170 error.
+        if is_entity_name {
+            return;
+        }
 
         if expr_type == tsz_solver::TypeId::ERROR {
             return;

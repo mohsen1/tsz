@@ -738,3 +738,37 @@ expression name (when available via `expression_text()`) or TS2571 fallback.
 - **TS2497 (13 tests)**: Module ESM import compat. MEDIUM difficulty (previously deferred).
 - **TS2550 (9 tests)**: Property needs newer lib target. MEDIUM-HIGH (needs lib version tracking).
 - **TS2589 (9 tests)**: Excessive instantiation depth. Infrastructure 80% done, needs wiring. MEDIUM.
+
+## Session: 2026-02-23 — Offset 6000 Investigation
+
+**Score**: 3935/6577 (59.8%) offset 6000, 7940/12574 (63.1%) full suite (+1 from TS2451 fix)
+
+### Fixed
+- **TS2451 vs TS2300 ordering**: When `let` appears before `var` in source for the same name,
+  tsc emits TS2451 ("Cannot redeclare block-scoped variable"). We were emitting TS2300 because
+  the binder's declaration vector was reordered by var hoisting. Fixed by using source position
+  (`node.pos`) to find the truly first declaration. +1 conformance (`letDeclarations-scopes-duplicates.ts`).
+- **property_checker.rs entity name evaluation**: Moved entity-name early return in
+  `check_computed_property_requires_literal` to after expression type evaluation, so side-effect
+  diagnostics (e.g., TS2585) are triggered even for entity name expressions.
+
+### Investigated but Deferred
+- **TS2585 Symbol at ES5 (10-15 tests)**: ROOT CAUSE is transitive lib loading. `lib.dom.d.ts`
+  contains `/// <reference lib="es2015" />` which pulls in ES2015 Symbol value bindings even
+  at ES5 target. This means Symbol resolves as a value, so no TS2585 is emitted. Fixing this
+  requires lib loading architecture changes to respect target level during transitive loading.
+  HIGH difficulty.
+- **TS2451 multi-file (6 tests)**: `letDeclarations-scopes-duplicates{2-7}.ts` are multi-file
+  tests requiring cross-file block-scoped variable redeclaration detection. Requires project-level
+  multi-file awareness. MEDIUM-HIGH difficulty.
+- **TS2454 (15 single-code tests)**: Core logic works for simple cases. Remaining failures are
+  multi-file scenarios, config propagation, and flow node gaps. MEDIUM difficulty.
+- **TS2304 false positives (19 extra)**: Largest pattern is `declare` keyword misparse (8 tests)
+  — when `declare` appears in invalid modifier positions, parser treats it as identifier expression,
+  emitting false "Cannot find name 'declare'". Suppression logic in `error_cannot_find_name_at`
+  exists but requires `has_parse_errors()` to be true. MEDIUM difficulty.
+- **TS2875 (9 tests, offset 6000)**: JSX runtime module resolution (`react/jsx-runtime`).
+  Requires implementing `getJSXImplicitImportBase()` and `getJSXRuntimeImport()` equivalents,
+  plus module resolution for implicit imports. HIGH difficulty.
+- **TS6133 (28+ tests)**: Unused variable/parameter detection. Large cluster requiring
+  systematic analysis pass. MEDIUM-HIGH difficulty but high payoff.

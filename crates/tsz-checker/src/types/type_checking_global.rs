@@ -1164,9 +1164,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Match TypeScript's binder behavior: if the first declaration is block-scoped,
-                // emit TS2451 for all duplicates. Otherwise emit TS2300 for all.
-                let first_decl_flags = declarations.first().map(|d| d.1).unwrap_or(0);
+                // Match TypeScript's binder behavior: if the first declaration (by source
+                // position) is block-scoped, emit TS2451 for all duplicates. Otherwise
+                // emit TS2300 for all. We use source position rather than declaration
+                // vector order because var hoisting can reorder declarations.
+                let first_decl_flags = declarations
+                    .iter()
+                    .filter(|(decl_idx, _, is_local, _)| *is_local && conflicts.contains(decl_idx))
+                    .min_by_key(|(decl_idx, _, _, _)| {
+                        self.ctx.arena.get(*decl_idx).map_or(u32::MAX, |n| n.pos)
+                    })
+                    .map(|d| d.1)
+                    .unwrap_or(0);
                 if (first_decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
                     (
                         format_message(
