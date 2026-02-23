@@ -518,6 +518,22 @@ Investigated but punted:
   Reason: still requires project-wide symbol grouping in tsserver `references-full`/rename/definition paths (current handlers remain single-file `parse_and_bind_file` based for these flows).
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same cross-file alias/re-export grouping gap as `_types` in tsserver navigation handlers.
+
+## 2026-02-23 (quickinfo contextual call-signature spacing follow-up)
+
+Completed in this pass:
+- Fixed tsserver quickinfo display-string normalization spacing for call signatures in object types in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` (`) :` -> `):`) so contextual overload-style type literals match fourslash quick info formatting expectations.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs`:
+  - `normalize_quickinfo_display_string_normalizes_object_call_signature_spacing`
+- Verification:
+  - `cargo nextest run -p tsz-cli normalize_quickinfo_display_string_normalizes_object_call_signature_spacing` passes.
+  - `./scripts/run-fourslash.sh --filter=quickInfoContextualTyping --verbose` improved from marker `18` spacing mismatch to marker `45`.
+  - `./scripts/run-fourslash.sh --max=200` remains `192/200` passing in this run.
+  - `cargo nextest run -p tsz-lsp -p tsz-cli` passed (`1141` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `45` (`(property) t1: (s: string) => string` expected, got empty quick info).
+  Reason: requires a dedicated quickinfo fallback for object-property assignment member access (`objc8.t1 = function(...)`) in tsserver `handlers_info` beyond this formatting-only patch.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation2.ts`
   Reason: remaining failure is exact completion-applied import-edit shaping/order for class-member snippets under augmentation variants.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation4.ts`
