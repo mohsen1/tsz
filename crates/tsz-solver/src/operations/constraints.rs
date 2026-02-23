@@ -97,7 +97,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
 
-        let is_nullish = |ty: TypeId| matches!(ty, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID);
+        let is_nullish = |ty: TypeId| ty.is_nullable();
 
         match (source_key, target_key) {
             (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner)))
