@@ -96,7 +96,7 @@ impl<'a> LinkedEditingProvider<'a> {
         let mut current = start_node;
 
         while current.is_some() {
-            let _node = self.arena.get(current)?;
+            self.arena.get(current)?;
             let parent_idx = self.arena.get_extended(current)?.parent;
 
             if parent_idx.is_none() {

@@ -1315,7 +1315,6 @@ impl Project {
         };
 
         let arena = file.arena();
-        let _root = file.root();
         let source_text = file.source_text();
 
         // Walk all nodes to find ImportDeclaration, ExportDeclaration, and CallExpression

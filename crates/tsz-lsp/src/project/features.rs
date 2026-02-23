@@ -336,7 +336,7 @@ impl Project {
     ///
     /// This uses project-wide `find_references` for accurate reference counts.
     pub fn resolve_code_lens(&mut self, file_name: &str, lens: &CodeLens) -> Option<CodeLens> {
-        let _file = self.files.get(file_name)?;
+        self.files.get(file_name)?;
         let data = lens.data.as_ref()?;
 
         match data.kind {

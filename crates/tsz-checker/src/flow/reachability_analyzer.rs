@@ -99,7 +99,7 @@ impl<'a> ReachabilityAnalyzer<'a> {
             return None;
         }
 
-        let _node_data = self.arena.get(node)?;
+        self.arena.get(node)?;
 
         // Check what kind of node precedes this one to determine the reason
         // For now, return a generic message
