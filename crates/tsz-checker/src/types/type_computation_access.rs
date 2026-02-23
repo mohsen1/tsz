@@ -308,13 +308,9 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
-                    // TS2339: Property does not exist on type 'unknown'
-                    // Use the same error as TypeScript for property access on unknown
-                    self.error_property_not_exist_at(
-                        &property_name,
-                        object_type_for_access,
-                        access.name_or_argument,
-                    );
+                    // TS18046: "'x' is of type 'unknown'."
+                    // tsc emits TS18046 (not TS2339) for property access on unknown types.
+                    self.error_is_of_type_unknown(access.expression);
                     Some(TypeId::ERROR)
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
@@ -454,11 +450,8 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
-                    self.error_property_not_exist_at(
-                        &property_name,
-                        object_type_for_access,
-                        access.name_or_argument,
-                    );
+                    // TS18046: "'x' is of type 'unknown'."
+                    self.error_is_of_type_unknown(access.expression);
                     Some(TypeId::ERROR)
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,

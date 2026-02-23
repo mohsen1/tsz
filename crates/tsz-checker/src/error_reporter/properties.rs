@@ -1,4 +1,4 @@
-//! Property-related error reporting (TS2339, TS2741, TS2540, TS7053).
+//! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
@@ -108,6 +108,35 @@ impl<'a> CheckerState<'a> {
             // Use push_diagnostic for deduplication
             self.ctx
                 .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Report TS18046: "'x' is of type 'unknown'."
+    /// Emitted when an expression of type `unknown` is used in a position that requires
+    /// a more specific type (property access, function call, arithmetic, etc.).
+    /// Falls back to TS2571 ("Object is of type 'unknown'.") when the expression name
+    /// cannot be determined.
+    pub fn error_is_of_type_unknown(&mut self, expr_idx: NodeIndex) {
+        let name = self.expression_text(expr_idx);
+        if let Some(loc) = self.get_source_location(expr_idx) {
+            let (code, message) = if let Some(ref name) = name {
+                (
+                    diagnostic_codes::IS_OF_TYPE_UNKNOWN,
+                    format!("'{name}' is of type 'unknown'."),
+                )
+            } else {
+                (
+                    diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                    "Object is of type 'unknown'.".to_string(),
+                )
+            };
+            self.ctx.push_diagnostic(Diagnostic::error(
+                &self.ctx.file_name,
+                loc.start,
+                loc.length(),
+                message,
+                code,
+            ));
         }
     }
 

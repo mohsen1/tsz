@@ -416,8 +416,14 @@ impl<'a> CheckerState<'a> {
             // Note: tsc does NOT validate operand types for unary +/-. Unary + is a
             // common idiom for number conversion (+someString), and tsc allows it freely.
             k if k == SyntaxKind::PlusToken as u16 || k == SyntaxKind::MinusToken as u16 => {
-                // Evaluate operand for side effects / flow analysis but don't type-check it
-                self.get_type_of_node(unary.operand);
+                // Evaluate operand for side effects / flow analysis
+                let operand_type = self.get_type_of_node(unary.operand);
+
+                // TS18046: unary +/- on unknown is not allowed
+                if operand_type == TypeId::UNKNOWN {
+                    self.error_is_of_type_unknown(unary.operand);
+                    return TypeId::ERROR;
+                }
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
                     if self.contextual_literal_type(literal_type).is_some() {

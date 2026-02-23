@@ -458,10 +458,8 @@ impl<'a> CheckerState<'a> {
                 property_type.unwrap_or(TypeId::UNKNOWN)
             }
             PropertyAccessResult::IsUnknown => {
-                // TS2339: Property does not exist on type 'unknown'
-                // Use the same error as TypeScript for property access on unknown
-                // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+                // TS18046: "'x' is of type 'unknown'."
+                self.error_is_of_type_unknown(access.expression);
                 TypeId::ERROR
             }
         };

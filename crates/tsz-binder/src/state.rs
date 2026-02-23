@@ -13,6 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use std::sync::RwLock;
+#[cfg(not(target_arch = "wasm32"))]
 use tracing::debug;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeAccess;

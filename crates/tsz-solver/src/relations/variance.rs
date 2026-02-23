@@ -485,7 +485,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         // Constraint (K in keyof T) is CONTRAVARIANT with respect to T
         self.visit_with_polarity(mapped.constraint, !current_polarity);
 
-        // Template type is COVARIANT with respect to T
+        // Template type is COVARIANT with respect to T.
         self.visit_with_polarity(mapped.template, current_polarity);
 
         // Name type (if present) is COVARIANT

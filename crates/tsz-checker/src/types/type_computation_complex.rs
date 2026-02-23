@@ -316,6 +316,25 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
+        // TS18046: Constructing an expression of type `unknown` is not allowed.
+        // tsc emits TS18046 instead of TS2351 when the constructor type is `unknown`.
+        if constructor_type == TypeId::UNKNOWN {
+            self.error_is_of_type_unknown(new_expr.expression);
+            // Still need to check arguments for definite assignment (TS2454)
+            let args = match new_expr.arguments.as_ref() {
+                Some(a) => a.nodes.as_slice(),
+                None => &[],
+            };
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| None,
+                check_excess_properties,
+                None,
+            );
+            return TypeId::ERROR;
+        }
+
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         constructor_type = self.evaluate_application_type(constructor_type);
 

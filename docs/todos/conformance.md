@@ -107,6 +107,7 @@ tests passing (offset 6000 slice: 3665→3684).
 - **TS5057**: `TypeScript/tests/cases/compiler/commonSourceDir1.ts` — requires project/tsconfig discovery and compiler option plumbing that is not yet wired into the current checker flow.
 - **TS5095**: `TypeScript/tests/cases/compiler/declarationEmitBundleWithAmbientReferences.ts` — requires moduleResolution validation against module-kind constraints, which is still outside current scope.
 - **TS2322 (62 missing)**: Many tests still miss TS2322 assignability errors — ongoing solver/checker type relation work.
+- **TS2322**: `crates/tsz-checker/tests/ts2322_tests.rs` (`test_ts2322_recursive_generic_assignability_is_not_false_positive`) — recursive generic structural relation can still emit false positives; requires deeper relation-cache/variance fast-path ordering work.
 - **TS2339 (52 missing)**: Property access errors not yet emitted for union-typed or intersection-typed values in some cases.
 - **TS2322/TS2339 (broad regression slice)**: `TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts` still needs solver/checker assignability and narrowing alignment before this cycle; fixing in this pass would be a broad refactor.
 - **TS2304 (57 extra)**: Over-emission of "cannot find name" — requires broader lib resolution and module resolution improvements.
@@ -385,6 +386,10 @@ matching tsc behavior. Triple-slash `/// <reference types="..." />` TS2688 was a
   for var/let redeclaration conflicts — needs `type_checking_global.rs` fix. (b) JS file
   declarations with `@typedef` and late-bound assignments incorrectly flagged in multi-file
   scripts. MEDIUM difficulty.
+- **TS2693 (1 targeted test remaining)**: `TypeScript/tests/cases/compiler/allowImportClausesToMergeWithTypes.ts`
+  still emits TS2693 for `a.ts:8:1` on `zzz` despite an imported value with the same name.
+  Root cause appears to be value/type symbol precedence across `import` declarations plus interface
+  declarations in the same module scope. Medium complexity in symbol resolution.
 
 ## TS2430/TS6053 — .lib/ diagnostic filtering in conformance runner (Fixed)
 

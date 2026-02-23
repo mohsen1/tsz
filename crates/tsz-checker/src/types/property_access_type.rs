@@ -820,14 +820,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 PropertyAccessResult::IsUnknown => {
-                    // TS2339: Property does not exist on type 'unknown'
-                    // Use the same error as TypeScript for property access on unknown
-                    // Report at the property name node, not the full expression (matches tsc behavior)
-                    self.error_property_not_exist_at(
-                        property_name,
-                        object_type_for_access,
-                        access.name_or_argument,
-                    );
+                    // TS18046: "'x' is of type 'unknown'."
+                    self.error_is_of_type_unknown(access.expression);
                     TypeId::ERROR
                 }
             }

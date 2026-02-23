@@ -367,13 +367,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
 
             if let Some(def_id) = def_id {
-                // Try to get variance from query_db (if available)
-                // This enables O(1) variance-based generic assignability checking
-                // Use fully qualified syntax to disambiguate QueryDatabase vs TypeResolver
+                // Try to get variance from query_db first (if available).
+                // This enables O(1) variance-based generic assignability checking.
+                // Fallback to resolver-provided variance for tests/unit setups where
+                // a full query cache is not configured.
                 use crate::caches::db::QueryDatabase;
                 let variances = self
                     .query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id));
+                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+                    .or_else(|| self.resolver.get_type_param_variance(def_id));
 
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
@@ -414,10 +416,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             return SubtypeResult::True;
                         }
 
-                        // If variance check failed, return False immediately
-                        // because for the SAME base, structural expansion won't help
-                        // (the variance check is semantically equivalent to expansion)
-                        return SubtypeResult::False;
+                        let is_interface = self.resolver.get_def_kind(def_id);
+
+                        // If variance check failed for SAME base applications, we can
+                        // often fast-fail to avoid structural false-positives.
+                        // Allow a fallback only for transparent type aliases and
+                        // interfaces; keep classes/other kinds strict here.
+                        if !matches!(
+                            is_interface,
+                            Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+                        ) {
+                            return SubtypeResult::False;
+                        }
                     }
                 }
             }
@@ -443,7 +453,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         });
 
         let app_def_pair = match (s_base_def, t_base_def) {
-            (Some(s_def), Some(t_def)) if s_def != t_def => Some((s_def, t_def)),
+            (Some(s_def), Some(t_def)) => Some((s_def, t_def)),
             _ => None,
         };
 

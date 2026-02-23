@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_relation_input_ready(target);
+        self.ensure_relation_inputs_ready(&[source, target]);
 
         // Substitute `ThisType` in the target with the class instance type.
         // In tsc, `this` acts as a type parameter constrained to the class type.
@@ -490,7 +490,7 @@ impl<'a> CheckerState<'a> {
     /// This keeps the same checker gateway (resolver + overrides + caches) as
     /// `is_assignable_to`, but forces the strict-function-types relation flag.
     pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.ensure_relation_input_ready(target);
+        self.ensure_relation_inputs_ready(&[source, target]);
 
         let target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(source);
@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
     /// overrides, caching, and precondition setup) while pinning nullability
     /// semantics to strict mode for localized checks.
     pub fn is_assignable_to_strict_null(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.ensure_relation_input_ready(target);
+        self.ensure_relation_inputs_ready(&[source, target]);
 
         let target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(source);
@@ -620,7 +620,7 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_relation_input_ready(target);
+        self.ensure_relation_inputs_ready(&[source, target]);
 
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
