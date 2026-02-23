@@ -16,3 +16,4 @@ pub(crate) mod state_type_resolution_constructors;
 pub(crate) mod state_type_resolution_module;
 pub(crate) mod state_variable_checking;
 pub(crate) mod state_variable_checking_destructuring;
+pub(crate) mod state_variable_checking_for_loop;
