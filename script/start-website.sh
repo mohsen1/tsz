@@ -28,21 +28,10 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 prepare_wasm() {
-  if [ -f "$ROOT/pkg/web/tsz_wasm.js" ] && [ -f "$ROOT/pkg/web/tsz_wasm_bg.wasm" ]; then
-    echo "WASM: found existing web build in pkg/web/"
-    return
-  fi
-
-  if [ "${TSZ_WEBSITE_BUILD_WASM:-0}" != "1" ]; then
-    echo "WASM: not found; skipping build for fast startup."
-    echo "      Set TSZ_WEBSITE_BUILD_WASM=1 to build it locally."
-    return
-  fi
-
   if ! command -v wasm-pack >/dev/null 2>&1; then
-    echo "WASM: wasm-pack not found; playground may show fallback."
-    echo "      Install: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
-    return
+    echo "error: wasm-pack is required to build playground WASM." >&2
+    echo "Install: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh" >&2
+    exit 1
   fi
 
   echo "WASM: building web target for playground..."
