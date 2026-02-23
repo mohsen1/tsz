@@ -1518,6 +1518,8 @@ pub(crate) use driver_sources::{
 
 #[path = "driver_check.rs"]
 mod driver_check;
+#[path = "driver_check_utils.rs"]
+mod driver_check_utils;
 use driver_check::{collect_diagnostics, load_lib_files_for_contexts};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
