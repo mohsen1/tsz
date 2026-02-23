@@ -441,6 +441,43 @@ impl<'a> Completions<'a> {
         })
     }
 
+    /// Collect inherited class members as completion candidates for class member snippets.
+    pub fn get_class_member_snippet_candidates(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Vec<CompletionItem> {
+        let Some(offset) = self.line_map.position_to_offset(position, self.source_text) else {
+            return Vec::new();
+        };
+        let node_idx = self.find_completions_node(root, offset);
+        let Some(class_idx) = self.find_enclosing_class_declaration(node_idx) else {
+            return Vec::new();
+        };
+        let Some(base_expr) = self.class_extends_expression(class_idx) else {
+            return Vec::new();
+        };
+        let mut candidates = self
+            .get_member_completions(base_expr, None)
+            .unwrap_or_default();
+        if candidates.is_empty() {
+            return candidates;
+        }
+
+        let declared_members = self.class_declared_member_names(class_idx);
+        candidates.retain(|item| {
+            (item.kind == CompletionItemKind::Method || item.kind == CompletionItemKind::Property)
+                && !declared_members.contains(&item.label)
+        });
+
+        for item in &mut candidates {
+            item.sort_text = Some(sort_priority::SUGGESTED_CLASS_MEMBERS.to_string());
+        }
+
+        candidates.sort_by(|a, b| a.label.cmp(&b.label));
+        candidates
+    }
+
     /// Check if the cursor is after a dot (member completion context).
     fn get_completions_internal(
         &self,
@@ -1114,19 +1151,6 @@ impl<'a> Completions<'a> {
         }
     }
 
-    /// Get class member snippet candidates at the given position.
-    ///
-    /// Returns completion items for members that the enclosing class should
-    /// implement (e.g. from a base class). Currently returns an empty list;
-    /// the tsserver fallback provides candidates via raw file scanning.
-    pub const fn get_class_member_snippet_candidates(
-        &self,
-        _root: NodeIndex,
-        _position: Position,
-    ) -> Vec<CompletionItem> {
-        Vec::new()
-    }
-
     pub fn get_member_completion_parent_type_name(
         &self,
         root: NodeIndex,
@@ -1391,6 +1415,76 @@ impl<'a> Completions<'a> {
         }
 
         None
+    }
+
+    fn find_enclosing_class_declaration(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        while current.is_some() {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return Some(current);
+            }
+            let ext = self.arena.get_extended(current)?;
+            current = ext.parent;
+        }
+        None
+    }
+
+    fn class_extends_expression(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
+        let class_node = self.arena.get(class_idx)?;
+        let class_data = self.arena.get_class(class_node)?;
+        let clauses = class_data.heritage_clauses.as_ref()?;
+        for &clause_idx in &clauses.nodes {
+            let clause_node = self.arena.get(clause_idx)?;
+            let heritage = self.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let type_node = self.arena.get(type_idx)?;
+                if let Some(expr_with_type_args) = self.arena.get_expr_type_args(type_node) {
+                    return Some(expr_with_type_args.expression);
+                }
+            }
+        }
+        None
+    }
+
+    fn class_declared_member_names(&self, class_idx: NodeIndex) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return names;
+        };
+        let Some(class_data) = self.arena.get_class(class_node) else {
+            return names;
+        };
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let name_idx = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.arena.get_method_decl(member_node).map(|m| m.name)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    self.arena.get_property_decl(member_node).map(|m| m.name)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena.get_accessor(member_node).map(|m| m.name)
+                }
+                _ => None,
+            };
+            if let Some(name_idx) = name_idx
+                && let Some(name) = self.arena.get_identifier_text(name_idx)
+            {
+                names.insert(name.to_string());
+            }
+        }
+
+        names
     }
 
     /// Get the set of property names already defined in an object literal.
