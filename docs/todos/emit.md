@@ -1,8 +1,25 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9777/13623 = 71.8% JS, 776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current 9789/13623 = 71.9% JS, 776/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **CJS namespace IIFE tail folding for AMD/UMD exported namespaces** (+13 JS):
+  For `export namespace N { ... }` with AMD/UMD modules, tsc folds `exports.N` into the
+  IIFE closing argument: `(N || (exports.N = N = {}))` instead of emitting a separate
+  `exports.N = N;` after the IIFE. Root cause: the lowering pass runs with `module=AMD`
+  (not CommonJS), so `is_commonjs()` returns false and no `CommonJSExport` directive wraps
+  the namespace. When the AMD wrapper later re-emits with `module=CommonJS`, the
+  `ES5Namespace` transform directive intercepts the node before `emit_node_by_kind` can
+  reach `emit_export_declaration_commonjs`. Fix: added `pending_cjs_namespace_export_fold`
+  flag to Printer, set in `module_emission_exports.rs` before `emit_module_declaration`.
+  Flag consumed in three places: (1) ES5 transform path in `transform_dispatch.rs` switches
+  from `emit_namespace` to `emit_exported_namespace`, (2) ES5 path in
+  `declarations_namespace.rs` uses `NamespaceES5Emitter::with_commonjs(true)`, (3) ES6+ IIFE
+  tail in `declarations_namespace.rs` writes `(N || (exports.N = N = {}))`.
+  One unit test added in `namespace_es5.rs`.
+  JS: 9776→9789, DTS: 776 (unchanged), zero regressions.
+
+### Previously Fixed (Session -1a)
 - **CJS export ordering for class declarations with static blocks** (+5 JS):
   For `export class C { static { ... } }` with CommonJS/AMD/UMD modules and ES2015+ target,
   `exports.C = C;` was emitted AFTER the lowered static block IIFE instead of between the

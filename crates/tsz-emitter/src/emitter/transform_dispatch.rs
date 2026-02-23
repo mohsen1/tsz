@@ -279,13 +279,21 @@ impl<'a> Printer<'a> {
                         self.declared_namespace_names.insert(ns_name);
                     }
                 }
+                let use_cjs = self.pending_cjs_namespace_export_fold;
+                if use_cjs {
+                    self.pending_cjs_namespace_export_fold = false;
+                }
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
                 ns_emitter.set_should_declare_var(should_declare_var);
-                let output = ns_emitter.emit_namespace(namespace_node);
+                let output = if use_cjs {
+                    ns_emitter.emit_exported_namespace(namespace_node)
+                } else {
+                    ns_emitter.emit_namespace(namespace_node)
+                };
                 self.write(output.trim_end_matches('\n'));
                 // Skip comments within the namespace range - the ES5 namespace emitter
                 // doesn't use the main comment system, so we must advance past them
