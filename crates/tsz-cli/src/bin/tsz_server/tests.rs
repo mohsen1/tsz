@@ -2456,8 +2456,7 @@ fn test_completion_info_verbatim_commonjs_auto_imports_include_require_member_fo
         .iter()
         .find(|entry| {
             entry.get("name").and_then(serde_json::Value::as_str) == Some("explode")
-                && entry.get("source").and_then(serde_json::Value::as_str)
-                    == Some("./cool-name")
+                && entry.get("source").and_then(serde_json::Value::as_str) == Some("./cool-name")
         })
         .expect("expected `explode` auto-import entry from `./cool-name`");
     assert_eq!(
@@ -2522,7 +2521,8 @@ fn test_get_code_fixes_verbatim_commonjs_fallback_rewrites_missing_member() {
     );
     server.open_files.insert(
         "/a.ts".to_string(),
-        "// @module: node18\n// @verbatimModuleSyntax: true\n// @allowJs: true\nnormalize\n".to_string(),
+        "// @module: node18\n// @verbatimModuleSyntax: true\n// @allowJs: true\nnormalize\n"
+            .to_string(),
     );
 
     let req = TsServerRequest {
