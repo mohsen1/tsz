@@ -1131,7 +1131,7 @@ impl<'a> ES5AsyncTransformer<'a> {
         if body_node.kind != syntax_kind_ext::BLOCK {
             // Concise arrow body - treat as return expression
             if let Some(expr) = self.transform_expression(body_idx) {
-                if self.is_await_expression(body_idx) {
+                if super::emit_utils::is_await_expression(self.arena, body_idx) {
                     result.push(AsyncStatement::ReturnAwait { operand: expr });
                 } else {
                     result.push(AsyncStatement::Return { value: Some(expr) });
@@ -1162,7 +1162,7 @@ impl<'a> ES5AsyncTransformer<'a> {
                     return;
                 };
 
-                if self.is_await_expression(expr_stmt.expression) {
+                if super::emit_utils::is_await_expression(self.arena, expr_stmt.expression) {
                     if let Some(operand) = self.get_await_operand(expr_stmt.expression) {
                         result.push(AsyncStatement::Await { operand });
                     }
@@ -1177,7 +1177,7 @@ impl<'a> ES5AsyncTransformer<'a> {
 
                 if ret.expression.is_none() {
                     result.push(AsyncStatement::Return { value: None });
-                } else if self.is_await_expression(ret.expression) {
+                } else if super::emit_utils::is_await_expression(self.arena, ret.expression) {
                     if let Some(operand) = self.get_await_operand(ret.expression) {
                         result.push(AsyncStatement::ReturnAwait { operand });
                     }
@@ -1369,13 +1369,6 @@ impl<'a> ES5AsyncTransformer<'a> {
             _ => {}
         }
 
-        false
-    }
-
-    fn is_await_expression(&self, idx: NodeIndex) -> bool {
-        if let Some(node) = self.arena.get(idx) {
-            return node.kind == syntax_kind_ext::AWAIT_EXPRESSION;
-        }
         false
     }
 

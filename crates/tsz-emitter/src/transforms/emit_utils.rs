@@ -306,6 +306,31 @@ pub(crate) fn is_spread_element(arena: &NodeArena, idx: NodeIndex) -> bool {
     node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT || node.kind == syntax_kind_ext::SPREAD_ELEMENT
 }
 
+/// Generate the next temporary variable name (`_a`, `_b`, ... `_z`, `_a`, ...) from a counter.
+pub(crate) fn next_temp_var_name(counter: &mut u32) -> String {
+    let name = format!("_{}", (b'a' + (*counter % 26) as u8) as char);
+    *counter += 1;
+    name
+}
+
+/// Check if a block body (given by `NodeIndex`) has an empty statement list.
+pub(crate) fn block_is_empty(arena: &NodeArena, body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(body) else {
+        return false;
+    };
+    let Some(block) = arena.get_block(body_node) else {
+        return false;
+    };
+    block.statements.nodes.is_empty()
+}
+
+/// Check if a node is an `AwaitExpression`.
+pub(crate) fn is_await_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
+    arena
+        .get(idx)
+        .is_some_and(|n| n.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;

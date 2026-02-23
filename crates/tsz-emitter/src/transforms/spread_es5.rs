@@ -100,9 +100,7 @@ impl<'a> ES5SpreadTransformer<'a> {
 
     /// Get next temporary variable name
     fn next_temp_var(&mut self) -> String {
-        let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
-        self.temp_var_counter += 1;
-        name
+        super::emit_utils::next_temp_var_name(&mut self.temp_var_counter)
     }
 
     /// Check if an array literal contains spread elements
