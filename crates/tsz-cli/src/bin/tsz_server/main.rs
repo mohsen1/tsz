@@ -40,6 +40,7 @@ mod handlers_info;
 mod handlers_info_alias;
 mod handlers_legacy;
 mod handlers_quickinfo;
+mod handlers_quickinfo_text;
 mod handlers_structure;
 
 use anyhow::{Context, Result};
