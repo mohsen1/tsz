@@ -40,11 +40,27 @@ impl<'a> Printer<'a> {
                 if is_function_body_block {
                     // tsc suppresses trailing comments on function/method/arrow body
                     // opening braces.  For empty bodies the comments sit between { and },
-                    // so we skip them and preserve original single/multi-line format.
+                    // so we skip same-line-as-brace comments and preserve original format.
                     self.skip_trailing_same_line_comments(node.pos, closing_brace_pos);
-                    if self.is_single_line(node) {
+                    // After skipping same-line comments, check if there are still inner
+                    // comments on subsequent lines (e.g., a comment-only function body
+                    // like `foo() {\n    //return 4;\n}`). tsc preserves these.
+                    let has_remaining_comments = self
+                        .all_comments
+                        .get(self.comment_emit_idx)
+                        .is_some_and(|c| c.end <= closing_brace_pos);
+                    if self.is_single_line(node) && !has_remaining_comments {
                         self.map_opening_brace(node);
                         self.write("{ }");
+                    } else if has_remaining_comments {
+                        self.map_opening_brace(node);
+                        self.write_with_end_marker("{");
+                        self.write_line();
+                        self.increase_indent();
+                        self.emit_comments_before_pos(closing_brace_pos);
+                        self.decrease_indent();
+                        self.map_closing_brace(node);
+                        self.write_with_end_marker("}");
                     } else {
                         self.map_opening_brace(node);
                         self.write_with_end_marker("{");
@@ -1486,6 +1502,69 @@ mod tests {
         assert!(
             output.contains("// keep this"),
             "Trailing comment on control-flow empty block should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Empty method body with inner comment on a DIFFERENT line from `{` should
+    /// preserve the comment.  tsc: `foo() {\n    //return 4;\n}`
+    /// (This is distinct from same-line comments on `{` which ARE suppressed.)
+    #[test]
+    fn empty_method_body_inner_comment_on_next_line_preserved() {
+        let source = "class Foo {\n    foo(): number {\n        //return 4;\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("//return 4;"),
+            "Inner comment on a different line from `{{` in an empty method body \
+             should be preserved (tsc preserves these).\nOutput:\n{output}"
+        );
+    }
+
+    /// Empty constructor body with inner comment on a different line should
+    /// preserve the comment.  tsc: `constructor(x) {\n    // comment\n}`
+    #[test]
+    fn empty_constructor_body_inner_comment_preserved() {
+        let source = "class Foo {\n    constructor(x: any) {\n        // WScript.Echo(\"test\");\n    }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// WScript.Echo"),
+            "Inner comment in empty constructor body should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Single-line empty function body with same-line block comment should still
+    /// suppress the comment.  tsc: `bar1() { }` (comment dropped)
+    #[test]
+    fn empty_method_body_single_line_comment_still_suppressed() {
+        let source = "class A {\n    bar1() { /*WScript.Echo(\"bar1\");*/ }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("WScript"),
+            "Same-line block comment in single-line empty method body should be \
+             suppressed (tsc drops these).\nOutput:\n{output}"
         );
     }
 }

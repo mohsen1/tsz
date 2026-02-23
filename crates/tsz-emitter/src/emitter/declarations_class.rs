@@ -445,7 +445,7 @@ impl<'a> Printer<'a> {
         // Check if we need to lower static blocks to IIFEs (for targets < ES2022)
         let needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
-        let mut deferred_static_blocks: Vec<NodeIndex> = Vec::new();
+        let mut deferred_static_blocks: Vec<(NodeIndex, usize)> = Vec::new();
         // Collect computed property name expressions from erased type-only members.
         // tsc emits these as standalone side-effect statements after the class body
         // (e.g., `[Symbol.iterator]: Type` → erased member, but `Symbol.iterator;` emitted).
@@ -694,8 +694,33 @@ impl<'a> Printer<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
                 && member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
-                deferred_static_blocks.push(member_idx);
+                // Find the opening `{` of the static block to determine where
+                // inner (body) comments start. We skip leading comments but save
+                // the index of the first inner comment for replay during IIFE emission.
+                let brace_pos = if let Some(text) = self.source_text {
+                    let bytes = text.as_bytes();
+                    let start = member_node.pos as usize;
+                    let end = (member_node.end as usize).min(bytes.len());
+                    bytes[start..end]
+                        .iter()
+                        .position(|&b| b == b'{')
+                        .map(|off| (start + off + 1) as u32)
+                        .unwrap_or(member_node.end)
+                } else {
+                    member_node.end
+                };
+                // Skip comments preceding the block opening `{`
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= brace_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                // Save index pointing at the first inner comment (if any)
+                let inner_comment_idx = self.comment_emit_idx;
+                // Skip remaining inner comments so they don't leak as leading
+                // comments of subsequent class members
                 self.skip_comments_for_erased_node(member_node);
+                deferred_static_blocks.push((member_idx, inner_comment_idx));
                 continue;
             }
 
@@ -1086,9 +1111,12 @@ impl<'a> Printer<'a> {
         }
 
         // Emit deferred static blocks as IIFEs after the class body
-        for static_block_idx in deferred_static_blocks {
+        for (static_block_idx, saved_comment_idx) in deferred_static_blocks {
             self.write_line();
             self.write("(() => ");
+            // Restore comment_emit_idx so inner comments from the static block
+            // body are available for emit_block to emit inside the IIFE.
+            self.comment_emit_idx = saved_comment_idx;
             if let Some(static_node) = self.arena.get(static_block_idx) {
                 // Static block uses the same data as a Block node
                 self.emit_block(static_node, static_block_idx);
