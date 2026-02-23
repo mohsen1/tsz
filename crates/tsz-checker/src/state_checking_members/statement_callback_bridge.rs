@@ -245,6 +245,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
         }
 
+        // TS8024: Check that JSDoc @param tag names match actual function parameters.
+        // Only for JS files (tsc does not emit TS8024 for TS files).
+        // Only for non-closures: arrow functions/function expressions in nested positions
+        // may find JSDoc from a parent function via parent chain walking.
+        if !is_closure {
+            let is_js = self.ctx.file_name.ends_with(".js")
+                || self.ctx.file_name.ends_with(".jsx")
+                || self.ctx.file_name.ends_with(".mjs")
+                || self.ctx.file_name.ends_with(".cjs");
+            if is_js && let Some(ref jsdoc) = self.find_jsdoc_for_function(func_idx) {
+                self.check_jsdoc_param_tag_names(jsdoc, &func.parameters.nodes, func_idx);
+            }
+        }
+
         // Check parameter initializer placement for implementation vs signature (TS2371)
         self.check_non_impl_parameter_initializers(
             &func.parameters.nodes,

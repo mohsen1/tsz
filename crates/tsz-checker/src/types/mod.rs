@@ -6,6 +6,7 @@ pub mod literal_type;
 pub mod object_type;
 pub(crate) mod property_access_type;
 pub mod type_checking;
+pub(crate) mod type_checking_class_helpers;
 pub(crate) mod type_checking_declarations;
 pub(crate) mod type_checking_declarations_utils;
 pub(crate) mod type_checking_global;

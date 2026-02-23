@@ -4,7 +4,6 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 #[derive(Clone)]
@@ -1052,6 +1051,226 @@ impl<'a> CheckerState<'a> {
     // JSDoc Helpers for Implicit Any Suppression
     // =========================================================================
 
+    /// TS8024: Check that JSDoc `@param` tag names match actual function parameters.
+    ///
+    /// For each `@param` tag, verifies that a parameter with that name exists.
+    /// Emits TS8024 for names that don't match any parameter.
+    /// Skips empty names (malformed tags), dotted/array names (nested property docs),
+    /// and the special name "this" (JSDoc this-type annotation).
+    pub(crate) fn check_jsdoc_param_tag_names(
+        &mut self,
+        jsdoc: &str,
+        param_nodes: &[NodeIndex],
+        func_idx: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        use tsz_parser::syntax_kind_ext;
+
+        // Collect actual parameter names and whether each is a binding pattern
+        let mut actual_params: Vec<(String, bool)> = Vec::new();
+        for &param_idx in param_nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let is_binding_pattern = self.ctx.arena.get(param.name).is_some_and(|n| {
+                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            });
+            let name = self.parameter_name_for_error(param.name);
+            actual_params.push((name, is_binding_pattern));
+        }
+
+        // Extract @param tag names from JSDoc (only top-level, non-dotted names)
+        let jsdoc_params = Self::extract_jsdoc_param_names(jsdoc);
+
+        // Get source text and comment position for error positioning
+        let source_info = self
+            .get_jsdoc_comment_pos_for_function(func_idx)
+            .and_then(|pos| {
+                let sf = self.ctx.arena.source_files.first()?;
+                Some((pos, sf.text.clone()))
+            });
+
+        // Track which @param tags we've seen (for positional matching with destructured params)
+        let mut param_tag_index = 0usize;
+        for (param_name, _tag_offset) in &jsdoc_params {
+            // Skip empty names (malformed @param tags)
+            if param_name.is_empty() {
+                continue;
+            }
+            // Skip "this" — JSDoc @param {type} this is a this-type annotation
+            if param_name == "this" {
+                continue;
+            }
+            // Check if this name matches any actual parameter by name
+            let matches_by_name = actual_params.iter().any(|(a, _)| a == param_name);
+            // Check if this @param positionally corresponds to a binding pattern
+            // (destructured param like { a, b, c } accepts any @param name at that position)
+            let matches_binding_pattern = actual_params
+                .get(param_tag_index)
+                .is_some_and(|(_, is_pattern)| *is_pattern);
+            param_tag_index += 1;
+            if matches_by_name || matches_binding_pattern {
+                continue;
+            }
+            // No match — emit TS8024
+            {
+                let message = format_message(
+                    diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                    &[param_name],
+                );
+                // Position at the parameter name within the JSDoc comment in source
+                if let Some((comment_pos, ref source_text)) = source_info {
+                    // Search for the name after @param in the source text within the comment
+                    let comment_start = comment_pos as usize;
+                    // Find param_name after an @param tag in the comment text
+                    let search_region = &source_text[comment_start..];
+                    let mut name_pos = None;
+                    let mut search_from = 0;
+                    while let Some(at_param) = search_region[search_from..].find("@param") {
+                        let after_param = search_from + at_param + "@param".len();
+                        // Find the name after the @param tag (skip {type} if present)
+                        if let Some(n) = Self::find_param_name_in_source(
+                            &search_region[after_param..],
+                            param_name,
+                        ) {
+                            name_pos = Some(comment_start + after_param + n);
+                            break;
+                        }
+                        search_from = after_param;
+                    }
+                    if let Some(pos) = name_pos {
+                        self.ctx.error(
+                            pos as u32,
+                            param_name.len() as u32,
+                            message,
+                            diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                        );
+                    } else {
+                        self.error_at_node(
+                            func_idx,
+                            &message,
+                            diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                        );
+                    }
+                } else {
+                    self.error_at_node(
+                        func_idx,
+                        &message,
+                        diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Find the byte offset of a parameter name after `@param` in source text.
+    ///
+    /// Given the text after `@param`, skips optional `{type}` and whitespace,
+    /// then checks if the next word matches `name`. Returns the byte offset
+    /// of the name relative to the start of the input.
+    fn find_param_name_in_source(after_param: &str, name: &str) -> Option<usize> {
+        let mut rest = after_param;
+        let mut offset = 0;
+        // Skip whitespace
+        let trimmed = rest.trim_start();
+        offset += rest.len() - trimmed.len();
+        rest = trimmed;
+        // Skip {type} if present
+        if rest.starts_with('{') {
+            let mut depth = 0usize;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            offset += i + 1;
+                            rest = &rest[i + 1..];
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Skip whitespace after type
+            let trimmed = rest.trim_start();
+            offset += rest.len() - trimmed.len();
+            rest = trimmed;
+        }
+        // Strip optional [ for optional params like [name] or [name=default]
+        if rest.starts_with('[') {
+            offset += 1;
+            rest = &rest[1..];
+        }
+        // Check if the next word is the name
+        if let Some(after_name) = rest.strip_prefix(name) {
+            // Verify it's a complete word (followed by non-alphanumeric or end)
+            if after_name.is_empty() || !after_name.chars().next().unwrap().is_alphanumeric() {
+                return Some(offset);
+            }
+        }
+        None
+    }
+
+    /// Get the byte position of the JSDoc comment for a function node.
+    ///
+    /// Returns `Some(pos)` where pos is the byte offset of `/**` in the source.
+    fn get_jsdoc_comment_pos_for_function(&self, func_idx: NodeIndex) -> Option<u32> {
+        use tsz_common::comments::is_jsdoc_comment;
+
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let func_node = self.ctx.arena.get(func_idx)?;
+
+        // Check inline JSDoc
+        if let Some(comment) = comments
+            .iter()
+            .find(|c| c.pos <= func_node.pos && func_node.pos < c.end)
+            && is_jsdoc_comment(comment, source_text)
+        {
+            return Some(comment.pos);
+        }
+
+        // Check leading comments
+        for comment in comments.iter().rev() {
+            if comment.end <= func_node.pos && is_jsdoc_comment(comment, source_text) {
+                // Check that there's nothing but whitespace between comment and node
+                let between = &source_text[comment.end as usize..func_node.pos as usize];
+                if between.trim().is_empty() {
+                    return Some(comment.pos);
+                }
+            }
+        }
+
+        // Walk up parent chain (for const f = ...)
+        let mut current = func_idx;
+        for _ in 0..4 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            for comment in comments.iter().rev() {
+                if comment.end <= parent_node.pos && is_jsdoc_comment(comment, source_text) {
+                    let between = &source_text[comment.end as usize..parent_node.pos as usize];
+                    if between.trim().is_empty() {
+                        return Some(comment.pos);
+                    }
+                }
+            }
+            current = parent;
+        }
+
+        None
+    }
+
     /// Get the `JSDoc` comment content for a function node.
     ///
     /// Walks up the parent chain from the function node to find the `JSDoc`
@@ -1067,7 +1286,15 @@ impl<'a> CheckerState<'a> {
         if is_js_file && !self.ctx.compiler_options.check_js {
             return None;
         }
+        self.find_jsdoc_for_function(func_idx)
+    }
 
+    /// Find the JSDoc comment for a function node without checking compiler options.
+    ///
+    /// Used by `get_jsdoc_for_function` (which adds a `check_js` guard) and by
+    /// TS8024 validation which needs JSDoc lookup independent of the checker's
+    /// `check_js` state (the driver-level `check_js` controls JS file inclusion).
+    pub(crate) fn find_jsdoc_for_function(&self, func_idx: NodeIndex) -> Option<String> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         let sf = self.ctx.arena.source_files.first()?;
@@ -1262,6 +1489,101 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         false
+    }
+
+    /// Extract all `@param` tag names from a JSDoc comment.
+    ///
+    /// Returns a list of `(name, byte_offset)` pairs where `byte_offset` is the
+    /// offset of the `@param` tag within the JSDoc text (used for error positioning).
+    /// Handles `@param {type} name`, `@param name {type}`, and nested/dotted names
+    /// like `opts.x` (only returns the top-level portion before the dot).
+    pub(crate) fn extract_jsdoc_param_names(jsdoc: &str) -> Vec<(String, usize)> {
+        let mut result = Vec::new();
+        let mut in_param = false;
+        let mut param_text = String::new();
+        let mut param_offset = 0usize;
+
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            if effective.starts_with('@') {
+                if in_param {
+                    if let Some(name) = Self::extract_param_name_from_tag(&param_text) {
+                        result.push((name, param_offset));
+                    }
+                    param_text.clear();
+                }
+                if let Some(rest) = effective.strip_prefix("@param") {
+                    in_param = true;
+                    // Calculate offset of this @param in the original JSDoc string
+                    // Find this line in the original to get byte offset
+                    if let Some(line_start) = jsdoc.find(line)
+                        && let Some(tag_pos) = line[..].find("@param")
+                    {
+                        param_offset = line_start + tag_pos;
+                    }
+                    param_text = rest.to_string();
+                } else {
+                    in_param = false;
+                }
+            } else if in_param {
+                param_text.push(' ');
+                param_text.push_str(trimmed);
+            }
+        }
+        // Process the last @param if any
+        if in_param && let Some(name) = Self::extract_param_name_from_tag(&param_text) {
+            result.push((name, param_offset));
+        }
+        result
+    }
+
+    /// Extract the parameter name from a `@param` tag body (the text after `@param`).
+    ///
+    /// Handles:
+    /// - `{type} name` → "name"
+    /// - `{type} name description` → "name"
+    /// - `{type} [name]` → "name"
+    /// - `{type} [name=default]` → "name"
+    /// - `{type} opts.x` → "opts" (nested/dotted → top-level only, skipped)
+    /// - `{type} opts[].x` → "opts" (array dotted → skipped)
+    /// - `name {type}` → "name"
+    fn extract_param_name_from_tag(tag_body: &str) -> Option<String> {
+        let rest = tag_body.trim();
+        if rest.is_empty() {
+            return None;
+        }
+
+        let name_str = if rest.starts_with('{') {
+            // Standard syntax: {type} name
+            let (_, after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
+            after_type.split_whitespace().next().unwrap_or("")
+        } else {
+            // Alternate syntax: name {type} or just name
+            rest.split_whitespace().next().unwrap_or("")
+        };
+
+        // Clean up the name: remove [], =default, backticks
+        let mut name = name_str.trim_start_matches('[');
+        name = name.split('=').next().unwrap_or(name);
+        name = name.trim_end_matches(']');
+        name = name.trim_matches('`');
+
+        // Skip dotted names like opts.x or opts[].x — these are nested property
+        // docs for destructured parameters, not standalone params
+        if name.contains('.') || name.contains("[]") {
+            return None;
+        }
+
+        // Skip rest parameter prefix
+        let name = name.trim_start_matches("...");
+
+        let decoded = Self::decode_unicode_escapes(name);
+        if decoded.is_empty() {
+            return Some(String::new()); // Empty name — still a @param tag
+        }
+        Some(decoded)
     }
 
     /// Skip leading backtick-quoted sections in a `JSDoc` line.
@@ -1496,233 +1818,5 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    // =========================================================================
-    // Class Helper Methods
-    // =========================================================================
-
-    /// Check if a class has a base class (extends clause).
-    ///
-    /// Returns true if the class has any heritage clause with `extends` keyword.
-    pub(crate) fn class_has_base(&self, class: &tsz_parser::parser::node::ClassData) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(ref heritage_clauses) = class.heritage_clauses else {
-            return false;
-        };
-
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
-                continue;
-            };
-            if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check whether a class extends `null`.
-    pub(crate) fn class_extends_null(&self, class: &tsz_parser::parser::node::ClassData) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(ref heritage_clauses) = class.heritage_clauses else {
-            return false;
-        };
-
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
-                continue;
-            };
-            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-
-            let Some(&first_type_idx) = heritage.types.nodes.first() else {
-                continue;
-            };
-
-            let expr_idx = if let Some(type_node) = self.ctx.arena.get(first_type_idx)
-                && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
-            {
-                expr_type_args.expression
-            } else {
-                first_type_idx
-            };
-
-            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-                continue;
-            };
-
-            if expr_node.kind == SyntaxKind::NullKeyword as u16 {
-                return true;
-            }
-
-            if expr_node.kind == SyntaxKind::Identifier as u16
-                && self
-                    .ctx
-                    .arena
-                    .get_identifier(expr_node)
-                    .is_some_and(|id| id.escaped_text == "null")
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check whether a class declaration merges with an interface declaration
-    /// that has an extends clause.
-    pub(crate) fn class_has_merged_interface_extends(
-        &self,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        if class.name.is_none() {
-            return false;
-        }
-
-        let Some(name_node) = self.ctx.arena.get(class.name) else {
-            return false;
-        };
-        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
-            return false;
-        };
-
-        let Some(sym_id) = self.ctx.binder.file_locals.get(&name_ident.escaped_text) else {
-            return false;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        for &decl_idx in &symbol.declarations {
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            if decl_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
-                continue;
-            }
-            let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
-                continue;
-            };
-            let Some(heritage_clauses) = &iface.heritage_clauses else {
-                continue;
-            };
-            if !heritage_clauses.nodes.is_empty() {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check whether a class requires a `super()` call in its constructor.
-    pub(crate) fn class_requires_super_call(
-        &self,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        self.class_has_base(class) && !self.class_extends_null(class)
-    }
-
-    /// Check whether a class has features that require strict `super()` placement checks.
-    ///
-    /// Matches TypeScript diagnostics TS2376/TS2401 trigger conditions:
-    /// initialized instance properties, constructor parameter properties,
-    /// or private identifiers.
-    pub(crate) fn class_has_super_call_position_sensitive_members(
-        &self,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        for &member_idx in &class.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            match member_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                        continue;
-                    };
-
-                    if self.is_private_identifier_name(prop.name) {
-                        return true;
-                    }
-
-                    if !self.has_static_modifier(&prop.modifiers) && prop.initializer.is_some() {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                        continue;
-                    };
-                    if self.is_private_identifier_name(method.name) {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                        continue;
-                    };
-                    if self.is_private_identifier_name(accessor.name) {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
-                        continue;
-                    };
-
-                    for &param_idx in &ctor.parameters.nodes {
-                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                            continue;
-                        };
-                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                            continue;
-                        };
-
-                        if self.has_parameter_property_modifier(&param.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
-    }
-
-    /// Find the constructor body in a class member list.
-    ///
-    /// Returns the body node of the first constructor member that has a body.
-    pub(crate) fn find_constructor_body(
-        &self,
-        members: &tsz_parser::parser::NodeList,
-    ) -> Option<NodeIndex> {
-        for &member_idx in &members.nodes {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind != syntax_kind_ext::CONSTRUCTOR {
-                continue;
-            }
-            let Some(ctor) = self.ctx.arena.get_constructor(node) else {
-                continue;
-            };
-            if ctor.body.is_some() {
-                return Some(ctor.body);
-            }
-        }
-        None
-    }
+    // Class helper methods have been moved to type_checking_class_helpers.rs
 }
