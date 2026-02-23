@@ -348,9 +348,33 @@ TS2506 cycle detection is handled by dedicated inheritance checks elsewhere.
 - **TS2339 (54 extra)**: Property access false positives. Ongoing.
 - **TS2345 (52 extra)**: Argument type mismatch false positives. Ongoing.
 
-## Current score: 7836/12574 (62.3%) — full suite
+## TS2688 — Cannot find type definition file (Fixed, tsconfig types array)
 
-### Session progress (7687 → 7836, +149 tests):
+**Status**: Fixed. +35 tests passing (7836→7871, 62.6%).
+**Error code:** TS2688 ("Cannot find type definition file for 'X'.")
+**Root cause**: `collect_type_root_files()` in `driver_sources.rs` silently ignored unresolved
+entries in the `compilerOptions.types` array. When a type name (e.g., `"phaser"`) was specified
+in `types` but couldn't be found in any type root, no diagnostic was emitted.
+**Fix**: Changed `collect_type_root_files()` to return `(Vec<PathBuf>, Vec<String>)` — the second
+element contains unresolved type names. The driver now emits TS2688 for each unresolved name,
+matching tsc behavior. Triple-slash `/// <reference types="..." />` TS2688 was already implemented.
+
+### Remaining TS2688 issues (3 tests)
+- 3 tests have TS2688 + other codes (TS2307, etc.) that we don't emit yet.
+
+## Deferred from this session (not fixed)
+
+- **TS2451 (7 false positive tests)**: Two patterns: (a) wrong code choice (TS2451 vs TS2300)
+  for var/let redeclaration conflicts — needs `type_checking_global.rs` fix. (b) JS file
+  declarations with `@typedef` and late-bound assignments incorrectly flagged in multi-file
+  scripts. MEDIUM difficulty.
+
+## Current score: 7871/12574 (62.6%) — full suite
+
+### Session progress (7836 → 7871, +35 tests):
+- **TS2688**: Emit TS2688 for unresolved entries in tsconfig `types` array (+35)
+
+### Previous session progress (7687 → 7836, +149 tests):
 - **TS5069/TS5053**: Config checks for emitDeclarationOnly/declarationMap/isolatedDeclarations without declaration, conflicting option pairs (+7)
 - **TS5070/TS5071/TS5098**: resolveJsonModule with classic/none/system/umd, resolvePackageJson* without modern moduleResolution (+9)
 - **TS5102 suppression**: Suppress TS5102 when ignoreDeprecations: "5.0" is valid (+2)
