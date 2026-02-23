@@ -448,6 +448,14 @@ error-code level only.
 - Most remaining failures at fingerprint level are due to missing diagnostics (not false positives).
   Only 1 test in first 1000 has false-positive-only failure.
 - Top missing fingerprint codes: TS2564 (22), TS2369 (13), TS1183 (13), TS2304 (12), TS2322 (12).
+- **TS5103 `ignoreDeprecations: "6.0"` is correct**: tsc 6.0.0-dev emits TS5103 for value "6.0" —
+  it is NOT yet a valid value despite deprecation messages suggesting it. All 48 tests with
+  `@ignoreDeprecations: 6.0` expect TS5103 in the tsc cache. Do NOT add "6.0" to accepted values.
+- **TS2343 (tslib emit helpers)**: 47 single-code tests, not implemented. Would require checking
+  tslib exports when `importHelpers: true`. Complex due to module resolution requirements.
+- **Second-half (offset 6000) analysis**: 3955 failing at fingerprint level (2622 pass).
+  Top quick-win codes at error-code level: TS2322 (222), TS2304 (157), TS2454 (156), TS2564 (94),
+  TS6133 (93). All are already implemented but need broader coverage.
 - TS2369 is already emitted for arrow functions in unit tests, but conformance wrapper may not
   preserve `// @target: es2015` correctly in all cases.
 - Config-level diagnostics (TS18003, TS5095, TS5024) appear as missing due to tsconfig formatting
