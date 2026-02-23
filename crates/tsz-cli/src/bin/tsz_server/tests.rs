@@ -2838,7 +2838,10 @@ fn test_completion_entry_details_class_member_snippet_export_list_augmentation_i
                     == Some("ClassMemberSnippet/")
         })
         .expect("expected class member snippet completion for container");
-    let container_data = container_entry.get("data").cloned().unwrap_or(serde_json::Value::Null);
+    let container_data = container_entry
+        .get("data")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
 
     let details_req = make_request(
         "completionEntryDetails-full",
