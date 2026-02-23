@@ -379,19 +379,26 @@ impl<'a> CheckerState<'a> {
 
         // TS2397: Declaration name conflicts with built-in global identifier.
         // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`.
-        if let Some(ref name) = var_name
-            && (name == "undefined" || name == "globalThis")
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                &[name],
-            );
-            self.error_at_node(
-                var_decl.name,
-                &message,
-                diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-            );
+        // `globalThis` only conflicts in script files (non-modules), since module-scoped
+        // declarations don't pollute the global scope.
+        if let Some(ref name) = var_name {
+            let should_emit = if name == "globalThis" {
+                !self.ctx.binder.is_external_module()
+            } else {
+                name == "undefined"
+            };
+            if should_emit {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &[name],
+                );
+                self.error_at_node(
+                    var_decl.name,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
+            }
         }
 
         // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode

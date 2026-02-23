@@ -41,11 +41,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             // TS2397: Declaration name conflicts with built-in global identifier.
             // Namespaces named `globalThis` or `undefined` conflict with built-in globals.
+            // `globalThis` only conflicts in script files (non-modules), since module-scoped
+            // declarations don't pollute the global scope.
             if let Some(name_node) = self.ctx.arena.get(module.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
                 let name = ident.escaped_text.as_str();
-                if name == "globalThis" || name == "undefined" {
+                let should_emit = if name == "globalThis" {
+                    !self.ctx.binder.is_external_module()
+                } else {
+                    name == "undefined"
+                };
+                if should_emit {
                     let message = format_message(
                         diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
                         &[name],
