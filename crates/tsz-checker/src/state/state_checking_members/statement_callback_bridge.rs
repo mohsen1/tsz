@@ -580,6 +580,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // This is the function implementation validation (TS2394)
         if func.body.is_some() {
             // Only check for implementations (functions with bodies)
+            self.check_overload_modifier_consistency(func_idx);
             self.check_overload_compatibility(func_idx);
         }
 
