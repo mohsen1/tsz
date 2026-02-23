@@ -908,7 +908,7 @@ impl<'a> FlowAnalyzer<'a> {
         _target: NodeIndex,
     ) -> Option<(Vec<Atom>, bool, NodeIndex)> {
         let expr = self.skip_parenthesized(expr);
-        let _node = self.arena.get(expr)?;
+        self.arena.get(expr)?;
 
         // Collect the property path by walking up the access chain
         // For action.payload.kind, we want ["payload", "kind"]

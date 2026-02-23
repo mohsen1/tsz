@@ -152,8 +152,7 @@ impl<'a> DocumentHighlightProvider<'a> {
             return None;
         }
 
-        let node = self.arena.get(node_idx)?;
-        let _kind = node.kind;
+        self.arena.get(node_idx)?;
 
         // Check if this is a keyword token or if we're inside a statement that
         // starts with a keyword at our cursor position

@@ -146,7 +146,7 @@ impl ProjectReferenceGraph {
             visited.insert(config_path.clone());
 
             let project = load_project(&config_path)?;
-            let _project_id = graph.add_project(project.clone());
+            graph.add_project(project.clone());
 
             // Queue referenced projects for loading
             for ref_info in &project.resolved_references {
