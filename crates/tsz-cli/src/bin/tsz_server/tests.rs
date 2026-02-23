@@ -2908,6 +2908,87 @@ fn test_completion_info_class_member_snippet_method_trims_trailing_param_comma()
 }
 
 #[test]
+fn test_completion_info_class_member_snippet_export_equals_default_parent() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node.ts".to_string(),
+        "import Container from \"./container.js\";\nimport Document from \"./document.js\";\n\ndeclare namespace Node {\n  class Node extends Node_ {}\n\n  export { Node as default };\n}\n\ndeclare abstract class Node_ {\n  parent: Container | Document | undefined;\n}\n\ndeclare class Node extends Node_ {}\n\nexport = Node;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/document.ts".to_string(),
+        "import Container from \"./container.js\";\n\ndeclare namespace Document {\n  export { Document_ as default };\n}\n\ndeclare class Document_ extends Container {}\n\ndeclare class Document extends Document_ {}\n\nexport = Document;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/container.ts".to_string(),
+        "import Node from \"./node.js\";\n\ndeclare namespace Container {\n  export { Container_ as default };\n}\n\ndeclare abstract class Container_ extends Node {\n  p\n}\n\ndeclare class Container extends Container_ {}\n\nexport = Container;\n".to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/container.ts",
+            "line": 8,
+            "offset": 4,
+            "preferences": {
+                "includeCompletionsWithClassMemberSnippets": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let parent_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("parent")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for `parent`");
+    assert_eq!(
+        parent_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("parent: Container_ | Document_ | undefined;")
+    );
+
+    let details_req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/container.ts",
+            "line": 8,
+            "offset": 4,
+            "entryNames": [{
+                "name": "parent",
+                "source": "ClassMemberSnippet/"
+            }]
+        }),
+    );
+    let details_resp = server.handle_tsserver_request(details_req);
+    assert!(details_resp.success);
+    let details_body = details_resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = details_body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let code_actions = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .expect("expected class member snippet completion details to include code actions");
+    assert_eq!(code_actions.len(), 1);
+}
+
+#[test]
 fn test_completion_entry_details_mts_type_position_adds_import_type_named_clause() {
     let mut server = make_server();
     server.open_files.insert(
