@@ -141,7 +141,7 @@ impl<'a> HoverProvider<'a> {
         })
     }
 
-    fn contextual_property_type_from_type(
+    pub(crate) fn contextual_property_type_from_type(
         &self,
         container_type_id: tsz_solver::TypeId,
         prop_name: &str,
@@ -470,6 +470,8 @@ impl<'a> HoverProvider<'a> {
         &self,
         param_decl_idx: NodeIndex,
     ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
         let param_node = self.arena.get(param_decl_idx)?;
         let param = self.arena.get_parameter(param_node)?;
         if param.type_annotation.is_some() {
@@ -485,25 +487,42 @@ impl<'a> HoverProvider<'a> {
             .iter()
             .position(|&idx| idx == param_decl_idx)?;
 
-        let contextual_type_node = self.contextual_function_type_node_for_expression(fn_idx)?;
-        let contextual_node = self.arena.get(contextual_type_node)?;
-        let contextual_param_idx =
-            if let Some(fn_type) = self.arena.get_function_type(contextual_node) {
-                *fn_type.parameters.nodes.get(param_index)?
-            } else if let Some(signature) = self.arena.get_signature(contextual_node) {
-                let params = signature.parameters.as_ref()?;
-                *params.nodes.get(param_index)?
-            } else {
+        if let Some(contextual_type_node) =
+            self.contextual_function_type_node_for_expression(fn_idx)
+        {
+            let contextual_node = self.arena.get(contextual_type_node)?;
+            let contextual_param_idx =
+                if let Some(fn_type) = self.arena.get_function_type(contextual_node) {
+                    *fn_type.parameters.nodes.get(param_index)?
+                } else if let Some(signature) = self.arena.get_signature(contextual_node) {
+                    let params = signature.parameters.as_ref()?;
+                    *params.nodes.get(param_index)?
+                } else {
+                    return None;
+                };
+            let contextual_param_node = self.arena.get(contextual_param_idx)?;
+            let contextual_param = self.arena.get_parameter(contextual_param_node)?;
+            if !contextual_param.type_annotation.is_some() {
                 return None;
-            };
-        let contextual_param_node = self.arena.get(contextual_param_idx)?;
-        let contextual_param = self.arena.get_parameter(contextual_param_node)?;
-        if !contextual_param.type_annotation.is_some() {
-            return None;
+            }
+
+            return self
+                .type_node_text(contextual_param.type_annotation)
+                .map(Self::normalize_annotation_text);
         }
 
-        self.type_node_text(contextual_param.type_annotation)
-            .map(Self::normalize_annotation_text)
+        let mut current_fn_expr = fn_idx;
+        while current_fn_expr.is_some() {
+            let parent_idx = self.arena.get_extended(current_fn_expr)?.parent;
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current_fn_expr = parent_idx;
+                continue;
+            }
+            break;
+        }
+
+        self.contextual_parameter_type_from_property_assignment(current_fn_expr, param_index)
     }
 
     pub(crate) fn property_declaration_annotation_text(
@@ -687,6 +706,84 @@ impl<'a> HoverProvider<'a> {
                     return Some(member_idx);
                 }
             }
+        }
+
+        None
+    }
+
+    fn contextual_parameter_type_from_property_assignment(
+        &self,
+        rhs_expr_idx: NodeIndex,
+        param_index: usize,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let parent_idx = self.arena.get_extended(rhs_expr_idx)?.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(parent_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 || binary.right != rhs_expr_idx {
+            return None;
+        }
+
+        let left_node = self.arena.get(binary.left)?;
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(left_node)?;
+        let prop_name = self
+            .arena
+            .get_identifier_text(access.name_or_argument)
+            .map(str::to_string)?;
+
+        let compiler_options = tsz_checker::context::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
+            ..Default::default()
+        };
+        let mut checker = CheckerState::new(
+            self.arena,
+            self.binder,
+            self.interner,
+            self.file_name.clone(),
+            compiler_options,
+        );
+
+        let expr_type_id = checker.get_type_of_node(access.expression);
+        let member_type_id = self
+            .contextual_property_type_from_type(expr_type_id, &prop_name)
+            .unwrap_or_else(|| checker.get_type_of_node(access.name_or_argument));
+        if member_type_id == tsz_solver::TypeId::ERROR {
+            return None;
+        }
+
+        if let Some(function_shape_id) =
+            tsz_solver::visitor::function_shape_id(self.interner, member_type_id)
+        {
+            let function = self.interner.function_shape(function_shape_id);
+            let param = function.params.get(param_index)?;
+            let text = checker.format_type(param.type_id);
+            return (!text.is_empty() && text != "error").then_some(text);
+        }
+
+        if let Some(callable_shape_id) =
+            tsz_solver::visitor::callable_shape_id(self.interner, member_type_id)
+        {
+            let callable = self.interner.callable_shape(callable_shape_id);
+            let signature = callable.call_signatures.first()?;
+            let param = signature.params.get(param_index)?;
+            let text = checker.format_type(param.type_id);
+            return (!text.is_empty() && text != "error").then_some(text);
         }
 
         None

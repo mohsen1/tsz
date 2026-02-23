@@ -198,6 +198,27 @@ fn test_hover_contextual_object_literal_array_property_name() {
 }
 
 #[test]
+fn test_hover_property_access_member_name_uses_member_type() {
+    let source = "var objc8: { t1: (s: string) => string } = { t1: (s: string) => s };\nobjc8.t1 = (function(s) { return s; });";
+    let info = get_hover_at(source, 1, 6).expect("Should find hover info for property access name");
+    assert_eq!(
+        info.display_string, "(property) t1: (s: string) => string",
+        "Property-access member hover should use contextual member type"
+    );
+}
+
+#[test]
+fn test_hover_property_assignment_function_parameter_uses_member_signature() {
+    let source = "var objc8: { t1: (s: string) => string } = { t1: (s: string) => s };\nobjc8.t1 = (function(s) { return s; });";
+    let info = get_hover_at(source, 1, 21)
+        .expect("Should find hover info for assigned function parameter");
+    assert_eq!(
+        info.display_string, "(parameter) s: string",
+        "Parameter hover in property-assignment function should use assigned member signature type"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
