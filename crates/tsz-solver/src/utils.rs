@@ -199,6 +199,23 @@ pub fn lookup_property<'props>(
         .map(|idx| &props[idx])
 }
 
+/// Find a common base type for a set of types using the provided `get_base` function.
+///
+/// Returns `Some(base)` if all types share the same base, `None` otherwise.
+/// Used by both expression operations (literal widening) and BCT inference (nominal hierarchy).
+pub fn find_common_base_type(
+    types: &[TypeId],
+    get_base: impl Fn(TypeId) -> Option<TypeId>,
+) -> Option<TypeId> {
+    let first_base = get_base(*types.first()?)?;
+    for &ty in types.iter().skip(1) {
+        if get_base(ty)? != first_base {
+            return None;
+        }
+    }
+    Some(first_base)
+}
+
 #[cfg(test)]
 #[path = "../tests/utils_tests.rs"]
 mod tests;

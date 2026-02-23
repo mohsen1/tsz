@@ -227,7 +227,9 @@ pub fn compute_best_common_type<R: TypeResolver>(
 
     // Step 3: Try to find a common base type for primitives/literals
     // For example, [string, "hello"] -> string
-    if let Some(base) = find_common_base_type(interner, &widened) {
+    if let Some(base) =
+        crate::utils::find_common_base_type(&widened, |ty| get_base_type(interner, ty))
+    {
         // All types share a common base type
         if all_types_are_narrower_than_base(interner, &widened, base) {
             return base;
@@ -260,27 +262,6 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
             ty // Non-literal types are preserved
         })
         .collect()
-}
-
-/// Find a common base type for a set of types.
-/// For example, [string, "hello"] -> Some(string)
-fn find_common_base_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> Option<TypeId> {
-    if types.is_empty() {
-        return None;
-    }
-
-    // Get the base type of the first type
-    let first_base = get_base_type(interner, types[0])?;
-
-    // Check if all other types have the same base type
-    for &ty in types.iter().skip(1) {
-        let base = get_base_type(interner, ty)?;
-        if base != first_base {
-            return None;
-        }
-    }
-
-    Some(first_base)
 }
 
 /// Get the base type of a type (for literals, this is the primitive type).
