@@ -147,6 +147,24 @@ impl<'a> Printer<'a> {
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
         }
+        // Prevent `+ +x` from collapsing to `++x` (pre-increment) and
+        // `- -x` from collapsing to `--x` (pre-decrement). When the operand
+        // is also a prefix unary with the same sign (or is `++`/`--`),
+        // insert a space to keep the tokens separate.
+        if (unary.operator == SyntaxKind::PlusToken as u16
+            || unary.operator == SyntaxKind::MinusToken as u16)
+            && let Some(operand_node) = self.arena.get(unary.operand)
+                && operand_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    && let Some(inner) = self.arena.get_unary_expr(operand_node) {
+                        let same_sign = inner.operator == unary.operator;
+                        let is_update = (unary.operator == SyntaxKind::PlusToken as u16
+                            && inner.operator == SyntaxKind::PlusPlusToken as u16)
+                            || (unary.operator == SyntaxKind::MinusToken as u16
+                                && inner.operator == SyntaxKind::MinusMinusToken as u16);
+                        if same_sign || is_update {
+                            self.write_space();
+                        }
+                    }
         // Set flag so yield-from-await knows to wrap in parens
         // e.g., `!await x` → `!(yield x)` not `!yield x`
         let prev = self.ctx.flags.in_binary_operand;
@@ -1575,6 +1593,73 @@ mod tests {
         assert!(
             output.contains("(_a = getObj())"),
             "Optional chain lowering must use temp in assignment.\nOutput:\n{output}"
+        );
+    }
+
+    /// Nested unary `+` operators must be separated by a space to prevent
+    /// `+ +y` from collapsing to `++y` (pre-increment).
+    #[test]
+    fn prefix_plus_plus_gets_space() {
+        let source = "var z = + +y;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("+ +y"),
+            "Nested unary `+` must have space between to avoid `++y`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("++y"),
+            "Must NOT collapse `+ +y` into `++y` (pre-increment).\nOutput:\n{output}"
+        );
+    }
+
+    /// Nested unary `-` operators must be separated by a space to prevent
+    /// `- -y` from collapsing to `--y` (pre-decrement).
+    #[test]
+    fn prefix_minus_minus_gets_space() {
+        let source = "var c = - -y;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("- -y"),
+            "Nested unary `-` must have space between to avoid `--y`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("--y"),
+            "Must NOT collapse `- -y` into `--y` (pre-decrement).\nOutput:\n{output}"
+        );
+    }
+
+    /// Unary `+` before `++` must insert a space: `+ ++x` not `+++x`.
+    #[test]
+    fn prefix_plus_before_increment_gets_space() {
+        let source = "var z = + ++x;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("+ ++x"),
+            "Unary `+` before `++x` must have space.\nOutput:\n{output}"
         );
     }
 }
