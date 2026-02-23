@@ -606,7 +606,11 @@ impl<'a> Printer<'a> {
                     self.write("...");
                 }
                 self.emit_parameter_name_js(param.name);
-                // Skip type annotations and defaults for JS emit
+                // Skip type annotations — consume comments inside the erased range
+                if param.type_annotation.is_some()
+                    && let Some(type_node) = self.arena.get(param.type_annotation) {
+                        self.skip_comments_in_range(type_node.pos, type_node.end);
+                    }
                 if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
