@@ -321,6 +321,125 @@ impl Server {
         edits
     }
 
+    fn class_member_snippet_synthesized_text_changes(
+        source_text: &str,
+        insert_text: &str,
+        member_name: &str,
+        project_items: &[CompletionItem],
+    ) -> Vec<serde_json::Value> {
+        let required_names = Self::class_member_snippet_type_identifiers(insert_text, member_name);
+        if required_names.is_empty() {
+            return Vec::new();
+        }
+
+        let fallback_source = Self::infer_extends_import_source(source_text);
+        let mut changes = Vec::new();
+        for required_name in required_names {
+            let source = project_items
+                .iter()
+                .find(|item| {
+                    item.label == required_name
+                        && item.has_action
+                        && item.source.as_deref().is_some()
+                })
+                .and_then(|item| item.source.as_deref())
+                .or(fallback_source.as_deref());
+            let Some(source) = source else {
+                continue;
+            };
+
+            if let Some((line_start, line_end, imported_names)) =
+                Self::find_named_import_line_for_module(source_text, source)
+            {
+                if imported_names.iter().any(|name| name == &required_name) {
+                    continue;
+                }
+                let mut merged = imported_names;
+                merged.push(required_name.clone());
+                merged.sort();
+                merged.dedup();
+                changes.push(serde_json::json!({
+                    "span": {
+                        "start": line_start,
+                        "length": line_end.saturating_sub(line_start),
+                    },
+                    "newText": format!("import {{ {} }} from \"{}\";\n", merged.join(", "), source),
+                }));
+            } else {
+                changes.push(serde_json::json!({
+                    "span": {
+                        "start": 0,
+                        "length": 0,
+                    },
+                    "newText": format!("import {{ {} }} from \"{}\";\n", required_name, source),
+                }));
+            }
+        }
+        changes
+    }
+
+    fn infer_extends_import_source(source_text: &str) -> Option<String> {
+        let extends_idx = source_text.find("extends ")?;
+        let rest = &source_text[extends_idx + "extends ".len()..];
+        let base_name: String = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .collect();
+        if base_name.is_empty() {
+            return None;
+        }
+
+        for line in source_text.lines() {
+            if !line.contains("import {") || !line.contains(" from ") {
+                continue;
+            }
+            let Some(open) = line.find('{') else {
+                continue;
+            };
+            let Some(close_rel) = line[open + 1..].find('}') else {
+                continue;
+            };
+            let close = open + 1 + close_rel;
+            let imports = line[open + 1..close]
+                .split(',')
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            if !imports.iter().any(|name| *name == base_name) {
+                continue;
+            }
+            if let Some(source) = Self::extract_module_specifier_from_import_text(line) {
+                return Some(source.to_string());
+            }
+        }
+        None
+    }
+
+    fn find_named_import_line_for_module(
+        source_text: &str,
+        module_specifier: &str,
+    ) -> Option<(usize, usize, Vec<String>)> {
+        let mut offset = 0usize;
+        for line in source_text.split_inclusive('\n') {
+            let matches_module = line.contains(&format!("from \"{module_specifier}\""))
+                || line.contains(&format!("from '{module_specifier}'"));
+            if !matches_module || !line.contains("import {") {
+                offset += line.len();
+                continue;
+            }
+            let open = line.find('{')?;
+            let close_rel = line[open + 1..].find('}')?;
+            let close = open + 1 + close_rel;
+            let names = line[open + 1..close]
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>();
+            return Some((offset, offset + line.len(), names));
+        }
+        None
+    }
+
     fn class_member_snippet_items(
         &self,
         provider: &Completions<'_>,
@@ -329,21 +448,15 @@ impl Server {
         file_name: &str,
         project_items: &[CompletionItem],
     ) -> Vec<CompletionItem> {
-        let mut candidates = provider.get_class_member_snippet_candidates(root, position);
+        let provider_candidates = provider.get_class_member_snippet_candidates(root, position);
         let fallback_candidates =
             self.class_member_snippet_fallback_candidates(file_name, position);
-        if candidates.is_empty() {
-            candidates = fallback_candidates;
-        } else {
-            for fallback in fallback_candidates {
-                if !candidates
-                    .iter()
-                    .any(|candidate| candidate.label == fallback.label)
-                {
-                    candidates.push(fallback);
-                }
-            }
-        }
+        let mut candidates =
+            Self::merge_class_member_snippet_candidates(provider_candidates, fallback_candidates);
+        let synthesized_candidates =
+            Self::synthesized_class_member_snippet_candidates_from_project_items(project_items);
+        candidates =
+            Self::merge_class_member_snippet_candidates(candidates, synthesized_candidates);
 
         let mut items = Vec::new();
         for candidate in candidates {
@@ -356,7 +469,7 @@ impl Server {
                 project_items,
             );
             let mut item = CompletionItem::new(candidate.label.clone(), candidate.kind)
-                .with_sort_text(tsz::lsp::completions::sort_priority::SUGGESTED_CLASS_MEMBERS)
+                .with_sort_text(tsz::lsp::completions::sort_priority::LOCATION_PRIORITY)
                 .with_insert_text(insert_text)
                 .as_snippet()
                 .with_has_action()
@@ -373,6 +486,67 @@ impl Server {
             items.push(item);
         }
         items
+    }
+
+    fn merge_class_member_snippet_candidates(
+        mut provider_candidates: Vec<CompletionItem>,
+        fallback_candidates: Vec<CompletionItem>,
+    ) -> Vec<CompletionItem> {
+        for fallback in fallback_candidates {
+            if let Some(idx) = provider_candidates
+                .iter()
+                .position(|candidate| candidate.label == fallback.label)
+            {
+                let existing_ok =
+                    Self::class_member_snippet_insert_text(&provider_candidates[idx]).is_some();
+                let fallback_ok = Self::class_member_snippet_insert_text(&fallback).is_some();
+                if !existing_ok && fallback_ok {
+                    provider_candidates[idx] = fallback;
+                }
+                continue;
+            }
+            provider_candidates.push(fallback);
+        }
+        provider_candidates
+    }
+
+    fn synthesized_class_member_snippet_candidates_from_project_items(
+        project_items: &[CompletionItem],
+    ) -> Vec<CompletionItem> {
+        let mut out = Vec::new();
+        let mut seen = BTreeSet::new();
+        for item in project_items {
+            if !item.has_action || item.source.is_none() {
+                continue;
+            }
+            let Some(first) = item.label.chars().next() else {
+                continue;
+            };
+            if !first.is_ascii_lowercase() {
+                continue;
+            }
+            let kind = match item.kind {
+                tsz::lsp::completions::CompletionItemKind::Method
+                | tsz::lsp::completions::CompletionItemKind::Function => {
+                    tsz::lsp::completions::CompletionItemKind::Method
+                }
+                _ => tsz::lsp::completions::CompletionItemKind::Property,
+            };
+            let mut candidate = CompletionItem::new(item.label.clone(), kind);
+            if let Some(detail) = item.detail.as_ref() {
+                candidate = candidate.with_detail(detail.clone());
+            }
+            if let Some(mods) = item.kind_modifiers.as_ref() {
+                candidate = candidate.with_kind_modifiers(mods.clone());
+            }
+            if Self::class_member_snippet_insert_text(&candidate).is_none() {
+                continue;
+            }
+            if seen.insert(candidate.label.clone()) {
+                out.push(candidate);
+            }
+        }
+        out
     }
 
     fn class_member_snippet_fallback_candidates(
@@ -1200,9 +1374,12 @@ impl Server {
             if let Some(insert_text) = item.insert_text.as_ref() {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
+            let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
             if item.is_snippet {
-                entry["isSnippet"] = serde_json::json!(true);
                 entry["filterText"] = serde_json::json!(item.label.clone());
+                if !is_class_member_snippet {
+                    entry["isSnippet"] = serde_json::json!(true);
+                }
             }
         }
         if let Some(source) = item.source.as_ref() {
@@ -1235,6 +1412,10 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            let preferences = request
+                .arguments
+                .get("preferences")
+                .unwrap_or(&request.arguments);
             let interner = TypeInterner::new();
             let provider = Completions::new_with_types(
                 &arena,
@@ -1249,16 +1430,12 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items = self.project_completion_items(
-                &file,
-                position,
-                request.arguments.get("preferences"),
-            );
+            let project_items = self.project_completion_items(&file, position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
             let include_class_member_snippets = Self::bool_pref_or_default(
-                request.arguments.get("preferences"),
+                Some(preferences),
                 "includeCompletionsWithClassMemberSnippets",
                 self.include_completions_with_class_member_snippets,
             );
@@ -1270,11 +1447,11 @@ impl Server {
             let items = if is_member_completion {
                 provider_items
             } else {
-                Self::merge_non_member_completion_items(provider_items, project_items)
+                Self::merge_non_member_completion_items(provider_items, project_items.clone())
             };
             let mut items = items;
             if !snippet_items.is_empty() {
-                items = Self::merge_non_member_completion_items(items, snippet_items);
+                items = Self::merge_non_member_completion_items(items, snippet_items.clone());
                 items = Self::prioritize_class_member_snippet_items(items);
                 items = Self::normalize_class_member_snippet_items(items);
             }
@@ -1315,6 +1492,10 @@ impl Server {
             let entry_names = request.arguments.get("entryNames")?.as_array()?;
             let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
             let line_map = LineMap::build(&source_text);
+            let preferences = request
+                .arguments
+                .get("preferences")
+                .unwrap_or(&request.arguments);
             let interner = TypeInterner::new();
             let provider = Completions::new_with_types(
                 &arena,
@@ -1332,13 +1513,12 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items =
-                self.project_completion_items(file, position, request.arguments.get("preferences"));
+            let project_items = self.project_completion_items(file, position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
             let include_class_member_snippets = Self::bool_pref_or_default(
-                request.arguments.get("preferences"),
+                Some(preferences),
                 "includeCompletionsWithClassMemberSnippets",
                 self.include_completions_with_class_member_snippets,
             );
@@ -1350,11 +1530,11 @@ impl Server {
             let items = if is_member_completion {
                 provider_items
             } else {
-                Self::merge_non_member_completion_items(provider_items, project_items)
+                Self::merge_non_member_completion_items(provider_items, project_items.clone())
             };
             let mut items = items;
             if !snippet_items.is_empty() {
-                items = Self::merge_non_member_completion_items(items, snippet_items);
+                items = Self::merge_non_member_completion_items(items, snippet_items.clone());
                 items = Self::prioritize_class_member_snippet_items(items);
                 items = Self::normalize_class_member_snippet_items(items);
             }
@@ -1386,7 +1566,7 @@ impl Server {
                         (String::new(), None)
                     };
                     // Try to find the matching completion item
-                    let item = items.iter().find(|i| {
+                    let mut item = items.iter().find(|i| {
                         if i.label != name {
                             return false;
                         }
@@ -1396,6 +1576,12 @@ impl Server {
                             true
                         }
                     });
+                    if item.is_none() && requested_source.as_deref() == Some("ClassMemberSnippet/")
+                    {
+                        item = snippet_items.iter().find(|i| {
+                            i.label == name && i.source.as_deref() == Some("ClassMemberSnippet/")
+                        });
+                    }
                     let kind = item.map_or("property", |i| Self::completion_kind_to_str(i.kind));
                     let kind_modifiers =
                         item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
@@ -1434,9 +1620,12 @@ impl Server {
                     }
                     if let Some(item) = item
                         && item.has_action
-                        && let Some(edits) = item.additional_text_edits.as_ref()
-                        && !edits.is_empty()
                     {
+                        let edits = item
+                            .additional_text_edits
+                            .as_ref()
+                            .cloned()
+                            .unwrap_or_default();
                         let mut text_changes: Vec<serde_json::Value> = edits
                             .iter()
                             .map(|edit| {
@@ -1461,87 +1650,104 @@ impl Server {
                                 })
                             })
                             .collect();
-                        if file.ends_with(".mts") {
-                            for idx in 0..text_changes.len() {
-                                let Some(new_text) = text_changes[idx]
-                                    .get("newText")
-                                    .and_then(serde_json::Value::as_str)
-                                else {
-                                    continue;
-                                };
-                                let Some((module_specifier, _)) = Self::parse_named_import_clause(
-                                    new_text, "import {", "} from ",
-                                ) else {
-                                    continue;
-                                };
-                                if Self::type_only_named_imports_for_module(
-                                    &source_text,
-                                    module_specifier,
-                                )
-                                .is_empty()
-                                {
-                                    continue;
-                                }
-                                let Some((existing_start, existing_length)) =
-                                    Self::find_type_only_named_import_span(
+                        if text_changes.is_empty()
+                            && item.source.as_deref() == Some("ClassMemberSnippet/")
+                            && let Some(insert_text) = item.insert_text.as_deref()
+                        {
+                            text_changes = Self::class_member_snippet_synthesized_text_changes(
+                                &source_text,
+                                insert_text,
+                                &item.label,
+                                &project_items,
+                            );
+                        }
+                        if !text_changes.is_empty() {
+                            if file.ends_with(".mts") {
+                                for idx in 0..text_changes.len() {
+                                    let Some(new_text) = text_changes[idx]
+                                        .get("newText")
+                                        .and_then(serde_json::Value::as_str)
+                                    else {
+                                        continue;
+                                    };
+                                    let Some((module_specifier, _)) =
+                                        Self::parse_named_import_clause(
+                                            new_text, "import {", "} from ",
+                                        )
+                                    else {
+                                        continue;
+                                    };
+                                    if Self::type_only_named_imports_for_module(
                                         &source_text,
                                         module_specifier,
                                     )
-                                else {
-                                    continue;
-                                };
+                                    .is_empty()
+                                    {
+                                        continue;
+                                    }
+                                    let Some((existing_start, existing_length)) =
+                                        Self::find_type_only_named_import_span(
+                                            &source_text,
+                                            module_specifier,
+                                        )
+                                    else {
+                                        continue;
+                                    };
 
-                                let start = text_changes[idx]
-                                    .get("span")
-                                    .and_then(|span| span.get("start"))
-                                    .and_then(serde_json::Value::as_u64)
-                                    .map(|n| n as u32)
-                                    .unwrap_or(0);
-                                let length = text_changes[idx]
-                                    .get("span")
-                                    .and_then(|span| span.get("length"))
-                                    .and_then(serde_json::Value::as_u64)
-                                    .map(|n| n as u32)
-                                    .unwrap_or(0);
-                                if length != 0 || start != existing_start {
-                                    continue;
-                                }
+                                    let start = text_changes[idx]
+                                        .get("span")
+                                        .and_then(|span| span.get("start"))
+                                        .and_then(serde_json::Value::as_u64)
+                                        .map(|n| n as u32)
+                                        .unwrap_or(0);
+                                    let length = text_changes[idx]
+                                        .get("span")
+                                        .and_then(|span| span.get("length"))
+                                        .and_then(serde_json::Value::as_u64)
+                                        .map(|n| n as u32)
+                                        .unwrap_or(0);
+                                    if length != 0 || start != existing_start {
+                                        continue;
+                                    }
 
-                                if let Some(change_obj) = text_changes[idx].as_object_mut() {
-                                    change_obj.insert(
-                                        "span".to_string(),
-                                        serde_json::json!({
-                                            "start": existing_start,
-                                            "length": existing_length,
-                                        }),
-                                    );
+                                    if let Some(change_obj) = text_changes[idx].as_object_mut() {
+                                        change_obj.insert(
+                                            "span".to_string(),
+                                            serde_json::json!({
+                                                "start": existing_start,
+                                                "length": existing_length,
+                                            }),
+                                        );
+                                    }
+                                    break;
                                 }
-                                break;
                             }
+
+                            let description = if item.source.as_deref()
+                                == Some("ClassMemberSnippet/")
+                            {
+                                format!("Includes imports of types referenced by '{}'", item.label)
+                            } else {
+                                Self::auto_import_code_action_description(
+                                    &source_text,
+                                    &file,
+                                    item.source.as_deref(),
+                                    &edits,
+                                    &item.label,
+                                )
+                            };
+
+                            detail.insert(
+                                "codeActions".to_string(),
+                                serde_json::json!([{
+                                    "description": description,
+                                    "changes": [{
+                                        "fileName": file,
+                                        "textChanges": text_changes,
+                                    }],
+                                }]),
+                            );
                         }
-
-                        let description = if item.source.as_deref() == Some("ClassMemberSnippet/") {
-                            format!("Includes imports of types referenced by '{}'", item.label)
-                        } else {
-                            Self::auto_import_code_action_description(
-                                &source_text,
-                                &file,
-                                item.source.as_deref(),
-                                edits,
-                                &item.label,
-                            )
-                        };
-
-                        detail.insert(
-                            "codeActions".to_string(),
-                            serde_json::json!([{
-                                "description": description,
-                                "changes": [{
-                                    "fileName": file,
-                                    "textChanges": text_changes,
-                                }],
-                            }]),
-                        );
                     }
                     serde_json::Value::Object(detail)
                 })
@@ -2380,6 +2586,78 @@ mod tests {
         assert!(item.has_action);
         assert!(item.is_snippet);
         assert_eq!(item.insert_text.as_deref(), Some("container: Container;"));
+    }
+
+    #[test]
+    fn merge_class_member_snippet_candidates_prefers_fallback_when_primary_is_not_snippet_ready() {
+        let provider = vec![
+            CompletionItem::new(
+                "execActionWithCount".to_string(),
+                CompletionItemKind::Method,
+            )
+            .with_detail("(count: number): void".to_string()),
+        ];
+        let fallback = vec![
+            CompletionItem::new(
+                "execActionWithCount".to_string(),
+                CompletionItemKind::Method,
+            )
+            .with_detail("(count: number) => void".to_string()),
+        ];
+
+        let merged = Server::merge_class_member_snippet_candidates(provider, fallback);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].detail.as_deref(),
+            Some("(count: number) => void"),
+            "fallback candidate should replace non-snippet-ready primary candidate"
+        );
+    }
+
+    #[test]
+    fn synthesized_class_member_snippet_candidates_uses_auto_import_items_when_primary_empty() {
+        let project_items = vec![
+            CompletionItem::new(
+                "execActionWithCount".to_string(),
+                CompletionItemKind::Function,
+            )
+            .with_has_action()
+            .with_source("@pkg/mod".to_string())
+            .with_detail("(count: number) => void".to_string()),
+            CompletionItem::new("Container".to_string(), CompletionItemKind::Class)
+                .with_has_action()
+                .with_source("@pkg/mod".to_string()),
+        ];
+
+        let synthesized =
+            Server::synthesized_class_member_snippet_candidates_from_project_items(&project_items);
+        assert_eq!(synthesized.len(), 1);
+        assert_eq!(synthesized[0].label, "execActionWithCount");
+        assert_eq!(synthesized[0].kind, CompletionItemKind::Method);
+    }
+
+    #[test]
+    fn class_member_snippet_synthesized_text_changes_updates_existing_named_import() {
+        let source_text = "import { Piece } from \"@sapphire/pieces\";\nclass C extends Piece {}\n";
+        let project_items = vec![
+            CompletionItem::new("Container".to_string(), CompletionItemKind::Interface)
+                .with_has_action()
+                .with_source("@sapphire/pieces".to_string()),
+        ];
+
+        let changes = Server::class_member_snippet_synthesized_text_changes(
+            source_text,
+            "container: Container;",
+            "container",
+            &project_items,
+        );
+
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        assert_eq!(
+            change.get("newText").and_then(serde_json::Value::as_str),
+            Some("import { Container, Piece } from \"@sapphire/pieces\";\n")
+        );
     }
 
     #[test]

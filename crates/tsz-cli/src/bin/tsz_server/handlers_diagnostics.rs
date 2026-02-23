@@ -55,38 +55,33 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.completion_import_module_specifier_ending = request
+        let preferences = request
             .arguments
             .get("preferences")
-            .and_then(|p| p.get("importModuleSpecifierEnding"))
+            .unwrap_or(&request.arguments);
+
+        self.completion_import_module_specifier_ending = preferences
+            .get("importModuleSpecifierEnding")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        self.import_module_specifier_preference = request
-            .arguments
-            .get("preferences")
-            .and_then(|p| p.get("importModuleSpecifierPreference"))
+        self.import_module_specifier_preference = preferences
+            .get("importModuleSpecifierPreference")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        self.organize_imports_type_order = request
-            .arguments
-            .get("preferences")
-            .and_then(|p| p.get("organizeImportsTypeOrder"))
+        self.organize_imports_type_order = preferences
+            .get("organizeImportsTypeOrder")
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
-        self.organize_imports_ignore_case = request
-            .arguments
-            .get("preferences")
-            .and_then(|p| p.get("organizeImportsIgnoreCase"))
+        self.organize_imports_ignore_case = preferences
+            .get("organizeImportsIgnoreCase")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true);
         self.auto_import_file_exclude_patterns =
             Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
         self.auto_import_specifier_exclude_regexes =
             Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
-        self.include_completions_with_class_member_snippets = request
-            .arguments
-            .get("preferences")
-            .and_then(|p| p.get("includeCompletionsWithClassMemberSnippets"))
+        self.include_completions_with_class_member_snippets = preferences
+            .get("includeCompletionsWithClassMemberSnippets")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 

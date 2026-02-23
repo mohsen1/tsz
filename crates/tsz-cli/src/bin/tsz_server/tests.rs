@@ -2566,6 +2566,57 @@ fn test_completion_info_class_member_snippet_includes_import_code_action() {
 }
 
 #[test]
+fn test_completion_info_accepts_top_level_class_member_snippet_preferences() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/@sapphire/pieces/index.d.ts".to_string(),
+        "interface Container {\n  stores: unknown;\n}\n\ndeclare class Piece {\n  container: Container;\n}\n\nexport { Piece, type Container };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "import { Piece } from \"@sapphire/pieces\";\nclass FullPiece extends Piece {\n  c/**/\n}\n"
+            .to_string(),
+    );
+
+    let completion_req = make_request(
+        "completionInfo",
+        serde_json::json!({
+            "file": "/index.ts",
+            "line": 3,
+            "offset": 4,
+            "includeCompletionsWithClassMemberSnippets": true,
+            "includeCompletionsWithInsertText": true
+        }),
+    );
+    let completion_resp = server.handle_tsserver_request(completion_req);
+    assert!(completion_resp.success);
+    let completion_body = completion_resp
+        .body
+        .expect("completionInfo should return a body");
+    let entries = completion_body["entries"]
+        .as_array()
+        .expect("completionInfo should include entries");
+    let container_entry = entries
+        .iter()
+        .find(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str) == Some("container")
+                && entry.get("source").and_then(serde_json::Value::as_str)
+                    == Some("ClassMemberSnippet/")
+        })
+        .expect("expected class member snippet completion for `container`");
+    assert!(
+        container_entry.get("isSnippet").is_none(),
+        "class member snippet entries should not set isSnippet"
+    );
+    assert_eq!(
+        container_entry
+            .get("insertText")
+            .and_then(serde_json::Value::as_str),
+        Some("container: Container;")
+    );
+}
+
+#[test]
 fn test_completion_info_class_member_snippet_includes_getter_from_augmented_alias_chain() {
     let mut server = make_server();
     server.open_files.insert(
@@ -2666,11 +2717,9 @@ fn test_completion_info_uses_configure_class_member_snippet_preference() {
                     == Some("ClassMemberSnippet/")
         })
         .expect("expected class member snippet completion after configure preference");
-    assert_eq!(
-        container_entry
-            .get("isSnippet")
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
+    assert!(
+        container_entry.get("isSnippet").is_none(),
+        "class member snippet entries should not set isSnippet"
     );
     assert_eq!(
         container_entry
@@ -2733,11 +2782,9 @@ fn test_completion_info_class_member_snippet_export_list_augmentation_shape() {
                     == Some("ClassMemberSnippet/")
         })
         .expect("expected class member snippet completion for container");
-    assert_eq!(
-        container_entry
-            .get("isSnippet")
-            .and_then(serde_json::Value::as_bool),
-        Some(true)
+    assert!(
+        container_entry.get("isSnippet").is_none(),
+        "class member snippet entries should not set isSnippet"
     );
     assert_eq!(
         container_entry

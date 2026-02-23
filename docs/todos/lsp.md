@@ -460,3 +460,26 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts`: still fails at marker `45` (`(property) t1: (s: string) => string` expected, got empty quick info).
   Reason: remaining gap is declaration-site/object-property assignment quickinfo fallback for `objc8.t1 = function(...)` in `handlers_info` member-access recovery; needs a dedicated property-assignment quickinfo resolver pass beyond this parameter-only fix.
+
+## 2026-02-23 (class-member snippet parity follow-up)
+
+Completed in this pass:
+- Improved class-member snippet completion parity for `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation1.ts` by:
+  - accepting top-level completion/configure preference shapes in tsserver handlers (in addition to nested `preferences` payloads),
+  - preserving class-member snippet response shape parity (`insertText`/`filterText` without `isSnippet` for `ClassMemberSnippet/` entries),
+  - normalizing class-member snippet sort priority to tsserver location-priority ordering,
+  - adding fallback code-action synthesis for class-member snippets when auto-import additional edits are missing (derive needed type imports from snippet type identifiers and enclosing `extends` import source).
+- Added focused Rust unit tests in:
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
+  - `crates/tsz-cli/src/bin/tsz_server/handlers_completions.rs`
+- Verification:
+  - `./scripts/run-fourslash.sh --max=200` improved from `189/200` to `191/200` passing in this run.
+  - `cargo nextest run -p tsz-cli -p tsz-lsp` passed (`1133` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: still fails on `execActionWithCount` completion insert text mismatch.
+  Reason: remaining gap appears to require richer method-signature/snippet-text synthesis from ambient merged-module symbol shape (beyond current class-member snippet fallback heuristics).
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: still fails on `parent` completion insert text mismatch.
+  Reason: requires export-equals/default-merged inheritance-aware class-member snippet text generation, which is broader than this targeted completion-shape/code-action fallback patch.
+- `TypeScript/tests/cases/fourslash/autoImportCompletionExportListAugmentation{2,4}.ts`: still fail `verifyFileContent` on completion-applied edits.
+  Reason: remaining divergence is in exact import-edit text shaping/order for class-member snippet code actions under augmentation variants; needs a dedicated edit-synthesis parity pass.
