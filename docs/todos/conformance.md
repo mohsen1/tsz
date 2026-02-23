@@ -419,14 +419,35 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 3005/5997 (50.1%) — first-6000 fingerprint-level
+## Current score: 4004/5997 (66.8%) — first-6000 fingerprint-level; 7939/12574 (63.1%) — full suite error-code-level
 
 **Note**: Conformance runner now uses fingerprint-level comparison (code + file + line + column
 + message) instead of error-code-level. This is stricter and reduced the apparent pass rate.
 The actual compiler behavior has not regressed — previous sessions' scores (~66%) were at
 error-code level only.
 
-### Session progress (2025-02-23):
+### Session progress (2026-02-23, TS2839):
+- **TS2839 (implemented)**: Emit "This condition will always return 'false'/'true' since
+  JavaScript compares objects by reference, not value" when an equality operator (`===`,
+  `!==`, `==`, `!=`) has at least one operand that is an object literal or array literal.
+  Check inserted in `type_computation_binary.rs` between the NaN check and TS2367
+  no-overlap check, matching tsc's diagnostic priority ordering. +1 conformance test
+  (`conditionalEqualityOnLiteralObjects.ts`), 0 regressions. Added 8 unit tests.
+- **TS2839 remaining**: `plainJSTypeErrors.ts` — JS-only test, our runner doesn't emit
+  TS2839 for `.js` files (likely a checkJs path difference). `narrowByEquality.ts` — has
+  TS2839 but also has TS2322 union order mismatches (`string | number` vs `number | string`).
+  `functionImplementations.ts` and `functionImplementationErrors.ts` — need TS2839 + other codes.
+- **TS2506 false positive (commentOnAmbientModule.ts)**: Investigated. Root cause is
+  cross-binder SymbolId space collision — `resolve_heritage_symbol` resolves `D` from `a.ts`
+  binder but looks up exports using `b.ts` binder, where the SymbolId indexes a different
+  symbol. Fix requires binder-aware cross-file symbol resolution. HARD difficulty.
+- **Analysis findings**: Top quick wins at error-code level: TS2322 (61 single-code tests),
+  TS2339 (47), TS2345 (40), TS18003 (32), TS2688 (18). All are deep solver/type-relation
+  issues or runner-level tsconfig formatting issues. NOT IMPLEMENTED codes with most tests:
+  TS2875 (14, JSX), TS2497 (13, ESM compat), TS2433 (10, cross-file namespace), TS2589 (9,
+  excessive depth), TS2550 (9, lib target).
+
+### Previous session progress (2025-02-23):
 - **TS2506 (false positive)**: Removed spurious TS2506 from `class_type.rs` recursion guard.
   The `class_instance_resolution_set` is a recursion prevention mechanism, not a cycle detector.
   True TS2506 cycle detection is handled by DFS in `class_inheritance.rs`. Added regression test.
