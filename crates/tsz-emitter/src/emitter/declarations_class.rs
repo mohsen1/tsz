@@ -402,29 +402,30 @@ impl<'a> Printer<'a> {
         // tsc drops same-line comments on `{` for class bodies, just like function
         // bodies (e.g. `class C { // error` → `class C {`).
         if !self.ctx.options.remove_comments
-            && let Some(text) = self.source_text {
-                let bytes = text.as_bytes();
-                let start = node.pos as usize;
-                let end = (node.end as usize).min(bytes.len());
-                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
-                    let brace_end = (start + offset + 1) as u32;
-                    // Only suppress if there's a newline between `{` and the first
-                    // member (or `}` if empty).  Single-line class bodies like
-                    // `class C { x: T; } // error` have the comment after `}`.
-                    let scan_end = class
-                        .members
-                        .nodes
-                        .first()
-                        .and_then(|&idx| self.arena.get(idx))
-                        .map_or(end, |m| m.pos as usize);
-                    let has_newline = bytes[brace_end as usize..scan_end.min(end)]
-                        .iter()
-                        .any(|&b| b == b'\n' || b == b'\r');
-                    if has_newline {
-                        self.skip_trailing_same_line_comments(brace_end, node.end);
-                    }
+            && let Some(text) = self.source_text
+        {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                let brace_end = (start + offset + 1) as u32;
+                // Only suppress if there's a newline between `{` and the first
+                // member (or `}` if empty).  Single-line class bodies like
+                // `class C { x: T; } // error` have the comment after `}`.
+                let scan_end = class
+                    .members
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(end, |m| m.pos as usize);
+                let has_newline = bytes[brace_end as usize..scan_end.min(end)]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r');
+                if has_newline {
+                    self.skip_trailing_same_line_comments(brace_end, node.end);
                 }
             }
+        }
         self.write_line();
         self.increase_indent();
 
