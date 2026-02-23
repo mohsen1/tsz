@@ -1025,3 +1025,20 @@ Investigated but punted:
   Reason: remaining gap is deeper `findAllReferences` alias-chain grouping/details parity (`defId`/`contextId` fan-out + alias detail rendering), beyond this payload-shape correction.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still creates a local baseline.
   Reason: same remaining alias-chain referenced-symbol grouping/detail parity gap as `_types`; requires broader modeling than this targeted fix.
+
+## 2026-02-23 (quoted alias referenced-symbol grouping follow-up)
+
+Completed in this pass:
+- Reworked tsserver `references-full` quoted-alias fallback in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` to build multiple referenced-symbol groups from alias-chain locations instead of a single collapsed canonical-symbol group.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_references_full_quoted_alias_returns_multiple_symbol_groups`
+
+Verification:
+- `cargo nextest run -p tsz-cli --bin tsz-server test_references_full_quoted_alias_returns_multiple_symbol_groups test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs test_references_full_quoted_alias_definition_uses_file_name_and_text_span_shape` passes.
+- `./scripts/run-fourslash.sh --skip-build --max=200` remains `198/200` (same two failures).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: remaining mismatch still requires TypeScript-equivalent symbol identity modeling for quoted import/export aliases in `findAllReferences` (`defId/contextId` grouping and alias display/detail shape), beyond location-based grouping synthesis.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same unresolved quoted-alias symbol identity/detail-shaping parity gap as `_types`; current grouping fallback is closer structurally but still not baseline-equivalent.
