@@ -283,74 +283,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the declaration is in an ambient context.
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::node_flags;
-
-        // Declarations inside .d.ts files are ambient by definition.
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        let mut current = var_idx;
-        while current.is_some() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this node has the AMBIENT flag set
-                if (node.flags as u32) & node_flags::AMBIENT != 0 {
-                    return true;
-                }
-
-                // Check modifiers on various declaration types for DeclareKeyword
-                // Variable statements
-                if let Some(var_stmt) = self.ctx.arena.get_variable(node)
-                    && self.has_declare_modifier(&var_stmt.modifiers)
-                {
-                    return true;
-                }
-                // Function declarations
-                if let Some(func) = self.ctx.arena.get_function(node)
-                    && self.has_declare_modifier(&func.modifiers)
-                {
-                    return true;
-                }
-                // Class declarations
-                if let Some(class) = self.ctx.arena.get_class(node)
-                    && self.has_declare_modifier(&class.modifiers)
-                {
-                    return true;
-                }
-                // Enum declarations
-                if let Some(enum_decl) = self.ctx.arena.get_enum(node)
-                    && self.has_declare_modifier(&enum_decl.modifiers)
-                {
-                    return true;
-                }
-                // Interface declarations (interfaces are implicitly ambient)
-                if self.ctx.arena.get_interface(node).is_some() {
-                    return true;
-                }
-                // Type alias declarations (type aliases are implicitly ambient)
-                if self.ctx.arena.get_type_alias(node).is_some() {
-                    return true;
-                }
-                // Module/namespace declarations
-                if let Some(module) = self.ctx.arena.get_module(node)
-                    && self.has_declare_modifier(&module.modifiers)
-                {
-                    return true;
-                }
-            }
-
-            // Move to parent node
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-
-        false
+        self.ctx.file_name.ends_with(".d.ts") || self.ctx.arena.is_in_ambient_context(var_idx)
     }
 
     // 19. Type and Name Checking Utilities (8 functions)

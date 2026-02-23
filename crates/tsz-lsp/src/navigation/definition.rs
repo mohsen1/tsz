@@ -1358,73 +1358,7 @@ impl<'a> GoToDefinition<'a> {
     /// Check if a declaration is ambient (has `declare` modifier).
     /// Walks up the parent chain to find a node with `declare` in its modifiers.
     fn is_ambient_declaration(&self, decl_idx: NodeIndex) -> bool {
-        let mut current = decl_idx;
-        for _ in 0..15 {
-            if let Some(node) = self.arena.get(current)
-                && self.node_has_declare_modifier(current, node)
-            {
-                return true;
-            }
-            // Walk up to parent
-            if let Some(ext) = self.arena.get_extended(current) {
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-        false
-    }
-
-    /// Check if a specific node has the `declare` keyword in its modifiers list.
-    fn node_has_declare_modifier(
-        &self,
-        _node_idx: NodeIndex,
-        node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
-        let modifiers = match node.kind {
-            syntax_kind_ext::VARIABLE_STATEMENT => self
-                .arena
-                .get_variable(node)
-                .and_then(|v| v.modifiers.as_ref()),
-            syntax_kind_ext::FUNCTION_DECLARATION => self
-                .arena
-                .get_function(node)
-                .and_then(|f| f.modifiers.as_ref()),
-            syntax_kind_ext::CLASS_DECLARATION => self
-                .arena
-                .get_class(node)
-                .and_then(|c| c.modifiers.as_ref()),
-            syntax_kind_ext::INTERFACE_DECLARATION => self
-                .arena
-                .get_interface(node)
-                .and_then(|i| i.modifiers.as_ref()),
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .arena
-                .get_type_alias(node)
-                .and_then(|t| t.modifiers.as_ref()),
-            syntax_kind_ext::ENUM_DECLARATION => {
-                self.arena.get_enum(node).and_then(|e| e.modifiers.as_ref())
-            }
-            syntax_kind_ext::MODULE_DECLARATION => self
-                .arena
-                .get_module(node)
-                .and_then(|m| m.modifiers.as_ref()),
-            _ => None,
-        };
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.arena.is_in_ambient_context(decl_idx)
     }
 
     /// Check if a declaration is at the top level of the source file.

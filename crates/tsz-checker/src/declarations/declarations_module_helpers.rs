@@ -2,7 +2,6 @@
 
 use std::path::{Component, Path, PathBuf};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-use tsz_scanner::SyntaxKind;
 
 use crate::declarations::DeclarationChecker;
 
@@ -268,35 +267,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check if a node is inside an ambient context (declare namespace/module or .d.ts file).
     pub(crate) fn is_in_ambient_context(&self, node_idx: NodeIndex) -> bool {
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        let mut current = node_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                && let Some(module) = self.ctx.arena.get_module(parent_node)
-                && self
-                    .ctx
-                    .arena
-                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-            {
-                return true;
-            }
-            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                return false;
-            }
-            current = parent;
-        }
+        self.ctx.file_name.ends_with(".d.ts") || self.ctx.arena.is_in_ambient_context(node_idx)
     }
 }

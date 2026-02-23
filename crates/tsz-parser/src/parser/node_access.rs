@@ -362,6 +362,109 @@ impl NodeArena {
         }
     }
 
+    /// Get the modifier list for a declaration node, if it has one.
+    ///
+    /// Returns `Some(&NodeList)` for any declaration kind that carries modifiers
+    /// (function, class, variable statement, enum, interface, type alias, module,
+    /// method, property, constructor, accessor, parameter, import, export, etc.).
+    /// Returns `None` for non-declaration nodes or nodes without modifier data.
+    #[must_use]
+    pub fn get_declaration_modifiers(&self, node: &Node) -> Option<&super::base::NodeList> {
+        match node.kind {
+            k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION || k == ARROW_FUNCTION => {
+                self.get_function(node).and_then(|d| d.modifiers.as_ref())
+            }
+            k if k == CLASS_DECLARATION || k == CLASS_EXPRESSION => {
+                self.get_class(node).and_then(|d| d.modifiers.as_ref())
+            }
+            VARIABLE_STATEMENT => self.get_variable(node).and_then(|d| d.modifiers.as_ref()),
+            ENUM_DECLARATION => self.get_enum(node).and_then(|d| d.modifiers.as_ref()),
+            INTERFACE_DECLARATION => self.get_interface(node).and_then(|d| d.modifiers.as_ref()),
+            TYPE_ALIAS_DECLARATION => self.get_type_alias(node).and_then(|d| d.modifiers.as_ref()),
+            MODULE_DECLARATION => self.get_module(node).and_then(|d| d.modifiers.as_ref()),
+            IMPORT_DECLARATION => self
+                .get_import_decl(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            EXPORT_DECLARATION => self
+                .get_export_decl(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            EXPORT_ASSIGNMENT => self
+                .get_export_assignment(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            k if k == METHOD_DECLARATION || k == METHOD_SIGNATURE => self
+                .get_method_decl(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            k if k == PROPERTY_DECLARATION || k == PROPERTY_SIGNATURE => self
+                .get_property_decl(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            CONSTRUCTOR => self
+                .get_constructor(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            k if k == GET_ACCESSOR || k == SET_ACCESSOR => {
+                self.get_accessor(node).and_then(|d| d.modifiers.as_ref())
+            }
+            PARAMETER => self.get_parameter(node).and_then(|d| d.modifiers.as_ref()),
+            INDEX_SIGNATURE => self
+                .get_index_signature(node)
+                .and_then(|d| d.modifiers.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Check whether a node is in an ambient context.
+    ///
+    /// A node is in an ambient context if it or any ancestor:
+    /// - Has the `AMBIENT` node flag (set by parser for `.d.ts` files),
+    /// - Has a `declare` keyword modifier, or
+    /// - Is an interface or type alias declaration (implicitly ambient).
+    ///
+    /// This does **not** check the file extension (`.d.ts`); callers that need
+    /// that check should do it separately since it requires filename context
+    /// that `NodeArena` doesn't have.
+    #[must_use]
+    pub fn is_in_ambient_context(&self, idx: NodeIndex) -> bool {
+        use super::flags::node_flags;
+
+        let mut current = idx;
+        for _ in 0..100 {
+            let Some(node) = self.get(current) else {
+                return false;
+            };
+
+            // Check the AMBIENT node flag (set by parser/binder)
+            if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                return true;
+            }
+
+            // Interfaces and type aliases are implicitly ambient
+            if node.kind == INTERFACE_DECLARATION || node.kind == TYPE_ALIAS_DECLARATION {
+                return true;
+            }
+
+            // Check for `declare` keyword modifier on this node
+            if let Some(mods) = self.get_declaration_modifiers(node) {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.get(mod_idx)
+                        && mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            // Walk to parent
+            if let Some(ext) = self.get_extended(current) {
+                if ext.parent.is_none() {
+                    return false;
+                }
+                current = ext.parent;
+            } else {
+                return false;
+            }
+        }
+        false
+    }
+
     /// Get access expression data (property access or element access).
     /// Returns None if node is not an access expression or has no data.
     #[inline]
