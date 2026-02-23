@@ -215,6 +215,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+            *self.ctx.depth_exceeded.borrow_mut() = true;
             self.ctx.application_eval_set.remove(&type_id);
             return type_id;
         }
@@ -333,6 +334,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+            *self.ctx.depth_exceeded.borrow_mut() = true;
             self.ctx.mapped_eval_set.remove(&type_id);
             return type_id;
         }

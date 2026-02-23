@@ -11,6 +11,7 @@ impl<'a> CheckerState<'a> {
     /// Get type of property access expression.
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
         if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+            *self.ctx.depth_exceeded.borrow_mut() = true;
             return TypeId::ERROR; // Max instantiation depth exceeded - propagate error
         }
 

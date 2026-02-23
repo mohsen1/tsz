@@ -886,6 +886,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A class declaration with the same name serves as an implementation
+        // for preceding function overload signatures (the "clodule" pattern).
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class) = self.ctx.arena.get_class(node)
+                && let Some(class_name_node) = self.ctx.arena.get(class.name)
+                    && let Some(class_ident) = self.ctx.arena.get_identifier(class_name_node)
+                    && class_ident.escaped_text == name
+                {
+                    return (true, Some(name.to_string()), Some(stmt_idx));
+                }
+
         (false, None, None)
     }
 

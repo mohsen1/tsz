@@ -63,14 +63,22 @@ impl<'a> CheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
-            evaluator.evaluate(type_id)
+            let result = evaluator.evaluate(type_id);
+            if evaluator.is_depth_exceeded() {
+                *self.ctx.depth_exceeded.borrow_mut() = true;
+            }
+            result
         };
 
         // If the result still contains IndexAccess types, try again with the full
         // checker context as resolver (which can resolve type parameters etc.)
         if query::index_access_types(self.ctx.types, result).is_some() {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
-            evaluator.evaluate(type_id)
+            let result = evaluator.evaluate(type_id);
+            if evaluator.is_depth_exceeded() {
+                *self.ctx.depth_exceeded.borrow_mut() = true;
+            }
+            result
         } else {
             result
         }

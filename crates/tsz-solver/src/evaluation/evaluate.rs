@@ -199,7 +199,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Check if depth limit was exceeded.
     #[inline]
-    pub(crate) const fn is_depth_exceeded(&self) -> bool {
+    pub const fn is_depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
     }
 
