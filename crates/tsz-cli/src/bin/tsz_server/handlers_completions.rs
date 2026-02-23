@@ -9,10 +9,95 @@ use std::cmp::Ordering;
 use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
-use tsz::lsp::position::LineMap;
+use tsz::lsp::position::{LineMap, Position};
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn completion_probe_positions(
+        position: Position,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> Vec<Position> {
+        let mut probes = vec![position];
+        let Some(base_offset) = line_map.position_to_offset(position, source_text) else {
+            return probes;
+        };
+        let len = source_text.len() as u32;
+        let Some(marker_start) = Self::numeric_marker_comment_start(source_text, base_offset)
+        else {
+            return probes;
+        };
+        for candidate in [
+            marker_start.saturating_sub(1),
+            marker_start.saturating_sub(2),
+        ] {
+            if candidate < len {
+                let probe = line_map.offset_to_position(candidate, source_text);
+                if !probes.contains(&probe) {
+                    probes.push(probe);
+                }
+            }
+        }
+        probes
+    }
+
+    fn numeric_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len < 5 {
+            return None;
+        }
+        let offset = base_offset.min(len.saturating_sub(1));
+        let search_start = offset.saturating_sub(8);
+        let search_end = (offset + 1).min(len.saturating_sub(2));
+        for start in search_start..=search_end {
+            if bytes[start as usize] != b'/' || bytes[(start + 1) as usize] != b'*' {
+                continue;
+            }
+            let mut end = start + 2;
+            while end + 1 < len && end - start <= 8 {
+                if bytes[end as usize] == b'*' && bytes[(end + 1) as usize] == b'/' {
+                    let digits = &bytes[(start + 2) as usize..end as usize];
+                    if !digits.is_empty() && digits.iter().all(u8::is_ascii_digit) {
+                        let comment_end = end + 1;
+                        if offset >= start && offset <= comment_end {
+                            return Some(start);
+                        }
+                    }
+                    break;
+                }
+                end += 1;
+            }
+        }
+        None
+    }
+
+    fn completion_result_with_probes(
+        provider: &Completions<'_>,
+        root: tsz::parser::base::NodeIndex,
+        position: Position,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> (Position, Option<tsz::lsp::completions::CompletionResult>) {
+        let probe_positions = Self::completion_probe_positions(position, line_map, source_text);
+        let mut selected_position = position;
+        let mut selected_result = None;
+        for probe_position in probe_positions {
+            let candidate = provider.get_completion_result(root, probe_position);
+            let has_useful_member_entries = candidate
+                .as_ref()
+                .is_some_and(|result| result.is_member_completion && !result.entries.is_empty());
+            if selected_result.is_none() || has_useful_member_entries {
+                selected_position = probe_position;
+                selected_result = candidate;
+            }
+            if has_useful_member_entries {
+                break;
+            }
+        }
+        (selected_position, selected_result)
+    }
+
     fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
         let mut best_rank_by_label: std::collections::HashMap<String, (usize, usize)> =
             std::collections::HashMap::new();
@@ -950,12 +1035,19 @@ impl Server {
                 &source_text,
                 file.clone(),
             );
-            let completion_result = provider.get_completion_result(root, position);
+            let (completion_position, completion_result) = Self::completion_result_with_probes(
+                &provider,
+                root,
+                position,
+                &line_map,
+                &source_text,
+            );
             let provider_items = completion_result
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items = self.project_completion_items(&file, position, Some(preferences));
+            let project_items =
+                self.project_completion_items(&file, completion_position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
@@ -968,7 +1060,7 @@ impl Server {
                 self.class_member_snippet_items(
                     &provider,
                     root,
-                    position,
+                    completion_position,
                     &file,
                     &source_text,
                     &project_items,
@@ -1044,13 +1136,19 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let completion_result = provider.get_completion_result(root, position);
+            let (completion_position, completion_result) = Self::completion_result_with_probes(
+                &provider,
+                root,
+                position,
+                &line_map,
+                &source_text,
+            );
             let provider_items = completion_result
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
             let mut project_items =
-                self.project_completion_items(file, position, Some(preferences));
+                self.project_completion_items(file, completion_position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
@@ -1069,8 +1167,11 @@ impl Server {
             if requested_class_member_snippet && project_items.is_empty() {
                 let forced_auto_import_prefs =
                     serde_json::json!({ "includeCompletionsForModuleExports": true });
-                project_items =
-                    self.project_completion_items(file, position, Some(&forced_auto_import_prefs));
+                project_items = self.project_completion_items(
+                    file,
+                    completion_position,
+                    Some(&forced_auto_import_prefs),
+                );
             }
             let snippet_items = if (include_class_member_snippets || requested_class_member_snippet)
                 && (!is_member_completion || requested_class_member_snippet)
@@ -1078,7 +1179,7 @@ impl Server {
                 self.class_member_snippet_items(
                     &provider,
                     root,
-                    position,
+                    completion_position,
                     file,
                     &source_text,
                     &project_items,
@@ -1102,9 +1203,9 @@ impl Server {
             let member_parent = completion_result
                 .as_ref()
                 .and_then(|result| {
-                    result
-                        .is_member_completion
-                        .then(|| provider.get_member_completion_parent_type_name(root, position))
+                    result.is_member_completion.then(|| {
+                        provider.get_member_completion_parent_type_name(root, completion_position)
+                    })
                 })
                 .flatten();
             let details: Vec<serde_json::Value> = entry_names

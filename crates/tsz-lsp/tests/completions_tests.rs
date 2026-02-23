@@ -261,6 +261,87 @@ fn test_completions_member_excludes_private_class_properties() {
 }
 
 #[test]
+fn test_completions_member_parameter_typeof_class_includes_static_and_namespace_members() {
+    let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x.\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let position = Position::new(7, 10);
+    let mut cache = None;
+    let items = completions.get_completions_with_cache(root, position, &mut cache);
+
+    assert!(items.is_some(), "Should have member completions");
+    let items = items.unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+    assert!(
+        names.contains(&"foo"),
+        "Should include static class member 'foo', got {names:?}"
+    );
+    assert!(
+        names.contains(&"f"),
+        "Should include merged namespace export 'f', got {names:?}"
+    );
+}
+
+#[test]
+fn test_completions_member_parameter_typeof_class_with_marker_comment_after_dot() {
+    let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x./*1*/\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let position = Position::new(7, 10);
+    let mut cache = None;
+    let items = completions.get_completions_with_cache(root, position, &mut cache);
+
+    assert!(
+        items.is_some(),
+        "Should have marker-adjacent member completions"
+    );
+    let items = items.unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+    assert!(
+        names.contains(&"foo"),
+        "Should include static class member 'foo', got {names:?}"
+    );
+    assert!(
+        names.contains(&"f"),
+        "Should include merged namespace export 'f', got {names:?}"
+    );
+}
+
+#[test]
 fn test_completions_includes_keywords() {
     let source = "const x = 1;\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -1078,7 +1078,23 @@ impl Server {
                 })
             })
             .or_else(|| infos.first())?;
-        Some(Self::definition_info_to_json(picked, &loc.file_path))
+        let mut normalized = picked.clone();
+        if normalized.is_ambient
+            && let Some(context) = normalized.context_span
+            && let (Some(start), Some(end)) = (
+                line_map.position_to_offset(context.start, &source_text),
+                line_map.position_to_offset(context.end, &source_text),
+            )
+            && start < end
+            && (end as usize) <= source_text.len()
+        {
+            let context_text = &source_text[start as usize..end as usize];
+            if !context_text.contains("declare") {
+                normalized.is_ambient = false;
+                normalized.is_local = true;
+            }
+        }
+        Some(Self::definition_info_to_json(&normalized, &loc.file_path))
     }
 
     pub(super) fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {
