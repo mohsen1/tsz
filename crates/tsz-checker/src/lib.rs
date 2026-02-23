@@ -148,6 +148,9 @@ mod ts2558_new_type_args_tests;
 #[path = "../tests/ts2774_tests.rs"]
 mod ts2774_tests;
 #[cfg(test)]
+#[path = "../tests/ts2839_tests.rs"]
+mod ts2839_tests;
+#[cfg(test)]
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
