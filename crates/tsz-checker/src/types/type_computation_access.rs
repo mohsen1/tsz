@@ -308,8 +308,7 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
-                    // TS18046: "'x' is of type 'unknown'."
-                    // tsc emits TS18046 (not TS2339) for property access on unknown types.
+                    // TS18046: 'x' is of type 'unknown'.
                     self.error_is_of_type_unknown(access.expression);
                     Some(TypeId::ERROR)
                 }
@@ -450,7 +449,7 @@ impl<'a> CheckerState<'a> {
                 }
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
-                    // TS18046: "'x' is of type 'unknown'."
+                    // TS18046: 'x' is of type 'unknown'.
                     self.error_is_of_type_unknown(access.expression);
                     Some(TypeId::ERROR)
                 }

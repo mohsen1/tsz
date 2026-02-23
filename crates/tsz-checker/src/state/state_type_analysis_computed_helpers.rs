@@ -458,8 +458,9 @@ impl<'a> CheckerState<'a> {
                 property_type.unwrap_or(TypeId::UNKNOWN)
             }
             PropertyAccessResult::IsUnknown => {
-                // TS18046: "'x' is of type 'unknown'."
-                self.error_is_of_type_unknown(access.expression);
+                // TS18046: 'x' is of type 'unknown'.
+                // Report on the expression, not the property name
+                self.error_is_of_type_unknown(name_idx);
                 TypeId::ERROR
             }
         };

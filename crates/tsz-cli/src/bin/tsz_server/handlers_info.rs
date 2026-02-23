@@ -1234,8 +1234,14 @@ impl Server {
             .and_then(|(arena, binder, root, source)| {
                 let lm = LineMap::build(&source);
                 let interner = TypeInterner::new();
-                let hover =
-                    HoverProvider::new(&arena, &binder, &lm, &interner, &source, loc.file_path.clone());
+                let hover = HoverProvider::new(
+                    &arena,
+                    &binder,
+                    &lm,
+                    &interner,
+                    &source,
+                    loc.file_path.clone(),
+                );
                 let mut type_cache = None;
                 hover
                     .get_hover(root, loc.range.start, &mut type_cache)
@@ -1252,12 +1258,7 @@ impl Server {
             "fileName": loc.file_path.clone(),
             "textSpan": { "start": start, "length": len },
         });
-        (
-            def,
-            loc.file_path.clone(),
-            start,
-            len,
-        )
+        (def, loc.file_path.clone(), start, len)
     }
 
     pub(crate) fn build_fallback_definition(
