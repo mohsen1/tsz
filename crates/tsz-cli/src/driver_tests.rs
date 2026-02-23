@@ -1,11 +1,14 @@
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
+use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::config::ResolvedCompilerOptions;
 use std::io::Write;
+use std::path::Path;
 use tempfile::NamedTempFile;
 use tsz::config::ModuleResolutionKind;
 use tsz_common::common::ModuleKind;
+use tsz_common::diagnostics::Diagnostic;
 
 #[test]
 fn test_module_resolution_requires_matching_module() {
@@ -53,4 +56,23 @@ fn test_read_source_file_text_is_not_binary() {
         matches!(result, FileReadResult::Text(text) if text == "const x = 1;\n"),
         "expected valid UTF-8 text to remain text"
     );
+}
+
+#[test]
+fn test_no_input_diagnostics_preserve_config_errors() {
+    let config_diag = Diagnostic::error(
+        "tsconfig.json".to_string(),
+        10,
+        7,
+        "Option 'checkJs' cannot be specified without specifying option 'allowJs'.".to_string(),
+        5052,
+    );
+    let diagnostics = no_input_diagnostics_for_config(
+        vec![config_diag],
+        Some(Path::new("tsconfig.json")),
+        Some(&["*.ts".to_string()]),
+        Some(&["node_modules".to_string()]),
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![5052, 18003]);
 }
