@@ -105,6 +105,8 @@ impl TsCompilerOptions {
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
             module_explicitly_set: self.module.is_some(),
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
         }
     }
 }
