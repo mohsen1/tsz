@@ -13,13 +13,7 @@ use tsz_solver::{
     TypePredicate, TypeSubstitution, Visibility, instantiate_type, types::ParamInfo,
 };
 
-#[inline]
-const fn can_skip_base_instantiation(
-    base_type_param_count: usize,
-    explicit_type_arg_count: usize,
-) -> bool {
-    base_type_param_count == 0 && explicit_type_arg_count == 0
-}
+use super::class_type::can_skip_base_instantiation;
 
 // =============================================================================
 // Class Constructor Type Resolution
@@ -818,18 +812,5 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect(),
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::can_skip_base_instantiation;
-
-    #[test]
-    fn skip_base_instantiation_only_without_generics() {
-        assert!(can_skip_base_instantiation(0, 0));
-        assert!(!can_skip_base_instantiation(1, 0));
-        assert!(!can_skip_base_instantiation(0, 1));
-        assert!(!can_skip_base_instantiation(3, 2));
     }
 }

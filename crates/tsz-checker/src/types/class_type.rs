@@ -16,7 +16,7 @@ use tsz_solver::{
 };
 
 #[inline]
-const fn can_skip_base_instantiation(
+pub(super) const fn can_skip_base_instantiation(
     base_type_param_count: usize,
     explicit_type_arg_count: usize,
 ) -> bool {
