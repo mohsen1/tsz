@@ -7,9 +7,7 @@
 //! - `kind_modifiers`: Comma-separated modifier list (e.g. `export,declare`)
 //! - `documentation`: Extracted `JSDoc` content
 
-#[path = "hover_contextual.rs"]
 mod contextual;
-#[path = "hover_format.rs"]
 pub(crate) mod format;
 
 use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
@@ -1166,5 +1164,5 @@ impl<'a> HoverProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/hover_tests.rs"]
+#[path = "../../tests/hover_tests.rs"]
 mod hover_tests;
