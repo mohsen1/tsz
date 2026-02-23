@@ -1,0 +1,624 @@
+use crate::emitter::ScriptTarget;
+use crate::output::printer::{PrintOptions, Printer};
+use tsz_parser::ParserState;
+
+/// Regression test: trailing comments on static class fields must be
+/// preserved when the field is lowered to `ClassName.field = value;`
+/// for targets < ES2022.
+#[test]
+fn static_field_lowering_preserves_trailing_comment() {
+    let source = "class C3 {\n    static intance = new C3(); // ok\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // The lowered static field should preserve the trailing comment
+    assert!(
+        output.contains("C3.intance = new C3(); // ok"),
+        "Trailing comment '// ok' should be preserved on lowered static field.\nOutput:\n{output}"
+    );
+}
+
+/// Test: multiple static fields with trailing comments are all preserved.
+#[test]
+fn static_field_lowering_preserves_multiple_trailing_comments() {
+    let source = "class Foo {\n    static a = 1; // first\n    static b = 2; // second\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("Foo.a = 1; // first"),
+        "Trailing comment '// first' should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.b = 2; // second"),
+        "Trailing comment '// second' should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Test: static fields without trailing comments still emit correctly.
+#[test]
+fn static_field_lowering_without_trailing_comment() {
+    let source = "class Bar {\n    static x = 42;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("Bar.x = 42;"),
+        "Static field should be lowered correctly.\nOutput:\n{output}"
+    );
+    // Should NOT have any trailing comment text
+    assert!(
+        !output.contains("Bar.x = 42; //"),
+        "Should not have spurious trailing comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_instance_fields_emit_getter_setter_with_weakmap() {
+    let source =
+        "class RegularClass {\n    accessor shouldError: string; // Should still error\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("var _RegularClass_shouldError_accessor_storage;"),
+        "Auto-accessor storage declaration should be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor() {",),
+        "Constructor should be synthesized for auto-accessor initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_RegularClass_shouldError_accessor_storage.set(this, void 0);"),
+        "Auto-accessor storage should initialize to void 0 in constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_RegularClass_shouldError_accessor_storage = new WeakMap();"),
+        "Auto-accessor storage should be initialized with WeakMap after class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "get shouldError() { return __classPrivateFieldGet(this, _RegularClass_shouldError_accessor_storage, \"f\"); } // Should still error",
+        ),
+        "Auto accessor getter should be lowered.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set shouldError(value) { __classPrivateFieldSet(this, _RegularClass_shouldError_accessor_storage, value, \"f\"); }",
+        ),
+        "Auto accessor setter should be lowered.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet"),
+        "Private field helpers should be emitted.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: class with lowered static fields followed by another
+/// statement must not produce an extra blank line. The static field
+/// emission ends with `write_line()` after `ClassName.field = value;`,
+/// so the source-file-level loop must not add a second newline.
+#[test]
+fn no_extra_blank_line_after_static_field_lowering() {
+    let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // Should have `Foo.x = 1;\n` immediately followed by `const y = 2;`
+    // with NO blank line in between.
+    assert!(
+        output.contains("Foo.x = 1;\nconst y = 2;"),
+        "Should not have blank line between lowered static field and next statement.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: class with lowered static field inside a block
+/// (e.g., for-loop body) must not produce an extra blank line before
+/// the next statement in the block.
+#[test]
+fn no_extra_blank_line_after_static_field_in_block() {
+    let source = "for (const x of [1]) {\n    class Row {\n        static factory = 1;\n    }\n    use(Row);\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // Should have `Row.factory = 1;\n    use(Row);` with no blank line.
+    assert!(
+        !output.contains("Row.factory = 1;\n\n"),
+        "Should not have blank line after lowered static field in block.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: `export default class` with static field in CJS mode
+/// must not produce a blank line between the lowered static field init
+/// and the `exports.default = ClassName;` assignment.
+#[test]
+fn no_extra_blank_line_cjs_default_export_with_static_field() {
+    use crate::emitter::ModuleKind;
+
+    let source = "export default class MyComponent {\n    static create = 1;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2017,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // Should have `MyComponent.create = 1;\n` followed by
+    // `exports.default = MyComponent;` with NO blank line.
+    assert!(
+        !output.contains("MyComponent.create = 1;\n\n"),
+        "Should not have blank line between lowered static field and CJS export.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default = MyComponent;"),
+        "Should emit CJS default export assignment.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: private fields (#name) with initializers must be
+/// emitted verbatim at ES2022+ targets even when useDefineForClassFields
+/// is false.  Private fields use native syntax at ES2022+ and are
+/// unaffected by the useDefineForClassFields flag (which only controls
+/// public field semantics).  Previously, the lowering skip logic dropped
+/// them because `identifier_text()` returned empty for `PrivateIdentifier`
+/// nodes, causing them to be neither collected for lowering NOR emitted
+/// in the class body.
+#[test]
+fn private_field_with_initializer_emitted_at_es2022() {
+    let source =
+        "class A {\n    static #field = 10;\n    static #uninitialized;\n    #instance = 1;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    // PrintOptions defaults to use_define_for_class_fields: false via
+    // PrinterOptions::default(), which triggers the class field lowering
+    // path.  At ES2022+ the lowering should still preserve private fields
+    // verbatim.
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("static #field = 10;"),
+        "Static private field with initializer should be emitted at ES2022.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static #uninitialized;"),
+        "Static private field without initializer should be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#instance = 1;"),
+        "Instance private field with initializer should be emitted at ES2022.\nOutput:\n{output}"
+    );
+}
+
+/// Verify that private fields at targets below ES2022 are still handled
+/// by the lowering path (not emitted verbatim with initializers).
+#[test]
+fn private_field_lowered_at_es2015() {
+    let source = "class A {\n    static #field = 10;\n    #instance = 1;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // At ES2015, private fields should NOT appear in the class body
+    // (they should be lowered to WeakMap-based patterns, though the
+    // lowering transform itself may not fully emit them yet).
+    assert!(
+        !output.contains("static #field = 10;"),
+        "Static private field should NOT be emitted verbatim at ES2015.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("#instance = 1;"),
+        "Instance private field should NOT be emitted verbatim at ES2015.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: bodyless method overload signatures are erased,
+/// so their leading comments (JSDoc blocks) must not appear in the output.
+/// Previously, `get_function()` was used instead of `get_method_decl()`,
+/// so `is_erased` was always false for methods.
+#[test]
+fn overload_method_comments_erased() {
+    let source = r#"class C {
+    /** overload 1 */
+    foo(x: number): number;
+    /** overload 2 */
+    foo(x: string): string;
+    /** implementation */
+    foo(x: any): any {
+        return x;
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // Overload JSDoc comments should NOT appear in the output
+    assert!(
+        !output.contains("overload 1"),
+        "JSDoc for overload signature 1 should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("overload 2"),
+        "JSDoc for overload signature 2 should be erased.\nOutput:\n{output}"
+    );
+    // Implementation JSDoc SHOULD appear
+    assert!(
+        output.contains("/** implementation */"),
+        "JSDoc for implementation should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: bodyless constructor overload signatures are erased,
+/// so their leading comments must not appear in the output.
+/// Previously, `get_function()` was used instead of `get_constructor()`,
+/// so `is_erased` was always false for constructors.
+#[test]
+fn overload_constructor_comments_erased() {
+    let source = r#"class C {
+    /** ctor overload 1 */
+    constructor(x: number);
+    /** ctor overload 2 */
+    constructor(x: string);
+    /** ctor implementation */
+    constructor(x: any) {}
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // Overload JSDoc comments should NOT appear
+    assert!(
+        !output.contains("ctor overload 1"),
+        "JSDoc for ctor overload 1 should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("ctor overload 2"),
+        "JSDoc for ctor overload 2 should be erased.\nOutput:\n{output}"
+    );
+    // Implementation JSDoc SHOULD appear
+    assert!(
+        output.contains("/** ctor implementation */"),
+        "JSDoc for ctor implementation should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: when a class member is erased (e.g., a type-only property
+/// at ES2015+ with useDefineForClassFields=false), trailing comments on the same
+/// line as the class closing `}` must NOT be consumed by the erased member's
+/// comment skip logic. For example:
+///   `class C extends E { foo: string; } // error`
+/// The `// error` comment belongs to the `}`, not to the erased `foo: string;`.
+#[test]
+fn erased_member_does_not_consume_trailing_comment_after_closing_brace() {
+    // Single-line class with an erased property and a trailing comment
+    let source = "class C extends E { foo: string; } // error\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("// error"),
+        "Trailing comment after closing brace should be preserved.\nOutput:\n{output}"
+    );
+}
+
+/// Regression test: an erased member's OWN trailing comment (on the same
+/// line, with only whitespace between the `;` and the comment) should still
+/// be consumed. This ensures the fix for closing-brace comments doesn't
+/// regress the basic erased-comment-suppression behavior.
+#[test]
+fn erased_interface_trailing_comment_is_suppressed() {
+    let source = "interface Foo {} // type-only\nconst x = 1;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("// type-only"),
+        "Trailing comment on erased interface should be suppressed.\nOutput:\n{output}"
+    );
+}
+
+/// Abstract methods WITH a body (an error in TS, but tsc still emits them)
+/// must NOT be erased — only bodyless methods should be erased.
+#[test]
+fn abstract_method_with_body_is_emitted() {
+    let source = "abstract class H {\n    abstract baz(): number { return 1; }\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("baz()"),
+        "Abstract method with body should be emitted (tsc parity).\nOutput:\n{output}"
+    );
+}
+
+/// Abstract methods WITHOUT a body should be erased (standard behavior).
+#[test]
+fn abstract_method_without_body_is_erased() {
+    let source = "abstract class G {\n    abstract qux(): number;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("qux"),
+        "Abstract method without body should be erased.\nOutput:\n{output}"
+    );
+}
+
+/// Bodyless non-abstract accessors (error case in TS) must NOT be erased —
+/// tsc emits them with an empty body `{ }`.
+#[test]
+fn bodyless_non_abstract_accessor_is_not_erased() {
+    let source = "class C {\n    get foo(): string;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("foo"),
+        "Bodyless non-abstract accessor should be emitted (tsc parity).\nOutput:\n{output}"
+    );
+}
+
+/// Erased computed property names with potential side effects (property access)
+/// must be emitted as standalone expression statements after the class body.
+/// e.g., `[Symbol.iterator]: Type` → class body erased, then `Symbol.iterator;`
+#[test]
+fn computed_property_side_effect_property_access() {
+    let source = "class C {\n    [Symbol.iterator]: any;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("}\nSymbol.iterator;"),
+        "Computed property access expression should be emitted as side-effect statement.\nOutput:\n{output}"
+    );
+}
+
+/// Simple identifier computed property names should NOT produce side-effect
+/// statements — tsc does not emit them (no observable side effects).
+#[test]
+fn computed_property_no_side_effect_for_identifier() {
+    let source = "class C {\n    [x]: string;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("x;"),
+        "Simple identifier computed property should NOT produce side-effect statement.\nOutput:\n{output}"
+    );
+}
+
+/// String literal computed property names should NOT produce side-effect
+/// statements — string literals have no observable side effects.
+#[test]
+fn computed_property_no_side_effect_for_string_literal() {
+    let source = "class C {\n    [\"a\"]: string;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("\"a\";"),
+        "String literal computed property should NOT produce side-effect statement.\nOutput:\n{output}"
+    );
+}
+
+/// Trailing comment on class body opening `{` should be suppressed.
+/// tsc: `class E extends A {` (comment dropped)
+#[test]
+fn class_body_brace_trailing_comment_suppressed() {
+    let source =
+        "class E extends A { // error -- doesn't implement bar\n    foo() { return 1; }\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("// error"),
+        "Trailing comment on class body `{{` should be suppressed.\nOutput:\n{output}"
+    );
+}
+
+/// Comment inside class body (not on opening brace) should still be preserved.
+#[test]
+fn class_body_inner_comment_preserved() {
+    let source = "class C {\n    // this is a method\n    foo() { return 1; }\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("// this is a method"),
+        "Leading comment of class member should be preserved.\nOutput:\n{output}"
+    );
+}
