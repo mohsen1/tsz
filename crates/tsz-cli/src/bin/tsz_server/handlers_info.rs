@@ -260,7 +260,9 @@ impl Server {
             ));
         }
         candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
-            arena, offset, source_text,
+            arena,
+            offset,
+            source_text,
         ));
         for node_idx in candidates {
             if node_idx.is_none() {
@@ -327,7 +329,9 @@ impl Server {
             ));
         }
         candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
-            arena, offset, source_text,
+            arena,
+            offset,
+            source_text,
         ));
         for node_idx in candidates {
             let Some(node) = arena.get(node_idx) else {
@@ -402,7 +406,8 @@ impl Server {
     ) -> Vec<tsz_common::position::Location> {
         let mut out = Vec::new();
         for file_path in self.open_files.keys() {
-            let Some((arena, _binder, root, source_text)) = self.parse_and_bind_file(file_path) else {
+            let Some((arena, _binder, root, source_text)) = self.parse_and_bind_file(file_path)
+            else {
                 continue;
             };
             let Some(source_file) = arena.get_source_file_at(root) else {
@@ -500,17 +505,16 @@ impl Server {
         out
     }
 
-    fn quoted_specifier_alias_closure(
-        &self,
-        seed_name: &str,
-    ) -> rustc_hash::FxHashSet<String> {
+    fn quoted_specifier_alias_closure(&self, seed_name: &str) -> rustc_hash::FxHashSet<String> {
         let mut names: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
         names.insert(seed_name.to_string());
         let mut changed = true;
         while changed {
             changed = false;
             for file_path in self.open_files.keys() {
-                let Some((arena, _binder, root, _source_text)) = self.parse_and_bind_file(file_path) else {
+                let Some((arena, _binder, root, _source_text)) =
+                    self.parse_and_bind_file(file_path)
+                else {
                     continue;
                 };
                 let Some(source_file) = arena.get_source_file_at(root) else {
@@ -590,7 +594,8 @@ impl Server {
             merged_refs.extend(canonical_refs);
         }
         if merged_refs.is_empty() {
-            let seed_name = Self::quoted_specifier_literal_at_offset(arena, source_text, query_offset)?;
+            let seed_name =
+                Self::quoted_specifier_literal_at_offset(arena, source_text, query_offset)?;
             let names = self.quoted_specifier_alias_closure(&seed_name);
             let mut only_textual = self.quoted_specifier_symbol_locations_for_names(&names);
             only_textual.sort_by(|a, b| {
@@ -625,7 +630,8 @@ impl Server {
             if start_cmp != std::cmp::Ordering::Equal {
                 return start_cmp;
             }
-            (a.range.end.line, a.range.end.character).cmp(&(b.range.end.line, b.range.end.character))
+            (a.range.end.line, a.range.end.character)
+                .cmp(&(b.range.end.line, b.range.end.character))
         });
         merged_refs.dedup_by(|a, b| a.file_path == b.file_path && a.range == b.range);
         let filtered: Vec<_> = merged_refs
@@ -1116,8 +1122,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let raw_offset = line_map.position_to_offset(position, &source_text)?;
-            let offset =
-                Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_offset);
+            let offset = Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_offset);
             let position = line_map.offset_to_position(offset, &source_text);
             if Self::is_offset_inside_comment(&source_text, offset) {
                 return None;
@@ -1170,8 +1175,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let raw_offset = line_map.position_to_offset(position, &source_text)?;
-            let offset =
-                Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_offset);
+            let offset = Self::adjusted_quoted_specifier_offset(&arena, &source_text, raw_offset);
             let position = line_map.offset_to_position(offset, &source_text);
             if Self::is_offset_inside_comment(&source_text, offset) {
                 return None;
@@ -1383,12 +1387,9 @@ impl Server {
                 && let Some(locs) =
                     project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
             {
-                let restrict_to_quoted = Self::quoted_specifier_literal_at_offset(
-                    &arena,
-                    &source_text,
-                    query_offset,
-                )
-                .is_some();
+                let restrict_to_quoted =
+                    Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset)
+                        .is_some();
                 let definition_locs = vec![canonical_loc];
                 let refs: Vec<serde_json::Value> = locs
                     .iter()
@@ -1601,16 +1602,14 @@ impl Server {
                 && let Some(locs) =
                     project.find_references(&canonical_loc.file_path, canonical_loc.range.start)
             {
-                let restrict_to_quoted = Self::quoted_specifier_literal_at_offset(
-                    &arena,
-                    &source_text,
-                    query_offset,
-                )
-                .is_some();
+                let restrict_to_quoted =
+                    Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset)
+                        .is_some();
                 let mut grouped: rustc_hash::FxHashMap<String, Vec<serde_json::Value>> =
                     rustc_hash::FxHashMap::default();
                 for loc in locs {
-                    if restrict_to_quoted && !self.is_quoted_import_or_export_specifier_location(&loc)
+                    if restrict_to_quoted
+                        && !self.is_quoted_import_or_export_specifier_location(&loc)
                     {
                         continue;
                     }
