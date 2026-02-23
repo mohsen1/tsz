@@ -827,3 +827,80 @@ Investigated but punted:
   Reason: still resolves rename/findReferences through local alias symbols (`foo`/`first`) instead of quoted export-name symbol identity under fourslash marker flows; full parity needs deeper symbol identity modeling for quoted import/export specifiers, not only handler-level offset probing and post-filtering.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same unresolved quoted export-name symbol identity gap as `_types`; handler-level quoted-location aggregation improves targeted tsserver behavior but does not yet match fourslash baseline defId/context grouping semantics.
+
+## 2026-02-23 (quoted alias chain references follow-up)
+
+Completed in this pass:
+- Hardened quoted import/export specifier detection in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` to derive quoted names from enclosing import/export specifier nodes, not just the cursor token.
+- Removed over-restrictive quoted-only filtering from quoted alias-chain reference aggregation so linked local alias usages can participate in `references`/`rename` results.
+- Added focused unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_type_only_quoted_alias_references_work_from_type_keyword_offset`
+  - updated `test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers` to assert local alias usage participation.
+- Validation:
+  - `cargo nextest run -p tsz-cli test_type_only_quoted_alias_references_work_from_type_keyword_offset test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers` passes.
+  - `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: still diverges in baseline rename/go-to-definition/find-all-references shaping (quoted token span normalization + canonical symbol identity/defId grouping) and needs deeper tsserver/fourslash parity work beyond this offset/aggregation patch.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same remaining parity gap as `_types`; current fixes improve handler robustness but do not yet align baseline symbol identity and range/rendering semantics.
+
+## 2026-02-23 (quoted type-only alias definition probe follow-up)
+
+Completed in this pass:
+- Improved quoted alias target extraction in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` by:
+  - probing adjacent AST offsets for import/export specifier discovery,
+  - accepting string-literal specifier names from either `name` or `property_name`,
+  - adding a textual fallback parser for quoted import/export alias lines when AST node shape is incomplete.
+- Tightened canonical alias-definition resolution for local export aliases to return the precise local token span (`foo` in `export { foo as "..." }`) instead of broad declaration spans that could re-resolve to the local import alias.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol`.
+
+Verification:
+- `cargo nextest run -p tsz-cli test_definition_type_only_quoted_import_alias_resolves_to_exported_symbol` passes.
+- `./scripts/run-fourslash.sh --skip-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+- `cargo nextest run -p tsz-lsp` passes (`738` tests).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: remaining baseline gaps still require deeper tsserver parity for quoted alias-chain `findAllReferences`/rename symbol identity grouping (beyond this definition-targeted fix).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same unresolved quoted alias-chain references/rename grouping parity as `_types`; current pass only fixed a definition-path subtype.
+
+## 2026-02-23 (quoted alias location-filter follow-up)
+
+Completed in this pass:
+- Tightened quoted alias location filtering in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` so quoted-alias rename/reference aggregation only keeps actual string-literal import/export specifier nodes (not arbitrary offsets within specifier clauses).
+- Restored quoted-only filtering in quoted-alias reference merge paths for `references` fallback handling.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_rename_from_export_quoted_alias_filters_non_specifier_locations`.
+
+Verification:
+- `cargo nextest run -p tsz-cli --bin tsz-server test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers test_rename_from_export_quoted_alias_filters_non_specifier_locations test_type_only_quoted_alias_references_work_from_type_keyword_offset` passes.
+- `./scripts/run-fourslash.sh --max=200` remains `198/200` (same two failures).
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: still needs deeper `references-full` quoted alias symbol-grouping/defId parity (multi-definition aggregation and detail shaping), beyond location filtering.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same unresolved `references-full` quoted alias symbol-grouping parity as `_types`.
+
+## 2026-02-23 (quoted alias references-full span normalization follow-up)
+
+Completed in this pass:
+- Tightened quoted import/export specifier location handling in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` by normalizing string-literal spans to inner text ranges for quoted alias discovery helpers.
+- Added alias-aware `references-full` fallback plumbing for quoted specifier queries and preserved quoted-only behavior for `references`/`rename` request paths.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs`:
+  - `test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs`.
+
+Verification:
+- `cargo nextest run -p tsz-cli test_quoted_alias_chain_references_and_rename_stay_on_quoted_specifiers test_references_full_quoted_alias_uses_inner_literal_span_and_cross_file_refs` passes.
+- `./scripts/run-fourslash.sh --skip-ts-build --skip-cargo-build --max=200` remains `198/200` (no sampled regression, no sampled improvement).
+- `cargo nextest run -p tsz-lsp` passes; `cargo nextest run -p tsz-cli -E 'not test(tsc_compat_)'` passes.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: remaining baseline mismatch is still in tsserver `references-full` definition/detail shaping (defId/context grouping and canonical symbol identity for quoted alias chains), which needs a broader alias-symbol modeling pass than this targeted span/offset fix.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same unresolved `references-full` alias-symbol identity/detail-shaping parity gap as `_types`.
