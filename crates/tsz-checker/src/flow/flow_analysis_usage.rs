@@ -646,6 +646,13 @@ impl<'a> CheckerState<'a> {
         // don't have direct flow nodes recorded — the binder only records flow
         // for statements and declarations. Walk up the AST to find the nearest
         // ancestor with a flow node, mirroring `apply_flow_narrowing`'s fallback.
+        //
+        // IMPORTANT: Compound read-write operations (++, --, +=, -=, **=, etc.)
+        // create flow ASSIGNMENT nodes, but the variable is READ before it is
+        // written. If the identifier is the operand of such an operation, we must
+        // skip that parent's flow node and use a flow node from earlier in the
+        // control flow graph. Otherwise `++NUMBER` would see its own assignment
+        // and incorrectly conclude that `NUMBER` is definitely assigned.
         let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
             flow
         } else {
@@ -656,6 +663,15 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                    // Check if this parent is a compound read-write operation
+                    // (++, --, +=, -=, **=, etc.) where the identifier is the
+                    // target. If so, skip this flow node — the read happens
+                    // BEFORE the assignment, so we need the prior flow state.
+                    if self.is_compound_read_write_target(parent, idx) {
+                        // Skip this flow node and keep walking up
+                        current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                        continue;
+                    }
                     found = Some(flow);
                     break;
                 }
@@ -682,6 +698,50 @@ impl<'a> CheckerState<'a> {
         .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         analyzer.is_definitely_assigned(idx, flow_node)
+    }
+
+    /// Check if `parent_idx` is a compound read-write operation (prefix/postfix
+    /// `++`/`--`, or compound assignment like `+=`, `-=`, `**=`) and `ident_idx`
+    /// is the target operand that is read before being written.
+    fn is_compound_read_write_target(&self, parent_idx: NodeIndex, ident_idx: NodeIndex) -> bool {
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        // Prefix/postfix ++/-- (e.g., `++x`, `x--`)
+        if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node) {
+                return (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    && unary.operand == ident_idx;
+            }
+
+        // Compound assignment operators (+=, -=, *=, /=, %=, **=, <<=, >>=, >>>=, &=, |=, ^=, &&=, ||=, ??=)
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node) {
+                let is_compound_assign = matches!(
+                    bin.operator_token,
+                    op if op == SyntaxKind::PlusEqualsToken as u16
+                        || op == SyntaxKind::MinusEqualsToken as u16
+                        || op == SyntaxKind::AsteriskEqualsToken as u16
+                        || op == SyntaxKind::SlashEqualsToken as u16
+                        || op == SyntaxKind::PercentEqualsToken as u16
+                        || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                        || op == SyntaxKind::LessThanLessThanEqualsToken as u16
+                        || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                        || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                        || op == SyntaxKind::AmpersandEqualsToken as u16
+                        || op == SyntaxKind::BarEqualsToken as u16
+                        || op == SyntaxKind::CaretEqualsToken as u16
+                        || op == SyntaxKind::BarBarEqualsToken as u16
+                        || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                        || op == SyntaxKind::QuestionQuestionEqualsToken as u16
+                );
+                return is_compound_assign && bin.left == ident_idx;
+            }
+
+        false
     }
 
     // =========================================================================
