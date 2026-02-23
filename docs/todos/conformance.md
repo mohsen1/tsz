@@ -8,14 +8,11 @@
 
 ### Remaining issues
 
-- **Fingerprint line number mismatch**: ~19 additional tests match at error-code level
-  but fail fingerprint comparison because JSON key ordering in the generated tsconfig
-  differs from the cache generator. The cache generator (JS) preserves insertion order
-  via JavaScript Object property ordering. Our runner uses `HashMap` which loses order.
-  Partial fix: added `option_order` tracking from test parser to `convert_options_to_tsconfig`,
-  but strict-family defaults are appended after directive options, shifting line numbers.
-  - Fix: Either stop adding strict defaults to tsconfig (let tsz handle internally) or
-    match the cache generator's exact tsconfig format including strict defaults placement.
+- **Fingerprint line number mismatch (tsconfig)**: Both the cache generator and runner
+  now sort tsconfig keys alphabetically, so key ordering is NOT a source of mismatch.
+  Remaining fingerprint-level failures in config-diagnostic tests are caused by deeper
+  semantic differences: line/column positions from strict-family defaults placement,
+  message text variations, and missing/extra diagnostics.
 
 ## TS2693 — suppress parse-recovery cascades for `new number[]` (Fixed)
 
