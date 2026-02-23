@@ -37,6 +37,76 @@ fn sanitize_artifact_name(path: &str) -> String {
         .collect()
 }
 
+/// Filter diagnostics from `.lib/` test library files out of tsz results.
+///
+/// Our conformance wrapper resolves `/// <reference path="/.lib/react16.d.ts" />`
+/// by copying lib files into the temp dir. This lets tsz type-check them and emit
+/// errors (e.g. TS2430) that tsc never sees — tsc emits TS6053 "file not found"
+/// instead. Filtering these avoids false positive mismatches.
+fn is_lib_diagnostic(fp: &DiagnosticFingerprint) -> bool {
+    fp.file.starts_with(".lib/")
+        || fp.file.starts_with("/.lib/")
+        || fp.message_key.contains("/.lib/")
+        || fp.message_key.contains(".lib/")
+}
+
+fn filter_lib_diagnostics_tsz(
+    mut result: tsz_wrapper::CompilationResult,
+) -> tsz_wrapper::CompilationResult {
+    let had_lib = result
+        .diagnostic_fingerprints
+        .iter()
+        .any(|fp| is_lib_diagnostic(fp));
+    if !had_lib {
+        return result;
+    }
+    // Collect codes that ONLY appear in .lib/ fingerprints
+    let lib_only_codes: std::collections::HashSet<u32> = {
+        let lib_codes: std::collections::HashSet<u32> = result
+            .diagnostic_fingerprints
+            .iter()
+            .filter(|fp| is_lib_diagnostic(fp))
+            .map(|fp| fp.code)
+            .collect();
+        let non_lib_codes: std::collections::HashSet<u32> = result
+            .diagnostic_fingerprints
+            .iter()
+            .filter(|fp| !is_lib_diagnostic(fp))
+            .map(|fp| fp.code)
+            .collect();
+        lib_codes.difference(&non_lib_codes).cloned().collect()
+    };
+    result
+        .diagnostic_fingerprints
+        .retain(|fp| !is_lib_diagnostic(fp));
+    result.error_codes.retain(|c| !lib_only_codes.contains(c));
+    result
+}
+
+/// Filter `.lib/` artifacts from tsc cache results.
+///
+/// tsc emits TS6053 for unresolved `/.lib/` references. Since our wrapper
+/// resolves them, these TS6053 entries are artifacts that should not count
+/// as "missing" diagnostics.
+fn filter_lib_diagnostics_tsc(
+    tsc_result: &crate::tsc_results::TscResult,
+) -> (Vec<u32>, Vec<DiagnosticFingerprint>) {
+    let mut codes = tsc_result.error_codes.clone();
+    let mut fps = tsc_result.diagnostic_fingerprints.clone();
+
+    let had_lib = fps.iter().any(|fp| is_lib_diagnostic(fp));
+    if !had_lib {
+        return (codes, fps);
+    }
+
+    fps.retain(|fp| !is_lib_diagnostic(fp));
+    // Remove TS6053 from error codes if no non-.lib/ TS6053 remains
+    if !fps.iter().any(|fp| fp.code == 6053) {
+        codes.retain(|c| *c != 6053);
+    }
+    (codes, fps)
+}
+
 /// Collects paths of crashed and timed-out tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -683,10 +753,13 @@ impl Runner {
                         crashed: false,
                         options: options.clone(),
                     };
+                    // Filter .lib/ diagnostics (see filter functions for explanation)
+                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
 
                     // Compare error codes
                     let tsc_codes: std::collections::HashSet<_> =
-                        tsc_result.error_codes.iter().cloned().collect();
+                        tsc_error_codes.iter().cloned().collect();
                     let tsz_codes: std::collections::HashSet<_> =
                         compile_result.error_codes.iter().cloned().collect();
 
@@ -696,7 +769,7 @@ impl Runner {
                     let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
 
                     let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_result.diagnostic_fingerprints.iter().cloned().collect();
+                        tsc_fps.iter().cloned().collect();
                     let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
                         compile_result
                             .diagnostic_fingerprints
@@ -851,8 +924,12 @@ impl Runner {
                         return Ok((TestResult::Crashed, file_preview.take()));
                     }
 
+                    // Filter .lib/ diagnostics (see variant path for explanation)
+                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
+
                     let tsc_codes: std::collections::HashSet<_> =
-                        tsc_result.error_codes.iter().cloned().collect();
+                        tsc_error_codes.iter().cloned().collect();
                     let tsz_codes: std::collections::HashSet<_> =
                         compile_result.error_codes.iter().cloned().collect();
 
@@ -860,7 +937,7 @@ impl Runner {
                     let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
 
                     let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_result.diagnostic_fingerprints.iter().cloned().collect();
+                        tsc_fps.iter().cloned().collect();
                     let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
                         compile_result
                             .diagnostic_fingerprints
@@ -1009,15 +1086,19 @@ impl Runner {
                         return Ok((TestResult::Crashed, file_preview.take()));
                     }
 
+                    // Filter .lib/ diagnostics (see variant path for explanation)
+                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
+
                     let tsc_codes: std::collections::HashSet<_> =
-                        tsc_result.error_codes.iter().cloned().collect();
+                        tsc_error_codes.iter().cloned().collect();
                     let tsz_codes: std::collections::HashSet<_> =
                         compile_result.error_codes.iter().cloned().collect();
 
                     let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
                     let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
                     let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_result.diagnostic_fingerprints.iter().cloned().collect();
+                        tsc_fps.iter().cloned().collect();
                     let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
                         compile_result
                             .diagnostic_fingerprints
@@ -1092,5 +1173,147 @@ impl Runner {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tsc_results::{DiagnosticFingerprint, FileMetadata, TscResult};
+
+    fn fp(code: u32, file: &str, msg: &str) -> DiagnosticFingerprint {
+        DiagnosticFingerprint {
+            code,
+            file: file.to_string(),
+            line: 1,
+            column: 1,
+            message_key: msg.to_string(),
+        }
+    }
+
+    #[test]
+    fn is_lib_diagnostic_detects_lib_files() {
+        assert!(is_lib_diagnostic(&fp(
+            2430,
+            ".lib/react16.d.ts",
+            "Interface 'X' incorrectly extends 'Y'."
+        )));
+        assert!(is_lib_diagnostic(&fp(
+            6053,
+            "test.tsx",
+            "File '/.lib/react.d.ts' not found."
+        )));
+        assert!(!is_lib_diagnostic(&fp(
+            2322,
+            "test.ts",
+            "Type 'A' is not assignable to type 'B'."
+        )));
+    }
+
+    #[test]
+    fn filter_tsz_removes_lib_only_codes() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2430, 2322],
+            diagnostic_fingerprints: vec![
+                fp(2430, ".lib/react16.d.ts", "Interface error"),
+                fp(2322, "test.ts", "Type mismatch"),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert_eq!(filtered.error_codes, vec![2322]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
+        assert_eq!(filtered.diagnostic_fingerprints[0].code, 2322);
+    }
+
+    #[test]
+    fn filter_tsz_preserves_code_appearing_in_both_lib_and_non_lib() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2430],
+            diagnostic_fingerprints: vec![
+                fp(2430, ".lib/react16.d.ts", "Interface error in lib"),
+                fp(2430, "test.ts", "Interface error in user code"),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert_eq!(filtered.error_codes, vec![2430]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 1);
+        assert_eq!(filtered.diagnostic_fingerprints[0].file, "test.ts");
+    }
+
+    #[test]
+    fn filter_tsz_noop_when_no_lib_diagnostics() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![2322, 2345],
+            diagnostic_fingerprints: vec![
+                fp(2322, "test.ts", "Type mismatch"),
+                fp(2345, "test.ts", "Arg type error"),
+            ],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert_eq!(filtered.error_codes, vec![2322, 2345]);
+        assert_eq!(filtered.diagnostic_fingerprints.len(), 2);
+    }
+
+    #[test]
+    fn filter_tsc_removes_lib_6053() {
+        let tsc_result = TscResult {
+            metadata: FileMetadata {
+                mtime_ms: 0,
+                size: 0,
+                typescript_version: None,
+            },
+            error_codes: vec![6053, 2322],
+            diagnostic_fingerprints: vec![
+                fp(6053, "test.tsx", "File '/.lib/react16.d.ts' not found."),
+                fp(2322, "test.ts", "Type mismatch"),
+            ],
+        };
+        let (codes, fps) = filter_lib_diagnostics_tsc(&tsc_result);
+        assert_eq!(codes, vec![2322]);
+        assert_eq!(fps.len(), 1);
+        assert_eq!(fps[0].code, 2322);
+    }
+
+    #[test]
+    fn filter_tsc_preserves_6053_from_non_lib() {
+        let tsc_result = TscResult {
+            metadata: FileMetadata {
+                mtime_ms: 0,
+                size: 0,
+                typescript_version: None,
+            },
+            error_codes: vec![6053],
+            diagnostic_fingerprints: vec![
+                fp(6053, "test.tsx", "File '/.lib/react16.d.ts' not found."),
+                fp(6053, "test.ts", "File 'missing.d.ts' not found."),
+            ],
+        };
+        let (codes, fps) = filter_lib_diagnostics_tsc(&tsc_result);
+        assert_eq!(codes, vec![6053]);
+        assert_eq!(fps.len(), 1);
+        assert_eq!(fps[0].message_key, "File 'missing.d.ts' not found.");
+    }
+
+    #[test]
+    fn filter_tsz_removes_6053_with_lib_in_message() {
+        let result = tsz_wrapper::CompilationResult {
+            error_codes: vec![6053],
+            diagnostic_fingerprints: vec![fp(
+                6053,
+                "test.tsx",
+                "File '/.lib/react.d.ts' not found.",
+            )],
+            crashed: false,
+            options: Default::default(),
+        };
+        let filtered = filter_lib_diagnostics_tsz(result);
+        assert!(filtered.error_codes.is_empty());
+        assert!(filtered.diagnostic_fingerprints.is_empty());
     }
 }
