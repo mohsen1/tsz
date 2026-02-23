@@ -20,6 +20,7 @@
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
 #   TSZ_SKIP_LINT_PARITY=1   Skip CI parity lint commands
+#   TSZ_SKIP_WASM_LINT=1     Skip wasm32 lint gate
 #   TSZ_CLEAN_STALE_DAYS=7   Remove build artifacts older than N days
 #   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
 #   TSZ_TEST_ALL=1           Force testing all crates
@@ -35,6 +36,7 @@ cd "$ROOT_DIR"
 SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 SKIP_LINT_PARITY="${TSZ_SKIP_LINT_PARITY:-}"
+SKIP_WASM_LINT="${TSZ_SKIP_WASM_LINT:-}"
 CLEAN_STALE_DAYS="${TSZ_CLEAN_STALE_DAYS:-7}"
 
 echo "Pre-commit checks..."
@@ -306,6 +308,20 @@ else
     }
 fi
 echo "  Clippy passed (zero warnings)"
+
+# ─── 4.25. Rustc warnings gate (wasm32 target, affected crates) ─────────────
+if [ "$SKIP_WASM_LINT" = "1" ]; then
+    echo "  wasm32 lint gate skipped (TSZ_SKIP_WASM_LINT=1)"
+else
+    echo "3.25/5 Rustc warnings gate (wasm32, affected crates)..."
+    WASM_CHECK_OUTPUT=$(RUSTFLAGS="-D warnings" cargo check $CLIPPY_PKGS --target wasm32-unknown-unknown --lib 2>&1) || {
+        echo ""
+        echo "ERROR: wasm32 check failed (rustc warnings denied):"
+        echo "$WASM_CHECK_OUTPUT" | tail -30
+        exit 1
+    }
+    echo "  wasm32 rustc warnings gate passed"
+fi
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
 echo "3.5/5 Checker boundary guardrail..."
