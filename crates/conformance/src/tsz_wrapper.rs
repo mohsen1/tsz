@@ -141,14 +141,15 @@ pub fn prepare_test_dir(
     let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
-    // Set allowJs when explicitly requested via @allowJs directive,
-    // or when @checkJs is true (checkJs implies allowJs, matching tsc's test harness behavior).
+    // Set allowJs when explicitly requested via @allowJs directive.
+    // Do not force allowJs=true when checkJs=true if allowJs is explicitly false;
+    // tsc emits TS5052 in that configuration.
     let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
     let check_js = options
         .get("checkJs")
         .or_else(|| options.get("checkjs"))
         .is_some_and(|v| v == "true");
-    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
+    let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
     // Match the cache generator's include patterns exactly.
     // The tsc cache always uses .ts/.tsx/.js/.jsx (no .cts/.mts/.mjs/.cjs).
     let include = serde_json::json!([
@@ -164,9 +165,11 @@ pub fn prepare_test_dir(
             map.insert("strict".to_string(), serde_json::Value::Bool(true));
 
             if check_js {
-                // checkJs implies allowJs in tsc test harness behavior, even when
-                // @allowJs:false is present.
-                map.insert("allowJs".to_string(), serde_json::Value::Bool(true));
+                if explicit_allow_js.is_none() {
+                    // Keep historical harness behavior for tests that set checkJs
+                    // without explicitly specifying allowJs.
+                    map.insert("allowJs".to_string(), serde_json::Value::Bool(true));
+                }
                 map.insert("checkJs".to_string(), serde_json::Value::Bool(true));
             } else if allow_js {
                 map.entry("allowJs")
