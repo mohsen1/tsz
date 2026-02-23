@@ -1,8 +1,30 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5184/7258 = 71.4% JS, 420/1047 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9744/13623 = 71.5% JS, 777/1995 = 38.9% DTS)
 
 ### Fixed This Session
+- **Preserve inner comments in empty function/constructor bodies and static block IIFEs** (+21 JS):
+  tsc preserves comments inside otherwise-empty function/method/constructor bodies when those
+  comments are on a different line from the opening `{` (not trailing same-line comments, which
+  are correctly suppressed). Three bugs fixed:
+  (1) `emit_block()` empty function-body path: after `skip_trailing_same_line_comments`, the code
+  wrote `{ }` or `{\n}` without emitting remaining inner comments on subsequent lines. Now checks
+  for unemitted comments after the same-line skip and emits them with proper indentation.
+  (2) `emit_constructor_body_with_prologue` empty body early-return: had no comment handling at all.
+  Added the same skip-then-check-remaining pattern.
+  (3) Static block IIFE lowering: `skip_comments_for_erased_node()` consumed all inner comments when
+  deferring the block. Now saves `comment_emit_idx` of inner comments before skipping, then restores
+  it when emitting the IIFE so `emit_block` replays them inside `(() => { ... })()`.
+  Three unit tests added.
+  Tests fixed: `callOverloads1/3/4/5`, `classOrder1`, `missingReturnStatement1`,
+  `classStaticBlock19`, `castOfYield`, `computedPropertyNames36/37/40/41/43_ES5`,
+  `implicitAnyFromCircularInference(es5)`, `declarationEmitLocalClassDeclarationMixin`,
+  `directDependenceBetweenTypeAliases`, `partiallyAnnotatedFunctionInferenceError`,
+  `partiallyAnnotatedFunctionInferenceWithTypeParameter`, `unqualifiedCallToClassStatic1`,
+  `typedefOnSemicolonClassElement`, and others.
+  JS: 9723→9744, DTS: unchanged, zero regressions.
+
+### Previously Fixed
 - **Suppress trailing comments on empty function body and class body opening braces** (+21 JS, +1 DTS):
   tsc drops same-line comments on the opening `{` of function/method/arrow body blocks and class
   body blocks. The existing suppression only covered non-empty function bodies. Two gaps:
@@ -587,6 +609,24 @@
 
 ### Investigated but Deferred
 
+- **Class field lowering drops inter-field comments (~3 sole-fix tests)**: When class fields like
+  `Field: number = this.num;` are lowered into the constructor body (targets < ES2022), comments
+  between field declarations (e.g., `// Or swap these two lines`) are not carried into the lowered
+  constructor prologue. The `emit_constructor_body_with_prologue` collects field names and
+  initializers but doesn't scan for inter-field comments. Affects `classVarianceCircularity`,
+  `conflictingTypeParameterSymbolTransfer`, and similar tests. Separate from the empty-body comment
+  fix (which handles comment-only bodies, not bodies with statements).
+- **Sole-fix dropped comments at file/statement level (~5 remaining)**: Several tests have a single
+  dropped comment that doesn't fall into function-body or field-lowering patterns:
+  `commaOperatorInvalidAssignmentType` (top-level comment dropped), `spreadContextualTypedBindingPattern`
+  (comment before destructured const), `booleanLiteralsContextuallyTypedFromUnion` (triple-slash ref),
+  `resolveNameWithNamspace` (triple-slash ref), `properties(es2015/es5)` (class expression static
+  properties — separate transform issue). These may share a common root cause in the comment-before-pos
+  logic not finding comments that precede certain statement types.
+- **Triple-slash `/// <reference>` and `/// <amd-module>` dropped at specific positions (~4 sole-fix tests)**:
+  `augmentExportEquals3_1`, `augmentExportEquals4_1`, `declarationEmitAmdModuleNameDirective`,
+  `umdNamedAmdMode`. These emit an extra `/// <reference>` or `/// <amd-module>` line that tsc strips.
+  Overlaps with the existing deferred "triple-slash reference directives in JS output" item.
 - **Computed property name side-effects with hoisted temp variables (~6 multi-issue tests)**: When a class
   has MULTIPLE computed properties (both erased and non-erased), tsc hoists all computed name expressions
   into a single comma expression with temp variables to preserve evaluation order (e.g.,
