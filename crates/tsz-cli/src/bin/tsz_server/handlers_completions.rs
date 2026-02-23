@@ -452,21 +452,19 @@ impl Server {
         if required_names.is_empty() {
             return Vec::new();
         }
-        let local_underscored = self.class_member_snippet_underscored_type_names(file_name, source_text, &[]);
+        let local_underscored =
+            self.class_member_snippet_underscored_type_names(file_name, source_text, &[]);
         let alias_sources = self.recursive_default_import_alias_sources(file_name, source_text);
         let mut changes = Vec::new();
         for required_name in required_names {
             if local_underscored.contains(&required_name) && source_text.contains(&required_name) {
                 continue;
             }
-            let source = alias_sources
-                .get(&required_name)
-                .cloned()
-                .or_else(|| {
-                    required_name
-                        .strip_suffix('_')
-                        .and_then(|base| alias_sources.get(base).cloned())
-                });
+            let source = alias_sources.get(&required_name).cloned().or_else(|| {
+                required_name
+                    .strip_suffix('_')
+                    .and_then(|base| alias_sources.get(base).cloned())
+            });
             let Some(source) = source else {
                 continue;
             };
@@ -498,9 +496,11 @@ impl Server {
             for (alias, source) in Self::default_import_aliases_in_source(&current_source) {
                 out.entry(alias).or_insert(source);
             }
-            for path in
-                Self::resolve_imported_module_files(&current_path, &current_source, &self.open_files)
-            {
+            for path in Self::resolve_imported_module_files(
+                &current_path,
+                &current_source,
+                &self.open_files,
+            ) {
                 if visited.contains(&path) {
                     continue;
                 }
@@ -680,19 +680,19 @@ impl Server {
                 out.insert(item.label.clone());
             }
         }
-        let mut queue = std::collections::VecDeque::from([(
-            file_name.to_string(),
-            source_text.to_string(),
-        )]);
+        let mut queue =
+            std::collections::VecDeque::from([(file_name.to_string(), source_text.to_string())]);
         let mut visited = BTreeSet::new();
         while let Some((current_path, current_source)) = queue.pop_front() {
             if !visited.insert(current_path.clone()) {
                 continue;
             }
             Self::collect_underscored_type_names_from_source(&current_source, &mut out);
-            for path in
-                Self::resolve_imported_module_files(&current_path, &current_source, &self.open_files)
-            {
+            for path in Self::resolve_imported_module_files(
+                &current_path,
+                &current_source,
+                &self.open_files,
+            ) {
                 if visited.contains(&path) {
                     continue;
                 }
@@ -1251,7 +1251,15 @@ impl Server {
             with_ext.push(ext);
             push(std::path::PathBuf::from(with_ext));
         }
-        for leaf in ["index.d.ts", "index.ts", "index.tsx", "index.js", "index.jsx", "index.mts", "index.cts"] {
+        for leaf in [
+            "index.d.ts",
+            "index.ts",
+            "index.tsx",
+            "index.js",
+            "index.jsx",
+            "index.mts",
+            "index.cts",
+        ] {
             push(base.join(leaf));
         }
     }
@@ -1808,7 +1816,8 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let mut project_items = self.project_completion_items(file, position, Some(preferences));
+            let mut project_items =
+                self.project_completion_items(file, position, Some(preferences));
             let is_member_completion = completion_result
                 .as_ref()
                 .is_some_and(|result| result.is_member_completion);
@@ -1970,12 +1979,13 @@ impl Server {
                         if item.source.as_deref() == Some("ClassMemberSnippet/")
                             && let Some(insert_text) = item.insert_text.as_deref()
                         {
-                            let mut synthesized = Self::class_member_snippet_synthesized_text_changes(
-                                &source_text,
-                                insert_text,
-                                &item.label,
-                                &project_items,
-                            );
+                            let mut synthesized =
+                                Self::class_member_snippet_synthesized_text_changes(
+                                    &source_text,
+                                    insert_text,
+                                    &item.label,
+                                    &project_items,
+                                );
                             if synthesized.is_empty() {
                                 synthesized = self
                                     .class_member_snippet_transitive_default_import_text_changes(
@@ -3009,7 +3019,10 @@ mod tests {
             &project_items,
         );
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "import Document_ from \"./document.js\";\n");
+        assert_eq!(
+            edits[0].new_text,
+            "import Document_ from \"./document.js\";\n"
+        );
     }
 
     #[test]
@@ -3085,8 +3098,11 @@ mod tests {
         );
         let source = "import Node from \"./node.js\";\n";
 
-        let resolved =
-            Server::resolve_imported_module_files("/workspace/src/container.ts", source, &open_files);
+        let resolved = Server::resolve_imported_module_files(
+            "/workspace/src/container.ts",
+            source,
+            &open_files,
+        );
 
         assert!(
             resolved.iter().any(|path| path == "/workspace/src/node.ts"),
