@@ -10,11 +10,7 @@ impl<'a> CheckerState<'a> {
     /// Get the type of a property by name.
     ///
     /// Returns the property type if found, or None otherwise.
-    pub fn get_object_property_type(
-        &self,
-        object_type: TypeId,
-        property_name: &str,
-    ) -> Option<TypeId> {
+    fn get_object_property_type(&self, object_type: TypeId, property_name: &str) -> Option<TypeId> {
         let shape = object_shape_for_type(self.ctx.types, object_type)?;
         let name_atom = self.ctx.types.intern_string(property_name);
         shape

@@ -122,24 +122,6 @@ pub trait TypeResolver {
         &[]
     }
 
-    /// Get an export from a namespace/module by name.
-    ///
-    /// Used for qualified name resolution: `namespace.member`.
-    fn get_lazy_export(&self, _def_id: DefId, _name: tsz_common::interner::Atom) -> Option<TypeId> {
-        None
-    }
-
-    /// Get enum member type by name from an enum `DefId`.
-    ///
-    /// Used for enum member access: `Enum.Member`.
-    fn get_lazy_enum_member(
-        &self,
-        _def_id: DefId,
-        _name: tsz_common::interner::Atom,
-    ) -> Option<TypeId> {
-        None
-    }
-
     /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
     ///
     /// Used for TypeScript's unsound Rule #7 (Open Numeric Enums) where
@@ -249,18 +231,6 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         (**self).get_array_base_type_params()
-    }
-
-    fn get_lazy_export(&self, def_id: DefId, name: tsz_common::interner::Atom) -> Option<TypeId> {
-        (**self).get_lazy_export(def_id, name)
-    }
-
-    fn get_lazy_enum_member(
-        &self,
-        def_id: DefId,
-        name: tsz_common::interner::Atom,
-    ) -> Option<TypeId> {
-        (**self).get_lazy_enum_member(def_id, name)
     }
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {

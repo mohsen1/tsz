@@ -240,37 +240,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if a function is within a namespace or module context.
-    ///
-    /// Uses AST-based parent traversal to detect `ModuleDeclaration` in the parent chain.
-    ///
-    /// ## Parameters
-    /// - `func_idx`: The function node index
-    ///
-    /// Returns true if the function is inside a namespace/module declaration.
-    pub fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
-        // Walk up the parent chain looking for ModuleDeclaration nodes
-        let mut current = func_idx;
-
-        while current.is_some() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this node is a ModuleDeclaration (namespace or module)
-                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    return true;
-                }
-            }
-
-            // Move to the parent node
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-
-        false
-    }
-
     /// Check if a variable is declared in an ambient context (declare keyword).
     ///
     /// This uses proper AST-based detection by:
