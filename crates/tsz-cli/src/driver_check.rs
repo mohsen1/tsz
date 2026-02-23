@@ -806,11 +806,12 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 if file.file_name.ends_with(".d.ts") {
                     continue;
                 }
-                if let Some((_helper_name, start, length)) = first_required_helper(file) {
+                let helpers = required_helpers(file);
+                if let Some((_helper_name, start, length)) = helpers.first() {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
-                        start,
-                        length,
+                        *start,
+                        *length,
                         "This syntax requires an imported helper but module 'tslib' cannot be found.".to_string(),
                         2354,
                     ));
@@ -833,7 +834,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                     continue;
                 }
 
-                if let Some((helper_name, start, length)) = first_required_helper(file) {
+                for (helper_name, start, length) in required_helpers(file) {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
                         start,
@@ -851,9 +852,11 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     result
 }
 
-pub(super) fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
+pub(super) fn required_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
+    let mut first_decorator: Option<(u32, u32)> = None;
+    let mut first_private_id: Option<(u32, u32)> = None;
 
     for node_idx_raw in 0..file.arena.len() {
         let node_idx = NodeIndex(node_idx_raw as u32);
@@ -861,23 +864,21 @@ pub(super) fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u
             continue;
         };
 
-        if node.kind == SyntaxKind::PrivateIdentifier as u16 {
-            return Some((
-                "__classPrivateFieldSet",
-                node.pos,
-                node.end.saturating_sub(node.pos),
-            ));
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 && first_private_id.is_none() {
+            first_private_id = Some((node.pos, node.end.saturating_sub(node.pos)));
         }
 
-        if node.kind == syntax_kind_ext::DECORATOR {
-            return Some(("__decorate", node.pos, node.end.saturating_sub(node.pos)));
+        if node.kind == syntax_kind_ext::DECORATOR && first_decorator.is_none() {
+            first_decorator = Some((node.pos, node.end.saturating_sub(node.pos)));
         }
 
         if node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_data) = file.arena.get_class(node)
             && class_data.heritage_clauses.is_some()
+            && first_decorator.is_none()
+            && first_private_id.is_none()
         {
-            return Some(("__extends", node.pos, node.end.saturating_sub(node.pos)));
+            return vec![("__extends", node.pos, node.end.saturating_sub(node.pos))];
         }
 
         if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
@@ -888,11 +889,142 @@ pub(super) fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u
         }
     }
 
-    if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
-        return Some(("__asyncGenerator", start, length));
+    // Decorators take priority (ES decorators handle private fields internally)
+    if let Some((start, length)) = first_decorator {
+        return es_decorator_helpers(file, start, length);
     }
 
-    None
+    if let Some((start, length)) = first_private_id {
+        return vec![("__classPrivateFieldSet", start, length)];
+    }
+
+    if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
+        return vec![("__asyncGenerator", start, length)];
+    }
+
+    Vec::new()
+}
+
+/// Determine which ES decorator helpers are needed for a file.
+///
+/// tsc emits all needed helper diagnostics at the position of the first decorated
+/// node. The helpers depend on the class structure:
+/// - `__esDecorate` + `__runInitializers`: always needed
+/// - `__setFunctionName`: needed when class is anonymous, has private members
+///   (static or non-static) with decorators, or is a default export
+/// - `__propKey`: needed when a decorated member has a static computed property name
+fn es_decorator_helpers(
+    file: &BoundFile,
+    first_dec_start: u32,
+    first_dec_length: u32,
+) -> Vec<(&'static str, u32, u32)> {
+    let mut needs_set_function_name = false;
+    let mut needs_prop_key = false;
+
+    // Helper: check if a modifiers list contains a DECORATOR node
+    let has_decorator_in_modifiers = |modifiers: &Option<tsz::parser::NodeList>| -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                file.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+            })
+        })
+    };
+
+    // Helper: check if modifiers contain DefaultKeyword
+    let has_default_keyword = |modifiers: &Option<tsz::parser::NodeList>| -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                file.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
+            })
+        })
+    };
+
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        let is_class = node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION;
+        if !is_class {
+            continue;
+        }
+        let Some(class_data) = file.arena.get_class(node) else {
+            continue;
+        };
+
+        let class_has_decorator = has_decorator_in_modifiers(&class_data.modifiers);
+
+        // Anonymous class expression → needs __setFunctionName
+        let name_node = file.arena.get(class_data.name);
+        let class_is_anonymous = name_node.is_none()
+            || name_node.is_some_and(|n| n.kind == SyntaxKind::Unknown as u16 || n.pos == n.end);
+
+        // export default @dec class → needs __setFunctionName
+        let is_default_export = class_has_decorator && has_default_keyword(&class_data.modifiers);
+
+        if class_is_anonymous || is_default_export {
+            needs_set_function_name = true;
+        }
+
+        // Walk class members for private identifiers or static computed property names
+        for &member_idx in &class_data.members.nodes {
+            let Some(member) = file.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Scan all arena nodes within the member's span for relevant node kinds.
+            // Arena stores nodes bottom-up (children before parents), so we scan all nodes.
+            let is_field = member.kind == syntax_kind_ext::PROPERTY_DECLARATION;
+            let mut member_has_decorator = false;
+            let mut member_is_static = false;
+
+            for child_idx_raw in 0..file.arena.len() {
+                let child_idx = NodeIndex(child_idx_raw as u32);
+                let Some(child) = file.arena.get(child_idx) else {
+                    continue;
+                };
+                // Only consider nodes within the member's span
+                if child.pos < member.pos || child.pos >= member.end {
+                    continue;
+                }
+                if child.kind == syntax_kind_ext::DECORATOR {
+                    member_has_decorator = true;
+                }
+                if child.kind == SyntaxKind::StaticKeyword as u16 {
+                    member_is_static = true;
+                }
+                if child.kind == SyntaxKind::PrivateIdentifier as u16
+                    && !is_field
+                    && (member_has_decorator || class_has_decorator)
+                {
+                    needs_set_function_name = true;
+                }
+                if child.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    && member_has_decorator
+                    && member_is_static
+                {
+                    needs_prop_key = true;
+                }
+            }
+        }
+    }
+
+    // Build helper list in alphabetical order (matching tsc output)
+    let mut helpers = vec![("__esDecorate", first_dec_start, first_dec_length)];
+    if needs_prop_key {
+        helpers.push(("__propKey", first_dec_start, first_dec_length));
+    }
+    helpers.push(("__runInitializers", first_dec_start, first_dec_length));
+    if needs_set_function_name {
+        helpers.push(("__setFunctionName", first_dec_start, first_dec_length));
+    }
+    helpers
 }
 
 pub(super) struct CheckFileForParallelContext<'a> {
@@ -1738,4 +1870,74 @@ fn is_real_syntax_error(code: u32) -> bool {
         | 1432 // 'await' expressions are only allowed within async functions
         | 1434 // Top-level 'await' expressions are only allowed...
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse source text and return the BoundFile from a merged program.
+    fn bound_file(source: &str) -> BoundFile {
+        let bind_result =
+            parallel::parse_and_bind_single("test.ts".to_string(), source.to_string());
+        let program = parallel::merge_bind_results(vec![bind_result]);
+        program.files.into_iter().next().unwrap()
+    }
+
+    /// Extract helper names from `required_helpers`.
+    fn helper_names(source: &str) -> Vec<&'static str> {
+        let file = bound_file(source);
+        required_helpers(&file)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect()
+    }
+
+    #[test]
+    fn plain_class_needs_no_helpers() {
+        assert!(helper_names("class C { method() {} }").is_empty());
+    }
+
+    #[test]
+    fn private_field_emits_class_private_field_set() {
+        let helpers = helper_names("class C { #foo = 1; }");
+        assert_eq!(helpers, vec!["__classPrivateFieldSet"]);
+    }
+
+    #[test]
+    fn decorated_class_emits_es_decorate_and_run_initializers() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { method() {} }");
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(helpers.contains(&"__runInitializers"), "got: {helpers:?}");
+        // Named non-default class should not need __setFunctionName
+        assert!(!helpers.contains(&"__setFunctionName"), "got: {helpers:?}");
+    }
+
+    #[test]
+    fn decorated_class_with_private_method_emits_set_function_name() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { #privateMethod() {} }");
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(helpers.contains(&"__runInitializers"), "got: {helpers:?}");
+        assert!(
+            helpers.contains(&"__setFunctionName"),
+            "private method should trigger __setFunctionName, got: {helpers:?}"
+        );
+    }
+
+    #[test]
+    fn decorator_takes_priority_over_private_field() {
+        let helpers = helper_names("declare var dec: any;\n@dec class C { #foo = 1; }");
+        // ES decorators handle private fields internally
+        assert!(helpers.contains(&"__esDecorate"), "got: {helpers:?}");
+        assert!(
+            !helpers.contains(&"__classPrivateFieldSet"),
+            "decorator should take priority, got: {helpers:?}"
+        );
+    }
+
+    #[test]
+    fn class_with_extends_emits_extends_helper() {
+        let helpers = helper_names("class Base {} class Derived extends Base {}");
+        assert_eq!(helpers, vec!["__extends"]);
+    }
 }

@@ -399,9 +399,23 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7894/12574 (62.8%) — full suite
+## Current score: 7928/12574 (63.1%) — full suite
 
-### Session progress (7892 → 7894, +2 tests):
+### Session progress (7894 → 7928, +34 tests):
+- **TS2343 ES decorator helpers**: Changed `first_required_helper` (returning a single legacy
+  `__decorate` helper) to `required_helpers` (returning a Vec of ES decorator helpers).
+  Added `es_decorator_helpers()` function that determines the correct TC39 Stage 3 helpers:
+  - `__esDecorate` + `__runInitializers`: always emitted for decorated classes
+  - `__setFunctionName`: emitted for anonymous classes, default exports, or private methods/accessors
+  - `__propKey`: emitted for decorated members with static computed property names
+  - Decorators now take priority over PrivateIdentifier (ES decorators handle private fields internally)
+  - Arena scanning uses span-based filtering since nodes are stored bottom-up (children before parents)
+  - Added 6 unit tests for helper detection logic
+  - **Deferred**: 8 remaining missingEmitHelpers failures — 2 auto-accessor tests (parser lacks
+    auto-accessor node kind), 5 class expression tests (need computed key + anonymous patterns),
+    1 exportAsNamespace test (different helper type)
+
+### Previous session progress (7892 → 7894, +2 tests):
 - **TS2300 false positives**: Suppressed three categories of false TS2300 emissions:
   1. Export default class duplicates: skip TS2300 when all duplicate class declarations are
      `export default` — TS2528 ("A module cannot have multiple default exports") handles it.
