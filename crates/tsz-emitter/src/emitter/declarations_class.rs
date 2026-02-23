@@ -410,14 +410,28 @@ impl<'a> Printer<'a> {
             if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
                 let brace_end = (start + offset + 1) as u32;
                 // Only suppress if there's a newline between `{` and the first
-                // member (or `}` if empty).  Single-line class bodies like
-                // `class C { x: T; } // error` have the comment after `}`.
+                // member (or the closing `}` if empty).  Single-line class bodies
+                // like `class C { x: T; } // error` have the comment after `}`,
+                // so we must NOT suppress it.
+                // For empty classes like `class C {} // comment`, scan_end must
+                // be the closing `}` position, not node.end — otherwise a newline
+                // after `}` (before the next statement) causes us to incorrectly
+                // suppress the trailing comment that belongs to `}`.
                 let scan_end = class
                     .members
                     .nodes
                     .first()
                     .and_then(|&idx| self.arena.get(idx))
-                    .map_or(end, |m| m.pos as usize);
+                    .map_or_else(
+                        || {
+                            // Empty class: find the closing `}` to use as scan_end
+                            bytes[brace_end as usize..end]
+                                .iter()
+                                .position(|&b| b == b'}')
+                                .map_or(end, |p| brace_end as usize + p)
+                        },
+                        |m| m.pos as usize,
+                    );
                 let has_newline = bytes[brace_end as usize..scan_end.min(end)]
                     .iter()
                     .any(|&b| b == b'\n' || b == b'\r');
