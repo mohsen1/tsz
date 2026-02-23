@@ -1,8 +1,22 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9647/13623 = 70.8% JS, 775/1988 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current 9653/13623 = 70.9% JS, 777/1989 = 39.1% DTS)
 
 ### Fixed This Session
+- **Extra parens around yield-from-await in assignment/comma expressions** (+11 JS, +1 DTS):
+  When async functions are lowered to generators (ES2015 target), `await expr` becomes `yield expr`.
+  The `in_binary_operand` flag in `emit_binary_expression` was set for ALL binary operators,
+  including assignment (`=`, `+=`, etc.) and comma (`,`). This triggered unnecessary parenthesization
+  in `emit_await_expression`, producing `o.a = (yield p)` instead of `o.a = yield p`, and
+  `((yield p), a)` instead of `(yield p, a)`. JS grammar already accepts `YieldExpression` as an
+  `AssignmentExpression`, so assignment RHS and comma operands don't need parens. Fix: check whether
+  the operator is an assignment or comma type and skip setting `in_binary_operand` for those.
+  Three unit tests added covering assignment RHS, comma expression, and confirming `||` still wraps.
+  Tests fixed: `awaitBinaryExpression4_es6`, `awaitBinaryExpression4_es5(target=es2015)`,
+  `awaitBinaryExpression5_es6`, `awaitBinaryExpression5_es5(target=es2015)`, and 7+ others.
+  JS: 9642→9653, DTS: 776→777, zero regressions.
+
+### Previously Fixed
 - **Abstract methods with body incorrectly erased** (+3 JS):
   The `is_erased` logic for `METHOD_DECLARATION` used `has_modifier(Abstract) || body.is_none()`,
   which erased abstract methods WITH a body. While these are error cases in TS, tsc still emits
@@ -553,7 +567,7 @@
   `constEnumSyntheticNodesComments`, `templateLiteralEscapeSequence`.
 - ~~**Numeric literal not downleveled for ES5 (~13 tests)**~~ — **FIXED**: Legacy octal conversion works for all targets, and numeric separator downleveling now converts `0b`/`0o`/`0x` prefixed literals to decimal at targets < ES2021 when the original had separators. Remaining: enum IIFE initializer paths still use un-converted source text (affects `es5-oldStyleOctalLiteralInEnums`, `strictModeOctalLiterals`).
 - **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
-- **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
+- **Parenthesization mismatches (~4 remaining tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, missing parens on async arrow params. The `yield` parens issue has been fixed (see above). Remaining sub-issues are diverse and small.
 - ~~**Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**~~ — **FIXED** (see "Fixed This Session").
 - **Remaining duplicate-export affected tests (~90)**: The overload dedup fix resolves the duplicate `exports.X = X;` issue, but ~90 tests that had this as one of multiple issues remain failing due to other causes (missing helpers, wrong comment placement, module transform gaps). No action needed on the dedup side; remaining failures need other fixes.
 - **`exports.default` ordering (~19 remaining tests, was ~36)**: For named default function exports, tsc emits
