@@ -92,6 +92,7 @@ impl<'a> Printer<'a> {
                 self.pending_cjs_namespace_export_fold = false;
             }
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
+            es5_emitter.set_target_es5(self.ctx.target_es5);
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
                 self.declared_namespace_names.insert(ns_name);
@@ -158,7 +159,11 @@ impl<'a> Printer<'a> {
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
         let should_declare = !self.declared_namespace_names.contains(&name);
         if should_declare {
-            let keyword = if self.in_namespace_iife { "let" } else { "var" };
+            let keyword = if self.in_namespace_iife && !self.ctx.target_es5 {
+                "let"
+            } else {
+                "var"
+            };
             self.write(keyword);
             self.write(" ");
             self.write(&name);

@@ -53,3 +53,27 @@ fn test_skip_whitespace_forward_no_whitespace() {
     let result = printer.skip_whitespace_forward(0, 3);
     assert_eq!(result, 0);
 }
+
+#[test]
+fn test_block_comment_after_comma_in_multiline_object() {
+    // Block comments after commas in multi-line object literals need a space before them
+    let source = r#"var x = {
+    a: 1, /* comment */
+    b: 2
+};"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    use tsz_emitter::output::printer::Printer;
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // The block comment should have a space before it (not "1,/* comment */")
+    assert!(
+        output.contains(", /* comment */") || output.contains(",  /* comment */"),
+        "Should have space before block comment after comma. Got:\n{output}"
+    );
+}

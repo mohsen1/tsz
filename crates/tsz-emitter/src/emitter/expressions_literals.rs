@@ -589,8 +589,11 @@ impl<'a> Printer<'a> {
                         }
                         let gap = &text[from..to];
                         // Check for comment on same line (no newline before comment start)
+                        // Handles both // line comments and /* block comments
                         if let Some(slash_pos) = gap.find("//") {
                             !gap[..slash_pos].contains('\n')
+                        } else if let Some(block_pos) = gap.find("/*") {
+                            !gap[..block_pos].contains('\n')
                         } else {
                             false
                         }

@@ -105,3 +105,51 @@ fn test_cjs_exported_namespace_iife_tail_folding() {
         );
     }
 }
+
+#[test]
+fn test_nested_namespace_uses_var_at_es5_target() {
+    // At ES5 target, nested namespaces inside IIFEs must use `var`, not `let`
+    let source = "namespace m { namespace m2 { export class c { } } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&ns_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        emitter.set_target_es5(true);
+        let output = emitter.emit_namespace(ns_idx);
+        assert!(
+            !output.contains("let "),
+            "ES5 target should never emit `let`. Got:\n{output}"
+        );
+        assert!(
+            output.contains("var m2"),
+            "Nested namespace should use `var` at ES5 target. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn test_nested_namespace_uses_let_at_es2015_target() {
+    // At ES2015+ target, nested namespaces inside IIFEs should use `let`
+    let source = "namespace m { namespace m2 { export class c { } } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&ns_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        // target_es5 defaults to false (ES2015+)
+        let output = emitter.emit_namespace(ns_idx);
+        assert!(
+            output.contains("let m2"),
+            "ES2015+ target should use `let` for nested namespace. Got:\n{output}"
+        );
+    }
+}

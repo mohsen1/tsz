@@ -209,9 +209,10 @@ impl<'a> Printer<'a> {
     /// tsc uses `var` for top-level enums and `let` for block-scoped enums
     /// (inside functions, methods, namespaces) when targeting ES2015+.
     fn should_use_let_for_enum(&self, enum_idx: NodeIndex) -> bool {
-        // Always use `let` inside namespace IIFEs (existing behavior).
+        // Use `let` inside namespace IIFEs, but only at ES2015+ targets.
+        // ES5 doesn't support `let`, so must always use `var`.
         if self.in_namespace_iife {
-            return true;
+            return !self.ctx.target_es5;
         }
         // Only upgrade to `let` for ES2015+ targets.
         if self.ctx.target_es5 {
@@ -275,6 +276,7 @@ impl<'a> Printer<'a> {
             if let Some(mut ir) = transformer.transform_enum(idx) {
                 let mut printer = IRPrinter::with_arena(self.arena);
                 printer.set_indent_level(self.writer.indent_level());
+                printer.set_target_es5(self.ctx.target_es5);
                 if let Some(source_text) = self.source_text_for_map() {
                     printer.set_source_text(source_text);
                 }
