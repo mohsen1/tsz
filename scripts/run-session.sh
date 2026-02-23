@@ -14,7 +14,7 @@ DRY_RUN=false
 RUN_ONCE=false
 RUNNER_FILTER=""          # "" = all, "claude" or "codex"
 SESSION_NAME=""           # "" = use existing session.sh, else load from scripts/sessions/
-TIMEOUT_SECONDS=3600      # 1 hour
+TIMEOUT_SECONDS=10800     # 3 hours
 COOLDOWN_FALLBACK=1800    # 30 min fallback when reset time can't be parsed
 LOOP_SLEEP=10             # seconds between loop iterations
 MAX_LOG_MB=500            # prune oldest logs when total exceeds this
@@ -72,7 +72,7 @@ Options:
   --dry-run          Show what would run without executing
   --once             Run once and exit (default: loop forever)
   --runner TYPE      Filter to "claude" or "codex" only
-  --timeout N        Max seconds per runner execution (default: 3600)
+  --timeout N        Max seconds per runner execution (default: 10800)
   --cooldown N       Fallback cooldown seconds (default: 1800)
   --sleep N          Seconds between loop iterations (default: 10)
   -h, --help         Show this help
