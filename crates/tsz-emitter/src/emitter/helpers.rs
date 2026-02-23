@@ -803,8 +803,80 @@ impl<'a> Printer<'a> {
                         .get_export_assignment(node)
                         .is_some_and(|export_assign| export_assign.is_export_equals)
             }
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                // When the parser fails to recognize `declare` as a modifier prefix
+                // (e.g., `declare import a = b;` or `declare declare var x;`), it may
+                // produce a bare `declare;` expression statement. We check the source to
+                // confirm this was a modifier (followed by a keyword on the same line),
+                // not a legitimate `declare` identifier expression.
+                if let Some(expr_stmt) = self.arena.get_expression_statement(node)
+                    && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+                    && let Some(ident) = self.arena.get_identifier(expr_node)
+                    && ident.escaped_text == "declare"
+                {
+                    self.is_declare_modifier_artifact(node)
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
+    }
+
+    /// Check if a `declare;` expression statement is an artifact of the parser not
+    /// recognizing `declare` as a modifier before certain keywords. Looks at the source
+    /// text after `declare` to see if the next non-whitespace content on the same line
+    /// is a keyword (import, export, declare, await, using, etc.) rather than `;` or a
+    /// newline, which would indicate a legitimate expression statement.
+    pub(super) fn is_declare_modifier_artifact(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        // Start scanning after the `declare` keyword (7 chars: "declare")
+        let declare_end = node.pos as usize + 7;
+        let node_end = node.end as usize;
+        if declare_end >= bytes.len() || declare_end >= node_end {
+            return false;
+        }
+        // Skip leading trivia (whitespace) to find where `declare` actually starts
+        let mut pos = node.pos as usize;
+        while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+        // Verify this actually starts with "declare"
+        if pos + 7 > bytes.len() || &bytes[pos..pos + 7] != b"declare" {
+            return false;
+        }
+        pos += 7;
+        // Skip spaces/tabs after "declare" (but NOT newlines — a newline means ASI)
+        while pos < bytes.len() && (bytes[pos] == b' ' || bytes[pos] == b'\t') {
+            pos += 1;
+        }
+        // If we hit a newline, semicolon, or end of source, this is a real expression
+        if pos >= bytes.len() || bytes[pos] == b'\n' || bytes[pos] == b'\r' || bytes[pos] == b';' {
+            return false;
+        }
+        // Check if the next token is a keyword that `declare` should modify
+        let remaining = &text[pos..];
+        remaining.starts_with("import")
+            || remaining.starts_with("export")
+            || remaining.starts_with("declare")
+            || remaining.starts_with("function")
+            || remaining.starts_with("class")
+            || remaining.starts_with("abstract")
+            || remaining.starts_with("interface")
+            || remaining.starts_with("type")
+            || remaining.starts_with("enum")
+            || remaining.starts_with("namespace")
+            || remaining.starts_with("module")
+            || remaining.starts_with("var")
+            || remaining.starts_with("let")
+            || remaining.starts_with("const")
+            || remaining.starts_with("async")
+            || remaining.starts_with("await")
+            || remaining.starts_with("using")
+            || remaining.starts_with("global")
     }
 
     /// Check if a module/namespace has any value-producing (instantiated) members.

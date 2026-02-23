@@ -465,6 +465,21 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Suppress bare `declare;` expression statements that are artifacts of the parser
+        // not recognizing `declare` as a modifier before certain keywords (e.g.,
+        // `declare import a = b;`, `declare export function f() {}`). We distinguish
+        // these from legitimate `declare;` expressions (where `declare` is a variable)
+        // by checking the source text: if `declare` is immediately followed by a keyword
+        // on the same line (no newline/semicolon between), it was meant as a modifier.
+        if let Some(expr_node) = self.arena.get(expr_stmt.expression)
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && ident.escaped_text == "declare"
+            && self.is_declare_modifier_artifact(node)
+        {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+
         // When a function expression appears as a statement, it needs wrapping parentheses
         // to distinguish it from a function declaration. This includes:
         // - Arrow functions transpiled to ES5 function expressions
@@ -1876,6 +1891,74 @@ mod tests {
         assert!(
             output.contains("else\n"),
             "Final else with non-block body should be on new indented line.\nOutput:\n{output}"
+        );
+    }
+
+    /// `declare import a = b;` should suppress the spurious `declare;` expression
+    /// statement and only emit the runtime import-equals binding.
+    #[test]
+    fn declare_modifier_on_import_suppressed() {
+        let source = "declare import a = b;";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("declare;"),
+            "`declare;` should be suppressed when it's a modifier artifact.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var a = b;"),
+            "The runtime binding should still be emitted.\nOutput:\n{output}"
+        );
+    }
+
+    /// `declare declare var x;` inside a namespace should produce an empty body
+    /// (both `declare;` and `declare var x;` are erased).
+    #[test]
+    fn declare_declare_var_in_namespace_erased() {
+        let source = r#"namespace M {
+    declare declare var x;
+}"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("declare;"),
+            "`declare;` should be suppressed inside namespace body.\nOutput:\n{output}"
+        );
+    }
+
+    /// Legitimate `declare;` as a variable expression (with ASI on a new line)
+    /// should NOT be suppressed.
+    #[test]
+    fn declare_as_identifier_preserved() {
+        // `declare` on its own line followed by a newline is a legitimate expression
+        // statement using `declare` as a variable name (ASI terminates the statement).
+        let source = "var declare = 5;\ndeclare;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("declare;"),
+            "Legitimate `declare;` expression should be preserved.\nOutput:\n{output}"
         );
     }
 }
