@@ -70,3 +70,38 @@ fn test_namespace_comment_after_erased_interface() {
         "Comment after erased interface should be preserved. Got:\n{output}"
     );
 }
+
+#[test]
+fn test_cjs_exported_namespace_iife_tail_folding() {
+    // When a namespace is exported in CJS, exports.Name should be folded
+    // into the IIFE tail: (N || (exports.N = N = {}))
+    let source = "export namespace Models { export function test(): void {} }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+    {
+        // Get the MODULE_DECLARATION inside the EXPORT_DECLARATION
+        let ns_idx = if let Some(stmt_node) = parser.arena.get(stmt_idx)
+            && let Some(export_decl) = parser.arena.get_export_decl(stmt_node)
+        {
+            export_decl.export_clause
+        } else {
+            stmt_idx
+        };
+
+        let mut emitter = NamespaceES5Emitter::with_commonjs(&parser.arena, true);
+        emitter.set_source_text(source);
+        let output = emitter.emit_exported_namespace(ns_idx);
+        assert!(
+            output.contains("(exports.Models = Models = {})"),
+            "CJS exported namespace should fold exports into IIFE tail. Got:\n{output}"
+        );
+        assert!(
+            !output.contains("exports.Models = Models;"),
+            "Should NOT have separate exports.Models = Models; line. Got:\n{output}"
+        );
+    }
+}

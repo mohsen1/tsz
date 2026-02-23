@@ -87,7 +87,11 @@ impl<'a> Printer<'a> {
         // ES5 target: Transform namespace to IIFE pattern
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
-            let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
+            let use_cjs = self.pending_cjs_namespace_export_fold;
+            if use_cjs {
+                self.pending_cjs_namespace_export_fold = false;
+            }
+            let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             let ns_name = self.get_identifier_text_idx(module.name);
             if !ns_name.is_empty() {
                 self.declared_namespace_names.insert(ns_name);
@@ -101,7 +105,11 @@ impl<'a> Printer<'a> {
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
-            let output = es5_emitter.emit_namespace(idx);
+            let output = if use_cjs {
+                es5_emitter.emit_exported_namespace(idx)
+            } else {
+                es5_emitter.emit_namespace(idx)
+            };
 
             // Write the namespace output line by line, letting the writer handle indentation.
             // IRPrinter generates relative indentation (nested constructs indented relative
@@ -217,6 +225,15 @@ impl<'a> Printer<'a> {
             self.write(" || (");
             self.write(parent);
             self.write(".");
+            self.write(&name);
+            self.write(" = {}));");
+        } else if self.pending_cjs_namespace_export_fold {
+            // CJS export fold: (N || (exports.N = N = {}))
+            self.pending_cjs_namespace_export_fold = false;
+            self.write(&name);
+            self.write(" || (exports.");
+            self.write(&name);
+            self.write(" = ");
             self.write(&name);
             self.write(" = {}));");
         } else {

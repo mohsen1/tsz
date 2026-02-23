@@ -453,19 +453,31 @@ impl<'a> Printer<'a> {
                 }
                 // export namespace N {}
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    self.emit_module_declaration(clause_node, export.export_clause);
-                    self.write_line();
-
-                    if !self.ctx.module_state.has_export_assignment
-                        && let Some(module_decl) = self.arena.get_module(clause_node)
-                        && let Some(name) = self.get_module_root_name(module_decl.name)
-                    {
-                        self.write("exports.");
-                        self.write(&name);
-                        self.write(" = ");
-                        self.write(&name);
-                        self.write(";");
+                    if !export.is_default_export && !self.ctx.module_state.has_export_assignment {
+                        // Fold exports.Name into the IIFE tail:
+                        // (N || (exports.N = N = {})) instead of separate
+                        // `exports.N = N;` after the IIFE.
+                        self.pending_cjs_namespace_export_fold = true;
+                        self.emit_module_declaration(clause_node, export.export_clause);
+                        // If the flag was consumed (instantiated namespace),
+                        // no separate export needed. If still set, the namespace
+                        // was non-instantiated/skipped, clear it.
+                        self.pending_cjs_namespace_export_fold = false;
+                    } else {
+                        self.emit_module_declaration(clause_node, export.export_clause);
                         self.write_line();
+
+                        if !self.ctx.module_state.has_export_assignment
+                            && let Some(module_decl) = self.arena.get_module(clause_node)
+                            && let Some(name) = self.get_module_root_name(module_decl.name)
+                        {
+                            self.write("exports.");
+                            self.write(&name);
+                            self.write(" = ");
+                            self.write(&name);
+                            self.write(";");
+                            self.write_line();
+                        }
                     }
                 }
                 // export { x, y } - local re-export without module specifier
