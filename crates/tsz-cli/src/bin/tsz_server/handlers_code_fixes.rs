@@ -6465,6 +6465,9 @@ mod tests {
         );
         assert_eq!(parse_identifier_call_expression("if (cond)"), None);
         assert_eq!(parse_identifier_call_expression("fn() { }"), None);
-        assert_eq!(parse_identifier_call_expression("fn(): number { return 1; }"), None);
+        assert_eq!(
+            parse_identifier_call_expression("fn(): number { return 1; }"),
+            None
+        );
     }
 }
