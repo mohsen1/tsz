@@ -6,7 +6,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
 use tsz::lsp::Project;
-use tsz::lsp::completions::{CompletionItem, Completions};
+use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
@@ -128,6 +128,366 @@ impl Server {
             }
         }
         items
+    }
+
+    fn maybe_add_verbatim_commonjs_auto_import_items(
+        &self,
+        file_name: &str,
+        _source_text: &str,
+        items: Vec<CompletionItem>,
+    ) -> Vec<CompletionItem> {
+        if !Self::is_ts_like_file(file_name) {
+            return items;
+        }
+        let fallback = self.verbatim_commonjs_auto_import_items(file_name);
+        if fallback.is_empty() {
+            items
+        } else {
+            Self::merge_non_member_completion_items(items, fallback)
+        }
+    }
+
+    fn is_ts_like_file(path: &str) -> bool {
+        matches!(
+            Path::new(path)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase())
+                .as_deref(),
+            Some("ts" | "tsx" | "mts" | "cts")
+        )
+    }
+
+    fn verbatim_commonjs_auto_import_items(&self, file_name: &str) -> Vec<CompletionItem> {
+        let mut out = Vec::new();
+        let mut seen = FxHashSet::default();
+        let scan_paths =
+            Self::fallback_class_member_scan_paths(&self.open_files, &self.external_project_files);
+
+        for path in &scan_paths {
+            let Some(content) = self
+                .open_files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(path).ok())
+            else {
+                continue;
+            };
+            for (module_specifier, alias, members) in
+                Self::extract_ambient_export_equals_modules(&content)
+            {
+                Self::push_verbatim_commonjs_auto_import_item(
+                    &mut out,
+                    &mut seen,
+                    &module_specifier,
+                    &alias,
+                    &alias,
+                    CompletionItemKind::Variable,
+                );
+                for member in members {
+                    Self::push_verbatim_commonjs_auto_import_item(
+                        &mut out,
+                        &mut seen,
+                        &module_specifier,
+                        &alias,
+                        &member,
+                        CompletionItemKind::Function,
+                    );
+                }
+            }
+        }
+
+        for path in scan_paths {
+            if path == file_name || !Self::is_js_like_completion_file(&path) {
+                continue;
+            }
+            let Some(content) = self
+                .open_files
+                .get(&path)
+                .cloned()
+                .or_else(|| std::fs::read_to_string(&path).ok())
+            else {
+                continue;
+            };
+            if !content.contains("module.exports") {
+                continue;
+            }
+            let Some(module_specifier) = Self::relative_module_specifier(file_name, &path) else {
+                continue;
+            };
+            let alias = Self::commonjs_binding_name_from_specifier(&module_specifier);
+            if alias.is_empty() {
+                continue;
+            }
+
+            let members = Self::extract_module_exports_object_members(&content);
+            if members.is_empty() {
+                continue;
+            }
+
+            Self::push_verbatim_commonjs_auto_import_item(
+                &mut out,
+                &mut seen,
+                &module_specifier,
+                &alias,
+                &alias,
+                CompletionItemKind::Variable,
+            );
+            for member in members {
+                Self::push_verbatim_commonjs_auto_import_item(
+                    &mut out,
+                    &mut seen,
+                    &module_specifier,
+                    &alias,
+                    &member,
+                    CompletionItemKind::Function,
+                );
+            }
+        }
+
+        out
+    }
+
+    fn push_verbatim_commonjs_auto_import_item(
+        out: &mut Vec<CompletionItem>,
+        seen: &mut FxHashSet<(String, String)>,
+        module_specifier: &str,
+        alias: &str,
+        label: &str,
+        kind: CompletionItemKind,
+    ) {
+        let key = (label.to_string(), module_specifier.to_string());
+        if !seen.insert(key) {
+            return;
+        }
+
+        let insert_text = if label == alias {
+            alias.to_string()
+        } else {
+            format!("{alias}.{label}")
+        };
+        let import_stmt = format!("import {alias} = require(\"{module_specifier}\");\n\n");
+        let edits = vec![tsz::lsp::rename::TextEdit::new(
+            tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                tsz::lsp::position::Position::new(0, 0),
+            ),
+            import_stmt,
+        )];
+        let item = CompletionItem::new(label.to_string(), kind)
+            .with_has_action()
+            .with_sort_text(sort_priority::AUTO_IMPORT)
+            .with_source(module_specifier.to_string())
+            .with_source_display(module_specifier.to_string())
+            .with_kind_modifiers("export".to_string())
+            .with_insert_text(insert_text)
+            .with_additional_edits(edits);
+        out.push(item);
+    }
+
+    fn is_js_like_completion_file(path: &str) -> bool {
+        matches!(
+            Path::new(path)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_ascii_lowercase())
+                .as_deref(),
+            Some("js" | "jsx" | "mjs" | "cjs")
+        )
+    }
+
+    fn relative_module_specifier(from_file: &str, target_file: &str) -> Option<String> {
+        let from = Path::new(from_file);
+        let target = Path::new(target_file);
+        let (Some(from_parent), Some(target_parent)) = (from.parent(), target.parent()) else {
+            return None;
+        };
+        if from_parent != target_parent {
+            return None;
+        }
+        let stem = target.file_stem()?.to_str()?;
+        Some(format!("./{stem}"))
+    }
+
+    fn commonjs_binding_name_from_specifier(specifier: &str) -> String {
+        let trimmed = specifier.trim();
+        let last_segment = if trimmed.starts_with('@') {
+            trimmed.rsplit('/').next().unwrap_or(trimmed)
+        } else {
+            trimmed
+                .trim_start_matches("./")
+                .trim_start_matches("../")
+                .rsplit('/')
+                .next()
+                .unwrap_or(trimmed)
+        };
+        let base = last_segment
+            .trim_end_matches(".d.ts")
+            .trim_end_matches(".d.mts")
+            .trim_end_matches(".d.cts")
+            .trim_end_matches(".ts")
+            .trim_end_matches(".tsx")
+            .trim_end_matches(".mts")
+            .trim_end_matches(".cts")
+            .trim_end_matches(".js")
+            .trim_end_matches(".jsx")
+            .trim_end_matches(".mjs")
+            .trim_end_matches(".cjs");
+
+        let mut out = String::new();
+        let mut upper_next = false;
+        for ch in base.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                if out.is_empty() {
+                    out.push(ch.to_ascii_lowercase());
+                } else if upper_next {
+                    out.push(ch.to_ascii_uppercase());
+                    upper_next = false;
+                } else {
+                    out.push(ch);
+                }
+            } else {
+                upper_next = true;
+            }
+        }
+        out
+    }
+
+    fn extract_module_exports_object_members(content: &str) -> Vec<String> {
+        let Some(exports_idx) = content.find("module.exports") else {
+            return Vec::new();
+        };
+        let Some(open_rel) = content[exports_idx..].find('{') else {
+            return Vec::new();
+        };
+        let body_start = exports_idx + open_rel + 1;
+        let bytes = content.as_bytes();
+        let mut depth = 1usize;
+        let mut idx = body_start;
+        while idx < bytes.len() {
+            match bytes[idx] as char {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        if idx <= body_start || idx > content.len() {
+            return Vec::new();
+        }
+        let body = &content[body_start..idx];
+        let mut seen = FxHashSet::default();
+        let mut out = Vec::new();
+        for line in body.lines() {
+            let trimmed = line.trim();
+            let Some((raw_name, _)) = trimmed.split_once(':') else {
+                continue;
+            };
+            let name = raw_name.trim().trim_matches('"').trim_matches('\'');
+            if Self::is_identifier(name) && seen.insert(name.to_string()) {
+                out.push(name.to_string());
+            }
+        }
+        out
+    }
+
+    fn extract_ambient_export_equals_modules(content: &str) -> Vec<(String, String, Vec<String>)> {
+        let mut modules = Vec::new();
+        let mut cursor = 0usize;
+        while let Some(decl_rel) = content[cursor..].find("declare module ") {
+            let decl_start = cursor + decl_rel;
+            let after_decl = decl_start + "declare module ".len();
+            let quote = content[after_decl..]
+                .chars()
+                .find(|ch| *ch == '"' || *ch == '\'');
+            let Some(quote) = quote else {
+                cursor = after_decl;
+                continue;
+            };
+            let quote_start = content[after_decl..].find(quote).map(|i| after_decl + i);
+            let Some(quote_start) = quote_start else {
+                cursor = after_decl;
+                continue;
+            };
+            let module_name_start = quote_start + 1;
+            let Some(quote_end_rel) = content[module_name_start..].find(quote) else {
+                cursor = module_name_start;
+                continue;
+            };
+            let module_name_end = module_name_start + quote_end_rel;
+            let module_name = content[module_name_start..module_name_end].trim();
+            let Some(open_brace_rel) = content[module_name_end..].find('{') else {
+                cursor = module_name_end;
+                continue;
+            };
+            let body_start = module_name_end + open_brace_rel + 1;
+            let mut depth = 1usize;
+            let bytes = content.as_bytes();
+            let mut idx = body_start;
+            while idx < bytes.len() {
+                match bytes[idx] as char {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                idx += 1;
+            }
+            if idx <= body_start || idx > content.len() {
+                cursor = body_start;
+                continue;
+            }
+            let body = &content[body_start..idx];
+            let alias = body
+                .lines()
+                .find_map(|line| {
+                    let trimmed = line.trim();
+                    let rest = trimmed.strip_prefix("export = ")?;
+                    let alias = rest.trim_end_matches(';').trim();
+                    Self::is_identifier(alias).then(|| alias.to_string())
+                })
+                .unwrap_or_default();
+            if !alias.is_empty() {
+                let mut members = Vec::new();
+                let mut seen = FxHashSet::default();
+                for line in body.lines() {
+                    let trimmed = line.trim();
+                    let Some(paren_idx) = trimmed.find('(') else {
+                        continue;
+                    };
+                    let mut head = trimmed[..paren_idx].trim();
+                    if head.ends_with('?') {
+                        head = head.trim_end_matches('?').trim();
+                    }
+                    if Self::is_identifier(head) && seen.insert(head.to_string()) {
+                        members.push(head.to_string());
+                    }
+                }
+                modules.push((module_name.to_string(), alias, members));
+            }
+            cursor = idx + 1;
+        }
+        modules
+    }
+
+    fn is_identifier(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+            return false;
+        }
+        chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
     }
 
     fn string_pref(preferences: Option<&serde_json::Value>, key: &str) -> Option<String> {
@@ -1840,6 +2200,10 @@ impl Server {
             }
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
+            let mut items =
+                self.maybe_add_verbatim_commonjs_auto_import_items(&file, &source_text, items);
+            Self::sort_tsserver_completion_items(&mut items);
+            let items = Self::prune_deeper_auto_import_duplicates(items);
 
             let entries: Vec<serde_json::Value> = items
                 .iter()
@@ -1944,6 +2308,7 @@ impl Server {
                 items = Self::prioritize_class_member_snippet_items(items);
                 items = Self::normalize_class_member_snippet_items(items);
             }
+            items = self.maybe_add_verbatim_commonjs_auto_import_items(file, &source_text, items);
             Self::sort_tsserver_completion_items(&mut items);
             let member_parent = completion_result
                 .as_ref()
@@ -3224,4 +3589,5 @@ mod tests {
             "expected explicit .js import to resolve sibling TypeScript source: {resolved:?}"
         );
     }
+
 }
