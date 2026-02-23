@@ -809,11 +809,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             tuple_list_id(self.interner, target),
         ) {
             // OPTIMIZATION: Unit-tuple disjointness fast-path (O(1) cached lookup)
-            // Two different unit tuples (tuples of literals/enums only) are guaranteed disjoint.
+            // Two different identity-comparable tuples are guaranteed disjoint.
             // Since we already checked source == target at the top and returned True,
-            // reaching here means source != target. If both are unit tuples, they're disjoint.
+            // reaching here means source != target. If both are identity-comparable, they're disjoint.
             // This avoids O(N) structural recursion for each comparison in BCT's O(N²) loop.
-            if self.interner.is_unit_type(source) && self.interner.is_unit_type(target) {
+            if self.interner.is_identity_comparable_type(source)
+                && self.interner.is_identity_comparable_type(target)
+            {
                 return SubtypeResult::False;
             }
             let s_elems = self.interner.tuple_list(s_elems);

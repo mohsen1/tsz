@@ -9,8 +9,8 @@
 use crate::TypeDatabase;
 use crate::types::{ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo};
 use crate::visitor::{
-    is_literal_type, is_unit_type, object_shape_id, object_with_index_shape_id, type_param_info,
-    union_list_id,
+    is_identity_comparable_type, is_literal_type, object_shape_id, object_with_index_shape_id,
+    type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -343,7 +343,7 @@ fn is_discriminant_for_union(
         let prop_type = prop.type_id;
         // Check if any constituent is a unit type
         for &constituent in &get_type_constituents(db, prop_type) {
-            if is_unit_type(db, constituent) || is_literal_type(db, constituent) {
+            if is_identity_comparable_type(db, constituent) || is_literal_type(db, constituent) {
                 has_unit = true;
             }
         }

@@ -100,11 +100,11 @@ pub trait TypeDatabase {
     /// This is used by the BCT algorithm to find common base classes.
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId>;
 
-    /// Check if a type is a "unit type" (represents exactly one value).
-    /// Unit types include literals, enum members, unique symbols, null, undefined, void, never,
-    /// and tuples composed entirely of unit types.
+    /// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
+    /// Identity-comparable types include literals, enum members, unique symbols, null, undefined,
+    /// void, never, and tuples composed entirely of identity-comparable types.
     /// Results are cached for O(1) lookup after first computation.
-    fn is_unit_type(&self, type_id: TypeId) -> bool;
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool;
 }
 
 impl TypeDatabase for TypeInterner {
@@ -343,8 +343,8 @@ impl TypeDatabase for TypeInterner {
         None
     }
 
-    fn is_unit_type(&self, type_id: TypeId) -> bool {
-        Self::is_unit_type(self, type_id)
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
+        Self::is_identity_comparable_type(self, type_id)
     }
 }
 

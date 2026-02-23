@@ -690,12 +690,12 @@ impl TypeInterner {
             return;
         }
 
-        // OPTIMIZATION: Skip reduction if all types are unit types or non-reducible structures.
-        // Unit types are disjoint. Arrays, tuples, and objects always return false in is_subtype_shallow
-        // unless they are identical (handled by dedup) or one is a structural subtype.
+        // OPTIMIZATION: Skip reduction if all types are identity-comparable or non-reducible structures.
+        // Identity-comparable types are disjoint. Arrays, tuples, and objects always return false in
+        // is_subtype_shallow unless they are identical (handled by dedup) or one is a structural subtype.
         if len > 2 {
             let all_non_reducible = flat.iter().all(|&ty| {
-                if self.is_unit_type(ty) {
+                if self.is_identity_comparable_type(ty) {
                     return true;
                 }
                 matches!(
