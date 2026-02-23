@@ -1645,56 +1645,57 @@ impl<'a> CheckerState<'a> {
         // tsc checks if `undefined` exists in globals and emits TS2397 for each
         // non-type declaration. We check the file-level locals.
         if let Some(sym_id) = self.ctx.binder.file_locals.get("undefined")
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                for &decl_idx in &symbol.declarations {
-                    let Some(node) = self.ctx.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    // Skip type declarations — only value declarations conflict.
-                    let is_type_declaration = matches!(
-                        node.kind,
-                        syntax_kind_ext::INTERFACE_DECLARATION
-                            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                            | syntax_kind_ext::ENUM_DECLARATION
-                            | syntax_kind_ext::CLASS_DECLARATION
-                            | syntax_kind_ext::TYPE_PARAMETER
-                    );
-                    if is_type_declaration {
-                        continue;
-                    }
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    let message = format_message(
-                        diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                        &["undefined"],
-                    );
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                    );
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            for &decl_idx in &symbol.declarations {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                // Skip type declarations — only value declarations conflict.
+                let is_type_declaration = matches!(
+                    node.kind,
+                    syntax_kind_ext::INTERFACE_DECLARATION
+                        | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                        | syntax_kind_ext::ENUM_DECLARATION
+                        | syntax_kind_ext::CLASS_DECLARATION
+                        | syntax_kind_ext::TYPE_PARAMETER
+                );
+                if is_type_declaration {
+                    continue;
                 }
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &["undefined"],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
             }
+        }
 
         // Check `globalThis` redeclaration in non-module (script) files.
         // tsc only emits TS2397 for `globalThis` in non-external-module files,
         // since module-scoped `globalThis` declarations don't pollute the global scope.
         if !is_external_module
             && let Some(sym_id) = self.ctx.binder.file_locals.get("globalThis")
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    for &decl_idx in &symbol.declarations {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        let message = format_message(
-                            diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                            &["globalThis"],
-                        );
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                        );
-                    }
-                }
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            for &decl_idx in &symbol.declarations {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &["globalThis"],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
+            }
+        }
     }
 
     /// Check if a function declaration has a body (is an implementation, not just a signature).
