@@ -483,6 +483,9 @@ impl<'a> CheckerState<'a> {
         };
 
         if element_data.dot_dot_dot_token {
+            if self.is_untyped_parameter_binding_pattern_without_context(pattern_idx) {
+                return TypeId::ANY;
+            }
             // TODO: compute actual object rest type omitting non-rest properties
             return parent_type;
         }
@@ -542,5 +545,28 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.types.factory().array(tuple_member_type)
         }
+    }
+
+    fn is_untyped_parameter_binding_pattern_without_context(&self, pattern_idx: NodeIndex) -> bool {
+        if self.ctx.contextual_type.is_some() {
+            return false;
+        }
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PARAMETER {
+            return false;
+        }
+        let Some(param) = self.ctx.arena.get_parameter(parent_node) else {
+            return false;
+        };
+        param.name == pattern_idx && param.type_annotation.is_none()
     }
 }
