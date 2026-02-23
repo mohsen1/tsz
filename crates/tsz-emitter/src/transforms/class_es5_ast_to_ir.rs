@@ -758,40 +758,7 @@ impl<'a> AstToIr<'a> {
     }
 
     fn get_binary_operator(&self, token: u16) -> String {
-        match token {
-            k if k == SyntaxKind::PlusToken as u16 => "+".to_string(),
-            k if k == SyntaxKind::MinusToken as u16 => "-".to_string(),
-            k if k == SyntaxKind::AsteriskToken as u16 => "*".to_string(),
-            k if k == SyntaxKind::SlashToken as u16 => "/".to_string(),
-            k if k == SyntaxKind::PercentToken as u16 => "%".to_string(),
-            k if k == SyntaxKind::EqualsToken as u16 => "=".to_string(),
-            k if k == SyntaxKind::PlusEqualsToken as u16 => "+=".to_string(),
-            k if k == SyntaxKind::MinusEqualsToken as u16 => "-=".to_string(),
-            k if k == SyntaxKind::AsteriskEqualsToken as u16 => "*=".to_string(),
-            k if k == SyntaxKind::SlashEqualsToken as u16 => "/=".to_string(),
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => "==".to_string(),
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===".to_string(),
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=".to_string(),
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==".to_string(),
-            k if k == SyntaxKind::LessThanToken as u16 => "<".to_string(),
-            k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=".to_string(),
-            k if k == SyntaxKind::GreaterThanToken as u16 => ">".to_string(),
-            k if k == SyntaxKind::GreaterThanEqualsToken as u16 => ">=".to_string(),
-            k if k == SyntaxKind::AmpersandAmpersandToken as u16 => "&&".to_string(),
-            k if k == SyntaxKind::BarBarToken as u16 => "||".to_string(),
-            k if k == SyntaxKind::AmpersandToken as u16 => "&".to_string(),
-            k if k == SyntaxKind::BarToken as u16 => "|".to_string(),
-            k if k == SyntaxKind::CaretToken as u16 => "^".to_string(),
-            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<".to_string(),
-            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>".to_string(),
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
-                ">>>".to_string()
-            }
-            k if k == SyntaxKind::InKeyword as u16 => "in".to_string(),
-            k if k == SyntaxKind::InstanceOfKeyword as u16 => "instanceof".to_string(),
-            k if k == SyntaxKind::CommaToken as u16 => ",".to_string(),
-            _ => "?".to_string(),
-        }
+        crate::transforms::emit_utils::operator_to_str(token).to_string()
     }
 
     fn convert_prefix_unary(&self, idx: NodeIndex) -> IRNode {
@@ -810,18 +777,7 @@ impl<'a> AstToIr<'a> {
     }
 
     fn get_prefix_operator(&self, token: u16) -> String {
-        match token {
-            k if k == SyntaxKind::PlusPlusToken as u16 => "++".to_string(),
-            k if k == SyntaxKind::MinusMinusToken as u16 => "--".to_string(),
-            k if k == SyntaxKind::ExclamationToken as u16 => "!".to_string(),
-            k if k == SyntaxKind::TildeToken as u16 => "~".to_string(),
-            k if k == SyntaxKind::PlusToken as u16 => "+".to_string(),
-            k if k == SyntaxKind::MinusToken as u16 => "-".to_string(),
-            k if k == SyntaxKind::TypeOfKeyword as u16 => "typeof ".to_string(),
-            k if k == SyntaxKind::VoidKeyword as u16 => "void ".to_string(),
-            k if k == SyntaxKind::DeleteKeyword as u16 => "delete ".to_string(),
-            _ => "".to_string(),
-        }
+        crate::transforms::emit_utils::operator_to_str(token).to_string()
     }
 
     fn convert_postfix_unary(&self, idx: NodeIndex) -> IRNode {
