@@ -251,6 +251,34 @@ fn test_prepare_test_dir_does_not_copy_non_root_tsconfig_to_root() {
     );
 }
 
+#[test]
+fn test_prepare_test_dir_preserves_explicit_allow_js_false_with_check_js() {
+    let content = "var x;";
+    let filenames: Vec<(String, String)> = Vec::new();
+    let options: HashMap<String, String> = HashMap::from([
+        ("checkJs".to_string(), "true".to_string()),
+        ("allowJs".to_string(), "false".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[]).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let compiler_options = tsconfig_json
+        .get("compilerOptions")
+        .and_then(serde_json::Value::as_object)
+        .expect("compilerOptions object should exist");
+
+    assert_eq!(
+        compiler_options.get("checkJs"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        compiler_options.get("allowJs"),
+        Some(&serde_json::Value::Bool(false))
+    );
+}
+
 fn find_tsz_binary() -> String {
     // Try common build locations relative to workspace root
     let candidates = [
