@@ -1042,3 +1042,11 @@ Investigated but punted:
   Reason: remaining mismatch still requires TypeScript-equivalent symbol identity modeling for quoted import/export aliases in `findAllReferences` (`defId/contextId` grouping and alias display/detail shape), beyond location-based grouping synthesis.
 - `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
   Reason: same unresolved quoted-alias symbol identity/detail-shaping parity gap as `_types`; current grouping fallback is closer structurally but still not baseline-equivalent.
+
+## 2026-02-23 (references-full canonical definition probe, reverted)
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts`
+  Reason: attempted minimal `references-full` alias-group canonicalization in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs` introduced regression in `test_references_full_quoted_alias_includes_symbol_alias_references_when_available` without improving `./scripts/run-fourslash.sh --max=200` (`198/200` unchanged), so changes were reverted; remaining work needs deeper symbol-group/detail parity (`defId/contextId` modeling).
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`
+  Reason: same unresolved alias-chain `findAllReferences` grouping/detail parity gap as `_types`; safe small patch was not sufficient.
