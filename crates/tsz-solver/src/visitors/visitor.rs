@@ -755,95 +755,6 @@ impl TypeVisitor for TypeKindVisitor {
     }
 }
 
-/// Visitor that collects all `TypeIds` referenced by a type.
-///
-/// Useful for finding dependencies or tracking type usage.
-pub struct TypeCollectorVisitor {
-    /// Set of collected type IDs.
-    pub types: FxHashSet<TypeId>,
-    /// Maximum depth to traverse.
-    pub max_depth: usize,
-}
-
-impl TypeCollectorVisitor {
-    /// Create a new `TypeCollectorVisitor`.
-    pub fn new() -> Self {
-        Self {
-            types: FxHashSet::default(),
-            max_depth: 10,
-        }
-    }
-
-    /// Create a new `TypeCollectorVisitor` with custom max depth.
-    pub fn with_max_depth(max_depth: usize) -> Self {
-        Self {
-            types: FxHashSet::default(),
-            max_depth,
-        }
-    }
-}
-
-impl Default for TypeCollectorVisitor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TypeVisitor for TypeCollectorVisitor {
-    type Output = ();
-
-    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
-        // Intrinsic types have no child types to collect
-    }
-
-    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
-        // Literal types have no child types to collect
-    }
-
-    fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(element_type);
-        }
-    }
-
-    fn visit_index_access(&mut self, object_type: TypeId, key_type: TypeId) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(object_type);
-            self.types.insert(key_type);
-        }
-    }
-
-    fn visit_keyof(&mut self, type_id: TypeId) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(type_id);
-        }
-    }
-
-    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(inner_type);
-        }
-    }
-
-    fn visit_string_intrinsic(
-        &mut self,
-        _kind: StringIntrinsicKind,
-        type_arg: TypeId,
-    ) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(type_arg);
-        }
-    }
-
-    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> Self::Output {
-        if self.max_depth > 0 {
-            self.types.insert(member_type);
-        }
-    }
-
-    fn default_output() -> Self::Output {}
-}
-
 /// Visitor that checks if a type matches a specific predicate.
 pub struct TypePredicateVisitor<F>
 where
@@ -941,7 +852,7 @@ where
 // =============================================================================
 
 /// A visitor that recursively collects all types referenced by a root type.
-/// Unlike `TypeCollectorVisitor`, this properly traverses into nested structures.
+/// Properly traverses into nested structures (objects, callables, tuples, etc.).
 pub struct RecursiveTypeCollector<'a> {
     types: &'a dyn TypeDatabase,
     collected: FxHashSet<TypeId>,

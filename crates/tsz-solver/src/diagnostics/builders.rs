@@ -250,15 +250,6 @@ impl<'a> DiagnosticBuilder<'a> {
         )
     }
 
-    /// Create a "Variable implicitly has an 'any' type" diagnostic (TS7005).
-    pub fn implicit_any_variable(&mut self, var_name: &str, var_type: TypeId) -> TypeDiagnostic {
-        let type_str = self.formatter.format(var_type);
-        TypeDiagnostic::error(
-            format!("Variable '{var_name}' implicitly has an '{type_str}' type."),
-            codes::IMPLICIT_ANY,
-        )
-    }
-
     /// Create an "implicitly has an 'any' return type" diagnostic (TS7010).
     pub fn implicit_any_return(&mut self, func_name: &str, return_type: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(return_type);
