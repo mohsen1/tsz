@@ -171,8 +171,9 @@ impl<'a> CheckerState<'a> {
             }
             MemberAccessLevel::Protected => {
                 if let Some((current_idx, receiver_idx)) = protected_receiver_mismatch {
-                    let current_name = self.get_class_name_from_decl(current_idx);
-                    let receiver_name = self.get_class_name_from_decl(receiver_idx);
+                    let current_name = self.get_class_name_with_type_params_from_decl(current_idx);
+                    let receiver_name =
+                        self.get_class_name_with_type_params_from_decl(receiver_idx);
                     let message = format!(
                         "Property '{property_name}' is protected and only accessible through an instance of class '{current_name}'. This is an instance of class '{receiver_name}'."
                     );

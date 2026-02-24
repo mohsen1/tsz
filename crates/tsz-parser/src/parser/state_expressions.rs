@@ -1658,6 +1658,12 @@ impl ParserState {
                     self.error_comma_expected();
                     // Continue parsing for error recovery
                 } else {
+                    // Emit ',' expected for tokens that aren't the list terminator
+                    if !self.is_token(SyntaxKind::CloseParenToken)
+                        && !self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        self.error_comma_expected();
+                    }
                     break;
                 }
             }

@@ -1144,15 +1144,8 @@ impl ParserState {
                     break;
                 }
 
-                // No ASI - check if next token looks like another declaration
-                // on the same line. If so, emit comma error for better diagnostics.
-                let can_start_next = self.is_identifier_or_keyword()
-                    || self.is_token(SyntaxKind::OpenBraceToken)
-                    || self.is_token(SyntaxKind::OpenBracketToken);
-
-                if can_start_next {
-                    self.error_comma_expected();
-                }
+                // No ASI - emit ',' expected for the unexpected token
+                self.error_comma_expected();
                 break;
             }
 

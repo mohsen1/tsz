@@ -622,6 +622,29 @@ impl<'a> CheckerState<'a> {
         "<anonymous>".to_string()
     }
 
+    /// Get class name with type parameters from a class declaration node.
+    /// E.g., for `class D<T>`, returns `"D<T>"` instead of just `"D"`.
+    /// Returns "<anonymous>" for unnamed classes.
+    pub(crate) fn get_class_name_with_type_params_from_decl(&self, class_idx: NodeIndex) -> String {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return "<anonymous>".to_string();
+        };
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return "<anonymous>".to_string();
+        };
+
+        if class.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(class.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let mut name = ident.escaped_text.clone();
+            self.append_type_param_names(&mut name, &class.type_parameters);
+            return name;
+        }
+
+        "<anonymous>".to_string()
+    }
+
     /// Get the name of a class member (property, method, or accessor).
     pub(crate) fn get_member_name(&self, member_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(member_idx)?;

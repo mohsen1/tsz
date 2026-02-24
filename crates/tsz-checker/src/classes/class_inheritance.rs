@@ -347,35 +347,32 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
         let mut name = symbol.escaped_name.clone();
 
-        // Append type parameters to match tsc's format: "Type 'I1<T>' recursively..."
-        let type_parameters = if is_class {
-            self.ctx
-                .arena
-                .get(decl_idx)
-                .and_then(|node| self.ctx.arena.get_class(node))
-                .and_then(|class| class.type_parameters.clone())
-        } else {
-            self.ctx
+        // Append type parameters only for interfaces (TS2310) to match tsc's format:
+        // "Type 'I1<T>' recursively references itself as a base type."
+        // For classes (TS2506), tsc uses just the bare name without type params.
+        if !is_class {
+            let type_parameters = self
+                .ctx
                 .arena
                 .get(decl_idx)
                 .and_then(|node| self.ctx.arena.get_interface(node))
-                .and_then(|iface| iface.type_parameters.clone())
-        };
-        if let Some(list) = &type_parameters {
-            let mut param_names = Vec::new();
-            for &param_idx in &list.nodes {
-                if let Some(node) = self.ctx.arena.get(param_idx)
-                    && let Some(data) = self.ctx.arena.get_type_parameter(node)
-                    && let Some(name_node) = self.ctx.arena.get(data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    param_names.push(ident.escaped_text.as_str());
+                .and_then(|iface| iface.type_parameters.clone());
+            if let Some(list) = &type_parameters {
+                let mut param_names = Vec::new();
+                for &param_idx in &list.nodes {
+                    if let Some(node) = self.ctx.arena.get(param_idx)
+                        && let Some(data) = self.ctx.arena.get_type_parameter(node)
+                        && let Some(name_node) = self.ctx.arena.get(data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        param_names.push(ident.escaped_text.as_str());
+                    }
                 }
-            }
-            if !param_names.is_empty() {
-                name.push('<');
-                name.push_str(&param_names.join(", "));
-                name.push('>');
+                if !param_names.is_empty() {
+                    name.push('<');
+                    name.push_str(&param_names.join(", "));
+                    name.push('>');
+                }
             }
         }
 

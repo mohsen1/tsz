@@ -180,7 +180,8 @@ impl<'a> CheckerState<'a> {
                     return Some(MemberAccessInfo {
                         level,
                         declaring_class_idx: current,
-                        declaring_class_name: self.get_class_name_from_decl(current),
+                        declaring_class_name: self
+                            .get_class_name_with_type_params_from_decl(current),
                     });
                 }
                 MemberLookup::Public => return None,
