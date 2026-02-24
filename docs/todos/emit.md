@@ -1,9 +1,48 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10088/13546 = 74.5% JS, ~779/1995 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5308/7124 = 74.5% JS, ~416/1039 = 40.0% DTS)
 
-Note: test count changed from 13546→11477 due to TypeScript submodule update (TS 6.0.0-dev.20260215).
-Pass rate decreased from 74.1%→72.8% — the new baseline files may introduce patterns not yet supported.
+Note: test count changed from 13546→11477→7163 due to TypeScript submodule updates.
+Pass rate stable at ~74.5% JS.
+
+### Fixed (2026-02-25, session 18) — Panic Fixes for Multi-byte UTF-8 Escapes and Malformed Class Sources (+2 JS)
+
+- **Multi-byte UTF-8 after backslash in string literals** (literals.rs):
+  `downlevel_codepoint_escapes_in_literal_text` treated the byte after `\` as
+  single-byte ASCII, advancing by 2 bytes. When `\` is followed by a multi-byte
+  UTF-8 character (e.g. U+2028 LINE SEPARATOR = 3 bytes), the index landed
+  inside the character, causing a panic on `text[i..]`. Fix: decode the full
+  char with `chars().next()` and advance by `ch.len_utf8()`.
+  Test: `sourceMap-LineBreaks(target=es5)` now passes.
+- **Malformed source class brace scanning** (declarations_class.rs):
+  The comment-suppression heuristic scans for `{` from `node.pos`. In malformed
+  source (e.g. `constructorWithIncompleteTypeAnnotation.ts` with `!= 0 ^= {`),
+  the first `{` found may be inside a broken expression, so `brace_end` can
+  exceed the first member's `pos`. `bytes[brace_end..scan_end]` panicked. Fix:
+  guard with bounds check, skip suppression heuristic when positions are inverted.
+  Test: `constructorWithIncompleteTypeAnnotation` now passes.
+- JS: 5306→5308, DTS: 416→416, zero regressions (555 emitter unit tests pass).
+
+### Skipped / Investigated (2026-02-25, session 18)
+
+- **Missing comments in output** (~23 tests where ONLY diff is missing comments):
+  Various patterns — comments inside downleveled getters (`Object.defineProperty`),
+  comments before closing `}` in constructors, first-line-of-file comments dropped.
+  Root causes vary per test; not a single fix.
+- **Extra `/// <reference>` directives in JS output** (~14 tests): tsz emits
+  `/// <reference path=...>` and `/// <reference types=...>` directives in JS
+  output when tsc strips them. Only 2 tests have this as the sole diff. Fixing
+  requires stripping triple-slash directives during JS emit.
+- **Command failures / crashes** (3 remaining after fixes): `augmentedTypesClass4`
+  and `augmentedTypesModules3` fail because the test runner interprets empty output
+  as failure (the tests expect JS baselines but tsz produces no output for these
+  files). `esDecorators-classDeclaration-exportModifier.2` fails with multi-file
+  input — likely a CLI argument handling issue with many input files.
+- **`"use strict"` over-emission** (~128 tests): Known issue — module detection
+  treats files as CJS when they should be ESM. Same root cause as `__esModule`
+  and CJS helper over-emission.
+- **`__decorate` helper not emitted** (~103 tests): Decorator transforms not
+  implemented. Major feature gap.
 
 ### Fixed (2026-02-24, session 17) — Comment Preservation After Erased Type Annotations (+3 JS)
 
