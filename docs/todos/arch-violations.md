@@ -120,7 +120,8 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
    - ~~`widening.rs` (128 LOC) → `operations/widening.rs`~~ ✅ Done (f306f0f4b)
    - ~~`application.rs` (190 LOC) → `instantiation/application.rs`~~ ✅ Done (db9084e91) — type application evaluation is conceptually part of the instantiation pipeline.
    - ~~`type_factory.rs` (184 LOC) → `intern/type_factory.rs`~~ ✅ Done (c492109bf) — type construction facade is conceptually adjacent to the interning engine.
-   - Remaining top-level candidates: `tracer.rs` (735 LOC); `unsoundness_audit.rs` (835 LOC — not runtime code, could move to docs); `format.rs` (699 LOC) could become `format/`; `recursion.rs` (664 LOC) + `canonicalize.rs` (617 LOC) could group together.
+   - ~~`format.rs` (787 LOC) → `diagnostics/format.rs`~~ ✅ Done — type formatting is the primary consumer of diagnostics infrastructure and its sole internal caller is `diagnostics/builders.rs`.
+   - Remaining top-level candidates: `tracer.rs` (735 LOC); `unsoundness_audit.rs` (835 LOC — not runtime code, could move to docs); `recursion.rs` (664 LOC) + `canonicalize.rs` (617 LOC) could group together.
 4. ~~**Checker `context*.rs` files**: organized into `context/` subdirectory~~ ✅ Done
 5. ~~**Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit~~ ✅ Done — extracted constructor/class/instance classifiers (~482 LOC) into `extended_constructors.rs`, reducing `extended.rs` to ~1,442 LOC.
 6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 → 1,395 LOC by extracting iterable classifications into `iterable.rs` and then traversal/property-access classifications (~355 LOC) into `traversal.rs`. Remaining sections: core type queries, intrinsic queries, composite queries, constructor/static collection, construct signatures, constraint classification, signature classification, property lookup classification, evaluation-needed classification.

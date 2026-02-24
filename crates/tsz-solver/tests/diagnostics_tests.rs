@@ -5,7 +5,7 @@ use crate::TypeInterner;
 use crate::diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
-use crate::format::TypeFormatter;
+use crate::diagnostics::format::TypeFormatter;
 #[test]
 fn test_format_intrinsic_types() {
     let interner = TypeInterner::new();
