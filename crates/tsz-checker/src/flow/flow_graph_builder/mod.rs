@@ -10,6 +10,8 @@
 //!
 //! This enables type narrowing analysis without mutating AST nodes.
 
+pub(crate) mod expressions;
+
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use tracing::{Level, debug, span};
@@ -1122,5 +1124,5 @@ impl<'a> FlowGraphBuilder<'a> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/flow_graph_builder.rs"]
+#[path = "../../../tests/flow_graph_builder.rs"]
 mod tests;
