@@ -849,6 +849,24 @@ TS1194 only fires in non-ambient namespaces.
 - **TS2585**: Symbol/Iterator in ES5 — medium difficulty, needs lib target awareness.
 - **TS2303**: Circular imports in multi-file scenarios.
 
+## Session 2026-02-24 — Second half (offset 6000)
+
+**Score**: 3966/6577 (60.3%) — offset 6000, fingerprint level
+**Full suite**: 7974/12574 (63.4%) (+15 from baseline 7959)
+
+### Fixed
+
+- **TS1501 message text fix (+15 tests)**: "This regular expression flag is only available when
+  targeting '{0}' or later." The validation logic was already implemented and working correctly
+  (checking regex flags u/y→ES2015, s→ES2018, d→ES2022, v→ESNext against the compilation target).
+  The only bug was the target name strings in the diagnostic message: we used uppercase enum names
+  (`"ES2015"`, `"ES2018"`, etc.) while tsc uses lowercase forms (`"es6"`, `"es2018"`, `"es2022"`,
+  `"esnext"`). Changed 4 string literals in `literal_type.rs`. 11 unit tests in `ts1501_tests.rs`.
+
+### Remaining TS1501 failures (4 tests)
+- `unicodeExtendedEscapesInRegularExpressions{07,12,14,17}.ts` — Need TS1198 (extended Unicode
+  escape out of range) and TS1508 (unexpected `}` in regex). Scanner-level regex validation gaps.
+
 ## Session 2026-02-23 — Second half (offset 6000)
 
 **Score**: 3952/6577 (60.1%) — offset 6000, fingerprint level
