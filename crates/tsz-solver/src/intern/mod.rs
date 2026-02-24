@@ -45,6 +45,7 @@ use tsz_common::interner::{Atom, ShardedInterner};
 mod intersection;
 mod normalize;
 mod template;
+pub mod type_factory;
 
 const SHARD_BITS: u32 = 6;
 const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
