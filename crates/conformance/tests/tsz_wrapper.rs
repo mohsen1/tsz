@@ -463,6 +463,72 @@ fn test_normalize_message_paths_normalizes_ts5057_directory() {
 }
 
 #[test]
+fn test_is_windows_absolute_path_drive_letters() {
+    assert!(is_windows_absolute_path("A:/foo/bar.ts"));
+    assert!(is_windows_absolute_path("C:/Users/test.ts"));
+    assert!(is_windows_absolute_path("B:\\foo\\bar.ts"));
+    assert!(is_windows_absolute_path("a:/lowercase.ts"));
+    assert!(is_windows_absolute_path("Z:/last.ts"));
+}
+
+#[test]
+fn test_is_windows_absolute_path_rejects_non_windows() {
+    assert!(!is_windows_absolute_path("/unix/path.ts"));
+    assert!(!is_windows_absolute_path("relative/path.ts"));
+    assert!(!is_windows_absolute_path("test.ts"));
+    assert!(!is_windows_absolute_path(""));
+    assert!(!is_windows_absolute_path("A:"));
+    assert!(!is_windows_absolute_path("1:/digit.ts"));
+    assert!(!is_windows_absolute_path("AB:/two.ts"));
+}
+
+#[test]
+fn test_prepare_test_dir_skips_windows_absolute_path_files() {
+    // When ALL filenames are Windows-style absolute paths, no source files should
+    // be written to the temp directory (matching tsc's behavior of emitting TS18003).
+    let filenames = vec![
+        ("A:/foo/bar.ts".to_string(), "var x: number;".to_string()),
+        ("A:/foo/baz.ts".to_string(), "var y: number;".to_string()),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("target".to_string(), "es2015".to_string())]);
+
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let dir = prepared.temp_dir.path();
+
+    // Only tsconfig.json should exist, no source files
+    let ts_files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|ext| ext == "ts").unwrap_or(false))
+        .collect();
+    assert!(
+        ts_files.is_empty(),
+        "No .ts files should be written for Windows-path-only tests, found: {:?}",
+        ts_files.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
+
+    // tsconfig.json should still exist
+    assert!(dir.join("tsconfig.json").exists());
+}
+
+#[test]
+fn test_prepare_test_dir_keeps_mixed_path_files() {
+    // When filenames mix Windows paths with normal paths, normal files should still be written.
+    let filenames = vec![
+        ("A:/foo/bar.ts".to_string(), "var x: number;".to_string()),
+        ("test.ts".to_string(), "var y: number;".to_string()),
+    ];
+    let options: HashMap<String, String> = HashMap::new();
+
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[]).unwrap();
+    let dir = prepared.temp_dir.path();
+
+    // test.ts should be written
+    assert!(dir.join("test.ts").exists());
+}
+
+#[test]
 fn test_normalize_message_paths_normalizes_ts5057_not_found() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "tsconfig not found at /tmp/tsz-test/tsconfig.json";
