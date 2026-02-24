@@ -235,16 +235,24 @@ impl<'a> Printer<'a> {
         self.inner.set_module_kind(self.options.module);
 
         // Extract source text from arena if not already set (for comment preservation)
-        if self.inner.source_text.is_none()
-            && let Some(node) = self.inner.arena.get(root)
+        if let Some(node) = self.inner.arena.get(root)
             && let Some(source_file) = self.inner.arena.get_source_file(node)
         {
-            // SAFETY: The source text lives as long as the arena, and we hold
-            // a reference to the arena for the lifetime of the Printer.
-            // Route through `set_source_text` so writer preallocation stays in sync
-            // with other source-text-aware constructor paths.
-            let text_ref: &'a str = &source_file.text;
-            self.inner.set_source_text(text_ref);
+            let file_name = source_file.file_name.to_ascii_lowercase();
+            let is_js_source = file_name.ends_with(".js")
+                || file_name.ends_with(".jsx")
+                || file_name.ends_with(".mjs")
+                || file_name.ends_with(".cjs");
+            self.inner.set_current_root_js_source(is_js_source);
+
+            if self.inner.source_text.is_none() {
+                // SAFETY: The source text lives as long as the arena, and we hold
+                // a reference to the arena for the lifetime of the Printer.
+                // Route through `set_source_text` so writer preallocation stays in sync
+                // with other source-text-aware constructor paths.
+                let text_ref: &'a str = &source_file.text;
+                self.inner.set_source_text(text_ref);
+            }
         }
 
         // Emit the AST

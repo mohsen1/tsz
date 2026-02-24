@@ -854,7 +854,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_get_accessor(&mut self, node: &Node) {
+    pub(super) fn emit_get_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };
@@ -868,10 +868,11 @@ impl<'a> Printer<'a> {
 
         // Skip type annotation for JS emit
 
-        self.emit_accessor_body(accessor.body);
+        let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+        self.emit_accessor_body(accessor.body, compact_body);
     }
 
-    pub(super) fn emit_set_accessor(&mut self, node: &Node) {
+    pub(super) fn emit_set_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };
@@ -913,12 +914,20 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        self.emit_accessor_body(accessor.body);
+        let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
+        self.emit_accessor_body(accessor.body, compact_body);
     }
 
     /// Emit the body of a get/set accessor, handling scope management and fallback to empty body.
-    fn emit_accessor_body(&mut self, body: NodeIndex) {
+    fn emit_accessor_body(&mut self, body: NodeIndex, compact_empty_body: bool) {
         if body.is_some() {
+            let can_emit_compact_empty_body =
+                compact_empty_body && self.should_emit_compact_empty_accessor_body_impl(body);
+            if can_emit_compact_empty_body {
+                self.write(" {}");
+                return;
+            }
+
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;
@@ -932,9 +941,48 @@ impl<'a> Printer<'a> {
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
-            // For JS emit, add empty body for accessors without body
-            self.write(" { }");
+            // For JS-pass-through object-literal accessors, keep compact braces.
+            if compact_empty_body {
+                self.write(" {}");
+            } else {
+                // For TS emit, preserve spaced empty-body formatting.
+                self.write(" { }");
+            }
         }
+    }
+
+    const fn should_emit_compact_empty_accessor_body(&self, _accessor_node: NodeIndex) -> bool {
+        self.is_current_root_js_source && self.is_emitting_object_literal_accessor()
+    }
+
+    /// Emit `{}` for object-literal accessors when the block is syntactically empty.
+    fn should_emit_compact_empty_accessor_body_impl(&mut self, body: NodeIndex) -> bool {
+        let Some(block_node) = self
+            .arena
+            .get(body)
+            .and_then(|body_node| self.arena.get_block(body_node))
+        else {
+            return false;
+        };
+
+        if !block_node.statements.nodes.is_empty() {
+            return false;
+        }
+
+        if self.ctx.options.remove_comments {
+            return true;
+        }
+
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+
+        let closing_brace_pos = self.find_token_end_before_trivia(body_node.pos, body_node.end);
+        let has_inner_comments = self
+            .all_comments
+            .get(self.comment_emit_idx)
+            .is_some_and(|c| c.end <= closing_brace_pos);
+        !has_inner_comments
     }
 }
 
@@ -1064,6 +1112,26 @@ mod tests {
         assert!(
             output.contains("set setter(v) { },"),
             "Object-literal setter should preserve trailing comma when present.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn object_literal_accessor_empty_body_compact_in_js_file() {
+        let source = "export const t = {\n    set setter(v) {},\n};";
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("set setter(v) {}"),
+            "JS input object-literal accessor should use compact empty-body formatting.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("set setter(v) { },"),
+            "JS input object-literal accessor should prefer compact braces.\nOutput: {output}"
         );
     }
 
