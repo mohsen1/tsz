@@ -1,6 +1,42 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10048/13623 = 73.8% JS, ~780/1995 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10076/13623 = 74.0% JS, ~780/1995 = 39.1% DTS)
+
+### Fixed (2026-02-24, session 10) — Erased-Statement Comment Boundary
+
+- **Trailing comments after non-erased siblings of erased declarations stripped** (+22 JS):
+  When a type-only declaration (interface, type alias) was followed by a non-erased
+  statement (`;`) on the same source line (e.g., `interface Foo {};  // Error`), the
+  `// Error` comment was dropped. Two independent bugs caused this:
+  1. **Initialization filter**: `erased_ranges` used `prev_end` from non-erased statements
+     as the range start, capturing trailing comments that belong to the preceding
+     non-erased statement. Fix: when the previous statement was non-erased, start the
+     erased range at the first newline after `prev_end`.
+  2. **Runtime handler**: The erased-statement handler consumed all comments up to
+     `line_end` without checking if a subsequent sibling statement existed on the same
+     line. Fix: cap the comment boundary at the next sibling's start position.
+  Also used `write_comment_with_reindent` for comment output in leading comment loops,
+  and replaced O(n) `position()` lookup with pre-computed enumerate index.
+  Two unit tests added (preserve trailing comment after erased sibling, erase comments
+  between consecutive erased declarations).
+  JS: 10054→10076, DTS: 780→780, zero regressions (9206 unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 10)
+
+- **Trailing comment shift** (~50 tests): When two statements appear on the same source
+  line (e.g., `function m2() { }; // comment`), tsz assigns the trailing comment to the
+  first statement (the `}`), while tsc assigns it to the last (`;`). Root cause is in
+  `emit_trailing_comments` which scans forward from the emitted statement's last token,
+  not respecting that another sibling starts between the token and the comment. Fixing
+  requires passing next-sibling position as upper bound to `emit_trailing_comments`.
+- **Comment over-emission on erased declarations** (~67 tests): tsz preserves comments
+  on type-only statements that tsc erases entirely. Some are fixed by this session's
+  initialization filter improvement; the remaining ones are comments that are leading
+  trivia of the erased node itself (on the same line as the erased node's first token).
+- **`__setFunctionName` not emitted** (~151 tests): tsc emits `__setFunctionName(ClassName,
+  "ClassName")` for class expressions at ES2015+. Not implemented in tsz.
+- **Import not elided (type-only imports)** (~150 tests): tsz emits import/require for
+  type-only imports that tsc correctly elides.
 
 ### Fixed (2026-02-24, session 9) — Test Runner outFile Baseline Handling
 
