@@ -431,49 +431,8 @@ impl<'a> CheckerState<'a> {
             // If there were string members, the "remaining" non-string type still needs to be
             // array-like, and the error message changes from TS2495 → TS2461 (no "or string type"
             // suffix because the string part is already accounted for).
-            let has_string_constituent = self.has_string_constituent(expr_type);
-            let allows_strings = !has_string_constituent;
-            if let Some((start, end)) = self.get_node_span(expr_idx) {
-                let type_str = self.format_type(expr_type);
-                // Check if the type has Symbol.iterator (iterable but not usable in ES5 for-of
-                // without downlevelIteration). These emit TS2802 instead of TS2495/TS2461.
-                if self.is_iterable_type(expr_type) {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                    );
-                } else if allows_strings {
-                    // No string in union: "Type is not an array type or a string type" (TS2495)
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
-                    );
-                } else {
-                    // Has string constituent but non-string part is not array-like: TS2461
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                    );
-                }
-            }
+            let allows_strings = !self.has_string_constituent(expr_type);
+            self.emit_es5_not_iterable_error(expr_type, expr_type, expr_idx, allows_strings);
             return false;
         }
 
@@ -483,20 +442,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-
-        if let Some((start, end)) = self.get_node_span(expr_idx) {
-            let type_str = self.format_type(expr_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-                &[&type_str],
-            );
-            self.error(
-                start,
-                end.saturating_sub(start),
-                message,
-                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-            );
-        }
+        self.emit_ts2488_not_iterable(expr_type, expr_idx);
         false
     }
 
@@ -517,32 +463,8 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            if let Some((start, end)) = self.get_node_span(expr_idx) {
-                let type_str = self.format_type(resolved);
-                if self.is_iterable_type(resolved) {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                    );
-                } else {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                    );
-                }
-            }
+            // Spread never uses the "or a string type" variant (allows_strings = false).
+            self.emit_es5_not_iterable_error(resolved, resolved, expr_idx, false);
             return false;
         }
 
@@ -562,20 +484,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-
-        if let Some((start, end)) = self.get_node_span(expr_idx) {
-            let type_str = self.format_type(spread_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-                &[&type_str],
-            );
-            self.error(
-                start,
-                end.saturating_sub(start),
-                message,
-                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-            );
-        }
+        self.emit_ts2488_not_iterable(spread_type, expr_idx);
         false
     }
 
@@ -629,20 +538,7 @@ impl<'a> CheckerState<'a> {
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            let error_idx = pattern_idx;
-            if let Some((start, end)) = self.get_node_span(error_idx) {
-                let type_str = self.format_type(pattern_type);
-                let message = format_message(
-                    diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-                    &[&type_str],
-                );
-                self.error(
-                    start,
-                    end.saturating_sub(start),
-                    message,
-                    diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-                );
-            }
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
             return false;
         }
 
@@ -666,36 +562,8 @@ impl<'a> CheckerState<'a> {
             if self.is_array_or_tuple_type(resolved_type) {
                 return true;
             }
-            // For destructuring diagnostics, anchor to the binding pattern.
-            let error_idx = pattern_idx;
-            if let Some((start, end)) = self.get_node_span(error_idx) {
-                let type_str = self.format_type(pattern_type);
-                // Check if the type has Symbol.iterator (iterable but not usable in ES5
-                // without downlevelIteration). These emit TS2802 instead of TS2461.
-                if self.is_iterable_type(resolved_type) {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
-                    );
-                } else {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                        &[&type_str],
-                    );
-                    self.error(
-                        start,
-                        end.saturating_sub(start),
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                    );
-                }
-            }
+            // Destructuring never uses the "or a string type" variant (allows_strings = false).
+            self.emit_es5_not_iterable_error(resolved_type, pattern_type, pattern_idx, false);
             return false;
         }
 
@@ -711,12 +579,21 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
+        self.emit_ts2488_not_iterable(pattern_type, pattern_idx);
+        false
+    }
 
-        // For destructuring diagnostics, anchor to the binding pattern.
-        let error_idx = pattern_idx;
+    // =========================================================================
+    // Shared Diagnostic Helpers
+    // =========================================================================
 
-        if let Some((start, end)) = self.get_node_span(error_idx) {
-            let type_str = self.format_type(pattern_type);
+    /// Emit TS2488: "Type '...' must have a '[Symbol.iterator]()' method that returns an iterator."
+    ///
+    /// Shared by `check_for_of_iterability`, `check_spread_iterability`, and
+    /// `check_destructuring_iterability` for non-iterable types in ES2015+ mode.
+    fn emit_ts2488_not_iterable(&mut self, type_id: TypeId, error_node: NodeIndex) {
+        if let Some((start, end)) = self.get_node_span(error_node) {
+            let type_str = self.format_type(type_id);
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],
@@ -728,7 +605,56 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
         }
-        false
+    }
+
+    /// Emit the appropriate ES5 non-iterable error:
+    /// - TS2802 if the type has `[Symbol.iterator]` (iterable but needs downlevelIteration)
+    /// - TS2461 if the type is not an array type (when `allows_strings` is false, or for
+    ///   spread/destructuring)
+    /// - TS2495 if the type is not an array type or a string type (when `allows_strings` is true,
+    ///   only used in for-of)
+    fn emit_es5_not_iterable_error(
+        &mut self,
+        resolved_type: TypeId,
+        display_type: TypeId,
+        error_node: NodeIndex,
+        allows_strings: bool,
+    ) {
+        if let Some((start, end)) = self.get_node_span(error_node) {
+            let type_str = self.format_type(display_type);
+            if self.is_iterable_type(resolved_type) {
+                let message = format_message(
+                    diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                    &[&type_str],
+                );
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                );
+            } else if allows_strings {
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                    &[&type_str],
+                );
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                );
+            } else {
+                let message =
+                    format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                );
+            }
+        }
     }
 
     // =========================================================================
