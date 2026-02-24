@@ -303,10 +303,8 @@
   clash, unique symbol computed property duplicates in classes
 - **Difficulty**: MEDIUM
 
-### TS2846 — Message text: .js extension suggestion
-- Our TS2846 says "Did you mean to import './a'?" but tsc says "Did you mean to import './a.js'?"
-- Affects several TS5097 and TS2846 tests
-- **Difficulty**: EASY
+### ~~TS2846 — Message text: .js extension suggestion~~ RESOLVED
+- Fixed: TS2846 message now includes .js/.mjs/.cjs (or .ts/.mts/.cts with allowImportingTsExtensions)
 
 ### TS2589 — Remaining (9 tests, now partially fixed)
 - Infrastructure is complete. Remaining failures co-occur with other missing codes.
@@ -323,14 +321,11 @@ for unresolved types. This blocks TS18046 expansion (calls, ops on unknown) beca
 distinguish "user wrote `unknown`" from "resolution failed." Fix requires either `TypeId::UNRESOLVED`
 or a separate flag.
 
-### Intersection freshness propagation
-`tsz-solver/src/intern/intersection.rs` line ~382 propagates `FRESH_LITERAL` flag via OR when
-merging objects. This makes intersected types appear fresh, triggering false excess property checks
-(~76 tests). Fix: AND instead of OR.
+### ~~Intersection freshness propagation~~ RESOLVED
+Already uses AND logic for FRESH_LITERAL propagation in intersection merging.
 
-### file_locals flat scope (TS2430 — RESOLVED)
-The binder's `file_locals` scope issue that caused false TS2430 in react16.d.ts patterns
-has been resolved. Unit test confirms correct behavior.
+### ~~file_locals flat scope (TS2430)~~ RESOLVED
+Binder's `file_locals` scope issue resolved. Unit test confirms correct behavior.
 
 ### Lib loading and target level (TS2585)
 `lib.dom.d.ts` contains `/// <reference lib="es2015" />` which pulls ES2015 bindings regardless
