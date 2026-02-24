@@ -1446,12 +1446,6 @@ impl ParserState {
         }
     }
 
-    /// Error: Unexpected token (TS1012)
-    pub(crate) fn error_unexpected_token(&mut self) {
-        use tsz_common::diagnostics::diagnostic_codes;
-        self.parse_error_at_current_token("Unexpected token", diagnostic_codes::UNEXPECTED_TOKEN);
-    }
-
     /// Parse semicolon (or recover from missing)
     pub(crate) fn parse_semicolon(&mut self) {
         if self.is_token(SyntaxKind::SemicolonToken) {

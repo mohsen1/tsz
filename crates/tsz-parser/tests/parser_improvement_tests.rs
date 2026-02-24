@@ -1218,3 +1218,63 @@ function fn() {
         "Expected 2 TS1005 errors for two orphan blocks, got {ts1005_count}. Diagnostics: {diagnostics:?}",
     );
 }
+
+#[test]
+fn test_ts1131_emitted_for_invalid_interface_member() {
+    // Invalid token inside an interface body should emit TS1131
+    // "Property or signature expected."
+    let source = r"
+interface Foo {
+    ?;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
+    assert!(
+        ts1131_count >= 1,
+        "Expected at least 1 TS1131 for invalid interface member, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_ts1131_emitted_for_invalid_type_literal_member() {
+    // Invalid token inside a type literal should emit TS1131
+    let source = r"
+type T = {
+    !;
+};
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
+    assert!(
+        ts1131_count >= 1,
+        "Expected at least 1 TS1131 for invalid type literal member, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_ts1131_not_emitted_for_valid_interface() {
+    // Valid interface should not emit TS1131
+    let source = r"
+interface Foo {
+    x: number;
+    y: string;
+    z(): void;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1131_count = diagnostics.iter().filter(|d| d.code == 1131).count();
+    assert_eq!(
+        ts1131_count, 0,
+        "Expected no TS1131 for valid interface, got {ts1131_count}. Diagnostics: {diagnostics:?}",
+    );
+}
