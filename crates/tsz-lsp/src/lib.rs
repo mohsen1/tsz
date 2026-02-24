@@ -33,7 +33,6 @@ pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
 pub mod export_signature;
-pub mod file_rename;
 pub mod folding;
 pub mod formatting;
 pub mod hierarchy;
@@ -41,7 +40,6 @@ pub mod highlighting;
 pub mod hover;
 pub mod inlay_hints;
 pub mod jsdoc;
-pub mod linked_editing;
 pub use tsz_common::position;
 pub mod navigation;
 pub mod project;
@@ -120,7 +118,7 @@ pub use hierarchy::call_hierarchy::{
 pub use hierarchy::type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};
 
 // Linked Editing
-pub use linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
+pub use rename::linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
 
 // File Rename
-pub use file_rename::{FileRenameProvider, ImportLocation};
+pub use rename::file_rename::{FileRenameProvider, ImportLocation};
