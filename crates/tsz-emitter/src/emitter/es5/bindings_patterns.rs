@@ -1154,7 +1154,7 @@ impl<'a> Printer<'a> {
         // Leading comments for downlevel for-of are deferred by statement emitters
         // and emitted here so they stay attached to the transformed loop body.
         if let Some(for_of_node) = self.arena.get(for_of_idx) {
-            let actual_start = self.skip_whitespace_forward(for_of_node.pos, for_of_node.end);
+            let actual_start = self.skip_trivia_forward(for_of_node.pos, for_of_node.end);
             self.emit_comments_before_pos(actual_start);
         }
 
@@ -1330,7 +1330,7 @@ impl<'a> Printer<'a> {
         // Leading comments for downlevel for-await-of are deferred by statement emitters
         // and emitted here so they stay attached to the transformed loop body.
         if let Some(for_of_node) = self.arena.get(for_of_idx) {
-            let actual_start = self.skip_whitespace_forward(for_of_node.pos, for_of_node.end);
+            let actual_start = self.skip_trivia_forward(for_of_node.pos, for_of_node.end);
             self.emit_comments_before_pos(actual_start);
         }
 

@@ -892,3 +892,35 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
         "CJS namespace at ES5 should use 'var' for const, got: {output}"
     );
 }
+
+#[test]
+fn test_comment_preserved_after_erased_type_annotation() {
+    // When a type annotation is erased during emit, comments that follow
+    // the annotation in trailing trivia should not be consumed.
+    // Regression test: skip_comments_in_range used raw node.end which
+    // extends into trailing trivia, consuming comments meant for the
+    // next statement.
+    let source = "var x: {\n    foo: string,\n    bar: string\n}\n\n// ASI makes this work\nvar y: {\n    foo: string\n    bar: string\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("// ASI makes this work"),
+        "Comment after erased type annotation should be preserved.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn test_comment_preserved_after_erased_function_return_type() {
+    // Comments after an erased return type annotation should not be consumed.
+    let source = "function foo(): number {\n    // body comment\n    return 1;\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("// body comment"),
+        "Comment inside function body should be preserved after return type erasure.\nOutput: {output}"
+    );
+}

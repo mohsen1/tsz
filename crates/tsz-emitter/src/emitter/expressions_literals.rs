@@ -171,7 +171,7 @@ impl<'a> Printer<'a> {
                         let actual_start = self
                             .arena
                             .get(elem)
-                            .map(|n| self.skip_whitespace_forward(n.pos, n.end))
+                            .map(|n| self.skip_trivia_forward(n.pos, n.end))
                             .unwrap_or(0);
                         if let Some(text) = self.source_text {
                             while self.comment_emit_idx < self.all_comments.len() {

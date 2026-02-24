@@ -218,9 +218,10 @@ impl<'a> Printer<'a> {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                     && self.should_defer_for_of_comments(stmt_node);
-                // Only skip whitespace, not comments - comments inside expressions
-                // should be handled by expression emitters
-                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+                // Skip past ALL trivia (whitespace + comments) to find the
+                // actual first token position.  Leading comments whose `c_end`
+                // falls before this position are emitted here.
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                 if !defer_for_of_comments && let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
