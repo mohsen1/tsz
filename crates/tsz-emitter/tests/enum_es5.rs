@@ -111,8 +111,8 @@ fn test_enum_with_binary_expression() {
     let output = transform_enum("enum E { A = 1 + 2, B }");
     assert!(output.contains("var E;"), "Should declare var E");
     assert!(
-        output.contains("E[E[\"A\"] = 1 + 2] = \"A\""),
-        "Should handle binary expression"
+        output.contains("E[E[\"A\"] = 3] = \"A\""),
+        "Should constant-fold binary expression (1+2=3), got: {output}"
     );
     assert!(
         output.contains("E[E[\"B\"] = 4] = \"B\""),
@@ -201,11 +201,11 @@ fn test_string_concatenation_enum_no_reverse_mapping() {
 
 #[test]
 fn test_enum_member_self_reference_qualified() {
-    // Bare identifiers referencing sibling members must be qualified with enum name
+    // Sibling member references are constant-folded when evaluable (a=2, b=3, x=2+3=5)
     let output = transform_enum("enum Foo { a = 2, b = 3, x = a + b }");
     assert!(
-        output.contains("Foo.a + Foo.b"),
-        "Sibling member references should be qualified with enum name, got: {output}"
+        output.contains("Foo[Foo[\"x\"] = 5] = \"x\""),
+        "Sibling member references should be constant-folded (2+3=5), got: {output}"
     );
 }
 
@@ -245,5 +245,83 @@ fn test_numeric_enum_still_has_reverse_mapping() {
     assert!(
         output.contains("Foo[Foo[\"G\"] = 2 + BAR] = \"G\""),
         "Numeric expression should have reverse mapping, got: {output}"
+    );
+}
+
+#[test]
+fn test_constant_folding_shift_operators() {
+    // tsc evaluates 1 << 1 → 2, 1 << 2 → 4, etc.
+    let output = transform_enum("enum E { A = 1 << 1, B = 1 << 2, C = 1 << 3 }");
+    assert!(
+        output.contains("E[E[\"A\"] = 2] = \"A\""),
+        "1 << 1 should fold to 2, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = 4] = \"B\""),
+        "1 << 2 should fold to 4, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = 8] = \"C\""),
+        "1 << 3 should fold to 8, got: {output}"
+    );
+}
+
+#[test]
+fn test_constant_folding_member_reference() {
+    // tsc resolves Color.Color to its numeric value
+    let output = transform_enum("enum Color { Color, Thing = Color.Color }");
+    assert!(
+        output.contains("Color[Color[\"Color\"] = 0] = \"Color\""),
+        "Auto-increment first member should be 0, got: {output}"
+    );
+    assert!(
+        output.contains("Color[Color[\"Thing\"] = 0] = \"Thing\""),
+        "Color.Color reference should fold to 0, got: {output}"
+    );
+}
+
+#[test]
+fn test_constant_folding_bitwise_ops() {
+    let output = transform_enum("enum Flags { A = 1, B = 2, AB = A | B }");
+    assert!(
+        output.contains("Flags[Flags[\"AB\"] = 3] = \"AB\""),
+        "A | B (1|2) should fold to 3, got: {output}"
+    );
+}
+
+#[test]
+fn test_constant_folding_complex_expression() {
+    // (2 + 3) * 4 = 20
+    let output = transform_enum("enum E { A = (2 + 3) * 4 }");
+    assert!(
+        output.contains("E[E[\"A\"] = 20] = \"A\""),
+        "(2+3)*4 should fold to 20, got: {output}"
+    );
+}
+
+#[test]
+fn test_no_folding_for_non_constant_expressions() {
+    // External function call cannot be folded
+    let output = transform_enum("enum E { A = foo() }");
+    assert!(
+        output.contains("foo()"),
+        "Non-constant expression should be preserved, got: {output}"
+    );
+}
+
+#[test]
+fn test_constant_folding_negative_values() {
+    let output = transform_enum("enum E { A = -1, B = -2, C }");
+    assert!(
+        output.contains("E[E[\"A\"] = -1] = \"A\""),
+        "Negative literal should be preserved, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"B\"] = -2] = \"B\""),
+        "Negative literal should be preserved, got: {output}"
+    );
+    assert!(
+        output.contains("E[E[\"C\"] = -1] = \"C\""),
+        "Auto-increment after -2 should be -1, got: {output}"
     );
 }
