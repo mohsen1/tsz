@@ -751,3 +751,33 @@ fn declare_class_field_not_emitted_in_constructor() {
         "Non-declare field should still emit in constructor.\nOutput:\n{output}"
     );
 }
+
+/// Trailing comment scan for the last class member must not overshoot into
+/// comments belonging to the closing `}` line.
+///
+/// Without capping, a comment like `} // end` could be stolen by the last
+/// member's trailing comment scanner and emitted after the member instead.
+/// Uses a method declaration to avoid class field lowering at default target.
+#[test]
+fn trailing_comment_capped_at_class_close_brace() {
+    let source = "class C {\n    m() {} // method comment\n} // end of class\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // The method's trailing comment should stay with the method
+    assert!(
+        output.contains("// method comment"),
+        "Method's trailing comment should be preserved.\nOutput:\n{output}"
+    );
+    // The closing brace comment must NOT be stolen by the method
+    assert!(
+        !output.contains("// method comment // end of class"),
+        "Closing brace comment must not be stolen by last member.\nOutput:\n{output}"
+    );
+}

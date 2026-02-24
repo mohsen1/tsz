@@ -1,8 +1,31 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9981/13623 = 73.3% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9995/13623 = 73.4% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Ternary/conditional expression line-breaking** (+6 JS):
+  tsc preserves source formatting for conditional expressions: `?` and `:` operators
+  stay on the same lines as in source. Two ternary styles exist:
+  - Case A: `a ?\n    b : c` (`?` trails on condition line)
+  - Case B: `a\n    ? b\n    : c` (`?` starts next line)
+  The emitter only handled Case B. Added `find_outer_ternary_operators()` forward
+  scanner that tracks ternary nesting depth to reliably find outer `?` and `:` positions
+  (the parser's `node.end` absorbs trailing trivia, making region-based detection unreliable).
+  Also added `question_on_condition_line()` and `colon_on_true_line()` helpers.
+  Fixed `detect_conditional_newlines()` to check for newlines AFTER the `:` (not just before),
+  catching the `b :\n  c` pattern. Removed buggy `colon_starts_new_line()` (inverted logic)
+  and replaced with `!colon_on_true_line()`. Nine unit tests added.
+  Tests fixed: conditionalExpressionNewLine3/5/6/7/8/9/10 and related patterns.
+  JS: 9986→9995, DTS unchanged, zero regressions.
+
+- **Trailing comment scan capping at closing braces** (+3 JS):
+  The trailing comment scanner for the last member in a class body or last statement
+  in a block could overshoot past the closing `}` and steal comments belonging to the
+  brace line. Fixed by computing the `}` position and passing it as a cap to
+  `emit_trailing_comments_before()` in both `declarations_class.rs` and `statements.rs`.
+  Two unit tests added.
+  JS: 9983→9986, DTS unchanged, zero regressions.
+
 - **`override` parameter property + `declare` class field emission** (+2 JS):
   Two class emission fixes: (1) `override` alone on a constructor parameter now
   triggers parameter property emission (`this.p1 = p1;`), matching tsc. Previously
@@ -39,6 +62,18 @@
   JS: 9947→9976, DTS: 776→777, zero regressions.
 
 ### Skipped / Investigated This Session (2026-02-24)
+- **Triple-slash reference directives**: Investigated stripping `/// <reference>` from JS output.
+  Resulted in -138 regression — tsc PRESERVES these directives in JS output, not strips them.
+  Reverted immediately.
+- **Comment displacement patterns** (~138+ tests): Comments on empty statements, detached
+  from preceding declarations, or shifted between class members. Requires systematic comment
+  association logic improvements, not simple scanner fixes. High complexity, moderate ROI.
+- **`void 0` default parameter substitution** (~74 tests): tsc replaces `undefined` with
+  `void 0` in some contexts. Requires understanding the exact heuristic for when this applies.
+- **Enum reverse mapping** (~60 tests): Numeric enum members should generate reverse mapping
+  (`E[E["A"] = 0] = "A"`). Not yet implemented in the enum lowering transform.
+- **Trailing semicolons on class members** (~31 tests): Some class members incorrectly get
+  trailing semicolons in the output. Needs investigation of member terminator logic.
 - **CJS export binding pattern** (~14 tests): tsc sometimes emits `const X = expr; exports.X = X;`
   (split form) and sometimes `exports.X = expr;` (inline form) for exported variable declarations.
   Attempted blanket switch to split form but it regressed 17 tests that expect inline form.
