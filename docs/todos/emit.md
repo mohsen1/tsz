@@ -1,8 +1,40 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5800/7967 = 72.8% JS, ~463/1159 = 39.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9951/13623 = 73.0% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **ES5 computed property comma expression always multi-line** (+18 JS):
+  When lowering computed property names in object literals to ES5 (`{ [key]: val }` →
+  `(_a = {}, _a[key] = val, _a)`), the comma expression was emitted on a single line.
+  tsc always formats this as multi-line with one assignment per indented line:
+  `(_a = {},\n    _a[key] = val,\n    _a)`. Root cause: `emit_object_literal_without_spread_es5`
+  in `es5/helpers.rs` only used multi-line formatting when `single_computed_only && source_is_multiline`.
+  Fix: always use multi-line formatting with `increase_indent`/`write_line`/`decrease_indent` for
+  the comma expression, matching tsc's output. Three unit tests added.
+  Tests fixed: `computedPropertyNames4/5/6/8/9/10_ES5`, `computedPropertyNamesContextualType1-5/8-10_ES5`,
+  `computedPropertyNamesDeclarationEmit6_ES5`, `parserES5ComputedPropertyName4`,
+  `thisTypeInObjectLiterals2`, `exportDefaultParenthesize`, and others.
+  JS: 9933→9951, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session (2026-02-24)
+- **Duplicate `//# sourceMappingURL` in outFile tests** (~10 tests): Tests with `@outFile` (e.g.,
+  `declarationMapsWithSourceMap`, `inlineSourceMap2`, `out-flag2/3`) fail because tsz doesn't
+  support `--outFile` concatenation. Each file gets its own sourceMappingURL, and the runner
+  concatenates them, resulting in duplicates. Fixing requires implementing outFile mode in the
+  driver. Not an emitter bug.
+- **`Object.defineProperty` multi-line in computed property getters/setters** (~2 tests):
+  `computedPropertyNamesDeclarationEmit5_ES5`, `computedPropertyNamesSourceMap2_ES5` —
+  the comma expression is now multi-line, but `Object.defineProperty(...)` calls for
+  getters/setters within the expression are still single-line instead of multi-line.
+  Separate formatting issue for the property descriptor object.
+- **Single-line block expansion** (~20+ tests): tsc always expands `{ statement }` blocks to
+  multi-line regardless of source formatting. tsz preserves single-line format from source.
+  Tests: `controlFlowPropertyDeclarations`, `throwInEnclosingStatements`, `constDeclarations`, etc.
+  Fixing requires changing `emit_block` in `statements.rs` to not use `is_single_line()` for
+  non-function-body blocks. Needs careful analysis to avoid regressions in arrow functions
+  and other contexts where single-line is correct.
+
+### Previously Fixed This Session (2026-02-24)
 - **Async arrow `__awaiter(this)` vs `__awaiter(void 0)` inside function scopes** (+6 JS):
   When lowering async arrow functions (ES5/ES2015 targets), tsz always checked whether the
   arrow body contained an explicit `this` reference to decide the `thisArg` passed to

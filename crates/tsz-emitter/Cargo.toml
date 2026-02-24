@@ -36,5 +36,9 @@ path = "tests/variable_declaration_emit_tests.rs"
 name = "optional_chaining_tests"
 path = "tests/optional_chaining_tests.rs"
 
+[[test]]
+name = "computed_property_es5_tests"
+path = "tests/computed_property_es5_tests.rs"
+
 [lints]
 workspace = true
