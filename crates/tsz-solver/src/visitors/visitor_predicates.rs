@@ -8,7 +8,8 @@
 //!
 //! - **Simple predicates** (`is_*`): Check if a type matches a specific `TypeData` variant.
 //! - **Deep predicates** (`contains_*`): Recursively check if a type contains specific nested types.
-//! - **Database wrappers** (`*_db`): Variants that unwrap through `ReadonlyType`/`NoInfer`/constraints.
+//! - **Constraint-unwrapping predicates** (`is_*_through_type_constraints`):
+//!   Variants that unwrap through `ReadonlyType`, `NoInfer`, and `TypeParameter` constraints.
 //! - **Object classification**: `ObjectTypeKind` enum and `classify_object_type`.
 
 use crate::types::{IntrinsicKind, ObjectShapeId};
@@ -433,26 +434,35 @@ where
 }
 
 // =============================================================================
-// TypeDatabase-based convenience functions
+// TypeDatabase-based convenience functions with constraint unwrapping
 // =============================================================================
 
 /// Check if a type is a literal type (`TypeDatabase` version).
-pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_literal_type_through_type_constraints(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     LiteralTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is a function type (`TypeDatabase` version).
-pub fn is_function_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_function_type_through_type_constraints(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
     FunctionTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is object-like (`TypeDatabase` version).
-pub fn is_object_like_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_object_like_type_through_type_constraints(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
     ObjectTypeChecker::check(types, type_id)
 }
 
 /// Check if a type is an empty object type (`TypeDatabase` version).
-pub fn is_empty_object_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+pub fn is_empty_object_type_through_type_constraints(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
     let checker = EmptyObjectChecker::new(types);
     checker.check(type_id)
 }

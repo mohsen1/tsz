@@ -4,7 +4,9 @@ use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
-use crate::visitor::{TypeVisitor, intrinsic_kind, is_empty_object_type_db, lazy_def_id};
+use crate::visitor::{
+    TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, lazy_def_id,
+};
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -1232,7 +1234,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Check if a type is an empty object target.
     /// Uses the visitor pattern from `solver::visitor`.
     fn is_empty_object_target(&self, target: TypeId) -> bool {
-        is_empty_object_type_db(self.interner, target)
+        is_empty_object_type_through_type_constraints(self.interner, target)
     }
 
     fn is_assignable_to_empty_object(&self, source: TypeId) -> bool {

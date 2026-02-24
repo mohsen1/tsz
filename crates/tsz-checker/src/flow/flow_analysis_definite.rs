@@ -141,7 +141,10 @@ impl<'a> CheckerState<'a> {
                     | TypeId::UNDEFINED
                     | TypeId::NULL
                     | TypeId::VOID
-            ) || tsz_solver::visitor::is_literal_type_db(self.ctx.types, declared_type))
+            ) || tsz_solver::visitor::is_literal_type_through_type_constraints(
+                self.ctx.types,
+                declared_type,
+            ))
         {
             return declared_type;
         }
