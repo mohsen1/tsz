@@ -416,7 +416,26 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 4014/5997 (66.9%) — first-6000
+## Current score: 7989/12574 (63.5%) — full suite
+
+### Session progress (2026-02-24, TS2683 explicit this parameter):
+- **TS2683 false positive fix (+2 tests)**: Functions with an explicit `this` parameter
+  (e.g., `function(this: any) { ... }`) have explicitly typed `this`, so TS2683
+  ("'this' implicitly has type 'any'") must not fire. Added
+  `enclosing_function_has_explicit_this_parameter()` helper in `scope_finder.rs`
+  and integrated it into both TS2683 emission paths in `dispatch.rs`
+  (nested-function-in-class and standalone-function paths).
+  Tests passing: `binaryArithmeticControlFlowGraphNotTooLarge.ts`,
+  `classNameReferencesInStaticElements.ts`. 5 unit tests added.
+- **Investigated but deferred**: TS2550 (3 single-code tests) — "Property does not
+  exist, do you need to change your target library?" Not implementable without fixing
+  lib loading architecture: our compiler loads all lib types regardless of `--lib`
+  setting (same root cause as TS2585). TS2437 (2 single-code tests) — "Module hidden
+  by local declaration" for `import X = Foo` when `var Foo` shadows outer namespace.
+  Requires scope-aware symbol resolution for import aliases. MEDIUM difficulty.
+  TS2657 (2 tests) — JSX multi-file tests, not tractable. TS1131 (5 tests) — parser
+  diagnostic not implemented. TS2846 message text — suggestion should use .js extension
+  but TS2846 not yet emitted.
 
 ### Session progress (2026-02-24, TS2320 optionality):
 - **TS2320 optionality fix (+1 test)**: Interface extension compatibility check now
