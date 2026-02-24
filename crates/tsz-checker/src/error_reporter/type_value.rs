@@ -406,6 +406,23 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2702: '{0}' only refers to a type, but is being used as a namespace here.
+    pub fn error_type_used_as_namespace_at(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
+            ));
+        }
+    }
+
     /// Report TS2709: Cannot use namespace '{0}' as a type.
     pub fn error_namespace_used_as_type_at(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
@@ -509,6 +526,94 @@ const x = new number[];
         assert_eq!(
             ts2693_count, 0,
             "Expected no TS2693 for `new number[]` parse recovery, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2702_for_empty_interface_used_as_namespace() {
+        // Empty interface has no property "hello", so TS2702 should fire
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface OhNo {}
+declare let y: OhNo.hello;
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2702),
+            "Expected TS2702 for empty interface used as namespace, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2713),
+            "Should NOT emit TS2713 when property doesn't exist, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_interface_property_as_type() {
+        // Interface has property "bar", so TS2713 (with suggestion) should fire
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface Foo { bar: string; }
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for interface property used as type, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2702),
+            "Should NOT emit TS2702 when property exists, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2702_for_union_with_non_shared_property() {
+        // Union where NOT all members have "bar" (Test5 pattern) → TS2702
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: number } | { wat: string };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2702),
+            "Expected TS2702 for union with non-shared property, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_union_with_shared_property() {
+        // Union where ALL members have "bar" (Test4 pattern) → TS2713
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: number } | { bar: string };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for union with shared property, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_type_alias_with_property() {
+        // Type alias with property "bar" → TS2713
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: string; };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for type alias property used as type, got: {diagnostics:?}",
         );
     }
 }

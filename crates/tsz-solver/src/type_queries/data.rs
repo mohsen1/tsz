@@ -424,6 +424,50 @@ pub fn find_property_in_type_by_str(
     }
 }
 
+/// Check if a type has a named property accessible on all branches.
+///
+/// For object types, checks if the property exists in the shape.
+/// For union types, returns `true` only if ALL members have the property
+/// (matching tsc's TS2713 vs TS2702 distinction).
+/// For intersection types, returns `true` if ANY member has the property.
+pub fn type_has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    fn member_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+        match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = db.type_list(list_id).to_vec();
+                members.iter().any(|&m| member_has_property(db, m, name))
+            }
+            _ => false,
+        }
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .any(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id).to_vec();
+            !members.is_empty() && members.iter().all(|&m| member_has_property(db, m, name))
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id).to_vec();
+            members.iter().any(|&m| member_has_property(db, m, name))
+        }
+        _ => false,
+    }
+}
+
 /// Unwrap readonly type wrappers.
 ///
 /// Returns the inner type if this is a `ReadonlyType`, otherwise returns the original type.

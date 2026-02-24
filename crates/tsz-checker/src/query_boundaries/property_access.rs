@@ -50,6 +50,14 @@ pub(crate) fn function_shape(
     tsz_solver::type_queries::get_function_shape(db, type_id)
 }
 
+/// Check if a type has a named property accessible on all branches.
+///
+/// For unions, returns true only when ALL members have the property.
+/// Used by TS2702/TS2713 diagnostic distinction.
+pub(crate) fn type_has_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
+    tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
+}
+
 #[cfg(test)]
 #[path = "../../tests/property_access_boundaries.rs"]
 mod tests;
