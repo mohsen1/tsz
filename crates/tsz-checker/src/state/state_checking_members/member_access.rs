@@ -428,6 +428,58 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2386: Check optionality agreement for interface method overloads
+        {
+            use rustc_hash::FxHashMap;
+            use tsz_parser::parser::syntax_kind_ext;
+
+            // Group method signatures by name
+            let mut method_groups: FxHashMap<String, Vec<(NodeIndex, bool)>> = FxHashMap::default();
+            for &member_idx in &iface.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::METHOD_SIGNATURE {
+                    continue;
+                }
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(sig.name) else {
+                    continue;
+                };
+                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                method_groups
+                    .entry(ident.escaped_text.clone())
+                    .or_default()
+                    .push((member_idx, sig.question_token));
+            }
+            for members in method_groups.values() {
+                if members.len() < 2 {
+                    continue;
+                }
+                let first_optional = members[0].1;
+                for &(member_idx, optional) in &members[1..] {
+                    if optional != first_optional {
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get(member_idx)
+                            .and_then(|n| self.ctx.arena.get_signature(n))
+                            .map(|s| s.name)
+                            .unwrap_or(member_idx);
+                        self.error_at_node(
+                            error_node,
+                            crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                            crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                        );
+                    }
+                }
+            }
+        }
+
         // Check for duplicate member names (TS2300)
         self.check_duplicate_interface_members(&iface.members.nodes);
 
