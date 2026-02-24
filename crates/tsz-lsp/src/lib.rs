@@ -46,7 +46,6 @@ pub mod project;
 pub mod rename;
 pub mod resolver;
 pub mod selection_range;
-pub mod semantic_tokens;
 pub mod signature_help;
 pub mod symbols;
 pub mod utils;
@@ -71,6 +70,9 @@ pub use folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
     DocumentFormattingProvider, FormattingOptions, TextEdit as FormattingTextEdit,
 };
+pub use highlighting::semantic_tokens::{
+    SemanticTokenType, SemanticTokensProvider, semantic_token_modifiers,
+};
 pub use highlighting::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightProvider};
 pub use hover::{HoverInfo, HoverProvider};
 pub use navigation::definition::GoToDefinition;
@@ -81,7 +83,6 @@ pub use project::{
     Project, ProjectFile, ProjectPerformance, ProjectRequestKind, ProjectRequestTiming,
 };
 pub use rename::{RenameProvider, TextEdit, WorkspaceEdit};
-pub use semantic_tokens::{SemanticTokenType, SemanticTokensProvider, semantic_token_modifiers};
 pub use signature_help::{
     ParameterInformation, SignatureHelp, SignatureHelpProvider, SignatureInformation,
 };
