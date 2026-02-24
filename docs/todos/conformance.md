@@ -876,3 +876,22 @@ TS1194 only fires in non-ambient namespaces.
 - **TS2497 (13 tests)**: "This module can only be referenced with ECMAScript imports/exports."
   Requires CommonJS module detection. HIGH difficulty.
 - **TS2433 (10 tests)**: "A namespace-style import cannot be called or constructed." MEDIUM.
+
+## TS2385 — Overload modifier consistency (Fixed)
+
+**Status**: Fixed. +1 conformance test (functionOverloads5.ts), 0 regressions.
+**Error code:** TS2385 ("Overload signatures must all be public, private or protected.")
+**Fix**: Added `check_overload_modifier_consistency()` in `overload_compatibility.rs`. Uses
+the implementation's access modifier as canonical and flags each overload signature that
+disagrees. Static and instance methods are checked independently (different symbol groups).
+Implicit public (no modifier keyword) is treated as equivalent to explicit `public`.
+Called from method, constructor, and function declaration checking paths.
+6 unit tests added.
+
+### Remaining TS2385-adjacent issues
+- **overloadModifiersMustAgree.ts**: Also needs TS2383 (exported/non-exported), TS2384
+  (ambient/non-ambient), TS2386 (optional/required). Separate overload consistency checks.
+- **memberFunctionsWithPublicPrivateOverloads.ts**: TS2385 matches perfectly. Remaining
+  failure is TS2341 message text (`class 'D'` vs `class 'D<T>'`).
+
+## Current score: 4010/5997 (66.9%) — first 6000; 7957/12574 (63.3%) — full suite
