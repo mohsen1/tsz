@@ -812,12 +812,19 @@ fn compile_inner(
     // Determine which cache to use: local cache from BuildInfo, or provided cache, or none
     // When cache is None, we can use local_cache; otherwise we use the provided cache
     if file_paths.is_empty() {
-        let diagnostics = no_input_diagnostics_for_config(
-            config_diagnostics,
-            tsconfig_path.as_deref(),
-            discovery.include.as_deref(),
-            discovery.exclude.as_deref(),
-        );
+        // When `files` is explicitly set (e.g., `"files": []` in a solution-style
+        // tsconfig), tsc does NOT emit TS18003. The error only applies when discovery
+        // found nothing due to include/exclude patterns.
+        let diagnostics = if discovery.files_explicitly_set {
+            config_diagnostics
+        } else {
+            no_input_diagnostics_for_config(
+                config_diagnostics,
+                tsconfig_path.as_deref(),
+                discovery.include.as_deref(),
+                discovery.exclude.as_deref(),
+            )
+        };
         return Ok(CompilationResult {
             diagnostics,
             emitted_files: Vec::new(),

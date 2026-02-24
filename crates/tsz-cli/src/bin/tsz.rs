@@ -793,9 +793,12 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         Vec::new()
     };
 
+    let files_explicitly_set =
+        !args.files.is_empty() || config.as_ref().and_then(|c| c.files.as_ref()).is_some();
     let discovery = FileDiscoveryOptions {
         base_dir: base_dir.to_path_buf(),
         files,
+        files_explicitly_set,
         include: config.as_ref().and_then(|c| c.include.clone()),
         exclude: config.as_ref().and_then(|c| c.exclude.clone()),
         out_dir: resolved.out_dir.clone(),
