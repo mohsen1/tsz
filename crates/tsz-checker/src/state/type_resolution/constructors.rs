@@ -1,7 +1,7 @@
 //! Constructor type operations, type argument application, and base instance
 //! type resolution for `CheckerState`.
 //!
-//! Extracted from `state_type_resolution_module.rs` to keep files focused and
+//! Extracted from `type_resolution/module.rs` to keep files focused and
 //! under the 2 000-line architectural limit.
 
 use crate::query_boundaries::state_type_resolution as query;

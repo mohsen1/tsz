@@ -1,7 +1,7 @@
 //! Module resolution and cross-file exports for `CheckerState`.
 //!
 //! Constructor type operations have been extracted to
-//! `state_type_resolution_constructors.rs`.
+//! `type_resolution/constructors.rs`.
 
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
