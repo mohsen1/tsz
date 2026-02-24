@@ -1065,6 +1065,7 @@ impl<'a> CheckerState<'a> {
                     var_decl.name,
                     var_decl.initializer,
                     pattern_type,
+                    !var_decl.type_annotation.is_some(),
                 );
             }
 
