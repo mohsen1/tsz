@@ -86,7 +86,15 @@ impl<'a> Printer<'a> {
         if !is_assignment_or_comma {
             self.ctx.flags.in_binary_operand = true;
         }
+        // When lowering optional chains in binary operands, the ternary must be
+        // wrapped in parens to avoid precedence issues.
+        // e.g., `x?.kind === null` → `(x === null || x === void 0 ? void 0 : x.kind) === null`
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        if !is_assignment_or_comma {
+            self.ctx.flags.optional_chain_needs_parens = true;
+        }
         self.emit(binary.left);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
 
         // Check if there's a line break between the operator and the right operand
         // in the source. TypeScript preserves these line breaks.
@@ -127,14 +135,24 @@ impl<'a> Printer<'a> {
             if has_newline_before_right {
                 self.write_line();
                 self.increase_indent();
+                // Set parens flag for right operand of non-assignment/comma operators
+                if !is_assignment_or_comma {
+                    self.ctx.flags.optional_chain_needs_parens = true;
+                }
                 self.emit(binary.right);
+                self.ctx.flags.optional_chain_needs_parens = prev_optional;
                 self.decrease_indent();
                 self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
             }
             self.write_space();
         }
+        // Set parens flag for right operand of non-assignment/comma operators
+        if !is_assignment_or_comma {
+            self.ctx.flags.optional_chain_needs_parens = true;
+        }
         self.emit(binary.right);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.in_binary_operand = prev_in_binary;
     }
 
@@ -170,7 +188,12 @@ impl<'a> Printer<'a> {
         // e.g., `!await x` → `!(yield x)` not `!yield x`
         let prev = self.ctx.flags.in_binary_operand;
         self.ctx.flags.in_binary_operand = true;
+        // When lowering optional chains (e.g., `++o?.a` → `++(o === null ... : o.a)`),
+        // the ternary must be wrapped in parens to preserve precedence.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = true;
         self.emit(unary.operand);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.in_binary_operand = prev;
     }
 
@@ -179,7 +202,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // When lowering optional chains (e.g., `o?.a++` → `(o === null ... : o.a)++`),
+        // the ternary must be wrapped in parens to preserve precedence.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = true;
         self.emit(unary.operand);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
         // Map the postfix operator (e.g., ++ or --) to its source position
         if let Some(operand_node) = self.arena.get(unary.operand) {
             self.map_token_after_skipping_whitespace(operand_node.end, node.end);
@@ -334,6 +362,11 @@ impl<'a> Printer<'a> {
         callee: NodeIndex,
         args: &Option<tsz_parser::parser::NodeList>,
     ) {
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
         if self.is_simple_nullish_expression(callee) {
             self.emit(callee);
             self.write(" === null || ");
@@ -354,6 +387,9 @@ impl<'a> Printer<'a> {
             self.write(&temp);
             self.emit_call_arguments(node, args.as_ref());
         }
+        if needs_parens {
+            self.write(")");
+        }
     }
 
     fn emit_optional_method_call_expression(
@@ -366,6 +402,12 @@ impl<'a> Printer<'a> {
         let Some(access) = self.arena.get_access_expr(access_node) else {
             return;
         };
+
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
 
         if !has_optional_call_token {
             let is_simple = self.is_simple_nullish_expression(access.expression);
@@ -404,6 +446,9 @@ impl<'a> Printer<'a> {
                 self.write("]");
             }
             self.emit_call_arguments(call_node, args.as_ref());
+            if needs_parens {
+                self.write(")");
+            }
             return;
         }
 
@@ -439,6 +484,9 @@ impl<'a> Printer<'a> {
                 self.write("this");
             }
             self.emit_optional_call_tail_arguments(args.as_ref());
+            if needs_parens {
+                self.write(")");
+            }
             return;
         }
 
@@ -512,6 +560,9 @@ impl<'a> Printer<'a> {
             self.write(".call(");
             self.write(&this_temp);
             self.emit_optional_call_tail_arguments(args.as_ref());
+        }
+        if needs_parens {
+            self.write(")");
         }
     }
 
@@ -888,6 +939,13 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_optional_property_access_downlevel(&mut self, access: &AccessExprData) {
+        // When the lowered ternary appears inside a prefix/postfix unary or
+        // conditional condition, wrap in parens to preserve precedence.
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
         let base_simple = self.is_simple_nullish_expression(access.expression);
         if base_simple {
             self.emit(access.expression);
@@ -897,24 +955,33 @@ impl<'a> Printer<'a> {
             self.emit(access.expression);
             self.write(".");
             self.emit_property_name_without_import_substitution(access.name_or_argument);
-            return;
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&base_temp);
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
         }
-
-        let base_temp = self.make_unique_name_hoisted();
-        self.write("(");
-        self.write(&base_temp);
-        self.write(" = ");
-        self.emit(access.expression);
-        self.write(")");
-        self.write(" === null || ");
-        self.write(&base_temp);
-        self.write(" === void 0 ? void 0 : ");
-        self.write(&base_temp);
-        self.write(".");
-        self.emit_property_name_without_import_substitution(access.name_or_argument);
+        if needs_parens {
+            self.write(")");
+        }
     }
 
     fn emit_optional_element_access_downlevel(&mut self, access: &AccessExprData) {
+        // When the lowered ternary appears inside a prefix/postfix unary or
+        // conditional condition, wrap in parens to preserve precedence.
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
         let base_simple = self.is_simple_nullish_expression(access.expression);
         if base_simple {
             self.emit(access.expression);
@@ -925,22 +992,24 @@ impl<'a> Printer<'a> {
             self.write("[");
             self.emit(access.name_or_argument);
             self.write("]");
-            return;
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&base_temp);
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
         }
-
-        let base_temp = self.make_unique_name_hoisted();
-        self.write("(");
-        self.write(&base_temp);
-        self.write(" = ");
-        self.emit(access.expression);
-        self.write(")");
-        self.write(" === null || ");
-        self.write(&base_temp);
-        self.write(" === void 0 ? void 0 : ");
-        self.write(&base_temp);
-        self.write("[");
-        self.emit(access.name_or_argument);
-        self.write("]");
+        if needs_parens {
+            self.write(")");
+        }
     }
 
     fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
@@ -1143,7 +1212,14 @@ impl<'a> Printer<'a> {
         let (newline_before_question, newline_before_colon) =
             self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
 
+        // When lowering optional chains in the condition (e.g., `o?.b ? 1 : 0`
+        // → `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`),
+        // the ternary must be wrapped in parens to avoid ambiguity with
+        // the outer conditional's `?`.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = true;
         self.emit(cond.condition);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
 
         if newline_before_question {
             // Newline between condition and `?` — e.g.:
@@ -1827,6 +1903,83 @@ mod tests {
         assert!(
             output.contains("=== null"),
             "Must have null check.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used as a ternary condition,
+    /// the lowered ternary must be wrapped in parens to preserve precedence.
+    /// `o?.b ? 1 : 0` → `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`
+    /// Without parens: `o === null || o === void 0 ? void 0 : o.b ? 1 : 0`
+    /// would parse as the wrong ternary nesting.
+    #[test]
+    fn optional_chain_in_ternary_condition_gets_parens() {
+        let source = "declare const o: any;\no?.b ? 1 : 0;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0"),
+            "Lowered optional chain in ternary condition must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used as an operand of `===`,
+    /// the lowered ternary must be wrapped in parens.
+    /// `o?.x === 1` → `(o === null || o === void 0 ? void 0 : o.x) === 1`
+    #[test]
+    fn optional_chain_in_binary_equals_gets_parens() {
+        let source = "declare const o: any;\no?.x === 1;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.x) === 1"),
+            "Lowered optional chain in === operand must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used with postfix `++`,
+    /// the lowered ternary must be wrapped in parens.
+    /// `o?.a++` → `(o === null || o === void 0 ? void 0 : o.a)++`
+    #[test]
+    fn optional_chain_in_postfix_increment_gets_parens() {
+        let source = "declare const o: any;\no?.a++;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a)++"),
+            "Lowered optional chain in postfix ++ must be wrapped in parens.\nOutput:\n{output}"
         );
     }
 }

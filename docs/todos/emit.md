@@ -1,8 +1,27 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9923/13623 = 72.8% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9931/13623 = 72.9% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Missing parens around downlevel optional chains in binary/unary/ternary contexts** (+7 JS):
+  When lowering optional chains (`?.`) for ES2019 and below, the emitted ternary
+  `x === null || x === void 0 ? void 0 : x.b` was not wrapped in parens when used
+  as an operand of `===`, `!==`, `++`, `--`, ternary condition, or other operators
+  with higher precedence than `||`. This caused incorrect JS: `x?.b === null` lowered
+  to `x === null || x === void 0 ? void 0 : x.b === null` (wrong) instead of
+  `(x === null || x === void 0 ? void 0 : x.b) === null` (correct). Similarly,
+  `o?.a++` lowered without parens and `o?.b ? 1 : 0` had ambiguous ternary nesting.
+  Fix: added `optional_chain_needs_parens` flag to `EmitFlags`. Set by
+  `emit_prefix_unary`, `emit_postfix_unary`, `emit_conditional` (condition only),
+  and `emit_binary` (non-assignment, non-comma operands). All four downlevel optional
+  chain emitters (`emit_optional_property_access_downlevel`,
+  `emit_optional_element_access_downlevel`, `emit_optional_call_expression`,
+  `emit_optional_method_call_expression`) check the flag and wrap in `(...)`.
+  Three unit tests added.
+  Tests fixed: `controlFlowOptionalChain2`, and several others with `===`/`!==`/ternary patterns.
+  JS: 9924→9931, DTS unchanged, zero regressions.
+
+### Previously Fixed This Session (2026-02-24)
 - **Optional chaining unnecessary temp vars for simple identifiers + extra `)` fix** (+6 JS):
   `emit_optional_method_call_expression` in `expressions.rs` was allocating temp variables even
   when the base expression was a simple identifier (no side effects). For example, `o?.b()` emitted
@@ -34,6 +53,23 @@
   JS: 9910→9921, DTS unchanged, zero regressions. Three unit tests added.
 
 ### Skipped / Investigated This Session (2026-02-24)
+- **Optional chain continuation into non-optional property access** (~4 tests):
+  `obj?.a.b++` should lower to `(obj === null || obj === void 0 ? void 0 : obj.a.b)++`
+  but tsz lowers only the `?.a` part, producing `(obj === null ... : obj.a).b++`. The parser
+  creates `obj?.a` as an optional property access and `.b` as a separate regular property
+  access. tsc's transform pass detects the full optional chain span and lowers it as a unit.
+  Fixing this requires the emitter to detect when a downleveled optional chain is immediately
+  followed by a continuation chain (property access / element access on the result) and include
+  those continuations inside the lowered ternary. Tests: `propertyAccessChain.3`,
+  `elementAccessChain.3`.
+- **Inline comment detachment** (~42 tests): tsz strips inline comments from code lines and
+  emits them as standalone comments on the next line. Each sub-pattern (enum member comments,
+  trailing comments on statements, etc.) needs individual investigation.
+- **`"use strict"` added to JS source files** (~15-20 tests): tsz adds `"use strict"` to
+  `.js` input files that tsc passes through without it. Combined with tab-to-space
+  indentation conversion. Needs special handling for JS file pass-through mode.
+
+### Previously Skipped / Investigated This Session (2026-02-24)
 - **`export {};` sentinel under-emission** (~537 tests expect it): Requires checker to populate
   `type_only_nodes` for import elision. Test runner uses `--noCheck --noLib`, so checker data
   is unavailable. Pure emitter fix not feasible without checker integration.
