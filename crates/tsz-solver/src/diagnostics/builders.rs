@@ -9,10 +9,10 @@
 //! - [`DiagnosticCollector`]: Accumulates diagnostics with source tracking
 //! - [`SourceLocation`]: Tracks source positions for AST nodes
 
+use super::format::TypeFormatter;
 use crate::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::diagnostics::{DiagnosticSeverity, SourceSpan, TypeDiagnostic, codes};
-use crate::format::TypeFormatter;
 use crate::types::TypeId;
 use std::sync::Arc;
 

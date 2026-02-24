@@ -14,6 +14,7 @@
 //! For eagerly-rendered diagnostic builders, see [`builders`].
 
 pub mod builders;
+pub mod format;
 
 use crate::types::{TypeId, Visibility};
 use std::sync::Arc;

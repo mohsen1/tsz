@@ -20,7 +20,6 @@ mod diagnostics;
 pub mod evaluation;
 #[cfg(test)]
 mod flow_analysis;
-mod format;
 mod inference;
 mod instantiation;
 mod intern;
@@ -79,11 +78,11 @@ pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
+pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
 pub use evaluation::evaluate::*;
-pub use format::TypeFormatter;
 pub use inference::infer::*;
 pub use instantiation::application::*;
 pub use instantiation::instantiate::{
