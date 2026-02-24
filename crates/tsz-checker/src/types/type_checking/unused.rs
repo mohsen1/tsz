@@ -20,7 +20,7 @@ impl<'a> CheckerState<'a> {
         let is_module = self.ctx.binder.is_external_module();
 
         // Skip .d.ts files entirely (ambient declarations)
-        if self.ctx.file_name.ends_with(".d.ts") {
+        if self.ctx.is_declaration_file() {
             return;
         }
 

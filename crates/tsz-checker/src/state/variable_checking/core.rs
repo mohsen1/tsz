@@ -279,7 +279,7 @@ impl<'a> CheckerState<'a> {
         // TS1212/1213/1214: Identifier expected. '{0}' is a reserved word in strict mode.
         // Check if variable name is a strict-mode reserved word used in strict context.
 
-        let mut is_ambient = self.ctx.file_name.ends_with(".d.ts");
+        let mut is_ambient = self.ctx.is_declaration_file();
         if !is_ambient {
             let mut current = decl_idx;
             let mut guard = 0;

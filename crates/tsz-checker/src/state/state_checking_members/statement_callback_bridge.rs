@@ -140,7 +140,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         if func.asterisk_token {
             use crate::diagnostics::diagnostic_codes;
             let is_ambient = self.has_declare_modifier(&func.modifiers)
-                || self.ctx.file_name.ends_with(".d.ts")
+                || self.ctx.is_declaration_file()
                 || self.is_ambient_declaration(func_idx);
 
             if is_ambient {
@@ -169,7 +169,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&func.parameters, func.body.is_some());
-        if !self.has_declare_modifier(&func.modifiers) && !self.ctx.file_name.ends_with(".d.ts") {
+        if !self.has_declare_modifier(&func.modifiers) && !self.ctx.is_declaration_file() {
             self.check_strict_mode_reserved_parameter_names(
                 &func.parameters.nodes,
                 func_idx,
@@ -551,7 +551,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
         } else if self.ctx.no_implicit_any() && !has_type_annotation {
             let is_ambient =
-                self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
+                self.has_declare_modifier(&func.modifiers) || self.ctx.is_declaration_file();
             if let Some(func_name) = self.get_function_name_from_node(func_idx) {
                 let name_node = (func.name.is_some()).then_some(func.name);
                 if is_ambient {
@@ -636,8 +636,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .arena
                     .get(export_decl.export_clause)
                     .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
-            let is_ambient = self.ctx.file_name.ends_with(".d.ts")
-                || self.ctx.arena.is_in_ambient_context(export_idx);
+            let is_ambient =
+                self.ctx.is_declaration_file() || self.ctx.arena.is_in_ambient_context(export_idx);
             if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) && !is_ambient
             {
                 let report_idx = if export_decl.module_specifier.is_some() {

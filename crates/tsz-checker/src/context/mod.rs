@@ -12,6 +12,7 @@
 //! - `lib_queries` - Library/global type availability queries
 
 mod compiler_options;
+pub use compiler_options::is_declaration_file_name;
 mod constructors;
 mod def_mapping;
 mod lib_queries;

@@ -6,9 +6,9 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use crate::declarations::DeclarationChecker;
 
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
-    /// Check if the current file is a declaration file (.d.ts).
+    /// Check if the current file is a declaration file (.d.ts, .d.mts, .d.cts).
     pub(crate) fn is_declaration_file(&self) -> bool {
-        self.ctx.file_name.ends_with(".d.ts")
+        self.ctx.is_declaration_file()
     }
 
     /// Check if the current file is an external module (has import/export statements).
@@ -267,6 +267,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check if a node is inside an ambient context (declare namespace/module or .d.ts file).
     pub(crate) fn is_in_ambient_context(&self, node_idx: NodeIndex) -> bool {
-        self.ctx.file_name.ends_with(".d.ts") || self.ctx.arena.is_in_ambient_context(node_idx)
+        self.ctx.is_declaration_file() || self.ctx.arena.is_in_ambient_context(node_idx)
     }
 }

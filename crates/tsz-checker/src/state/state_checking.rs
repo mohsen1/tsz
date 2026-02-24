@@ -1,5 +1,6 @@
 //! Declaration and statement checking, including `StatementCheckCallbacks`.
 
+use crate::context::is_declaration_file_name;
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
 use tracing::{Level, span};
@@ -196,10 +197,7 @@ impl<'a> CheckerState<'a> {
             // In .d.ts files, emit TS1036 for non-declaration top-level statements.
             // The entire file is an ambient context, so statements like break, continue,
             // return, debugger, if, while, for, etc. are not allowed.
-            let is_dts = self.ctx.file_name.ends_with(".d.ts")
-                || self.ctx.file_name.ends_with(".d.tsx")
-                || self.ctx.file_name.ends_with(".d.mts")
-                || self.ctx.file_name.ends_with(".d.cts");
+            let is_dts = self.ctx.is_declaration_file();
             if is_dts {
                 self.ctx.is_in_ambient_declaration_file = true;
             }
@@ -933,16 +931,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let source_file_name = &source_file.file_name;
         let is_declaration_file = source_file.is_declaration_file
-            || source_file_name.ends_with(".d.ts")
-            || source_file_name.ends_with(".d.tsx")
-            || source_file_name.ends_with(".d.mts")
-            || source_file_name.ends_with(".d.cts")
-            || self.ctx.file_name.ends_with(".d.ts")
-            || self.ctx.file_name.ends_with(".d.tsx")
-            || self.ctx.file_name.ends_with(".d.mts")
-            || self.ctx.file_name.ends_with(".d.cts");
+            || is_declaration_file_name(&source_file.file_name)
+            || self.ctx.is_declaration_file();
 
         if is_declaration_file {
             return;

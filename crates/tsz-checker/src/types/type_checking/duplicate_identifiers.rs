@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
                 const SPACE_VALUE: u32 = 2;
                 const SPACE_NAMESPACE: u32 = 4;
 
-                let any_in_declare_context = self.ctx.file_name.ends_with(".d.ts")
+                let any_in_declare_context = self.ctx.is_declaration_file()
                     || declarations.iter().any(|&(decl_idx, _, is_local, _)| {
                         is_local && self.is_in_declare_namespace_or_module(decl_idx)
                     });
