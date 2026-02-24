@@ -67,7 +67,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         };
 
         // TS1100: 'arguments' and 'eval' are invalid in function names in strict contexts.
+        // Skip in ambient contexts (declare namespace/module/global) — tsc does not emit TS1100 there.
         if self.is_strict_mode_for_node(func_idx)
+            && !self.ctx.is_ambient_declaration(func_idx)
             && func.name.is_some()
             && let Some(func_name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
@@ -138,7 +140,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&func.parameters, func.body.is_some());
-        if !self.has_declare_modifier(&func.modifiers) && !self.ctx.is_declaration_file() {
+        if !self.ctx.is_ambient_declaration(func_idx) {
             self.check_strict_mode_reserved_parameter_names(
                 &func.parameters.nodes,
                 func_idx,
