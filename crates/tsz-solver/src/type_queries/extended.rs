@@ -70,14 +70,6 @@ pub fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
-/// Check if a type is a boolean literal type.
-pub fn is_boolean_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(
-        classify_literal_type(db, type_id),
-        LiteralTypeKind::Boolean(_)
-    )
-}
-
 /// Get string atom from a string literal type.
 pub fn get_string_literal_atom(
     db: &dyn TypeDatabase,
@@ -108,14 +100,6 @@ pub fn get_boolean_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 // =============================================================================
 // Index Type Classification
 // =============================================================================
-
-/// Check if a type cannot be used as an index type (TS2538).
-///
-/// A valid index type must be string/number/symbol (or compatible literal forms).
-pub fn is_invalid_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let mut visited = FxHashSet::default();
-    is_invalid_index_type_inner(db, type_id, &mut visited).is_some()
-}
 
 /// Returns the specific `TypeId` within the given type (e.g., inside a union)
 /// that makes it invalid for indexing.
@@ -187,128 +171,6 @@ fn is_invalid_index_type_inner(
 }
 
 // =============================================================================
-// Spread Type Classification
-// =============================================================================
-
-/// Classification for spread operations.
-///
-/// This enum provides a structured way to handle spread types without
-/// directly matching on `TypeData` in the checker layer.
-#[derive(Debug, Clone)]
-pub enum SpreadTypeKind {
-    /// Array type - element type for spread
-    Array(TypeId),
-    /// Tuple type - can expand individual elements
-    Tuple(crate::types::TupleListId),
-    /// Object type - properties can be spread
-    Object(crate::types::ObjectShapeId),
-    /// Object with index signature
-    ObjectWithIndex(crate::types::ObjectShapeId),
-    /// String literal - can be spread as characters
-    StringLiteral(tsz_common::interner::Atom),
-    /// Lazy reference (`DefId`) - needs resolution to actual spreadable type
-    Lazy(DefId),
-    /// Type that needs further checks for iterability
-    Other,
-    /// Type that cannot be spread
-    NotSpreadable,
-}
-
-/// Classify a type for spread operations.
-///
-/// This function examines a type and returns information about how to handle it
-/// when used in a spread context.
-pub fn classify_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> SpreadTypeKind {
-    // Handle intrinsic types first
-    if type_id.is_any() || type_id == TypeId::STRING {
-        return SpreadTypeKind::Other;
-    }
-    if type_id.is_unknown() {
-        return SpreadTypeKind::NotSpreadable;
-    }
-
-    let Some(key) = db.lookup(type_id) else {
-        return SpreadTypeKind::NotSpreadable;
-    };
-
-    match key {
-        TypeData::Array(element_type) => SpreadTypeKind::Array(element_type),
-        TypeData::Tuple(tuple_id) => SpreadTypeKind::Tuple(tuple_id),
-        TypeData::Object(shape_id) => SpreadTypeKind::Object(shape_id),
-        TypeData::ObjectWithIndex(shape_id) => SpreadTypeKind::ObjectWithIndex(shape_id),
-        TypeData::Literal(crate::LiteralValue::String(atom)) => SpreadTypeKind::StringLiteral(atom),
-        TypeData::Lazy(def_id) => SpreadTypeKind::Lazy(def_id),
-        _ => SpreadTypeKind::Other,
-    }
-}
-
-/// Check if a type has Symbol.iterator or is otherwise iterable.
-///
-/// This is a helper for checking iterability without matching on `TypeData`.
-pub fn is_iterable_type_kind(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Handle intrinsic string type
-    if type_id == TypeId::STRING {
-        return true;
-    }
-
-    let Some(key) = db.lookup(type_id) else {
-        return false;
-    };
-
-    match key {
-        TypeData::Array(_)
-        | TypeData::Tuple(_)
-        | TypeData::Literal(crate::LiteralValue::String(_)) => true,
-        TypeData::Object(shape_id) => {
-            // Check for [Symbol.iterator] method
-            let shape = db.object_shape(shape_id);
-            shape.properties.iter().any(|prop| {
-                let prop_name = db.resolve_atom_ref(prop.name);
-                (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next")
-                    && prop.is_method
-            })
-        }
-        _ => false,
-    }
-}
-
-/// Get the iterable element type for a type if it's iterable.
-pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    // Handle intrinsic string type
-    if type_id == TypeId::STRING {
-        return Some(TypeId::STRING);
-    }
-
-    let key = db.lookup(type_id)?;
-
-    match key {
-        TypeData::Array(elem_type) => Some(elem_type),
-        TypeData::Tuple(tuple_list_id) => {
-            let elements = db.tuple_list(tuple_list_id);
-            if elements.is_empty() {
-                Some(TypeId::NEVER)
-            } else {
-                let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                Some(db.union(types))
-            }
-        }
-        TypeData::Literal(crate::LiteralValue::String(_)) => Some(TypeId::STRING),
-        TypeData::Object(shape_id) => {
-            // For objects with [Symbol.iterator], we'd need to infer the element type
-            // from the iterator's return type. For now, return Any as a fallback.
-            let shape = db.object_shape(shape_id);
-            let has_iterator = shape.properties.iter().any(|prop| {
-                let prop_name = db.resolve_atom_ref(prop.name);
-                (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next")
-                    && prop.is_method
-            });
-            has_iterator.then_some(TypeId::ANY)
-        }
-        _ => None,
-    }
-}
-
-// =============================================================================
 // Type Parameter Classification (Extended)
 // =============================================================================
 
@@ -356,22 +218,6 @@ pub fn classify_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> TypePa
         }
         TypeData::Callable(shape_id) => TypeParameterKind::Callable(shape_id),
         _ => TypeParameterKind::NotTypeParameter,
-    }
-}
-
-/// Check if a type is directly a type parameter (`TypeParameter` or Infer).
-pub fn is_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(
-        classify_type_parameter(db, type_id),
-        TypeParameterKind::TypeParameter(_) | TypeParameterKind::Infer(_)
-    )
-}
-
-/// Get the type parameter default if this is a type parameter.
-pub fn get_type_param_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.default,
-        _ => None,
     }
 }
 
@@ -610,106 +456,6 @@ pub fn get_application_info(
 }
 
 // =============================================================================
-// Type Parameter Content Classification
-// =============================================================================
-
-/// Classification for types when checking for type parameters.
-#[derive(Debug, Clone)]
-pub enum TypeParameterContentKind {
-    /// Is a type parameter or infer type
-    IsTypeParameter,
-    /// Array - check element type
-    Array(TypeId),
-    /// Tuple - check element types
-    Tuple(crate::types::TupleListId),
-    /// Union - check all members
-    Union(Vec<TypeId>),
-    /// Intersection - check all members
-    Intersection(Vec<TypeId>),
-    /// Application - check base and args
-    Application { base: TypeId, args: Vec<TypeId> },
-    /// Not a type parameter and no nested types to check
-    NotTypeParameter,
-}
-
-/// Classify a type for type parameter checking.
-pub fn classify_for_type_parameter_content(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> TypeParameterContentKind {
-    let Some(key) = db.lookup(type_id) else {
-        return TypeParameterContentKind::NotTypeParameter;
-    };
-
-    match key {
-        TypeData::TypeParameter(_) | TypeData::Infer(_) => {
-            TypeParameterContentKind::IsTypeParameter
-        }
-        TypeData::Array(elem) => TypeParameterContentKind::Array(elem),
-        TypeData::Tuple(list_id) => TypeParameterContentKind::Tuple(list_id),
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            TypeParameterContentKind::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            TypeParameterContentKind::Intersection(members.to_vec())
-        }
-        TypeData::Application(app_id) => {
-            let app = db.type_application(app_id);
-            TypeParameterContentKind::Application {
-                base: app.base,
-                args: app.args.clone(),
-            }
-        }
-        _ => TypeParameterContentKind::NotTypeParameter,
-    }
-}
-
-// =============================================================================
-// Type Depth Classification
-// =============================================================================
-
-/// Classification for computing type depth.
-#[derive(Debug, Clone)]
-pub enum TypeDepthKind {
-    /// Array - depth = 1 + element depth
-    Array(TypeId),
-    /// Tuple - depth = 1 + max element depth
-    Tuple(crate::types::TupleListId),
-    /// Union or Intersection - depth = 1 + max member depth
-    Members(Vec<TypeId>),
-    /// Application - depth = 1 + max(base depth, arg depths)
-    Application { base: TypeId, args: Vec<TypeId> },
-    /// Terminal type - depth = 1
-    Terminal,
-}
-
-/// Classify a type for depth computation.
-pub fn classify_for_type_depth(db: &dyn TypeDatabase, type_id: TypeId) -> TypeDepthKind {
-    let Some(key) = db.lookup(type_id) else {
-        return TypeDepthKind::Terminal;
-    };
-
-    match key {
-        TypeData::Array(elem) => TypeDepthKind::Array(elem),
-        TypeData::Tuple(list_id) => TypeDepthKind::Tuple(list_id),
-        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            TypeDepthKind::Members(members.to_vec())
-        }
-        TypeData::Application(app_id) => {
-            let app = db.type_application(app_id);
-            TypeDepthKind::Application {
-                base: app.base,
-                args: app.args.clone(),
-            }
-        }
-        _ => TypeDepthKind::Terminal,
-    }
-}
-
-// =============================================================================
 // Ref Type Resolution
 // =============================================================================
 
@@ -731,57 +477,6 @@ pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> L
     match key {
         TypeData::Lazy(def_id) => LazyTypeKind::Lazy(def_id),
         _ => LazyTypeKind::NotLazy,
-    }
-}
-
-/// Check if a type is narrowable (union or type parameter).
-pub fn is_narrowable_type_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // CRITICAL FIX: Lazy types are also narrowable!
-    // Lazy types are DefId references that need to be resolved, but they represent
-    // types that can be narrowed (unions, type parameters, etc.)
-    // Without this, discriminant narrowing fails for types stored as lazy references
-    matches!(
-        db.lookup(type_id),
-        Some(
-            TypeData::Union(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::Lazy(_)
-        )
-    )
-}
-
-// =============================================================================
-// Private Brand Classification (for get_private_brand)
-// =============================================================================
-
-/// Classification for types when extracting private brands.
-#[derive(Debug, Clone)]
-pub enum PrivateBrandKind {
-    /// Object type with `shape_id` - check properties for brand
-    Object(crate::types::ObjectShapeId),
-    /// Callable type with `shape_id` - check properties for brand
-    Callable(crate::types::CallableShapeId),
-    /// No private brand possible
-    None,
-}
-
-/// Classify a type for private brand extraction.
-pub fn classify_for_private_brand(db: &dyn TypeDatabase, type_id: TypeId) -> PrivateBrandKind {
-    match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            PrivateBrandKind::Object(shape_id)
-        }
-        Some(TypeData::Callable(shape_id)) => PrivateBrandKind::Callable(shape_id),
-        _ => PrivateBrandKind::None,
-    }
-}
-
-/// Get the widened type for a literal type.
-pub fn get_widened_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Literal(ref lit)) => Some(lit.primitive_type_id()),
-        _ => None,
     }
 }
 
@@ -853,42 +548,6 @@ pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref lit)) => lit.primitive_type_id(),
         _ => type_id,
-    }
-}
-
-/// Get the type of a named property from an object type.
-///
-/// Returns `None` if the type is not an object or the property doesn't exist.
-pub fn get_object_property_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    property_name: &str,
-) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            for prop in &shape.properties {
-                let prop_name = db.resolve_atom_ref(prop.name);
-                if prop_name.as_ref() == property_name {
-                    return Some(prop.type_id);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Check if a type is a Function (not Callable) and get its return type.
-///
-/// Used for checking if a function's return type is promise-like in async iterator contexts.
-pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Function(shape_id)) => {
-            let shape = db.function_shape(shape_id);
-            Some(shape.return_type)
-        }
-        _ => None,
     }
 }
 
@@ -1049,28 +708,6 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
 }
 
 // =============================================================================
-// Symbol Reference Classification (for enum_symbol_from_value_type)
-// =============================================================================
-
-/// Classification for symbol reference types.
-#[derive(Debug, Clone)]
-pub enum SymbolRefKind {
-    /// Lazy reference (`DefId`)
-    Lazy(crate::def::DefId),
-    TypeQuery(crate::types::SymbolRef),
-    Other,
-}
-
-/// Classify a type as a symbol reference.
-pub fn classify_symbol_ref(db: &dyn TypeDatabase, type_id: TypeId) -> SymbolRefKind {
-    match db.lookup(type_id) {
-        Some(TypeData::Lazy(def_id)) => SymbolRefKind::Lazy(def_id),
-        Some(TypeData::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
-        _ => SymbolRefKind::Other,
-    }
-}
-
-// =============================================================================
 // Type Contains Classification (for type_contains_any_inner)
 // =============================================================================
 
@@ -1176,13 +813,6 @@ pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId 
 /// This abstracts away the `TypeData` construction from the checker layer.
 pub fn create_number_literal_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
     db.literal_number(value)
-}
-
-/// Create a boolean literal type.
-///
-/// This abstracts away the `TypeData` construction from the checker layer.
-pub fn create_boolean_literal_type(db: &dyn TypeDatabase, value: bool) -> TypeId {
-    db.literal_boolean(value)
 }
 
 // =============================================================================
