@@ -83,6 +83,59 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
+    /// Check if `this` is inside a top-level arrow function that captures `globalThis`.
+    ///
+    /// Returns true when `this` is in an arrow function chain that ultimately captures
+    /// the global `this`, i.e., there is no enclosing class, object literal, or
+    /// non-arrow function providing a local `this` binding.
+    ///
+    /// Used for TS7041: "The containing arrow function captures the global value of 'this'."
+    pub(crate) fn is_this_in_global_capturing_arrow(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_DECLARATION,
+            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION,
+            SET_ACCESSOR,
+        };
+        let mut found_arrow = false;
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    k if k == ARROW_FUNCTION => {
+                        found_arrow = true;
+                    }
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR
+                        || k == CLASS_DECLARATION
+                        || k == CLASS_EXPRESSION
+                        || k == OBJECT_LITERAL_EXPRESSION =>
+                    {
+                        // Any of these provide a local `this` binding — not global capture
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        found_arrow
+    }
+
     /// Walks up the AST from the given node. If the first function-like node
     /// encountered is an `ArrowFunction`, returns true. If it's a regular function
     /// (`FunctionDeclaration`, `FunctionExpression`, Method, Constructor, Accessor),
