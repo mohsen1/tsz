@@ -802,6 +802,7 @@ pub fn resolve_compiler_options(
 
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
+        resolved.checker.check_js = check_js;
     }
     if let Some(skip_lib_check) = options.skip_lib_check {
         resolved.skip_lib_check = skip_lib_check;
@@ -1383,6 +1384,51 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             }
         }
+
+        // TS6046: Validate option values for target, module, moduleResolution, jsx, lib.
+        // If a value is invalid, emit TS6046 and null it out so resolve_compiler_options
+        // doesn't see it and bail.
+        validate_option_value(
+            compiler_opts,
+            "target",
+            &stripped,
+            file_path,
+            VALID_TARGET_VALUES,
+            "--target",
+            VALID_TARGET_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "module",
+            &stripped,
+            file_path,
+            VALID_MODULE_VALUES,
+            "--module",
+            VALID_MODULE_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "moduleResolution",
+            &stripped,
+            file_path,
+            VALID_MODULE_RESOLUTION_VALUES,
+            "--moduleResolution",
+            VALID_MODULE_RESOLUTION_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_option_value(
+            compiler_opts,
+            "jsx",
+            &stripped,
+            file_path,
+            VALID_JSX_VALUES,
+            "--jsx",
+            VALID_JSX_DISPLAY,
+            &mut diagnostics,
+        );
+        validate_lib_values(compiler_opts, &stripped, file_path, &mut diagnostics);
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -2515,6 +2561,236 @@ fn remove_trailing_commas(input: &str) -> String {
     out
 }
 
+// TS6046: Valid option value lists (normalized lowercase, matching tsc 6.0)
+// These must match the values tsc accepts and lists in its TS6046 messages.
+
+/// Valid `--target` values (normalized). The display list uses tsc's canonical casing.
+const VALID_TARGET_VALUES: &[&str] = &[
+    "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
+    "es2022", "es2023", "es2024", "esnext",
+];
+const VALID_TARGET_DISPLAY: &str = "'es5', 'es6', 'es2015', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'esnext'";
+
+/// Valid `--module` values (normalized).
+const VALID_MODULE_VALUES: &[&str] = &[
+    "none", "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext",
+    "node16", "node18", "node20", "nodenext", "preserve",
+];
+const VALID_MODULE_DISPLAY: &str = "'none', 'commonjs', 'amd', 'system', 'umd', 'es6', 'es2015', 'es2020', 'es2022', 'esnext', 'node16', 'node18', 'node20', 'nodenext', 'preserve'";
+
+/// Valid `--moduleResolution` values (normalized).
+const VALID_MODULE_RESOLUTION_VALUES: &[&str] =
+    &["classic", "node", "node10", "node16", "nodenext", "bundler"];
+const VALID_MODULE_RESOLUTION_DISPLAY: &str =
+    "'classic', 'node', 'node10', 'node16', 'nodenext', 'bundler'";
+
+/// Valid `--jsx` values (normalized).
+const VALID_JSX_VALUES: &[&str] = &[
+    "preserve",
+    "react",
+    "reactnative",
+    "reactjsx",
+    "reactjsxdev",
+];
+const VALID_JSX_DISPLAY: &str = "'preserve', 'react', 'react-native', 'react-jsx', 'react-jsxdev'";
+
+/// Valid `--lib` values (normalized). This list matches tsc 6.0's accepted lib names.
+const VALID_LIB_VALUES: &[&str] = &[
+    "es5",
+    "es6",
+    "es2015",
+    "es7",
+    "es2016",
+    "es2017",
+    "es2018",
+    "es2019",
+    "es2020",
+    "es2021",
+    "es2022",
+    "es2023",
+    "es2024",
+    "esnext",
+    "dom",
+    "dom.iterable",
+    "dom.asynciterable",
+    "webworker",
+    "webworker.importscripts",
+    "webworker.iterable",
+    "webworker.asynciterable",
+    "scripthost",
+    "es2015.core",
+    "es2015.collection",
+    "es2015.generator",
+    "es2015.iterable",
+    "es2015.promise",
+    "es2015.proxy",
+    "es2015.reflect",
+    "es2015.symbol",
+    "es2015.symbol.wellknown",
+    "es2016.array.include",
+    "es2016.intl",
+    "es2017.arraybuffer",
+    "es2017.date",
+    "es2017.object",
+    "es2017.sharedmemory",
+    "es2017.string",
+    "es2017.intl",
+    "es2017.typedarrays",
+    "es2018.asyncgenerator",
+    "es2018.asynciterable",
+    "es2018.intl",
+    "es2018.promise",
+    "es2018.regexp",
+    "es2019.array",
+    "es2019.object",
+    "es2019.string",
+    "es2019.symbol",
+    "es2019.intl",
+    "es2020.bigint",
+    "es2020.date",
+    "es2020.promise",
+    "es2020.sharedmemory",
+    "es2020.string",
+    "es2020.symbol.wellknown",
+    "es2020.intl",
+    "es2020.number",
+    "es2021.promise",
+    "es2021.string",
+    "es2021.weakref",
+    "es2021.intl",
+    "es2022.array",
+    "es2022.error",
+    "es2022.intl",
+    "es2022.object",
+    "es2022.string",
+    "es2022.regexp",
+    "es2023.array",
+    "es2023.collection",
+    "es2023.intl",
+    "es2024.arraybuffer",
+    "es2024.collection",
+    "es2024.object",
+    "es2024.promise",
+    "es2024.regexp",
+    "es2024.sharedmemory",
+    "es2024.string",
+    "esnext.array",
+    "esnext.collection",
+    "esnext.symbol",
+    "esnext.asynciterable",
+    "esnext.intl",
+    "esnext.disposable",
+    "esnext.bigint",
+    "esnext.string",
+    "esnext.promise",
+    "esnext.weakref",
+    "esnext.decorators",
+    "esnext.object",
+    "esnext.regexp",
+    "esnext.iterator",
+    "esnext.float16",
+    "esnext.error",
+    "esnext.sharedmemory",
+    "decorators",
+    "decorators.legacy",
+];
+
+const VALID_LIB_DISPLAY: &str = "'es5', 'es6', 'es2015', 'es7', 'es2016', 'es2017', 'es2018', 'es2019', 'es2020', 'es2021', 'es2022', 'es2023', 'es2024', 'esnext', 'dom', 'dom.iterable', 'dom.asynciterable', 'webworker', 'webworker.importscripts', 'webworker.iterable', 'webworker.asynciterable', 'scripthost', 'es2015.core', 'es2015.collection', 'es2015.generator', 'es2015.iterable', 'es2015.promise', 'es2015.proxy', 'es2015.reflect', 'es2015.symbol', 'es2015.symbol.wellknown', 'es2016.array.include', 'es2016.intl', 'es2017.arraybuffer', 'es2017.date', 'es2017.object', 'es2017.sharedmemory', 'es2017.string', 'es2017.intl', 'es2017.typedarrays', 'es2018.asyncgenerator', 'es2018.asynciterable', 'es2018.intl', 'es2018.promise', 'es2018.regexp', 'es2019.array', 'es2019.object', 'es2019.string', 'es2019.symbol', 'es2019.intl', 'es2020.bigint', 'es2020.date', 'es2020.promise', 'es2020.sharedmemory', 'es2020.string', 'es2020.symbol.wellknown', 'es2020.intl', 'es2020.number', 'es2021.promise', 'es2021.string', 'es2021.weakref', 'es2021.intl', 'es2022.array', 'es2022.error', 'es2022.intl', 'es2022.object', 'es2022.string', 'es2022.regexp', 'es2023.array', 'es2023.collection', 'es2023.intl', 'es2024.arraybuffer', 'es2024.collection', 'es2024.object', 'es2024.promise', 'es2024.regexp', 'es2024.sharedmemory', 'es2024.string', 'esnext.array', 'esnext.collection', 'esnext.symbol', 'esnext.asynciterable', 'esnext.intl', 'esnext.disposable', 'esnext.bigint', 'esnext.string', 'esnext.promise', 'esnext.weakref', 'esnext.decorators', 'esnext.object', 'esnext.regexp', 'esnext.iterator', 'esnext.float16', 'esnext.error', 'esnext.sharedmemory', 'decorators', 'decorators.legacy'";
+
+/// Validate a single-value compiler option against a list of valid values.
+/// If the value is invalid, emit TS6046 and null it out in the JSON object.
+fn validate_option_value(
+    compiler_opts: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    source: &str,
+    file_path: &str,
+    valid_values: &[&str],
+    option_flag: &str,
+    display_list: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let Some(serde_json::Value::String(value)) = compiler_opts.get(key) {
+        let normalized = normalize_option(value.split(',').next().unwrap_or(value).trim());
+        if !normalized.is_empty() && !valid_values.contains(&normalized.as_str()) {
+            let start = find_value_offset_in_source(source, key);
+            let value_len = value.len() as u32 + 2; // include quotes
+            let msg = format_message(
+                diagnostic_messages::ARGUMENT_FOR_OPTION_MUST_BE,
+                &[option_flag, display_list],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                value_len,
+                msg,
+                diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE,
+            ));
+            // Null out the invalid value so resolve_compiler_options doesn't bail
+            compiler_opts.insert(key.to_string(), serde_json::Value::Null);
+        }
+    }
+}
+
+/// Validate individual entries in the `lib` array option.
+/// Invalid entries emit TS6046 and are removed from the array.
+fn validate_lib_values(
+    compiler_opts: &mut serde_json::Map<String, serde_json::Value>,
+    source: &str,
+    file_path: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(serde_json::Value::Array(lib_array)) = compiler_opts.get("lib") else {
+        return;
+    };
+
+    // Collect invalid entries with their positions
+    let mut invalid_indices = Vec::new();
+    for (i, entry) in lib_array.iter().enumerate() {
+        if let serde_json::Value::String(lib_name) = entry {
+            let normalized = normalize_option(lib_name);
+            if !normalized.is_empty() && !VALID_LIB_VALUES.contains(&normalized.as_str()) {
+                // Find position of this lib entry in source
+                let start = find_lib_entry_offset(source, lib_name);
+                let value_len = lib_name.len() as u32 + 2; // include quotes
+                let msg = format_message(
+                    diagnostic_messages::ARGUMENT_FOR_OPTION_MUST_BE,
+                    &["--lib", VALID_LIB_DISPLAY],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    value_len,
+                    msg,
+                    diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE,
+                ));
+                invalid_indices.push(i);
+            }
+        }
+    }
+
+    // Remove invalid entries (in reverse order to preserve indices)
+    if !invalid_indices.is_empty()
+        && let Some(serde_json::Value::Array(lib_array)) = compiler_opts.get_mut("lib")
+    {
+        for &idx in invalid_indices.iter().rev() {
+            lib_array.remove(idx);
+        }
+    }
+}
+
+/// Find the byte offset of a specific lib entry string within the source text.
+/// Searches for `"entry"` within the lib array section.
+fn find_lib_entry_offset(source: &str, entry: &str) -> u32 {
+    let search = format!("\"{entry}\"");
+    // Look for the lib array first
+    let lib_pos = source.find("\"lib\"").unwrap_or(0);
+    if let Some(pos) = source[lib_pos..].find(&search) {
+        (lib_pos + pos) as u32
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3055,6 +3331,16 @@ mod tests {
             "Should not emit TS5052 when allowJs is true, got: {:?}",
             parsed.diagnostics
         );
+    }
+
+    #[test]
+    fn test_resolve_compiler_options_propagates_check_js_to_checker_options() {
+        let source = r#"{"compilerOptions":{"allowJs":true,"checkJs":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+
+        assert!(resolved.check_js);
+        assert!(resolved.checker.check_js);
     }
 
     #[test]
