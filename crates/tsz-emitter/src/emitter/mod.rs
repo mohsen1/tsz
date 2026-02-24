@@ -278,6 +278,11 @@ pub struct Printer<'a> {
     /// Used to qualify identifier references: `foo` → `ns.foo`.
     pub(super) namespace_exported_names: FxHashSet<String>,
 
+    /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
+    /// newline. The next `write()` call should insert a space before non-whitespace text.
+    /// This avoids double-spacing with expression emitters that handle their own comment spacing.
+    pub(super) pending_block_comment_space: bool,
+
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(super) suppress_ns_qualification: bool,
 
@@ -446,6 +451,7 @@ impl<'a> Printer<'a> {
             current_namespace_name: None,
             anonymous_default_export_name: None,
             next_disposable_env_id: 1,
+            pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),

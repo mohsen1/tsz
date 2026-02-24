@@ -693,6 +693,8 @@ impl<'a> Printer<'a> {
                             self.write(comment_text);
                             if c_trailing {
                                 self.write_line();
+                            } else if comment_text.starts_with("/*") {
+                                self.pending_block_comment_space = true;
                             }
                             self.comment_emit_idx += 1;
                         } else {

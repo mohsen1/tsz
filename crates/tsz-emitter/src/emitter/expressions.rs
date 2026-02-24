@@ -945,6 +945,31 @@ mod tests {
         );
     }
 
+    /// Block comments on the same line as a statement must have a space after `*/`.
+    /// This ensures `/*comment*/ var x` rather than `/*comment*/var x`.
+    #[test]
+    fn inline_block_comment_before_statement_gets_trailing_space() {
+        // A block comment on the same line as a var declaration
+        let source = "{\n    /*comment*/ var x = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("/*comment*/ var"),
+            "Inline block comment must have a space before the next token.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("/*comment*/var"),
+            "Block comment must not be glued to the next token.\nOutput:\n{output}"
+        );
+    }
+
     /// Multiline ternary: colon trailing on previous line, alternate on next.
     /// `a ? b :\n    c` must preserve the line break after `:`.
     #[test]
