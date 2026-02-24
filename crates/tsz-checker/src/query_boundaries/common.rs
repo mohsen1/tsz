@@ -85,3 +85,7 @@ pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
     tsz_solver::type_queries::get_intersection_members(db, type_id)
 }
+
+pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_unit_type(db, type_id)
+}

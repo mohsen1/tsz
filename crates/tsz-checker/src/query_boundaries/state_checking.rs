@@ -5,7 +5,8 @@ use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
     array_element_type, intersection_members, is_mapped_type, is_string_type,
-    is_type_parameter_like, object_shape_for_type as object_shape, tuple_elements, union_members,
+    is_type_parameter_like, is_unit_type, object_shape_for_type as object_shape, tuple_elements,
+    union_members,
 };
 
 pub(crate) fn extract_string_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {
@@ -26,10 +27,6 @@ pub(crate) fn find_property_in_object_by_str(
     property: &str,
 ) -> Option<tsz_solver::PropertyInfo> {
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, property)
-}
-
-pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_unit_type(db, type_id)
 }
 
 pub(crate) fn has_type_query_for_symbol<F>(
