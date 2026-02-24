@@ -351,50 +351,11 @@ impl<'a> Printer<'a> {
         &self,
         param_idx: NodeIndex,
     ) -> bool {
-        let Some(param_node) = self.arena.get(param_idx) else {
-            return false;
-        };
-        let Some(param) = self.arena.get_parameter(param_node) else {
-            return false;
-        };
-        if param.initializer.is_none() {
-            return false;
-        }
-        let Some(init_node) = self.arena.get(param.initializer) else {
-            return false;
-        };
-        init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+        emit_utils::param_initializer_has_top_level_await(self.arena, param_idx)
     }
 
     fn first_await_default_param_name(&self, params: &[NodeIndex]) -> Option<String> {
-        for &param_idx in params {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if param.initializer.is_none() {
-                continue;
-            }
-            let Some(init_node) = self.arena.get(param.initializer) else {
-                continue;
-            };
-            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
-                continue;
-            }
-            let Some(name_node) = self.arena.get(param.name) else {
-                continue;
-            };
-            if name_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let name = emit_utils::identifier_text_or_empty(self.arena, param.name);
-            if !name.is_empty() {
-                return Some(name);
-            }
-        }
-        None
+        emit_utils::first_await_default_param_name(self.arena, params)
     }
 
     fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
