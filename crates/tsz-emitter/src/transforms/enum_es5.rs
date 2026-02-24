@@ -35,7 +35,7 @@
 //! // usages are inlined
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::transforms::ir::{IRNode, IRParam};
 use crate::transforms::ir_printer::IRPrinter;
@@ -55,6 +55,8 @@ pub struct EnumES5Transformer<'a> {
     member_names: HashSet<String>,
     /// Names of enum members with string-valued initializers (no reverse mapping)
     string_members: HashSet<String>,
+    /// Evaluated numeric values of enum members (for constant folding in subsequent member initializers)
+    member_values: HashMap<String, i64>,
     /// The enum parameter name used inside the IIFE (for qualifying self-references)
     current_enum_name: String,
     /// When true, emit const enums instead of erasing them
@@ -69,6 +71,7 @@ impl<'a> EnumES5Transformer<'a> {
             source_text: None,
             member_names: HashSet::new(),
             string_members: HashSet::new(),
+            member_values: HashMap::new(),
             current_enum_name: String::new(),
             preserve_const_enums: false,
         }
@@ -175,6 +178,7 @@ impl<'a> EnumES5Transformer<'a> {
         // Reset per-enum tracking state
         self.member_names.clear();
         self.string_members.clear();
+        self.member_values.clear();
         self.current_enum_name = enum_name.to_string();
 
         for &member_idx in &members.nodes {
@@ -207,14 +211,19 @@ impl<'a> EnumES5Transformer<'a> {
                 } else {
                     // Numeric/Computed: E[E["A"] = val] = "A";
                     // Try to evaluate the constant expression for auto-increment tracking
-                    if let Some(evaluated) =
-                        self.evaluate_constant_expression(member_data.initializer)
-                    {
-                        self.last_value = Some(evaluated);
+                    // and constant folding (tsc emits evaluated values, not source expressions)
+                    let evaluated = self.evaluate_constant_expression(member_data.initializer);
+                    if let Some(val) = evaluated {
+                        self.last_value = Some(val);
                     } else {
                         self.last_value = None; // Can't evaluate, reset auto-increment
                     }
-                    let inner_value = self.transform_expression(member_data.initializer);
+                    // Use the evaluated value if available, otherwise emit the source expression
+                    let inner_value = if let Some(val) = evaluated {
+                        Self::format_numeric_literal(val)
+                    } else {
+                        self.transform_expression(member_data.initializer)
+                    };
                     let inner_assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
                             object: Box::new(IRNode::Identifier(enum_name.to_string())),
@@ -257,6 +266,10 @@ impl<'a> EnumES5Transformer<'a> {
                 IRNode::ExpressionStatement(Box::new(outer_assign))
             };
 
+            // Track the evaluated value for use in subsequent member initializers
+            if let Some(val) = self.last_value {
+                self.member_values.insert(member_name.clone(), val);
+            }
             self.member_names.insert(member_name);
             statements.push(stmt);
         }
@@ -437,8 +450,16 @@ impl<'a> EnumES5Transformer<'a> {
         crate::transforms::emit_utils::operator_to_str(op).to_string()
     }
 
-    /// Try to evaluate a constant expression to its numeric value
-    /// Returns None if the expression can't be statically evaluated
+    /// Format an i64 value as an `IRNode` numeric literal, matching tsc's output format.
+    fn format_numeric_literal(val: i64) -> IRNode {
+        IRNode::NumericLiteral(val.to_string())
+    }
+
+    /// Try to evaluate a constant expression to its numeric value.
+    /// Handles numeric literals, binary/unary expressions, parenthesized expressions,
+    /// and references to previously evaluated enum members (both bare identifiers and
+    /// `EnumName.Member` property accesses).
+    /// Returns None if the expression can't be statically evaluated.
     fn evaluate_constant_expression(&self, idx: NodeIndex) -> Option<i64> {
         let node = self.arena.get(idx)?;
 
@@ -446,6 +467,28 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
                 lit.text.parse().ok()
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Resolve references to previously evaluated enum members
+                let id = self.arena.get_identifier(node)?;
+                self.member_values.get(id.escaped_text.as_str()).copied()
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                // Resolve E.Member references (same enum self-references)
+                let access = self.arena.get_access_expr(node)?;
+                let obj_node = self.arena.get(access.expression)?;
+                if obj_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(obj_id) = self.arena.get_identifier(obj_node)
+                        && obj_id.escaped_text == self.current_enum_name {
+                            let prop_node = self.arena.get(access.name_or_argument)?;
+                            if let Some(prop_id) = self.arena.get_identifier(prop_node) {
+                                return self
+                                    .member_values
+                                    .get(prop_id.escaped_text.as_str())
+                                    .copied();
+                            }
+                        }
+                None
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(node)?;
