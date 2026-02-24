@@ -1544,14 +1544,15 @@ impl<'a> CheckerState<'a> {
                 // Register enum parent relationships for Task #17 (Enum Type Resolution)
                 if let Some(def_id) = def_id
                     && let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
-                    && (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
-                        let parent_sym_id = symbol.parent;
-                        if let Some(&parent_def_id) =
-                            self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
-                        {
-                            env.register_enum_parent(def_id, parent_def_id);
-                        }
+                    && (symbol.flags & symbol_flags::ENUM_MEMBER) != 0
+                {
+                    let parent_sym_id = symbol.parent;
+                    if let Some(&parent_def_id) =
+                        self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
+                    {
+                        env.register_enum_parent(def_id, parent_def_id);
                     }
+                }
             } else {
                 let sym_name = self
                     .ctx

@@ -836,17 +836,17 @@ impl<'a> CheckerState<'a> {
         // TS2408: Setters cannot return a value.
         if return_data.expression.is_some()
             && let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx)
-                && let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx)
-                && enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    stmt_idx,
-                    "Setters cannot return a value.",
-                    diagnostic_codes::SETTERS_CANNOT_RETURN_A_VALUE,
-                );
-                return;
-            }
+            && let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx)
+            && enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                stmt_idx,
+                "Setters cannot return a value.",
+                diagnostic_codes::SETTERS_CANNOT_RETURN_A_VALUE,
+            );
+            return;
+        }
 
         // Get the expected return type from the function context
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);
