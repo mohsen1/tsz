@@ -92,6 +92,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // tsc suppresses TS18050 when either operand is `any` — operations on `any`
+        // are unchecked and should not produce nullish-value diagnostics.
+        if left_type == TypeId::ANY || right_type == TypeId::ANY {
+            return false;
+        }
+
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
@@ -115,6 +121,19 @@ impl<'a> CheckerState<'a> {
                     | "<="
                     | ">="
             );
+
+        // For the `+` operator, tsc suppresses TS18050 when the other operand is a
+        // string type — `+` becomes string concatenation, and null/undefined are
+        // coerced to "null"/"undefined" strings. Only arithmetic `+` (both operands
+        // number/bigint/enum) should emit TS18050.
+        if op == "+" && should_emit_nullish_error {
+            if left_is_nullish && self.is_string_like_type(right_type) {
+                return false;
+            }
+            if right_is_nullish && self.is_string_like_type(left_type) {
+                return false;
+            }
+        }
 
         if left_is_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
@@ -161,6 +180,13 @@ impl<'a> CheckerState<'a> {
         }
 
         emitted_nullish_error
+    }
+
+    /// Check if a type is string-like (intrinsic `string` or a string literal).
+    /// Used to determine if `+` is string concatenation rather than arithmetic.
+    fn is_string_like_type(&self, type_id: TypeId) -> bool {
+        type_id == TypeId::STRING
+            || tsz_solver::type_queries::is_string_literal(self.ctx.types, type_id)
     }
 
     /// Emit errors for binary operator type mismatches.

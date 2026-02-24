@@ -1183,6 +1183,7 @@ matching the existing pattern in `check_const_assignment()` and `check_increment
   comparison instead of mutual assignability for method signatures.
 - **`exactOptionalPropertyTypes`** — compiler option not yet supported.
 
+
 ## TS7006 — False positive for null/undefined default parameters (Fixed)
 
 **Status**: Fixed. +2 tests passing.
@@ -1229,4 +1230,29 @@ via OR when merging objects in an intersection. This causes intersected types to
 they shouldn't, triggering false excess property checks. Fix requires changing freshness
 propagation semantics (AND instead of OR for intersection merging).
 
-## Current score: 4029/5997 (67.2%) — first-6000 slice
+## TS18050 — suppress false positives for string concatenation with null/undefined (Fixed)
+
+**Status**: Fixed.
+**Error code:** TS18050 ("The value '{0}' cannot be used here.")
+**Root cause:** `check_and_emit_nullish_binary_operands` in `operator_errors.rs` emitted
+TS18050 for all null/undefined operands in `+` expressions, including string concatenation
+(`"test" + null`). tsc suppresses TS18050 when the `+` operator is string concatenation
+(other operand is string/string-literal) or when either operand is `any`.
+**Fix:**
+1. Added early return when either operand is `TypeId::ANY` (any suppresses all type errors).
+2. Added string-like type check for `+` operator: if one operand is nullish and the other is
+   string/string-literal, suppress TS18050 (it's concatenation, not arithmetic).
+3. Added `is_string_like_type()` helper that checks `TypeId::STRING` and `is_string_literal()`.
+**Validation:** 8 unit tests in `binary.rs` covering null+number (emit), undefined+number (emit),
+string+null (no emit), null+string (no emit), string_literal+null (no emit), any+null (no emit),
+null+any (no emit), null-number (emit). Full conformance: 8012/12574 (63.7%).
+
+### Deferred TS18050 investigations
+- **TS2454 false positives (26 single-code tests)**: Multiple diverse root causes including
+  dead branches in literal ternaries, post-type-guard contexts, and variable assignment in
+  branches. Each pattern requires a different fix — not a single-fix target.
+- **TS6133 false positives (19 single-code tests)**: Multiple root causes including private
+  class members, type parameters, destructuring spread, function expressions, and
+  underscore-prefixed variables. Too diverse for a single fix.
+
+## Current score: ~8012/12574 (63.7%) — full suite
