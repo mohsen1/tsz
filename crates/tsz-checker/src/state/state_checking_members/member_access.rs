@@ -946,6 +946,10 @@ impl<'a> CheckerState<'a> {
                     let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
                         continue;
                     };
+                    // Skip static members — not checked against instance index signatures
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
                     // Skip private fields (#name)
                     if let Some(name_node) = self.ctx.arena.get(prop.name)
                         && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
@@ -964,6 +968,10 @@ impl<'a> CheckerState<'a> {
                     let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
                         continue;
                     };
+                    // Skip static members — not checked against instance index signatures
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
                     // Skip private methods (#name)
                     if let Some(name_node) = self.ctx.arena.get(method.name)
                         && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
@@ -980,6 +988,10 @@ impl<'a> CheckerState<'a> {
                     let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
                         continue;
                     };
+                    // Skip static members — not checked against instance index signatures
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
                     // Skip private accessors (#name)
                     if let Some(name_node) = self.ctx.arena.get(accessor.name)
                         && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16

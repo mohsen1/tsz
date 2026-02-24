@@ -175,6 +175,12 @@ impl<'a> CheckerState<'a> {
         op: &str,
         emitted_nullish_error: bool,
     ) {
+        // tsc suppresses binary operator type errors in files with parse errors
+        // to avoid cascading diagnostics from malformed AST nodes.
+        if self.has_parse_errors() {
+            return;
+        }
+
         // Suppress cascade errors from unresolved types
         if left_type == TypeId::ERROR
             || right_type == TypeId::ERROR

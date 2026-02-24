@@ -525,6 +525,11 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate a binary operation on two types.
     pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        // `never` is the bottom type — any non-logical operation on `never` produces `never`.
+        // Logical operators (&&, ||, ??) have their own `never` handling in evaluate_logical.
+        if !matches!(op, "&&" | "||" | "??") && (left == TypeId::NEVER || right == TypeId::NEVER) {
+            return BinaryOpResult::Success(TypeId::NEVER);
+        }
         match op {
             "+" => self.evaluate_plus(left, right),
             "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>" => {
