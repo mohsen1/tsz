@@ -430,11 +430,11 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should centralize enum DefId precondition resolution in a dedicated helper"
     );
 
-    let type_computation_complex_src = fs::read_to_string("src/types/type_computation_complex.rs")
-        .expect("failed to read src/types/type_computation_complex.rs for architecture guard");
+    let type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
+        .expect("failed to read src/types/computation/complex.rs for architecture guard");
     assert!(
         !type_computation_complex_src.contains("intern(tsz_solver::TypeData::TypeParameter("),
-        "type_computation_complex should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
+        "computation/complex should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
     let diagnostics_boundary_src = fs::read_to_string("src/query_boundaries/diagnostics.rs")
@@ -846,55 +846,55 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_checking_members assignment-style checks should route through check_assignable_or_report"
     );
 
-    let mut type_computation_src = fs::read_to_string("src/types/type_computation.rs")
-        .expect("failed to read src/types/type_computation.rs for architecture guard");
-    // Include split-off module that is part of the type_computation logical module
+    let mut type_computation_src = fs::read_to_string("src/types/computation/helpers.rs")
+        .expect("failed to read src/types/computation/helpers.rs for architecture guard");
+    // Include split-off module that is part of the computation logical module
     type_computation_src.push_str(
-        &fs::read_to_string("src/types/type_computation_binary.rs")
-            .expect("failed to read src/types/type_computation_binary.rs for architecture guard"),
+        &fs::read_to_string("src/types/computation/binary.rs")
+            .expect("failed to read src/types/computation/binary.rs for architecture guard"),
     );
     assert!(
         type_computation_src.contains("check_assignable_or_report("),
-        "type_computation mismatch checks should route through check_assignable_or_report"
+        "computation mismatch checks should route through check_assignable_or_report"
     );
 
-    let type_computation_complex_src = fs::read_to_string("src/types/type_computation_complex.rs")
-        .expect("failed to read src/types/type_computation_complex.rs for architecture guard");
+    let type_computation_complex_src = fs::read_to_string("src/types/computation/complex.rs")
+        .expect("failed to read src/types/computation/complex.rs for architecture guard");
     assert!(
         type_computation_complex_src.contains("check_argument_assignable_or_report("),
-        "type_computation_complex argument mismatch checks should route through check_argument_assignable_or_report"
+        "computation/complex argument mismatch checks should route through check_argument_assignable_or_report"
     );
     assert!(
         type_computation_complex_src.contains("check_assignable_or_report_generic_at("),
-        "type_computation_complex callback constraint mismatch checks should route through check_assignable_or_report_generic_at"
+        "computation/complex callback constraint mismatch checks should route through check_assignable_or_report_generic_at"
     );
     assert!(
         type_computation_complex_src.contains("ensure_relation_input_ready(")
             && type_computation_complex_src.contains("ensure_relation_inputs_ready("),
-        "type_computation_complex should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
+        "computation/complex should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
     );
     assert!(
         !type_computation_complex_src.contains("ensure_application_symbols_resolved("),
-        "type_computation_complex should not manually orchestrate application-symbol preconditions; use centralized relation precondition helpers"
+        "computation/complex should not manually orchestrate application-symbol preconditions; use centralized relation precondition helpers"
     );
-    let type_computation_access_src = fs::read_to_string("src/types/type_computation_access.rs")
-        .expect("failed to read src/types/type_computation_access.rs for architecture guard");
+    let type_computation_access_src = fs::read_to_string("src/types/computation/access.rs")
+        .expect("failed to read src/types/computation/access.rs for architecture guard");
     assert!(
         type_computation_access_src.contains("query_boundaries::type_computation_access::"),
-        "type_computation_access solver queries should route through query_boundaries::type_computation_access"
+        "computation/access solver queries should route through query_boundaries::type_computation_access"
     );
     assert!(
         !type_computation_access_src
             .contains("tsz_solver::type_queries::get_literal_property_name("),
-        "type_computation_access should not call get_literal_property_name directly; use type_computation_access query boundaries"
+        "computation/access should not call get_literal_property_name directly; use type_computation_access query boundaries"
     );
     assert!(
         !type_computation_access_src.contains("tsz_solver::type_queries::get_tuple_elements("),
-        "type_computation_access should not call get_tuple_elements directly; use type_computation_access query boundaries"
+        "computation/access should not call get_tuple_elements directly; use type_computation_access query boundaries"
     );
     assert!(
         !type_computation_access_src.contains("tsz_solver::type_queries::is_valid_spread_type("),
-        "type_computation_access should not call is_valid_spread_type directly; use type_computation_access query boundaries"
+        "computation/access should not call is_valid_spread_type directly; use type_computation_access query boundaries"
     );
 
     let dispatch_src =

@@ -69,8 +69,8 @@ pub use state_domain::{
 pub use symbols_domain::{scope_finder, symbol_resolver};
 
 pub use types_domain::{
-    class_type, function_type, interface_type, literal_type, object_type, type_checking,
-    type_computation, type_literal_checker, type_node,
+    class_type, computation, function_type, interface_type, literal_type, object_type,
+    type_checking, type_literal_checker, type_node,
 };
 
 pub mod diagnostics {

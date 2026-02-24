@@ -1,5 +1,5 @@
 //! Binary expression type computation.
-//! Extracted from `type_computation.rs` — handles all binary operators including
+//! Extracted from `core.rs` — handles all binary operators including
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::diagnostics::Diagnostic;

@@ -2,10 +2,10 @@
 //!
 //! Handles call expression type resolution including overload resolution,
 //! argument type checking, type argument validation, and call result processing.
-//! Identifier resolution is in `type_computation_identifier.rs` and tagged
-//! template expression handling is in `type_computation_tagged_template.rs`.
+//! Identifier resolution is in `identifier.rs` and tagged
+//! template expression handling is in `tagged_template.rs`.
 
-use super::type_computation_complex::is_contextually_sensitive;
+use super::complex::is_contextually_sensitive;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;
@@ -833,7 +833,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-// Identifier resolution is in `type_computation_identifier.rs`.
-// Tagged template expression handling is in `type_computation_tagged_template.rs`.
+// Identifier resolution is in `identifier.rs`.
+// Tagged template expression handling is in `tagged_template.rs`.
 // TDZ checking, value declaration resolution, and other helpers are in
-// `type_computation_call_helpers.rs`.
+// `call_helpers.rs`.
