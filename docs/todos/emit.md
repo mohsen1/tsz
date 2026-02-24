@@ -5,6 +5,23 @@
 Note: test count changed from 13546→11477 due to TypeScript submodule update (TS 6.0.0-dev.20260215).
 Pass rate decreased from 74.1%→72.8% — the new baseline files may introduce patterns not yet supported.
 
+### Fixed (2026-02-24, session 17) — Comment Preservation After Erased Type Annotations (+3 JS)
+
+- **Comments consumed by type annotation erasure**: When erasing type annotations
+  (e.g., `var x: { foo: string }`) via `skip_comments_in_range`, the function used
+  raw `type_node.end` which extends past trailing trivia (parser convention). Comments
+  in the trailing trivia (like `// ASI makes this work`) were incorrectly consumed,
+  preventing them from being emitted as leading comments for the next statement.
+- **Root cause**: `skip_comments_in_range` used `node.end` directly as the boundary,
+  but the parser's `node.end` extends past trailing trivia into the next token's
+  position. Fixed by narrowing the end boundary via `find_token_end_before_trivia`.
+- **Also fixed**: The `else` catch-all branch in `skip_comments_in_range` incorrectly
+  advanced `comment_emit_idx` for out-of-range comments (changed to `break`).
+- **Also fixed**: Changed `skip_whitespace_forward` → `skip_trivia_forward` at 7 comment
+  boundary detection sites (source_file.rs, statements.rs, comment_helpers.rs,
+  declarations_class_members.rs, expressions_literals.rs, es5/bindings_patterns.rs).
+- JS pass rate: 5429→5432 (74.3%→74.4%)
+
 ### Fixed (2026-02-24, session 16) — Const Enum Value Inlining at Usage Sites
 
 - **Const enum property/element access not inlined** (+33 JS):

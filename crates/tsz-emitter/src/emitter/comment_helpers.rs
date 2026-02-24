@@ -263,7 +263,7 @@ impl<'a> Printer<'a> {
         if self.ctx.options.remove_comments {
             return;
         }
-        let actual_start = self.skip_whitespace_forward(pos, pos + 1024);
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
         if let Some(text) = self.source_text {
             while self.comment_emit_idx < self.all_comments.len() {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
@@ -508,7 +508,7 @@ impl<'a> Printer<'a> {
         let Some(text) = self.source_text else {
             return Vec::new();
         };
-        let actual_start = self.skip_whitespace_forward(pos, pos + 1024);
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
         let mut result = Vec::new();
         let mut idx = self.comment_emit_idx;
         while idx < self.all_comments.len() {
@@ -526,15 +526,19 @@ impl<'a> Printer<'a> {
 
     /// Skip (suppress) all comments within a source range.
     /// Used to consume comments inside erased syntax regions like type parameter lists.
+    ///
+    /// Narrows the end boundary using `find_token_end_before_trivia` because our
+    /// parser's `node.end` extends past trailing trivia into the next token's
+    /// position. Without narrowing, comments in the trailing trivia (which logically
+    /// belong to the next statement) would be consumed.
     pub(super) fn skip_comments_in_range(&mut self, start: u32, end: u32) {
+        let actual_end = self.find_token_end_before_trivia(start, end);
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
-            if c.pos >= start && c.end <= end {
+            if c.pos >= start && c.end <= actual_end {
                 self.comment_emit_idx += 1;
-            } else if c.pos >= end {
-                break;
             } else {
-                self.comment_emit_idx += 1;
+                break;
             }
         }
     }

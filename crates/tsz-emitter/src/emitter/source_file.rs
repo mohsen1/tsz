@@ -650,10 +650,12 @@ impl<'a> Printer<'a> {
             }
 
             // Find the actual start of the statement's first token by
-            // scanning forward from node.pos past whitespace only.
-            // We preserve comments here - they're handled either as leading
-            // comments (if truly before the statement) or by nested expression emitters.
-            let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+            // scanning forward from node.pos past ALL trivia (whitespace AND
+            // comments). This way `c_end <= actual_start` correctly identifies
+            // every leading comment whose text ends before the real token.
+            // Previously we used skip_whitespace_forward which stopped at
+            // comments, causing `c_end > actual_start` for the comment itself.
+            let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
 
             if is_erased {
                 // Skip erased declarations. Their leading comments were already

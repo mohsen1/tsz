@@ -551,7 +551,7 @@ impl<'a> Printer<'a> {
         let mut prologue_emitted = !has_prologue;
         for (stmt_i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                 self.emit_comments_before_pos(actual_start);
             }
 
