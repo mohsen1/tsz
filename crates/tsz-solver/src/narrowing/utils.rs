@@ -6,7 +6,7 @@
 use super::{DiscriminantInfo, NarrowingContext};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
-use crate::visitor::{TypeVisitor, is_object_like_type_db, union_list_id};
+use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints, union_list_id};
 use crate::{QueryDatabase, TypeDatabase};
 use tsz_common::interner::Atom;
 
@@ -62,7 +62,7 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                     // Case 3: Both are object types but not directly related
                     // They might overlap (e.g., interfaces with common properties)
                     // For now, conservatively return the intersection
-                    if is_object_like_type_db(self.db, self.narrower) {
+                    if is_object_like_type_through_type_constraints(self.db, self.narrower) {
                         return self.db.intersection2(type_id, self.narrower);
                     }
                     // Case 4: Disjoint object types
