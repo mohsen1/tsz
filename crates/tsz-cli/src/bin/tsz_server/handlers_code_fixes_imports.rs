@@ -1123,7 +1123,7 @@ impl Server {
             } else {
                 for missing_name in &fallback_names {
                     candidates.extend(
-                        project.get_import_candidates_for_prefix(current_file_path, &missing_name),
+                        project.get_import_candidates_for_prefix(current_file_path, missing_name),
                     );
                 }
             }
@@ -1412,13 +1412,12 @@ impl Server {
             normalized_rest.truncate(new_len);
         }
 
-        let candidate = if normalized_rest.is_empty() {
-            package.clone()
-        } else if normalized_rest == format!("/dist/{package}") {
-            package.clone()
-        } else {
-            format!("{package}{normalized_rest}")
-        };
+        let candidate =
+            if normalized_rest.is_empty() || normalized_rest == format!("/dist/{package}") {
+                package.clone()
+            } else {
+                format!("{package}{normalized_rest}")
+            };
 
         if existing_specifiers.contains(&candidate) {
             Some(candidate)

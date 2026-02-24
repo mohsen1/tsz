@@ -289,13 +289,10 @@ impl Server {
         if Self::quoted_specifier_inner_range_at_offset(&arena, &source_text, offset).is_some() {
             return true;
         }
-        let mut candidates = Vec::with_capacity(2);
-        candidates.push(tsz::lsp::utils::find_node_at_offset(&arena, offset));
-        candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
-            &arena,
-            offset,
-            &source_text,
-        ));
+        let candidates = vec![
+            tsz::lsp::utils::find_node_at_offset(&arena, offset),
+            tsz::lsp::utils::find_node_at_or_before_offset(&arena, offset, &source_text),
+        ];
         for node_idx in candidates {
             if node_idx.is_none() {
                 continue;

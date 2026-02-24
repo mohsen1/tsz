@@ -182,6 +182,7 @@ impl Server {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn quickinfo_member_access_declaration_hover(
         arena: &tsz::parser::node::NodeArena,
         binder: &tsz::binder::BinderState,
@@ -397,6 +398,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn constructor_quickinfo_from_new_expression(
         arena: &tsz::parser::node::NodeArena,
         binder: &tsz::binder::BinderState,
@@ -610,6 +612,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn quickinfo_from_arrow_token(
         arena: &tsz::parser::node::NodeArena,
         binder: &tsz::binder::BinderState,
@@ -639,9 +642,7 @@ impl Server {
             }
             cursor += 1;
         }
-        let Some(arrow_start) = arrow_start else {
-            return None;
-        };
+        let arrow_start = arrow_start?;
 
         let mut current =
             tsz::lsp::utils::find_node_at_or_before_offset(arena, arrow_start + 1, source_text);
@@ -767,6 +768,7 @@ impl Server {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn contextual_parameter_hover_from_function_like(
         arena: &tsz::parser::node::NodeArena,
         binder: &tsz::binder::BinderState,
@@ -916,6 +918,7 @@ impl Server {
         text::contextual_first_parameter_type_from_text(type_text)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn contextual_arrow_display_string(
         arena: &tsz::parser::node::NodeArena,
         line_map: &LineMap,
