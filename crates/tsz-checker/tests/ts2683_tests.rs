@@ -124,3 +124,63 @@ fn standalone_function_emits_ts2683() {
     let src = "function foo() { return this; }";
     assert!(has_error(src, 2683));
 }
+
+#[test]
+fn explicit_this_param_suppresses_ts2683() {
+    // `this` in a function with explicit `this: any` parameter should NOT get TS2683
+    let src = r#"
+const foo = function (this: any) {
+    var a = this.blocks;
+};
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn explicit_this_param_unknown_suppresses_ts2683() {
+    // `this` in a function with explicit `this: unknown` parameter should NOT get TS2683
+    let src = r#"
+class Foo {
+    static y = function(this: unknown) { console.log(this); }
+}
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn no_explicit_this_param_still_emits_ts2683() {
+    // `this` in a function without explicit `this` parameter should still get TS2683
+    let src = r#"
+const foo = function () {
+    var a = this;
+};
+"#;
+    assert!(has_error(src, 2683));
+}
+
+#[test]
+fn explicit_this_param_in_nested_class_function_suppresses_ts2683() {
+    // `this` in a function nested in a class method, but with explicit `this` param,
+    // should NOT get TS2683
+    let src = r#"
+class C {
+    method() {
+        const inner = function(this: C) {
+            return this;
+        };
+    }
+}
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn function_declaration_with_this_param_suppresses_ts2683() {
+    // `this` in a function declaration with explicit `this` parameter
+    let src = r#"
+function foo(this: { x: number }) {
+    return this.x;
+}
+"#;
+    assert!(!has_error(src, 2683));
+}

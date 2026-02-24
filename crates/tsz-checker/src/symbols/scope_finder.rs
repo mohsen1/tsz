@@ -100,6 +100,76 @@ impl<'a> CheckerState<'a> {
         fn_node.kind == FUNCTION_EXPRESSION || fn_node.kind == FUNCTION_DECLARATION
     }
 
+    /// Check if the enclosing non-arrow function has an explicit `this` parameter.
+    ///
+    /// TypeScript allows functions to declare `this` as their first parameter
+    /// (e.g., `function(this: MyType) { ... }`). When present, `this` is explicitly
+    /// typed and TS2683 ("'this' implicitly has type 'any'") must be suppressed.
+    pub(crate) fn enclosing_function_has_explicit_this_parameter(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
+
+        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
+            Some(f) => f,
+            None => return false,
+        };
+        let fn_node = match self.ctx.arena.get(enclosing_fn) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        // Get the first parameter based on function kind
+        let first_param_idx =
+            if fn_node.kind == FUNCTION_DECLARATION || fn_node.kind == FUNCTION_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_function(fn_node)
+                    .and_then(|f| f.parameters.nodes.first().copied())
+            } else if fn_node.kind == METHOD_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_method_decl(fn_node)
+                    .and_then(|m| m.parameters.nodes.first().copied())
+            } else if fn_node.kind == CONSTRUCTOR {
+                self.ctx
+                    .arena
+                    .get_constructor(fn_node)
+                    .and_then(|c| c.parameters.nodes.first().copied())
+            } else if fn_node.kind == GET_ACCESSOR || fn_node.kind == SET_ACCESSOR {
+                self.ctx
+                    .arena
+                    .get_accessor(fn_node)
+                    .and_then(|a| a.parameters.nodes.first().copied())
+            } else {
+                None
+            };
+
+        let Some(param_idx) = first_param_idx else {
+            return false;
+        };
+
+        // Check if the first parameter is named "this"
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return false;
+        };
+
+        // Check if the parameter name is "this" (ThisKeyword or Identifier("this"))
+        if let Some(name_node) = self.ctx.arena.get(param.name) {
+            if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                return true;
+            }
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                return ident.escaped_text == "this";
+            }
+        }
+        false
+    }
+
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Check if `this` is inside a top-level arrow function that captures `globalThis`.

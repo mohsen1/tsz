@@ -547,7 +547,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         TypeId::ANY
                     } else {
                         // Fall through to TS2683 / TS7041 checks below
-                        if self.checker.ctx.no_implicit_this() && !self.checker.is_js_file() {
+                        // Suppress if the nested function has an explicit `this` parameter
+                        if self.checker.ctx.no_implicit_this()
+                            && !self.checker.is_js_file()
+                            && !self
+                                .checker
+                                .enclosing_function_has_explicit_this_parameter(idx)
+                        {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.checker.error_at_node(
                                 idx,
@@ -571,13 +577,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // TS2683: 'this' implicitly has type 'any'
                     // Suppressed in JS files: tsc infers `this` for constructor/prototype
                     // patterns and JSDoc-typed functions.
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.checker.error_at_node(
-                        idx,
-                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                    );
-                    TypeId::ANY
+                    // Suppress if the enclosing function has an explicit `this` parameter
+                    if self
+                        .checker
+                        .enclosing_function_has_explicit_this_parameter(idx)
+                    {
+                        TypeId::ANY
+                    } else {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                            diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        );
+                        TypeId::ANY
+                    }
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
                     && self.checker.is_this_in_global_capturing_arrow(idx)
