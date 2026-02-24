@@ -1,6 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10030/13623 = 73.6% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10031/13623 = 73.6% JS, ~776/1995 = 38.9% DTS)
+
+### Fixed (2026-02-24, session 7) — Block Comment Spacing After `*/`
+
+- **Inline block comments missing space before next token** (affected ~43 tests as secondary diff):
+  When a `/* ... */` comment appeared on the same line as a statement (no trailing newline),
+  the emitter wrote it directly adjacent to the next token (`/*comment*/var x`) instead of
+  with a separating space (`/*comment*/ var x`). This affected three comment emission loops
+  in `statements.rs`, `source_file.rs`, and `comment_helpers.rs`.
+  Fix: introduced a `pending_block_comment_space` flag on the `Printer` struct. When an inline
+  block comment is emitted without a trailing newline, the flag is set. The `write()` method
+  checks the flag and inserts a space before non-whitespace text, then clears it. `write_line()`
+  and `write_space()` also clear the flag. This deferred approach avoids double-spacing with
+  expression emitters (like `yield`) that have their own comment spacing logic.
+  One unit test added (`inline_block_comment_before_statement_gets_trailing_space`).
+  JS: 10031/13623, DTS: 776/1995, zero regressions (512 unit tests pass).
 
 ### Fixed (2026-02-24, session 6) — Dispose Helper Over-Emission at ES2025+
 

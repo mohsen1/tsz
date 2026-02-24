@@ -275,6 +275,8 @@ impl<'a> Printer<'a> {
                     self.write_comment_with_reindent(comment_text, Some(c_pos));
                     if c_trailing {
                         self.write_line();
+                    } else if comment_text.starts_with("/*") {
+                        self.pending_block_comment_space = true;
                     }
                     self.comment_emit_idx += 1;
                 } else {

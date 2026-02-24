@@ -17,6 +17,18 @@ impl<'a> Printer<'a> {
 
     /// Write text to output.
     pub(super) fn write(&mut self, text: &str) {
+        // If an inline block comment was just emitted, insert a separating space
+        // before non-whitespace text to match tsc output (e.g. `/*comment*/ yield`).
+        if self.pending_block_comment_space {
+            self.pending_block_comment_space = false;
+            if !text.is_empty()
+                && !text.starts_with(' ')
+                && !text.starts_with('\n')
+                && !text.starts_with('\r')
+            {
+                self.writer.write_space();
+            }
+        }
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node(text, source_pos);
         } else {
@@ -64,11 +76,13 @@ impl<'a> Printer<'a> {
 
     /// Write a newline.
     pub(super) fn write_line(&mut self) {
+        self.pending_block_comment_space = false;
         self.writer.write_line();
     }
 
     /// Write a space.
     pub(super) fn write_space(&mut self) {
+        self.pending_block_comment_space = false;
         self.writer.write_space();
     }
 
