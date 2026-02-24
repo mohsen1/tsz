@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
                 if args.len() > sig.type_params.len() {
                     args.truncate(sig.type_params.len());
                 }
-                let result = self.instantiate_constructor_signature(sig, &args);
+                let result = self.instantiate_signature(sig, &args);
                 {
                     let app_info = query::get_application_info(self.ctx.types, result.return_type)
                         .map(|(base, args)| format!("base={base:?} args={args:?}"))
@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
                         if args.len() > sig.type_params.len() {
                             args.truncate(sig.type_params.len());
                         }
-                        self.instantiate_call_signature(sig, &args)
+                        self.instantiate_signature(sig, &args)
                     })
                     .collect();
 
@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
                     return callee_type;
                 }
 
-                let instantiated_call = self.instantiate_call_signature(
+                let instantiated_call = self.instantiate_signature(
                     &tsz_solver::CallSignature {
                         type_params: shape.type_params.clone(),
                         params: shape.params.clone(),

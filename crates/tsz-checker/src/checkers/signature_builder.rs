@@ -127,9 +127,10 @@ impl<'a> CheckerState<'a> {
     // Signature Instantiation
     // =========================================================================
 
-    /// Instantiate a call signature with type arguments.
-    /// Similar to `instantiate_constructor_signature` but for call signatures.
-    pub(crate) fn instantiate_call_signature(
+    /// Instantiate a signature (call or constructor) with type arguments.
+    /// Substitutes type parameters with the provided type arguments throughout
+    /// the signature's params, this type, return type, and type predicate.
+    pub(crate) fn instantiate_signature(
         &self,
         sig: &tsz_solver::CallSignature,
         type_args: &[TypeId],
@@ -165,51 +166,6 @@ impl<'a> CheckerState<'a> {
                 });
 
         tsz_solver::CallSignature {
-            type_params: Vec::new(),
-            params,
-            this_type,
-            return_type,
-            type_predicate,
-            is_method: sig.is_method,
-        }
-    }
-
-    /// Instantiate a constructor signature with type arguments.
-    pub(crate) fn instantiate_constructor_signature(
-        &self,
-        sig: &tsz_solver::CallSignature,
-        type_args: &[TypeId],
-    ) -> tsz_solver::CallSignature {
-        use tsz_solver::{
-            CallSignature, ParamInfo, TypePredicate, TypeSubstitution, instantiate_type,
-        };
-
-        let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
-        let params: Vec<ParamInfo> = sig
-            .params
-            .iter()
-            .map(|param| ParamInfo {
-                name: param.name,
-                type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
-                optional: param.optional,
-                rest: param.rest,
-            })
-            .collect();
-
-        let this_type = sig
-            .this_type
-            .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
-        let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
-        let type_predicate = sig.type_predicate.as_ref().map(|predicate| TypePredicate {
-            asserts: predicate.asserts,
-            target: predicate.target.clone(),
-            type_id: predicate
-                .type_id
-                .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
-            parameter_index: predicate.parameter_index,
-        });
-
-        CallSignature {
             type_params: Vec::new(),
             params,
             this_type,
@@ -335,22 +291,49 @@ impl<'a> CheckerState<'a> {
     // Return Type and Type Predicate
     // =========================================================================
 
-    /// Extract return type and type predicate from a type annotation.
+    /// Extract return type and type predicate from a type annotation (declaration context).
     pub(crate) fn return_type_and_predicate(
         &mut self,
         type_annotation: NodeIndex,
         params: &[tsz_solver::ParamInfo],
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
+        self.return_type_and_predicate_impl(type_annotation, params, false)
+    }
+
+    /// Extract return type and type predicate from a type literal annotation.
+    pub(crate) fn return_type_and_predicate_in_type_literal(
+        &mut self,
+        type_annotation: NodeIndex,
+        params: &[tsz_solver::ParamInfo],
+    ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
+        self.return_type_and_predicate_impl(type_annotation, params, true)
+    }
+
+    /// Shared implementation for return type + type predicate extraction.
+    /// When `in_type_literal` is true, uses `get_type_from_type_node_in_type_literal`;
+    /// otherwise uses `get_type_from_type_node`.
+    fn return_type_and_predicate_impl(
+        &mut self,
+        type_annotation: NodeIndex,
+        params: &[tsz_solver::ParamInfo],
+        in_type_literal: bool,
+    ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
         use tsz_solver::{TypePredicate, TypePredicateTarget};
 
         if type_annotation.is_none() {
-            // Return ANY to match TypeScript's implicit 'any' return type for signatures
-            // missing a type annotation.
             return (TypeId::ANY, None);
         }
 
+        let resolve_type = |this: &mut Self, node: NodeIndex| {
+            if in_type_literal {
+                this.get_type_from_type_node_in_type_literal(node)
+            } else {
+                this.get_type_from_type_node(node)
+            }
+        };
+
         let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {
-            return (self.get_type_from_type_node(type_annotation), None);
+            return (resolve_type(self, type_annotation), None);
         };
 
         let Some(node) = self.ctx.arena.get(predicate_node_idx) else {
@@ -374,7 +357,7 @@ impl<'a> CheckerState<'a> {
         let type_id = if data.type_node.is_none() {
             None
         } else {
-            Some(self.get_type_from_type_node(data.type_node))
+            Some(resolve_type(self, data.type_node))
         };
 
         let mut parameter_index = None;
@@ -412,65 +395,5 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
-    }
-
-    /// Extract return type and type predicate from a type literal annotation.
-    pub(crate) fn return_type_and_predicate_in_type_literal(
-        &mut self,
-        type_annotation: NodeIndex,
-        params: &[tsz_solver::ParamInfo],
-    ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        use tsz_solver::{TypePredicate, TypePredicateTarget};
-
-        if type_annotation.is_none() {
-            // Return ANY to match TypeScript's implicit 'any' return type for signatures
-            // missing a type annotation (especially in ambient declarations and type literals).
-            return (TypeId::ANY, None);
-        }
-
-        let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {
-            return (
-                self.get_type_from_type_node_in_type_literal(type_annotation),
-                None,
-            );
-        };
-
-        let Some(node) = self.ctx.arena.get(predicate_node_idx) else {
-            return (TypeId::BOOLEAN, None);
-        };
-        let Some(data) = self.ctx.arena.get_type_predicate(node) else {
-            return (TypeId::BOOLEAN, None);
-        };
-
-        let return_type = if data.asserts_modifier {
-            TypeId::VOID
-        } else {
-            TypeId::BOOLEAN
-        };
-
-        let target = match self.type_predicate_target(data.parameter_name) {
-            Some(target) => target,
-            None => return (return_type, None),
-        };
-
-        let type_id = if data.type_node.is_none() {
-            None
-        } else {
-            Some(self.get_type_from_type_node_in_type_literal(data.type_node))
-        };
-
-        let mut parameter_index = None;
-        if let TypePredicateTarget::Identifier(name) = &target {
-            parameter_index = params.iter().position(|p| p.name == Some(*name));
-        }
-
-        let predicate = TypePredicate {
-            asserts: data.asserts_modifier,
-            target,
-            type_id,
-            parameter_index,
-        };
-
-        (return_type, Some(predicate))
     }
 }
