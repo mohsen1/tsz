@@ -3164,6 +3164,20 @@ mod tests {
     }
 
     #[test]
+    fn test_ts5103_emitted_for_6_0_value() {
+        // "6.0" is NOT a valid deprecation wave — ignoreDeprecations only covers
+        // past deprecation waves ("5.0", "5.5"), not the current version.
+        // tsc 6.0.0-dev rejects "6.0" with TS5103.
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5103),
+            "Expected TS5103 for ignoreDeprecations='6.0' (not a valid wave), got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn test_ts5103_not_emitted_for_valid_value() {
         let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.0"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
@@ -3190,7 +3204,7 @@ mod tests {
 
     #[test]
     fn test_ts5103_emitted_for_invalid_5_5() {
-        // tsc only accepts "5.0" and "6.0" — "5.5" is not a valid ignoreDeprecations value
+        // tsc 6.0 only accepts "5.0" — "5.5" is not a valid ignoreDeprecations value
         let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.5"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
