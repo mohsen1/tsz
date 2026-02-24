@@ -118,6 +118,7 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.function_scope_depth += 1;
 
         // Push temp scope and block scope for function body.
         // Each function has its own scope for variable renaming/shadowing.
@@ -130,6 +131,7 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
         // Track function name to prevent duplicate var declarations for merged namespaces.
