@@ -53,33 +53,21 @@ impl<'a> CheckerState<'a> {
             }
 
             if all_plus && operand_nodes.len() > 1 {
-                let mut all_number = true;
-                let mut all_bigint = true;
-                let mut all_string = true;
-                let mut has_any = false;
+                let mut operand_types = Vec::with_capacity(operand_nodes.len());
 
                 for node_idx in operand_nodes {
                     let ty = self.get_type_of_node(node_idx);
                     if ty == TypeId::ERROR {
                         return TypeId::ERROR;
                     }
-                    has_any |= ty == TypeId::ANY;
-                    all_number &= ty == TypeId::NUMBER;
-                    all_bigint &= ty == TypeId::BIGINT;
-                    all_string &= ty == TypeId::STRING;
+                    operand_types.push(ty);
                 }
 
-                if all_number {
-                    return TypeId::NUMBER;
-                }
-                if all_bigint {
-                    return TypeId::BIGINT;
-                }
-                if all_string {
-                    return TypeId::STRING;
-                }
-                if has_any {
-                    return TypeId::ANY;
+                if let Some(ty) = crate::query_boundaries::type_computation::evaluate_plus_chain(
+                    self.ctx.types,
+                    &operand_types,
+                ) {
+                    return ty;
                 }
             }
         }
