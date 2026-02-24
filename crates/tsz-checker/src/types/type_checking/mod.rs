@@ -1,0 +1,18 @@
+//! Type checking validation modules.
+//!
+//! Organized into focused submodules:
+//! - `core` — utility methods, AST traversal helpers, member/declaration validation
+//! - `declarations` — declaration-specific type checking (variable, function, class)
+//! - `declarations_utils` — shared utilities for declaration checking
+//! - `duplicate_identifiers` — duplicate identifier/declaration conflict detection
+//! - `global` — global-scope type checking
+//! - `property_init` — property initializer validation
+//! - `unused` — unused variable/parameter detection
+
+mod core;
+mod declarations;
+mod declarations_utils;
+mod duplicate_identifiers;
+mod global;
+mod property_init;
+mod unused;

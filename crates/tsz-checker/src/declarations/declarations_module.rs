@@ -819,7 +819,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // First check if any non-ambient function with a body merges with this namespace.
         // When a function merge exists, the global duplicate-check path in
-        // type_checking_global.rs handles TS2434 for the function case, and we
+        // type_checking/global.rs handles TS2434 for the function case, and we
         // should suppress TS2434 for any class that also merges (tsc emits
         // TS2813/TS2814 for the class conflict, not TS2434).
         let has_merged_function = symbol.declarations.iter().any(|&decl_idx| {

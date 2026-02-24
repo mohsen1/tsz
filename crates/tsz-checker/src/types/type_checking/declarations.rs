@@ -11,7 +11,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     // Property initialization order checking (TS2729) is in
-    // `type_checking_property_init.rs`.
+    // `type_checking/property_init.rs`.
 
     // 18. AST Context Checking (4 functions)
 
@@ -1293,5 +1293,5 @@ impl<'a> CheckerState<'a> {
     }
 
     // Interface merge compatibility, name matching, property name utilities,
-    // and node containment are in `type_checking_declarations_utils.rs`.
+    // and node containment are in `type_checking/declarations_utils.rs`.
 }
