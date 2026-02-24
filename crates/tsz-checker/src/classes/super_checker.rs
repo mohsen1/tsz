@@ -56,12 +56,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is inside a class method body.
+    /// Walk up the parent chain from `idx`, looking for a class member matching `target_kinds`.
     ///
-    /// Returns true if inside a method body (both static and non-static).
-    /// `super` property access is valid in both static and instance methods
-    /// of a derived class.
-    pub(crate) fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
+    /// Arrow functions are transparent (skipped — they capture class context).
+    /// Regular functions/declarations are scope boundaries (return `false`).
+    /// Returns `false` if we leave the class without finding a match.
+    fn is_in_class_member_of_kind(&self, idx: NodeIndex, target_kinds: &[u16]) -> bool {
         let mut current = idx;
 
         while let Some(ext) = self.ctx.arena.get_extended(current) {
@@ -73,22 +73,20 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            // Arrow functions capture the class context, so skip them when checking
+            // Arrow functions capture the class context, so skip them
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
                 current = parent_idx;
                 continue;
             }
 
-            // Regular functions create a new scope - super is not valid inside them
-            // TS2660: 'super' can only be referenced in members of derived classes
+            // Regular functions create a new scope — super is not valid inside them
             if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             {
                 return false;
             }
 
-            if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                // `super` property access is valid in both static and non-static methods
+            if target_kinds.contains(&parent_node.kind) {
                 return true;
             }
 
@@ -103,6 +101,15 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Check if a node is inside a class method body.
+    ///
+    /// Returns true if inside a method body (both static and non-static).
+    /// `super` property access is valid in both static and instance methods
+    /// of a derived class.
+    pub(crate) fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
+        self.is_in_class_member_of_kind(idx, &[syntax_kind_ext::METHOD_DECLARATION])
     }
 
     /// Check if a node is inside a class accessor body (getter/setter).
@@ -110,47 +117,10 @@ impl<'a> CheckerState<'a> {
     /// Returns true if inside an accessor body.
     /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
     pub(crate) fn is_in_class_accessor_body(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-
-            // Arrow functions capture the class context, so skip them when checking
-            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                current = parent_idx;
-                continue;
-            }
-
-            // Regular functions create a new scope - super is not valid inside them
-            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                return false;
-            }
-
-            if parent_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                return true;
-            }
-
-            // Check if we've left the class
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                break;
-            }
-
-            current = parent_idx;
-        }
-
-        false
+        self.is_in_class_member_of_kind(
+            idx,
+            &[syntax_kind_ext::GET_ACCESSOR, syntax_kind_ext::SET_ACCESSOR],
+        )
     }
 
     /// Check if a node is inside a class property initializer.
@@ -158,45 +128,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if inside a property declaration (class field).
     /// IMPORTANT: Skips arrow function boundaries since they capture the class context.
     pub(crate) fn is_in_class_property_initializer(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-
-            // Arrow functions capture the class context, so skip them when checking
-            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                current = parent_idx;
-                continue;
-            }
-
-            // Regular functions create a new scope - super is not valid inside them
-            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                return false;
-            }
-
-            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                return true;
-            }
-
-            // Check if we've left the class
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                break;
-            }
-
-            current = parent_idx;
-        }
-
-        false
+        self.is_in_class_member_of_kind(idx, &[syntax_kind_ext::PROPERTY_DECLARATION])
     }
 
     /// Check if a node is inside a class static block.
