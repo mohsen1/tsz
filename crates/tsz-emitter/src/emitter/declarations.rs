@@ -270,13 +270,18 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Skip ambient and const enums (declare/const enums are erased)
+        // Skip ambient enums (always erased) and const enums (erased unless preserveConstEnums)
         if self
             .arena
             .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-            || self
-                .arena
-                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+        {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+        if self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            && !self.ctx.options.preserve_const_enums
         {
             self.skip_comments_for_erased_node(node);
             return;
@@ -285,6 +290,7 @@ impl<'a> Printer<'a> {
         // Transform enum to IIFE pattern for all targets
         {
             let mut transformer = EnumES5Transformer::new(self.arena);
+            transformer.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }

@@ -66,6 +66,7 @@ interface TestCase {
   jsxFragmentFactory?: string;
   jsxImportSource?: string;
   moduleDetection?: string;
+  preserveConstEnums: boolean;
 }
 
 interface TestResult {
@@ -139,6 +140,7 @@ function getCacheKey(
   jsxFragmentFactory: string = '',
   jsxImportSource: string = '',
   moduleDetection: string = '',
+  preserveConstEnums: boolean = false,
 ): string {
   const tszBin = process.env.TSZ_BIN;
   let engineSalt = '';
@@ -150,7 +152,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -425,6 +427,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const jsxFragmentFactory =
       typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
+    const preserveConstEnums = directives.preserveconstenums === true;
 
     return {
       baselineFile,
@@ -454,6 +457,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       jsxFragmentFactory,
       jsxImportSource,
       moduleDetection,
+      preserveConstEnums,
     } as TestCase;
   })));
 
@@ -500,6 +504,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.jsxFragmentFactory ?? '',
       testCase.jsxImportSource ?? '',
       testCase.moduleDetection ?? '',
+      testCase.preserveConstEnums,
     );
     let tszJs: string;
     let tszDts: string | null = null;
@@ -530,6 +535,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         jsxFragmentFactory: testCase.jsxFragmentFactory,
         jsxImportSource: testCase.jsxImportSource,
         moduleDetection: testCase.moduleDetection,
+        preserveConstEnums: testCase.preserveConstEnums,
         outFile: testCase.expectedJsFileName === 'out.js' ? 'out.js' : undefined,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,

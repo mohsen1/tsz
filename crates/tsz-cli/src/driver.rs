@@ -1715,6 +1715,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(ModuleDetection::Force) = args.module_detection {
         options.printer.module_detection_force = true;
     }
+    if args.preserve_const_enums {
+        options.printer.preserve_const_enums = true;
+    }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
     }

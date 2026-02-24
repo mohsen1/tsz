@@ -64,7 +64,10 @@ fn test_optional_catch_binding_downlevel_to_param() {
         },
     )
     .code;
-    assert!(output.contains("catch (_unused)"));
+    assert!(
+        output.contains("catch (_a)"),
+        "Expected catch (_a) in downleveled output, got: {output}"
+    );
 
     let output_es2020 = lower_and_print(
         &parser.arena,
@@ -75,7 +78,39 @@ fn test_optional_catch_binding_downlevel_to_param() {
         },
     )
     .code;
-    assert!(!output_es2020.contains("catch (_unused)"));
+    assert!(
+        !output_es2020.contains("catch (_a)"),
+        "ES2020+ should preserve optional catch binding"
+    );
+}
+
+#[test]
+fn test_optional_catch_binding_multiple_get_unique_names() {
+    let source = "try {} catch {}\ntry {} catch {}\ntry {} catch {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2018,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("catch (_a)"),
+        "First catch should use _a, got: {output}"
+    );
+    assert!(
+        output.contains("catch (_b)"),
+        "Second catch should use _b, got: {output}"
+    );
+    assert!(
+        output.contains("catch (_c)"),
+        "Third catch should use _c, got: {output}"
+    );
 }
 
 #[test]

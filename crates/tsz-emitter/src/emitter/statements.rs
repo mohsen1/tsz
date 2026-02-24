@@ -981,7 +981,12 @@ impl<'a> Printer<'a> {
             self.emit(catch.variable_declaration);
             self.write(")");
         } else if self.ctx.needs_es2019_lowering {
-            self.write(" (_unused)");
+            // ES2019 optional catch binding: generate a unique temp name like tsc does
+            // (e.g., _a, _b, _c) instead of a hardcoded name.
+            let name = self.make_unique_name();
+            self.write(" (");
+            self.write(&name);
+            self.write(")");
         }
 
         self.write(" ");
