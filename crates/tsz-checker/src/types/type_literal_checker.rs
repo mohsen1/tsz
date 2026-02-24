@@ -5,6 +5,8 @@
 
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
+use rustc_hash::FxHashMap;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -370,7 +372,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing type literal data - propagate error
         };
 
+        struct AccessorAggregate {
+            getter: Option<TypeId>,
+            setter: Option<TypeId>,
+        }
+
         let mut properties = Vec::new();
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut call_signatures = Vec::new();
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
@@ -555,27 +563,18 @@ impl<'a> CheckerState<'a> {
                 && let Some(name) = self.get_property_name(accessor.name)
             {
                 let name_atom = self.ctx.types.intern_string(&name);
-                let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
-                if is_getter {
+                let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                    getter: None,
+                    setter: None,
+                });
+
+                if member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR {
                     let getter_type = if accessor.type_annotation.is_some() {
                         self.get_type_from_type_node_in_type_literal(accessor.type_annotation)
                     } else {
                         TypeId::ANY
                     };
-                    if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
-                        existing.type_id = getter_type;
-                    } else {
-                        properties.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: getter_type,
-                            write_type: getter_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                        });
-                    }
+                    entry.getter = Some(getter_type);
                 } else {
                     let setter_type = accessor
                         .parameters
@@ -589,23 +588,29 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                         .unwrap_or(TypeId::UNKNOWN);
-                    if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
-                        existing.write_type = setter_type;
-                        existing.readonly = false;
-                    } else {
-                        properties.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: setter_type,
-                            write_type: setter_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                        });
-                    }
+                    entry.setter = Some(setter_type);
                 }
             }
+        }
+
+        // Convert accessors to properties (getter-only implies readonly)
+        for (name, accessor) in accessors {
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
+            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            properties.push(PropertyInfo {
+                name,
+                type_id: read_type,
+                write_type,
+                optional: false,
+                readonly,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            });
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {

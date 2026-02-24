@@ -32,7 +32,7 @@ impl<'a> CheckerState<'a> {
         // Collect getters and setters by name
         #[derive(Default)]
         struct AccessorPair {
-            getter: Option<(NodeIndex, bool)>, // (node_idx, is_abstract)
+            getter: Option<(NodeIndex, bool)>, // (name_node_idx, is_abstract)
             setter: Option<(NodeIndex, bool)>,
         }
 
@@ -48,14 +48,15 @@ impl<'a> CheckerState<'a> {
                 && let Some(accessor) = self.ctx.arena.get_accessor(node)
             {
                 let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+                let name_node_idx = accessor.name;
 
                 // Get accessor name
                 if let Some(name) = self.get_property_name(accessor.name) {
                     let pair = accessors.entry(name).or_default();
                     if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        pair.getter = Some((member_idx, is_abstract));
+                        pair.getter = Some((name_node_idx, is_abstract));
                     } else {
-                        pair.setter = Some((member_idx, is_abstract));
+                        pair.setter = Some((name_node_idx, is_abstract));
                     }
                 }
             }
@@ -63,18 +64,20 @@ impl<'a> CheckerState<'a> {
 
         // Check for abstract mismatch
         for (_, pair) in accessors {
-            if let (Some((getter_idx, getter_abstract)), Some((setter_idx, setter_abstract))) =
-                (pair.getter, pair.setter)
+            if let (
+                Some((getter_name_idx, getter_abstract)),
+                Some((setter_name_idx, setter_abstract)),
+            ) = (pair.getter, pair.setter)
                 && getter_abstract != setter_abstract
             {
-                // Report error on both accessors
+                // Report error on accessor names (tsc points to the property name)
                 self.error_at_node(
-                    getter_idx,
+                    getter_name_idx,
                     "Accessors must both be abstract or non-abstract.",
                     diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NON_ABSTRACT,
                 );
                 self.error_at_node(
-                    setter_idx,
+                    setter_name_idx,
                     "Accessors must both be abstract or non-abstract.",
                     diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NON_ABSTRACT,
                 );
@@ -115,9 +118,11 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check for initializer (error 1052)
+            // tsc points at the accessor name (e.g., `X` in `set X(v = 0)`)
             if param.initializer.is_some() {
+                let error_node = accessor_name.unwrap_or(param.name);
                 self.error_at_node(
-                    param.name,
+                    error_node,
                     "A 'set' accessor parameter cannot have an initializer.",
                     diagnostic_codes::A_SET_ACCESSOR_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
                 );
