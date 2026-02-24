@@ -2,6 +2,8 @@
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
+use std::collections::HashSet;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -24,11 +26,21 @@ impl<'a> CheckerState<'a> {
         // This is the key TypeScript behavior:
         // - const p: Point = {x: 1, y: 2, z: 3}  // ERROR: 'z' is excess (fresh)
         // - const obj = {x: 1, y: 2, z: 3}; p = obj;  // OK: obj loses freshness
+        // - const p: Point = { ...source, z: 3 }  // ERROR: only explicit property `z` is checked
         //
         // IMPORTANT: Freshness is tracked on the TypeId itself.
         // This fixes the "Zombie Freshness" bug by keeping fresh vs non-fresh
         // object types distinct at the interner level.
-        if !freshness::is_fresh_object_type(self.ctx.types, source) {
+        let is_fresh_source = freshness::is_fresh_object_type(self.ctx.types, source);
+        let explicit_property_names = if is_fresh_source {
+            None
+        } else {
+            self.explicit_object_literal_property_names_for_spread(idx)
+        };
+
+        // Non-fresh object literals should be exempt from excess-property checks
+        // unless they use spread, in which case we still check explicit properties.
+        if !is_fresh_source && explicit_property_names.is_none() {
             return;
         }
 
@@ -118,6 +130,14 @@ impl<'a> CheckerState<'a> {
             };
 
             for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
                 // For unions, check if property exists in ANY member
                 let target_prop_types: Vec<TypeId> = effective_shapes
                     .iter()
@@ -183,6 +203,14 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
                 // For intersections, property exists if it's in ANY member's shape
                 let mut found = false;
                 let mut nested_target_types = Vec::new();
@@ -237,6 +265,14 @@ impl<'a> CheckerState<'a> {
             }
             // This is the "freshness" or "strict object literal" check
             for source_prop in source_props {
+                if explicit_property_names.is_some()
+                    && !explicit_property_names
+                        .as_ref()
+                        .is_some_and(|names| names.contains(&source_prop.name))
+                {
+                    continue;
+                }
+
                 let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
                 if target_prop.is_none() {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
@@ -276,7 +312,14 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_solver::relations::freshness;
 
-        if !freshness::is_fresh_object_type(self.ctx.types, source) {
+        let is_fresh_source = freshness::is_fresh_object_type(self.ctx.types, source);
+        let explicit_property_names = if is_fresh_source {
+            None
+        } else {
+            self.explicit_object_literal_property_names_for_spread(obj_literal_idx)
+        };
+
+        if !is_fresh_source && explicit_property_names.is_none() {
             return false;
         }
 
@@ -319,6 +362,14 @@ impl<'a> CheckerState<'a> {
         let mut best_member: Option<(TypeId, &std::sync::Arc<tsz_solver::ObjectShape>)> = None;
 
         for source_prop in source_props {
+            if explicit_property_names.is_some()
+                && !explicit_property_names
+                    .as_ref()
+                    .is_some_and(|names| names.contains(&source_prop.name))
+            {
+                continue;
+            }
+
             if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
                 continue;
             }
@@ -348,6 +399,14 @@ impl<'a> CheckerState<'a> {
         // tsc reports only the first excess property in source order.
         let mut excess_candidates: Vec<(tsz_common::interner::Atom, NodeIndex, u32)> = Vec::new();
         for source_prop in source_props {
+            if explicit_property_names.is_some()
+                && !explicit_property_names
+                    .as_ref()
+                    .is_some_and(|names| names.contains(&source_prop.name))
+            {
+                continue;
+            }
+
             let exists_in_narrowed = narrowed_shape
                 .properties
                 .iter()
@@ -375,6 +434,65 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    fn explicit_object_literal_property_names_for_spread(
+        &self,
+        obj_literal_idx: NodeIndex,
+    ) -> Option<HashSet<Atom>> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+
+        let has_spread = obj_lit.elements.nodes.iter().any(|&elem_idx| {
+            self.ctx.arena.get(elem_idx).is_some_and(|elem_node| {
+                elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                    || elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+            })
+        });
+        if !has_spread {
+            return None;
+        }
+
+        let mut explicit_names = HashSet::new();
+        for &elem_idx in &obj_lit.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            let elem_prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(elem_node)
+                    .and_then(|method| self.get_property_name(method.name)),
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                    .ctx
+                    .arena
+                    .get_accessor(elem_node)
+                    .and_then(|accessor| self.get_property_name(accessor.name)),
+                _ => None,
+            };
+
+            if let Some(name) = elem_prop_name {
+                explicit_names.insert(self.ctx.types.intern_string(&name));
+            }
+        }
+
+        Some(explicit_names)
     }
 
     /// Check nested object literal properties for excess properties.
@@ -526,8 +644,9 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         initializer_idx: NodeIndex,
         target_type: TypeId,
+        use_pattern_target_type: bool,
     ) {
-        if initializer_idx.is_none() || target_type == TypeId::ANY || target_type == TypeId::ERROR {
+        if initializer_idx.is_none() || target_type == TypeId::ERROR {
             return;
         }
 
@@ -572,8 +691,22 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Use explicit pattern keys only when the pattern is the source of truth (no
+        // explicit annotation). This avoids overriding annotated target types like
+        // `{x: string}` with a synthetic `{x: any}` shape.
+        let effective_target_type = if use_pattern_target_type {
+            self.object_binding_pattern_target_type_for_excess_checks(pattern_idx)
+                .unwrap_or(target_type)
+        } else {
+            target_type
+        };
+
+        if effective_target_type == TypeId::ANY {
+            return;
+        }
+
         // Get the properties of the target type
-        let Some(target_shape) = query::object_shape(self.ctx.types, target_type) else {
+        let Some(target_shape) = query::object_shape(self.ctx.types, effective_target_type) else {
             return;
         };
         let target_props = target_shape.properties.as_slice();
@@ -589,7 +722,15 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_property_assignment(elem_node)
-                    .and_then(|prop| self.get_property_name(prop.name)),
+                    .and_then(|prop| {
+                        if let Some(name_node) = self.ctx.arena.get(prop.name)
+                            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        {
+                            return self.computed_property_display_name(prop.name);
+                        }
+
+                        self.get_property_name(prop.name)
+                    }),
                 syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena
@@ -605,7 +746,8 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(prop.name)
                 && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             {
-                "[computed property]".to_string()
+                self.computed_property_display_name(prop.name)
+                    .unwrap_or("[computed property]".to_string())
             } else {
                 continue;
             };
@@ -615,9 +757,93 @@ impl<'a> CheckerState<'a> {
             // Check if the property exists in the target type
             let target_prop = target_props.iter().find(|p| p.name == prop_atom);
             if target_prop.is_none() {
-                self.error_excess_property_at(&prop_name, target_type, elem_idx);
+                self.error_excess_property_at(&prop_name, effective_target_type, elem_idx);
             }
         }
+    }
+
+    fn object_binding_pattern_target_type_for_excess_checks(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let pattern_node = self.ctx.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.ctx.arena.get_binding_pattern(pattern_node)?;
+
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let Some(element) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+
+            if element.dot_dot_dot_token {
+                return None;
+            }
+
+            let property_name = if element.property_name.is_some() {
+                let Some(property_name_node) = self.ctx.arena.get(element.property_name) else {
+                    continue;
+                };
+                if property_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return None;
+                }
+                self.get_property_name(element.property_name)
+            } else {
+                self.get_identifier_text_from_idx(element.name)
+            };
+
+            property_name.as_ref()?;
+        }
+
+        let synthetic_type = self.infer_type_from_binding_pattern(pattern_idx, TypeId::ANY);
+        if synthetic_type == TypeId::ANY || synthetic_type == TypeId::ERROR {
+            None
+        } else {
+            Some(synthetic_type)
+        }
+    }
+
+    fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+        if let Some(ident_name) = self.get_identifier_text_from_idx(computed.expression) {
+            return Some(format!("[{ident_name}]"));
+        }
+
+        let expr_node = self.ctx.arena.get(computed.expression)?;
+        if expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+            let literal = self.ctx.arena.get_literal(expr_node)?;
+            return Some(format!("[\"{}\"]", literal.text));
+        }
+
+        if expr_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16 {
+            let literal = self.ctx.arena.get_literal(expr_node)?;
+            return Some(format!(
+                "[{}]",
+                tsz_solver::utils::canonicalize_numeric_name(&literal.text)
+                    .unwrap_or_else(|| literal.text.clone())
+            ));
+        }
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(expr_node)?;
+            let obj_node = self.ctx.arena.get(access.expression)?;
+            let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
+            if obj_ident.escaped_text.as_str() == "Symbol" {
+                let prop_node = self.ctx.arena.get(access.name_or_argument)?;
+                let prop_ident = self.ctx.arena.get_identifier(prop_node)?;
+                return Some(format!("[Symbol.{}]", prop_ident.escaped_text));
+            }
+        }
+
+        None
     }
 
     /// Resolve property access using `TypeEnvironment` (includes lib.d.ts types).
@@ -1336,5 +1562,76 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions::default();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn ts2353_spread_object_literal_reports_explicit_excess_property_only() {
+        let diags = check_source_diagnostics(
+            "let x = { b: 1, extra: 2 };\nlet xx: { a, b } = { a: 1, ...x, z: 3 };",
+        );
+
+        let ts2353 = diags.iter().filter(|d| d.code == 2353).collect::<Vec<_>>();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected one TS2353 for z, got {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        assert!(
+            ts2353[0].message_text.contains("'z'"),
+            "TS2353 should mention z, got: {}",
+            ts2353[0].message_text
+        );
+    }
+
+    #[test]
+    fn ts2353_inferred_pattern_target_type_reports_computed_property_name() {
+        let diags = check_source_diagnostics(
+            "const k = 'extra';\nconst source = { x: 1, y: 2 };\nlet { x } = { x: 1, ...source, [k]: 3 };",
+        );
+
+        let ts2353 = diags.iter().filter(|d| d.code == 2353).collect::<Vec<_>>();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected one TS2353 for [k], got {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        assert!(
+            ts2353[0].message_text.contains("'[k]'") || ts2353[0].message_text.contains("\"[k]\""),
+            "TS2353 should mention [k], got: {}",
+            ts2353[0].message_text
+        );
     }
 }

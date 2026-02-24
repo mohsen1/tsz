@@ -505,6 +505,46 @@ fn test_intersection_object_merging() {
 }
 
 #[test]
+fn test_freshness_intersection_for_objects() {
+    let interner = TypeInterner::new();
+
+    // Intersection of a fresh object with a non-fresh object should not be fresh.
+    let fresh = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let non_fresh = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::STRING,
+    )]);
+
+    let mixed = interner.intersection2(fresh, non_fresh);
+    assert!(!is_fresh_object_type(&interner, mixed));
+    if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) = interner.lookup(mixed) {
+        assert!(
+            !interner
+                .object_shape(shape_id)
+                .flags
+                .contains(ObjectFlags::FRESH_LITERAL)
+        );
+    } else {
+        panic!("Expected object type");
+    }
+
+    // Intersection of two fresh objects should remain fresh.
+    let fresh_a = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let fresh_b = interner.object_fresh(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
+    let all_fresh = interner.intersection2(fresh_a, fresh_b);
+    assert!(is_fresh_object_type(&interner, all_fresh));
+}
+
+#[test]
 fn test_intersection_disjoint_property_types() {
     let interner = TypeInterner::new();
 
