@@ -711,10 +711,12 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            let tuple_type_str = self.format_type(rhs);
             self.error_at_node(
                 element_idx,
                 &format!(
-                    "Tuple type of length '{}' has no element at index '{}'.",
+                    "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                    tuple_type_str,
                     tuple_elements.len(),
                     index
                 ),

@@ -265,11 +265,16 @@ impl ParserState {
                     );
                     reported_accessibility_duplicate = true;
                 }
-                // TS1029: Accessibility modifier must come before readonly
+                // TS1029: Accessibility modifier must precede readonly
                 if seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let modifier_name = match mod_kind {
+                        SyntaxKind::PrivateKeyword => "private",
+                        SyntaxKind::ProtectedKeyword => "protected",
+                        _ => "public",
+                    };
                     self.parse_error_at_current_token(
-                        "'accessibility modifier' must come before 'readonly' modifier.",
+                        &format!("'{modifier_name}' modifier must precede 'readonly' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
@@ -368,7 +373,7 @@ impl ParserState {
             if question_token {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    "A parameter cannot have question mark and initializer.",
+                    "Parameter cannot have question mark and initializer.",
                     diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
                 );
             }

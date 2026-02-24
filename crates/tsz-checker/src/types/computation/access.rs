@@ -538,10 +538,12 @@ impl<'a> CheckerState<'a> {
         {
             let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
             if !has_rest_tail && index >= tuple_elements.len() {
+                let tuple_type_str = self.format_type(object_type_for_access);
                 self.error_at_node(
                     access.name_or_argument,
                     &format!(
-                        "Tuple type of length '{}' has no element at index '{}'.",
+                        "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                        tuple_type_str,
                         tuple_elements.len(),
                         index
                     ),

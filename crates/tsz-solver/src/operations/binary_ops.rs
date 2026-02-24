@@ -542,7 +542,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                     BinaryOpResult::TypeError { left, right, op }
                 }
             }
-            "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
+            "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right, op),
             "&&" | "||" | "??" => self.evaluate_logical(left, right, op),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
@@ -660,7 +660,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Evaluate comparison operators (<, >, <=, >=).
-    fn evaluate_comparison(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
+    fn evaluate_comparison(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
         // Don't emit errors for unknown types - prevents cascading errors
         if left == TypeId::UNKNOWN || right == TypeId::UNKNOWN {
             return BinaryOpResult::Success(TypeId::BOOLEAN);
@@ -680,11 +680,7 @@ impl<'a> BinaryOpEvaluator<'a> {
 
         // TS2469: Symbol cannot be used in comparison operators
         if self.is_symbol_like(left) || self.is_symbol_like(right) {
-            return BinaryOpResult::TypeError {
-                left,
-                right,
-                op: "<",
-            };
+            return BinaryOpResult::TypeError { left, right, op };
         }
 
         // Any allows comparison
@@ -720,11 +716,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
 
         // Mismatch - emit TS2365
-        BinaryOpResult::TypeError {
-            left,
-            right,
-            op: "<",
-        }
+        BinaryOpResult::TypeError { left, right, op }
     }
 
     /// Evaluate logical operators (&&, ||).

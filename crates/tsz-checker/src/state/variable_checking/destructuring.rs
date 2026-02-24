@@ -371,10 +371,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     let has_rest_tail = elems.last().is_some_and(|element| element.rest);
                     if !has_rest_tail {
+                        let tuple_type_str = self.format_type(array_like);
                         self.error_at_node(
                             element_data.name,
                             &format!(
-                                "Tuple type of length '{}' has no element at index '{}'.",
+                                "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                                tuple_type_str,
                                 elems.len(),
                                 element_index
                             ),
