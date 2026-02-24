@@ -1152,4 +1152,34 @@ matching the existing pattern in `check_const_assignment()` and `check_increment
 - **TS2454/TS2564 over-emission (16 tests)**: We emit more "used before assigned" /
   "not definitely assigned" errors than tsc. Flow analysis precision gaps. MEDIUM difficulty.
 
-## Current score: 4021/5997 (67.1%) — first-6000 slice; 7989/12574 (63.5%) — full suite
+## TS2320 — Interface cannot simultaneously extend types (Fixed, +2 tests)
+
+**Status**: Partially fixed. Three bugs addressed in `check_interface_extension_compatibility`:
+
+1. **Same-name generic base comparison** — `extends A<string>, A<number>` was not detecting
+   conflicts because both entries share the base name "A". Fixed by keying
+   `inherited_member_sources` on heritage clause `NodeIndex` instead of base name string.
+
+2. **Inherited member collection** — `extends B, D` where B inherits from A and D from C
+   was not detecting transitive conflicts. Added worklist-based traversal that walks the
+   full interface hierarchy (with cycle detection) to collect inherited members, not just
+   direct members.
+
+3. **Cross-declaration heritage** — Merged interface declarations (`interface E extends B {};
+   interface E extends D {}`) now aggregate heritage clauses across ALL declarations.
+   Only the first declaration runs the check (to avoid duplicate errors).
+
+4. **Base name formatting** — Error messages now include type arguments: `A<string>` instead
+   of just `A`, matching tsc's output format.
+
+**Validation**: 7 new unit tests added to `ts2320_tests.rs`. Conformance: +2 tests passing
+(`conflictingMemberTypesInBases`, `multipleBaseInterfaesWithIncompatibleProperties`).
+
+### Remaining TS2320 gaps
+- **Class visibility conflicts** (`extends C, C2` with public/private x) — not yet
+  detected for class-based member type incompatibility (only private/protected detection exists).
+- **Generic vs non-generic signatures** (`f(x:any):any` vs `f<T>(x:T):T`) — needs identity
+  comparison instead of mutual assignability for method signatures.
+- **`exactOptionalPropertyTypes`** — compiler option not yet supported.
+
+## Current score: 4023/5997 (67.1%) — first-6000 slice; 7989/12574 (63.5%) — full suite

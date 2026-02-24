@@ -112,3 +112,119 @@ interface C extends A, B {}
         "Should not get TS2320 when both are optional with same type"
     );
 }
+
+#[test]
+fn ts2320_same_name_generic_base() {
+    // extends A<string>, A<number> — same base name "A" but different type args
+    // must still detect the conflict on property "x"
+    let source = r#"
+interface A<T> {
+    x: T;
+}
+interface C extends A<string>, A<number> { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for extends A<string>, A<number> with conflicting 'x'"
+    );
+}
+
+#[test]
+fn ts2320_same_name_generic_base_compatible() {
+    // extends A<string>, A<string> — same base, same type arg, no conflict
+    let source = r#"
+interface A<T> {
+    x: T;
+}
+interface C extends A<string>, A<string> { }
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Should not get TS2320 when same generic base with identical type args"
+    );
+}
+
+#[test]
+fn ts2320_inherited_members_through_chain() {
+    // B inherits m:string from A, D inherits m:number from C.
+    // E extends B and D — conflict on inherited member "m".
+    let source = r#"
+interface A {
+    m: string;
+}
+interface B extends A { }
+interface C {
+    m: number;
+}
+interface D extends C { }
+interface E extends B, D { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for inherited member conflict through interface chain"
+    );
+}
+
+#[test]
+fn ts2320_merged_interface_cross_declaration() {
+    // Merged interface: two declarations of E, each extending a different base
+    // with conflicting inherited members.
+    let source = r#"
+interface A {
+    m: string;
+}
+interface B extends A { }
+interface C {
+    m: number;
+}
+interface D extends C { }
+interface E extends B { }
+interface E extends D { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for cross-declaration heritage with conflicting inherited members"
+    );
+}
+
+#[test]
+fn ts2320_inherited_compatible_no_error() {
+    // B inherits x:number from A, D inherits x:number from C — same type, no conflict
+    let source = r#"
+interface A {
+    x: number;
+}
+interface B extends A { }
+interface C {
+    x: number;
+}
+interface D extends C { }
+interface E extends B, D { }
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Should not get TS2320 when inherited members have compatible types"
+    );
+}
+
+#[test]
+fn ts2320_derived_member_shadows_inherited() {
+    // When E declares "m" itself, it shadows the inherited members — no TS2320
+    let source = r#"
+interface A {
+    m: string;
+}
+interface B extends A { }
+interface C {
+    m: number;
+}
+interface D extends C { }
+interface E extends B, D {
+    m: string;
+}
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Should not get TS2320 when derived interface overrides the conflicting member"
+    );
+}
