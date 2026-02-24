@@ -1444,21 +1444,21 @@ impl<'a> CheckerState<'a> {
         // are allowed because they don't conflict with the global scope.
         if !is_external_module
             && let Some(sym_id) = self.ctx.binder.file_locals.get("globalThis")
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            {
-                for &decl_idx in &symbol.declarations {
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    let message = format_message(
-                        diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                        &["globalThis"],
-                    );
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
-                    );
-                }
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            for &decl_idx in &symbol.declarations {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &["globalThis"],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
             }
+        }
     }
 
     /// Check if a function declaration has a body (is an implementation, not just a signature).
