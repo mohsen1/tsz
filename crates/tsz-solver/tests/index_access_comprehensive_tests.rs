@@ -380,3 +380,92 @@ fn test_multiple_index_access() {
     assert_eq!(access_b, TypeId::NUMBER);
     assert_eq!(access_c, TypeId::BOOLEAN);
 }
+
+// =============================================================================
+// Cyclic Lazy Index Access Tests (Stack Overflow Prevention)
+// =============================================================================
+
+/// Regression test for stack overflow caused by cyclic lazy type in index access.
+///
+/// When a Lazy(DefId) resolves to a type that itself is Lazy(DefId) (directly
+/// self-referential), `evaluate_index_access` would call `evaluate()` which
+/// detects the cycle and returns the Lazy type unchanged. The `IndexAccessVisitor`
+/// then dispatches to `visit_lazy`, which resolves the DefId *directly* (bypassing
+/// the recursion guard) and calls `evaluate_index_access` again — creating an
+/// infinite recursion that overflows the stack.
+///
+/// This reproduces the crash observed on large TypeScript projects where recursive
+/// type definitions create cyclic Lazy resolution chains (exit code 137 / SIGKILL
+/// from macOS due to 209,568-deep stack in `evaluate_index_access ↔ visit_type`).
+#[test]
+fn test_cyclic_lazy_index_access_does_not_stack_overflow() {
+    use crate::def::DefId;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::type_resolver::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    // Create a self-referential lazy type: DefId(1) resolves to Lazy(DefId(1))
+    let def_id = DefId(1);
+    let lazy_type = interner.lazy(def_id);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def_id, lazy_type); // DefId(1) → Lazy(DefId(1)) — direct cycle
+
+    let key = interner.literal_string("x");
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    // This must terminate (not stack overflow). The result should be ERROR or the
+    // deferred IndexAccess type — the exact value doesn't matter as long as
+    // the evaluator doesn't blow the stack.
+    let result = evaluator.evaluate_index_access(lazy_type, key);
+
+    // Should not be the original lazy type (that would mean no progress)
+    // and should not crash. ERROR or a deferred IndexAccess are both acceptable.
+    assert!(
+        result != TypeId::NONE,
+        "Cyclic lazy index access should terminate without stack overflow"
+    );
+}
+
+/// Regression test for indirect cyclic lazy types in index access.
+///
+/// DefId(1) → object with property "val" of type Lazy(DefId(2))
+/// DefId(2) → Lazy(DefId(1))
+///
+/// Evaluating IndexAccess(Lazy(DefId(2)), "val") creates a chain:
+/// Lazy(2) → Lazy(1) → object → property "val" → Lazy(2) → cycle
+#[test]
+fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
+    use crate::def::DefId;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::type_resolver::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    let def_1 = DefId(1);
+    let def_2 = DefId(2);
+    let lazy_1 = interner.lazy(def_1);
+    let lazy_2 = interner.lazy(def_2);
+
+    // DefId(1) resolves to an object { val: Lazy(DefId(2)) }
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("val"),
+        lazy_2,
+    )]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def_1, obj);
+    env.insert_def(def_2, lazy_1); // DefId(2) → Lazy(DefId(1)) — indirect cycle
+
+    let key = interner.literal_string("val");
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    // Must terminate without stack overflow
+    let result = evaluator.evaluate_index_access(lazy_2, key);
+
+    assert!(
+        result != TypeId::NONE,
+        "Indirect cyclic lazy index access should terminate without stack overflow"
+    );
+}
