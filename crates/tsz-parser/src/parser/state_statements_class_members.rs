@@ -549,12 +549,31 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // Parse body (may be empty for ambient declarations or abstract accessors)
+        let body = self.parse_accessor_body(&modifiers);
+
+        let end_pos = self.token_end();
+        self.arena.add_accessor(
+            syntax_kind_ext::GET_ACCESSOR,
+            start_pos,
+            end_pos,
+            crate::parser::node::AccessorData {
+                modifiers,
+                name,
+                type_parameters,
+                parameters,
+                type_annotation,
+                body,
+            },
+        )
+    }
+
+    /// Parse the body of an accessor (get or set).
+    /// Returns `NodeIndex::NONE` for ambient or abstract accessors with no body.
+    fn parse_accessor_body(&mut self, modifiers: &Option<NodeList>) -> NodeIndex {
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else {
-            // Accessors must have a body unless in an ambient context or if abstract
             let has_abstract = modifiers.as_ref().is_some_and(|mods| {
                 mods.nodes.iter().any(|&idx| {
                     self.arena
@@ -571,21 +590,7 @@ impl ParserState {
             NodeIndex::NONE
         };
         self.pop_label_scope();
-
-        let end_pos = self.token_end();
-        self.arena.add_accessor(
-            syntax_kind_ext::GET_ACCESSOR,
-            start_pos,
-            end_pos,
-            crate::parser::node::AccessorData {
-                modifiers,
-                name,
-                type_parameters,
-                parameters,
-                type_annotation,
-                body,
-            },
-        )
+        body
     }
 
     /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
@@ -671,28 +676,7 @@ impl ParserState {
             let _ = self.parse_type();
         }
 
-        // Parse body (may be empty for ambient declarations or abstract accessors)
-        self.push_label_scope();
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
-        } else {
-            // Accessors must have a body unless in an ambient context or if abstract
-            let has_abstract = modifiers.as_ref().is_some_and(|mods| {
-                mods.nodes.iter().any(|&idx| {
-                    self.arena
-                        .nodes
-                        .get(idx.0 as usize)
-                        .is_some_and(|node| node.kind == SyntaxKind::AbstractKeyword as u16)
-                })
-            });
-
-            if (self.context_flags & CONTEXT_FLAG_AMBIENT) == 0 && !has_abstract {
-                self.error_token_expected("{");
-            }
-            self.parse_semicolon();
-            NodeIndex::NONE
-        };
-        self.pop_label_scope();
+        let body = self.parse_accessor_body(&modifiers);
 
         let end_pos = self.token_end();
         self.arena.add_accessor(

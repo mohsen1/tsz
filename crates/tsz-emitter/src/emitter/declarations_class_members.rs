@@ -858,23 +858,7 @@ impl<'a> Printer<'a> {
 
         // Skip type annotation for JS emit
 
-        if accessor.body.is_some() {
-            let prev_emitting_function_body_block = self.emitting_function_body_block;
-            self.emitting_function_body_block = true;
-            self.function_scope_depth += 1;
-            self.ctx.block_scope_state.enter_scope();
-            self.push_temp_scope();
-            self.prepare_logical_assignment_value_temps(accessor.body);
-            self.write(" ");
-            self.emit(accessor.body);
-            self.pop_temp_scope();
-            self.ctx.block_scope_state.exit_scope();
-            self.function_scope_depth -= 1;
-            self.emitting_function_body_block = prev_emitting_function_body_block;
-        } else {
-            // For JS emit, add empty body for accessors without body
-            self.write(" { }");
-        }
+        self.emit_accessor_body(accessor.body);
     }
 
     pub(super) fn emit_set_accessor(&mut self, node: &Node) {
@@ -901,15 +885,20 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if accessor.body.is_some() {
+        self.emit_accessor_body(accessor.body);
+    }
+
+    /// Emit the body of a get/set accessor, handling scope management and fallback to empty body.
+    fn emit_accessor_body(&mut self, body: NodeIndex) {
+        if body.is_some() {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.function_scope_depth += 1;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
-            self.prepare_logical_assignment_value_temps(accessor.body);
+            self.prepare_logical_assignment_value_temps(body);
             self.write(" ");
-            self.emit(accessor.body);
+            self.emit(body);
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.function_scope_depth -= 1;
