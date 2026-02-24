@@ -412,7 +412,9 @@ impl<'a> Printer<'a> {
             self.emit(decl_list_idx);
         }
         self.map_trailing_semicolon(node);
-        self.write_semicolon();
+        if !self.should_omit_variable_statement_trailing_semicolon(&var_stmt.declarations) {
+            self.write_semicolon();
+        }
 
         // Emit trailing comments (e.g., var x = 1; // comment).
         // Use a bounded scan range that excludes erased type annotations.
@@ -481,6 +483,39 @@ impl<'a> Printer<'a> {
             }
         }
         effective_end
+    }
+
+    fn should_omit_variable_statement_trailing_semicolon(&self, declarations: &NodeList) -> bool {
+        let Some(first_list_idx) = declarations.nodes.first() else {
+            return false;
+        };
+        if declarations.nodes.len() != 1 {
+            return false;
+        }
+
+        let Some(first_list_node) = self.arena.get(*first_list_idx) else {
+            return false;
+        };
+        let Some(first_list) = self.arena.get_variable(first_list_node) else {
+            return false;
+        };
+        if first_list.declarations.nodes.len() != 1 {
+            return false;
+        }
+
+        let Some(first_decl_idx) = first_list.declarations.nodes.first() else {
+            return false;
+        };
+        let Some(first_decl_node) = self.arena.get(*first_decl_idx) else {
+            return false;
+        };
+        let Some(first_decl) = self.arena.get_variable_declaration(first_decl_node) else {
+            return false;
+        };
+        let Some(initializer) = self.arena.get(first_decl.initializer) else {
+            return false;
+        };
+        initializer.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
 
     /// Check if all variable declarations in a declaration list lack initializers

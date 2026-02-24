@@ -513,6 +513,28 @@ fn empty_method_body_single_line_comment_still_suppressed() {
     );
 }
 
+#[test]
+fn accessor_object_literal_empty_body_and_no_trailing_semicolon() {
+    let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    }\n}\nexport const t2 = {\n    set setter(v) {}\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("set setter(v) {}"),
+        "Accessor object-literal bodies without statements should be emitted as `{{}}`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("};"),
+        "Object literal variable declarations in this fixture should not end with `}};`.\nOutput:\n{output}"
+    );
+}
+
 // =========================================================================
 // Trailing comments after semicolons on statement types
 // =========================================================================

@@ -723,6 +723,9 @@ impl<'a> Printer<'a> {
                     let upper_bound = next_pos.unwrap_or(stmt_node.end);
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
+                    if let Some(next) = next_pos {
+                        self.emit_trailing_source_blank_lines(token_end, next);
+                    }
                 }
                 self.write_line();
             }
@@ -812,5 +815,40 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.target_es5 && self.ctx.options.downlevel_iteration
+    }
+
+    fn emit_trailing_source_blank_lines(&mut self, start: u32, end: u32) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        let bytes = text.as_bytes();
+        let mut i = std::cmp::min(start as usize, bytes.len());
+        let end = std::cmp::min(end as usize, bytes.len());
+        let mut newline_count = 0u32;
+
+        while i < end {
+            match bytes[i] {
+                b'\r' => {
+                    i += 1;
+                    if i < end && bytes[i] == b'\n' {
+                        i += 1;
+                    }
+                    newline_count += 1;
+                }
+                b'\n' => {
+                    i += 1;
+                    newline_count += 1;
+                }
+                b' ' | b'\t' | b'\x0b' | b'\x0c' => {
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+
+        for _ in 1..newline_count {
+            self.write_line();
+        }
     }
 }
