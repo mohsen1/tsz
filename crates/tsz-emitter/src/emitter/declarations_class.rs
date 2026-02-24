@@ -1132,8 +1132,12 @@ impl<'a> Printer<'a> {
             // body are available for emit_block to emit inside the IIFE.
             self.comment_emit_idx = saved_comment_idx;
             if let Some(static_node) = self.arena.get(static_block_idx) {
-                // Static block uses the same data as a Block node
+                // Static block uses the same data as a Block node.
+                // Treated like a function body for single-line formatting.
+                let prev = self.emitting_function_body_block;
+                self.emitting_function_body_block = true;
                 self.emit_block(static_node, static_block_idx);
+                self.emitting_function_body_block = prev;
             } else {
                 self.write("{ }");
             }
