@@ -1038,7 +1038,6 @@ ambient overloads is valid (e.g., `declare function f(x: number): void; function
 implementations from the TS2384 check.
 **Tests fixed**: `constructorOverloads7.ts` and 2 others.
 
-<<<<<<< HEAD
 ## TS2683 — False positive suppression for explicit `this` parameters and `any` receivers (Fixed, 2026-02-24)
 
 **Status**: Fixed. +4 tests passing in first-6000 slice (4017→4021, 67.1%).
@@ -1059,8 +1058,6 @@ implementations from the TS2384 check.
   `any`-typed property receivers, and nested functions in classes.
 **Deferred**: ~9 of 13 identified TS2683-only-extra tests still fail due to other unrelated
   mismatches (e.g., missing TS7006, TS2304, etc.) — TS2683 is no longer the blocking code.
-
-## Current score: 4021/5997 (67.1%) — first-6000 slice
 
 ## TS2702 — Type-as-namespace diagnostic distinction (Fixed, 2026-02-24)
 
@@ -1096,4 +1093,33 @@ of reaching the TS2702/TS2713 path).
   via OR. This causes intersected types to appear fresh when they shouldn't, triggering
   false excess property checks. Affects ~76 tests. Not pursued — larger change needed.
 
-## Current score: 4021/5997 (67.1%) — first-6000 slice; 7981/12574 (63.5%) — full suite
+## TS2540 — Parenthesized readonly property assignment (Fixed, 2026-02-24)
+
+**Status**: Fixed. +8 tests passing in full suite (7981→7989, 63.5%).
+**Error code:** TS2540 ("Cannot assign to '{0}' because it is a read-only property.")
+**Root cause**: `check_readonly_assignment()` in `state_property_checking.rs` did not
+unwrap parenthesized expressions before checking the target node kind. Expressions like
+`++((M.x))` or `(obj.ro) = 10` had the property access hidden behind `ParenthesizedExpression`
+nodes, so the readonly check fell through without detecting the violation.
+**Fix**: Added `skip_parenthesized(target_idx)` at the top of `check_readonly_assignment()`,
+matching the existing pattern in `check_const_assignment()` and `check_increment_decrement_operand()`.
+**Tests**: 4 new unit tests for parenthesized readonly patterns.
+**Tests fixed**: `constDeclarations-access3.ts`, `constDeclarations-access4.ts`, and 6 others.
+
+### Investigated but deferred (offset 6000)
+- **TS2741 (36 missing, 13 extra)**: Property missing in type. Already implemented for basic
+  cases. Remaining failures involve class-to-class assignment where member resolution gaps
+  prevent detecting missing properties. MEDIUM difficulty.
+- **TS7026 (56 missing)**: JSX `IntrinsicElements` not found. Requires React/JSX module
+  resolution improvements. HIGH difficulty.
+- **TS2585 (10 missing)**: Symbol-as-value at ES5. Requires lib loading architecture changes
+  to respect target level. Already documented, HIGH difficulty.
+- **TS2411 (18 single-code tests)**: Index signature property compatibility. Requires
+  checking that all properties of an interface/class are assignable to the index signature
+  type. MEDIUM-HIGH difficulty.
+- **TS2729 (6 single-code tests)**: Property used before initialization with
+  `useDefineForClassFields`. Requires class member ordering analysis. MEDIUM difficulty.
+- **TS2454/TS2564 over-emission (16 tests)**: We emit more "used before assigned" /
+  "not definitely assigned" errors than tsc. Flow analysis precision gaps. MEDIUM difficulty.
+
+## Current score: 4021/5997 (67.1%) — first-6000 slice; 7989/12574 (63.5%) — full suite
