@@ -257,6 +257,28 @@
 - **Auto-accessor transform** (~12 tests): `accessor` keyword not transformed to
   private storage + getter/setter pattern. Tests: `autoAccessor1-10`, etc.
 
+### Skipped / Investigated (2026-02-24, session 12) — Auto-accessor follow-ups
+
+- **`autoAccessor2`** (`/TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor2.ts`)
+  Blocked: requires broader ES2015/ES2022 accessor/`useDefineForClassFields` behavior split.
+- **`autoAccessor5`** (`.../autoAccessor5.ts`)
+  Blocked: non-identifier computed accessor names and helper ordering need full transform alignment.
+- **`autoAccessor6`** (`.../autoAccessor6.ts`)
+  Blocked: `useDefineForClassFields` interaction with `ts.next` helper-emission parity still mismatches.
+- **`autoAccessor7`** (`.../autoAccessor7.ts`)
+  Blocked: ES2015 path is entangled with class-lowering pipeline regressions.
+- **`autoAccessor11`** (`.../autoAccessor11.ts`)
+  Blocked: recovery parse-emission ordering (`static`/`accessor`) still diverges.
+
+### Skipped / Investigated (2026-02-24, session 13) — Auto-accessor regressions from this run
+
+- **`autoAccessor5`** (`/TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor5.ts`)
+  One-line blocker: transformed accessor emission ordering still diverges for computed names and helper placement.
+- **`controlFlowAutoAccessor1`** (`/TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/controlFlowAutoAccessor1.ts`)
+  One-line blocker: needs broader class-lowering + control-flow recovery path to preserve ordering and comments.
+- **`autoAccessor2`** (`/TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor2.ts`)
+  One-line blocker: requires full `useDefineForClassFields` branch alignment across ES2015 vs ES2022 emit paths.
+
 ### Investigated (2026-02-24, session 2) — No Safe Single Fix Found
 
 Deep analysis of remaining 3629 JS failures. All simple fixes either caused regressions
@@ -313,6 +335,18 @@ the pass rate without regressions. Next improvements likely require:
   suppressed semicolons after variable statements with object literal initializers (`};` → `}`);
   (3) accessor empty-body format changed from `{ }` to `{}` when tsc uses `{ }`. Reverted all three.
   JS: 6069→9993, DTS unchanged, zero regressions.
+- **Accessor object-literal empty-body spacing for JS input**:
+  Restored pass-through style for object-literal `set/get` accessors with empty bodies in JS input
+  (no-space braces: `{}`) while keeping TS class/object-literal emission at the existing spaced style
+  (`{ }`). This includes restoring JS-pass-through `accessorDeclarationEmitJs` behavior for this case.
+- **JS file pass-through formatting for object-literal variable statements**:
+  Restored no-semicolon emission for single-declaration object-literal variable statements in `.js` roots
+  when emit is in JS source mode (`test.js` inputs), matching `accessorDeclarationEmitJs` expectations.
+  This is intentionally scoped to JS root inputs to avoid regressions in `.ts` output.
+- **JS pass-through inter-statement blank lines**:
+  Restored preservation of top-level blank lines for `.js` source files where tsc preserves source
+  formatting in pass-through cases (including `accessorDeclarationEmitJs`), while keeping `.ts`
+  source output unchanged (no extra blank lines between statements in our TS emit path).
 
 ### Skipped / Investigated This Session (2026-02-24)
 - **Accessor spacing fix is now scoped**: `set/get` empty-body accessors in object literals and
@@ -320,13 +354,9 @@ the pass rate without regressions. Next improvements likely require:
   `autoAccessor*` and private-name accessor cases still fail and require broader transform/lowering
   work (`autoAccessor1`–`autoAccessor11`, `privateName*Accessors*` variants).
 
-- **Accessor object literal format in JS passthrough** (~2 tests): `accessorDeclarationEmitJs` is a
-  `.js` input file where tsc passes through the source formatting verbatim (no semicolons, preserved
-  blank lines between statements). The emitter always adds semicolons and strips blank lines. Fixing
-  this requires detecting JS passthrough mode. Low impact (2 tests).
-- **Source blank line preservation**: tsc does NOT preserve inter-statement blank lines in JS emit
-  from `.ts` files. Any future attempt to add blank line preservation must be scoped to JS passthrough
-  mode only.
+- **Source blank line preservation in `.ts` emit**:
+  tsc does not preserve inter-statement blank lines when emitting from TypeScript sources (`.ts`),
+  so this behavior must remain unchanged.
 
 
 - **Ternary/conditional expression line-breaking** (+6 JS):

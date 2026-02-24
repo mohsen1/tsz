@@ -113,7 +113,6 @@ impl<'a> Printer<'a> {
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_end: Option<u32> = None;
-            let mut prev_was_erased = false;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     let stmt_token_end =
@@ -131,39 +130,8 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        let range_start = if prev_was_erased {
-                            if let Some(pe) = prev_end {
-                                pe
-                            } else {
-                                first_erased_stmt_pos = Some(stmt_node.pos);
-                                stmt_node.pos
-                            }
-                        } else if let Some(pe) = prev_end {
-                            // Previous statement was non-erased. Don't capture its
-                            // trailing same-line comments. Start the erased range at
-                            // the first newline after the previous statement's end,
-                            // so trailing comments on its line are preserved.
-                            if let Some(text) = self.source_text {
-                                let bytes = text.as_bytes();
-                                let mut p = pe as usize;
-                                while p < bytes.len() && bytes[p] != b'\n' && bytes[p] != b'\r' {
-                                    p += 1;
-                                }
-                                // Skip past the newline
-                                if p < bytes.len() {
-                                    if bytes[p] == b'\r'
-                                        && p + 1 < bytes.len()
-                                        && bytes[p + 1] == b'\n'
-                                    {
-                                        p += 2;
-                                    } else {
-                                        p += 1;
-                                    }
-                                }
-                                p as u32
-                            } else {
-                                stmt_node.pos
-                            }
+                        let range_start = if let Some(pe) = prev_end {
+                            pe
                         } else {
                             // For the first erased statement, preserve file-level
                             // comments by starting the erased range at the statement
@@ -175,7 +143,6 @@ impl<'a> Printer<'a> {
                         erased_ranges.push((range_start, stmt_token_end));
                     }
                     prev_end = Some(stmt_token_end);
-                    prev_was_erased = is_erased;
                 }
             }
             if !erased_ranges.is_empty() {
@@ -320,6 +287,18 @@ impl<'a> Printer<'a> {
             .first()
             .and_then(|&idx| self.arena.get(idx))
             .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
+        let first_stmt_is_auto_accessor_class = source
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .is_some_and(|stmt_node| {
+                stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && self
+                        .arena
+                        .get_class(stmt_node)
+                        .is_some_and(|class| self.class_has_auto_accessor_members(class))
+            });
 
         let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
         let is_commonjs = self.ctx.is_commonjs();
@@ -329,6 +308,21 @@ impl<'a> Printer<'a> {
                 if c_end <= first_stmt_pos {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    let comment_text =
+                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    let trimmed_comment = comment_text.trim_start();
+                    let is_triple_slash_reference = trimmed_comment.starts_with("///<reference");
+                    let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
+
+                    // Auto-accessor class declarations emit comments themselves right
+                    // after helper storage declarations. Keep their leading comments
+                    // in the cursor queue so declarations_class.rs can place them.
+                    if first_stmt_is_auto_accessor_class
+                        && !is_triple_slash_reference
+                        && !is_amd_dependency
+                    {
+                        break;
+                    }
 
                     // Skip comments that are directly attached to an erased first
                     // statement (no blank line between comment and declaration).
@@ -343,9 +337,6 @@ impl<'a> Printer<'a> {
                         }
                     }
 
-                    let comment_text =
-                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    let trimmed_comment = comment_text.trim_start();
                     // Note: `// @option` comments are NOT stripped here.
                     // tsc preserves all source-level comments in JS output,
                     // including ones that look like directives (e.g. `// @ts-ignore`,
@@ -545,221 +536,206 @@ impl<'a> Printer<'a> {
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         let mut has_runtime_module_syntax = false;
         let mut has_deferred_empty_export = false;
-        let stmts_slice = &source.statements.nodes;
-        for (stmt_i, &stmt_idx) in stmts_slice.iter().enumerate() {
-            if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                // Skip source-level "use strict" prologue when we already emitted it
-                // at the correct position (before __esModule/exports preamble).
-                if skip_source_use_strict
-                    && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                    && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-                    && let Some(expr_node) = self.arena.get(expr_stmt.expression)
-                    && expr_node.kind == SyntaxKind::StringLiteral as u16
-                {
-                    let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
-                        lit.text == "use strict"
-                    } else if let Some(text) = self.source_text {
-                        let s = crate::safe_slice::slice(
-                            text,
-                            expr_node.pos as usize,
-                            expr_node.end as usize,
-                        );
-                        s == "\"use strict\"" || s == "'use strict'"
-                    } else {
-                        false
-                    };
-                    if is_strict {
-                        self.skip_comments_for_erased_node(stmt_node);
-                        continue;
-                    }
-                }
-
-                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    && self.export_assignment_identifier_is_type_only(stmt_node, &source.statements)
-                {
+        for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let stmt_node_pos = stmt_node.pos;
+            // Skip source-level "use strict" prologue when we already emitted it
+            // at the correct position (before __esModule/exports preamble).
+            if skip_source_use_strict
+                && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
+                && let Some(expr_node) = self.arena.get(expr_stmt.expression)
+                && expr_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
+                    lit.text == "use strict"
+                } else if let Some(text) = self.source_text {
+                    let s = crate::safe_slice::slice(
+                        text,
+                        expr_node.pos as usize,
+                        expr_node.end as usize,
+                    );
+                    s == "\"use strict\"" || s == "'use strict'"
+                } else {
+                    false
+                };
+                if is_strict {
                     self.skip_comments_for_erased_node(stmt_node);
-                    last_erased_stmt_end = None;
-                    last_erased_was_shorthand_module = false;
                     continue;
                 }
+            }
 
-                if self.ctx.is_commonjs()
-                    && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    && self
-                        .arena
-                        .get_export_assignment(stmt_node)
-                        .is_some_and(|ea| ea.is_export_equals)
-                {
-                    deferred_commonjs_export_equals.push(stmt_idx);
-                    last_erased_stmt_end = None;
-                    last_erased_was_shorthand_module = false;
-                    continue;
-                }
-
-                // Defer `export {}` (empty named exports, no module specifier) to end
-                // of file. TSC places these at the end as ESM markers.
-                if is_es_module_output
-                    && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                    && let Some(export) = self.arena.get_export_decl(stmt_node)
-                    && export.module_specifier.is_none()
-                    && let Some(clause_node) = self.arena.get(export.export_clause)
-                    && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
-                    && let Some(named_exports) = self.arena.get_named_imports(clause_node)
-                    && named_exports.elements.nodes.is_empty()
-                {
-                    has_deferred_empty_export = true;
-                    has_runtime_module_syntax = true;
-                    self.skip_comments_for_erased_node(stmt_node);
-                    last_erased_stmt_end = None;
-                    last_erased_was_shorthand_module = false;
-                    continue;
-                }
-
-                // For erased declarations (type-only, ambient, etc.) in JS emit mode,
-                // skip their leading comments entirely - they should not appear in output.
-                let is_erased =
-                    !self.ctx.flags.in_declaration_emit && self.is_erased_statement(stmt_node);
-
-                // Skip empty statements (`;`) that follow an erased shorthand module
-                // declaration (`declare module "foo";`). The shorthand module syntax
-                // parses as MODULE_DECLARATION + EMPTY_STATEMENT, and the trailing
-                // `;` should be erased along with the declaration.
-                if !is_erased
-                    && stmt_node.kind == syntax_kind_ext::EMPTY_STATEMENT
-                    && last_erased_was_shorthand_module
-                {
-                    last_erased_was_shorthand_module = false;
-                    continue;
-                }
-
-                // Track whether any non-erased module-indicating statement exists
-                // (needed for `export {};` insertion at end of file)
-                if !is_erased && !has_runtime_module_syntax {
-                    let k = stmt_node.kind;
-                    if k == syntax_kind_ext::IMPORT_DECLARATION
-                        || k == syntax_kind_ext::EXPORT_DECLARATION
-                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    {
-                        has_runtime_module_syntax = true;
-                    }
-                }
-
-                // Find the actual start of the statement's first token by
-                // scanning forward from node.pos past whitespace only.
-                // We preserve comments here - they're handled either as leading
-                // comments (if truly before the statement) or by nested expression emitters.
-                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
-
-                if is_erased {
-                    // Skip erased declarations. Their leading comments were already
-                    // filtered out of all_comments during initialization.
-                    // Also consume trailing same-line comments for the erased statement
-                    // (e.g., `declare var a: boolean; // comment` should be erased too).
-                    // We use the end-of-line of the last token as the boundary:
-                    //   - Comments on the same line as the last token → consume (erase)
-                    //   - Comments on subsequent lines → keep for the next statement
-                    // However, if the next sibling statement starts on the same line,
-                    // we must NOT consume comments past the next sibling's start position.
-                    // Example: `interface Foo {};  // Error` — the `// Error` belongs
-                    // to the `;` (EmptyStatement), not to the erased interface.
-                    let stmt_token_end =
-                        self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
-                    let line_end = if let Some(text) = self.source_text {
-                        let bytes = text.as_bytes();
-                        let mut pos = stmt_token_end as usize;
-                        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
-                            pos += 1;
-                        }
-                        pos as u32
-                    } else {
-                        stmt_token_end
-                    };
-                    // Cap the boundary: if the next sibling starts before line_end,
-                    // comments after the sibling's start belong to that sibling.
-                    let comment_boundary = if let Some(&next_idx) = stmts_slice.get(stmt_i + 1) {
-                        if let Some(next_node) = self.arena.get(next_idx) {
-                            let next_start =
-                                self.skip_whitespace_forward(next_node.pos, next_node.end);
-                            if next_start < line_end {
-                                next_start
-                            } else {
-                                line_end
-                            }
-                        } else {
-                            line_end
-                        }
-                    } else {
-                        line_end
-                    };
-                    while self.comment_emit_idx < self.all_comments.len() {
-                        let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= comment_boundary {
-                            self.comment_emit_idx += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    last_erased_stmt_end = Some(comment_boundary);
-                    // Track if this is a shorthand module declaration (no body),
-                    // so we can skip the trailing EMPTY_STATEMENT (`;`).
-                    last_erased_was_shorthand_module = stmt_node.kind
-                        == syntax_kind_ext::MODULE_DECLARATION
-                        && self
-                            .arena
-                            .get_module(stmt_node)
-                            .is_some_and(|m| m.body.is_none());
-                    continue;
-                }
-
-                // Emit comments whose end position is at or before the actual token start.
-                // These are truly "leading" comments for this statement.
-                // Comments inside expressions (like call arguments) have positions AFTER
-                // the statement's first token, so they won't be emitted here.
-                let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                    && self.should_defer_for_of_comments(stmt_node);
-                let skip_auto_accessor_leading_comments = stmt_node.kind
-                    == syntax_kind_ext::CLASS_DECLARATION
-                    && self
-                        .arena
-                        .get_class(stmt_node)
-                        .is_some_and(|class| self.class_has_auto_accessor_members(class));
-                if !defer_for_of_comments
-                    && !skip_auto_accessor_leading_comments
-                    && let Some(text) = self.source_text
-                {
-                    while self.comment_emit_idx < self.all_comments.len() {
-                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                        let c_end = self.all_comments[self.comment_emit_idx].end;
-                        let c_trailing =
-                            self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                        if let Some(erased_end) = last_erased_stmt_end
-                            && c_end <= erased_end
-                        {
-                            // Comment was part of a recently erased declaration; discard it.
-                            self.comment_emit_idx += 1;
-                            continue;
-                        }
-                        // Only emit if this comment ends before the statement's first token
-                        // AND hasn't been emitted by a nested expression emitter
-                        if c_end <= actual_start {
-                            let comment_text =
-                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                            self.write_comment_with_reindent(comment_text, Some(c_pos));
-                            if c_trailing {
-                                self.write_line();
-                            } else if comment_text.starts_with("/*") {
-                                self.pending_block_comment_space = true;
-                            }
-                            self.comment_emit_idx += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                }
+            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                && self.export_assignment_identifier_is_type_only(stmt_node, &source.statements)
+            {
+                self.skip_comments_for_erased_node(stmt_node);
                 last_erased_stmt_end = None;
                 last_erased_was_shorthand_module = false;
+                continue;
             }
+
+            if self.ctx.is_commonjs()
+                && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                && self
+                    .arena
+                    .get_export_assignment(stmt_node)
+                    .is_some_and(|ea| ea.is_export_equals)
+            {
+                deferred_commonjs_export_equals.push(stmt_idx);
+                last_erased_stmt_end = None;
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
+
+            // Defer `export {}` (empty named exports, no module specifier) to end
+            // of file. TSC places these at the end as ESM markers.
+            if is_es_module_output
+                && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && export.module_specifier.is_none()
+                && let Some(clause_node) = self.arena.get(export.export_clause)
+                && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+                && named_exports.elements.nodes.is_empty()
+            {
+                has_deferred_empty_export = true;
+                has_runtime_module_syntax = true;
+                self.skip_comments_for_erased_node(stmt_node);
+                last_erased_stmt_end = None;
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
+
+            // For erased declarations (type-only, ambient, etc.) in JS emit mode,
+            // skip their leading comments entirely - they should not appear in output.
+            let is_erased =
+                !self.ctx.flags.in_declaration_emit && self.is_erased_statement(stmt_node);
+
+            // Skip empty statements (`;`) that follow an erased shorthand module
+            // declaration (`declare module "foo";`). The shorthand module syntax
+            // parses as MODULE_DECLARATION + EMPTY_STATEMENT, and the trailing
+            // `;` should be erased along with the declaration.
+            if !is_erased
+                && stmt_node.kind == syntax_kind_ext::EMPTY_STATEMENT
+                && last_erased_was_shorthand_module
+            {
+                last_erased_was_shorthand_module = false;
+                continue;
+            }
+
+            // Track whether any non-erased module-indicating statement exists
+            // (needed for `export {};` insertion at end of file)
+            if !is_erased && !has_runtime_module_syntax {
+                let k = stmt_node.kind;
+                if k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                {
+                    has_runtime_module_syntax = true;
+                }
+            }
+
+            // Find the actual start of the statement's first token by
+            // scanning forward from node.pos past whitespace only.
+            // We preserve comments here - they're handled either as leading
+            // comments (if truly before the statement) or by nested expression emitters.
+            let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+
+            if is_erased {
+                // Skip erased declarations. Their leading comments were already
+                // filtered out of all_comments during initialization.
+                // Also consume trailing same-line comments for the erased statement
+                // (e.g., `declare var a: boolean; // comment` should be erased too).
+                // We use the end-of-line of the last token as the boundary:
+                //   - Comments on the same line as the last token → consume (erase)
+                //   - Comments on subsequent lines → keep for the next statement
+                let stmt_token_end =
+                    self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                let line_end = if let Some(text) = self.source_text {
+                    let bytes = text.as_bytes();
+                    let mut pos = stmt_token_end as usize;
+                    while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                    pos as u32
+                } else {
+                    stmt_token_end
+                };
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end <= line_end {
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                last_erased_stmt_end = Some(line_end);
+                // Track if this is a shorthand module declaration (no body),
+                // so we can skip the trailing EMPTY_STATEMENT (`;`).
+                last_erased_was_shorthand_module = stmt_node.kind
+                    == syntax_kind_ext::MODULE_DECLARATION
+                    && self
+                        .arena
+                        .get_module(stmt_node)
+                        .is_some_and(|m| m.body.is_none());
+                continue;
+            }
+
+            // Emit comments whose end position is at or before the actual token start.
+            // These are truly "leading" comments for this statement.
+            // Comments inside expressions (like call arguments) have positions AFTER
+            // the statement's first token, so they won't be emitted here.
+            let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && self.should_defer_for_of_comments(stmt_node);
+            let skip_auto_accessor_leading_comments = stmt_node.kind
+                == syntax_kind_ext::CLASS_DECLARATION
+                && self
+                    .arena
+                    .get_class(stmt_node)
+                    .is_some_and(|class| self.class_has_auto_accessor_members(class));
+            if !defer_for_of_comments
+                && !skip_auto_accessor_leading_comments
+                && let Some(text) = self.source_text
+            {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    if let Some(erased_end) = last_erased_stmt_end
+                        && c_end <= erased_end
+                    {
+                        // Comment was part of a recently erased declaration; discard it.
+                        self.comment_emit_idx += 1;
+                        continue;
+                    }
+                    // Only emit if this comment ends before the statement's first token
+                    // AND hasn't been emitted by a nested expression emitter
+                    if c_end <= actual_start {
+                        let comment_text =
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        self.write(comment_text);
+                        if c_trailing {
+                            self.write_line();
+                        } else if comment_text.starts_with("/*") {
+                            self.pending_block_comment_space = true;
+                        }
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            last_erased_stmt_end = None;
+            last_erased_was_shorthand_module = false;
+            let next_stmt_pos = source
+                .statements
+                .nodes
+                .get(stmt_i + 1)
+                .and_then(|&idx| self.arena.get(idx))
+                .map(|next_node| next_node.pos);
 
             let before_len = self.writer.len();
             self.emit(stmt_idx);
@@ -768,16 +744,19 @@ impl<'a> Printer<'a> {
                 // Emit trailing comments on the same line as the statement.
                 // Use the next statement's pos as upper bound to avoid scanning
                 // into the next statement's trivia (same pattern as emit_block_body).
-                if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let next_pos = stmts_slice
-                        .get(stmt_i + 1)
-                        .and_then(|&next_idx| self.arena.get(next_idx))
-                        .map(|n| n.pos);
-                    let upper_bound = next_pos.unwrap_or(stmt_node.end);
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
-                    self.emit_trailing_comments(token_end);
-                }
+                let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
+                let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
+                self.emit_trailing_comments(token_end);
                 self.write_line();
+                if self.is_current_root_js_source
+                    && let Some(next_pos) = next_stmt_pos
+                    && self.has_inter_statement_blank_line(
+                        self.find_token_end_before_trivia(stmt_node_pos, next_pos),
+                        next_pos,
+                    )
+                {
+                    self.write_line();
+                }
             }
 
             // Note: We do NOT skip inner comments here. The "emit comments before
@@ -820,7 +799,7 @@ impl<'a> Printer<'a> {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                 let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                self.write_comment_with_reindent(comment_text, Some(c_pos));
+                self.write(comment_text);
                 if c_trailing {
                     self.write_line();
                 }
@@ -865,5 +844,126 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.target_es5 && self.ctx.options.downlevel_iteration
+    }
+
+    fn has_inter_statement_blank_line(&self, from: u32, to: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut prev_had_line_break = false;
+        let mut i = from as usize;
+        let end = to.min(text.len() as u32) as usize;
+        let bytes = text.as_bytes();
+        while i < end {
+            match bytes[i] {
+                b'\r' => {
+                    if prev_had_line_break {
+                        return true;
+                    }
+                    prev_had_line_break = true;
+                    if i + 1 < end && bytes[i + 1] == b'\n' {
+                        i += 1;
+                    }
+                }
+                b'\n' => {
+                    if prev_had_line_break {
+                        return true;
+                    }
+                    prev_had_line_break = true;
+                }
+                b' ' | b'\t' | b'\x0b' | b'\x0c' => {}
+                _ => {
+                    prev_had_line_break = false;
+                }
+            }
+            i += 1;
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::output::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    #[test]
+    fn emit_source_file_preserves_top_level_blank_lines_for_js_pass_through() {
+        let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    },\n}\n\nexport const t2 = {\n    v: 'value',\n    set setter(v) {},\n}\n\nexport const t3 = {\n    p: 'value',\n    get value() {\n        return 'value';\n    },\n    set value(v) {},\n}\n";
+
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("}\n\nexport const t2"),
+            "JS source should keep the blank line between top-level declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("}\n\nexport const t3"),
+            "JS source should keep the blank line between top-level declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn emit_source_file_does_not_preserve_top_level_blank_lines_for_ts_files() {
+        let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    },\n};\n\nexport const t2 = {\n    v: 'value',\n    set setter(v) {},\n};\n\nexport const t3 = {\n    p: 'value',\n    get value() {\n        return 'value';\n    },\n    set value(v) {},\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("};\n\nexport const t2"),
+            "TS files should not preserve explicit inter-statement blank lines in emit.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("};\n\nexport const t3"),
+            "TS files should not preserve explicit inter-statement blank lines in emit.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn emit_class_with_accessor_members_preserves_leading_comments_in_ts_output() {
+        let source = "// Regular class should still error when targeting ES5\n\
+class RegularClass {\n    accessor shouldError;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        let comment_pos = output
+            .find("// Regular class should still error when targeting ES5")
+            .expect("accessor class comment should be emitted");
+        let storage_pos = output
+            .find("var _RegularClass_shouldError_accessor_storage;")
+            .expect("accessor storage declaration should be emitted");
+        let class_pos = output
+            .find("var RegularClass =")
+            .or_else(|| output.find("class RegularClass"))
+            .expect("regular class declaration should be emitted");
+
+        assert!(
+            comment_pos > storage_pos,
+            "Auto-accessor class leading comments should appear after storage declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            class_pos > comment_pos,
+            "Class declaration should follow its auto-accessor leading comment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("class RegularClass") || output.contains("var RegularClass"),
+            "Class output should still be emitted for accessor-containing class in ES5 path.\nOutput:\n{output}"
+        );
     }
 }

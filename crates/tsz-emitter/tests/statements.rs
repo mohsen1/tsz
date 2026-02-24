@@ -536,6 +536,28 @@ fn accessor_object_literal_empty_body() {
     );
 }
 
+#[test]
+fn accessor_object_literal_empty_body_no_trailing_semicolon_in_js_file() {
+    let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    }\n}\nexport const t2 = {\n    set setter(v) {}\n}\nexport const t3 = {\n    get value() {\n        return 'value';\n    },\n    set value(v) {}\n}\n";
+
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut parser_output_printer = Printer::new(&parser.arena, PrintOptions::default());
+    parser_output_printer.set_source_text(source);
+    parser_output_printer.print(root);
+    let output = parser_output_printer.finish().code;
+
+    assert!(
+        output.contains("set setter(v) {}"),
+        "JS input should keep compact empty accessor formatting.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("};"),
+        "JS input object-literal declarations should not emit trailing semicolons.\nOutput:\n{output}"
+    );
+}
+
 // =========================================================================
 // Trailing comments after semicolons on statement types
 // =========================================================================

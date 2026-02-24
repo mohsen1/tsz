@@ -352,6 +352,12 @@ pub struct Printer<'a> {
     /// call expressions where removal would change semantics:
     /// `new (x() as T)` → `new (x())` (not `new x()`).
     pub(super) paren_in_new_callee: bool,
+
+    /// Depth counter for accessor members emitted from object literal syntax.
+    object_literal_accessor_depth: u32,
+
+    /// Whether the current root source file has a JavaScript-like extension.
+    pub(super) is_current_root_js_source: bool,
 }
 
 impl<'a> Printer<'a> {
@@ -472,6 +478,38 @@ impl<'a> Printer<'a> {
             destructuring_read_depth: 0,
             paren_in_access_position: false,
             paren_in_new_callee: false,
+            object_literal_accessor_depth: 0,
+            is_current_root_js_source: false,
+        }
+    }
+
+    /// Set whether the current root source file has a JavaScript-like extension.
+    pub(crate) const fn set_current_root_js_source(&mut self, is_js_source: bool) {
+        self.is_current_root_js_source = is_js_source;
+    }
+
+    /// Whether an accessor node is currently being emitted from object-literal syntax.
+    pub(super) const fn is_emitting_object_literal_accessor(&self) -> bool {
+        self.object_literal_accessor_depth > 0
+    }
+
+    /// Emit an object-literal property node, marking accessor members to enable
+    /// JS pass-through formatting rules (e.g., empty accessor-body spacing).
+    fn emit_object_property(&mut self, property_idx: NodeIndex) {
+        let is_accessor = self.arena.get(property_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::GET_ACCESSOR || node.kind == syntax_kind_ext::SET_ACCESSOR
+        });
+
+        if is_accessor {
+            self.object_literal_accessor_depth =
+                self.object_literal_accessor_depth.saturating_add(1);
+        }
+
+        self.emit(property_idx);
+
+        if is_accessor {
+            self.object_literal_accessor_depth =
+                self.object_literal_accessor_depth.saturating_sub(1);
         }
     }
 
@@ -658,6 +696,15 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return;
         };
+
+        if let Some(source) = self.arena.get_source_file(node) {
+            let file_name = source.file_name.to_ascii_lowercase();
+            let is_js_source = file_name.ends_with(".js")
+                || file_name.ends_with(".jsx")
+                || file_name.ends_with(".mjs")
+                || file_name.ends_with(".cjs");
+            self.set_current_root_js_source(is_js_source);
+        }
 
         if let Some(source) = self.arena.get_source_file(node)
             && self.transforms.is_empty()
@@ -1233,10 +1280,10 @@ impl<'a> Printer<'a> {
                 self.emit_constructor_declaration(node);
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
-                self.emit_get_accessor(node);
+                self.emit_get_accessor(node, idx);
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
-                self.emit_set_accessor(node);
+                self.emit_set_accessor(node, idx);
             }
             k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => {
                 self.write(";");

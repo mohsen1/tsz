@@ -134,6 +134,185 @@ fn auto_accessor_instance_fields_emit_getter_setter_with_weakmap() {
     );
 }
 
+#[test]
+fn auto_accessor_mixed_static_and_instance_fields_emit_expected_helpers_and_storage() {
+    let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    static accessor c: any;\n    static accessor d = 2;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("var _a, _C1_a_accessor_storage, _C1_b_accessor_storage, _C1_c_accessor_storage, _C1_d_accessor_storage;"),
+        "Static accessor lowering should emit helper storage declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("constructor() {"),
+        "Instance accessors should cause constructor synthesis.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_a_accessor_storage.set(this, void 0);"),
+        "Instance auto-accessor with no initializer should initialize to void 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_b_accessor_storage.set(this, 1);"),
+        "Instance auto-accessor initializer should assign 1 in constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.b = 1"),
+        "Instance auto-accessor should not emit direct property assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static get c() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_c_accessor_storage); }"
+        ),
+        "Static auto-accessor getter should pass class alias + storage object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static set c(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_c_accessor_storage); }"
+        ),
+        "Static auto-accessor setter should pass class alias + storage object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static get d() { return __classPrivateFieldGet(_a, _a, \"f\", _C1_d_accessor_storage); }"
+        ),
+        "Static auto-accessor getter with initializer should preserve object-backed storage helper form.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static set d(value) { __classPrivateFieldSet(_a, _a, value, \"f\", _C1_d_accessor_storage); }"
+        ),
+        "Static auto-accessor setter should preserve object-backed storage helper form.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = C1, _C1_a_accessor_storage = new WeakMap(), _C1_b_accessor_storage = new WeakMap();"),
+        "Auto-accessor instance storage initialization should be emitted in one aliased statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_C1_c_accessor_storage = { value: void 0 }"),
+        "Static accessor without initializer should default to void 0.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("C1.d = 2"),
+        "Static auto-accessor declarations should not be lowered as static field assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_fields_emit_private_storage_at_es2022() {
+    let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    accessor #c: any;\n    accessor #d = 2;\n    static accessor e: any;\n    static accessor f = 3;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // ES2022 uses native private storage + getter/setter pairs.
+    assert!(
+        !output.contains("new WeakMap"),
+        "ES2022 should not use WeakMap-backed storage for accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#a_accessor_storage;"),
+        "Instance accessor `a` should create a private storage field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#b_accessor_storage = 1;"),
+        "Instance accessor with initializer should inline field initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#c_accessor_storage;"),
+        "Private accessor `#c` should create native private storage field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#d_accessor_storage = 2;"),
+        "Private accessor with initializer should inline to private field.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static #e_accessor_storage;"),
+        "Static accessor should create native private storage field.\nOutput:\\n{output}"
+    );
+    assert!(
+        output.contains("static #f_accessor_storage = 3;"),
+        "Static accessor with initializer should inline static private field initializer.\nOutput:\\n{output}"
+    );
+    assert!(
+        output.contains("get a() { return this.#a_accessor_storage; }"),
+        "Instance accessor getter should reference private storage field.\nOutput:\\n{output}"
+    );
+    assert!(
+        output.contains("set a(value) { this.#a_accessor_storage = value; }"),
+        "Instance accessor setter should assign private storage field.\nOutput:\\n{output}"
+    );
+    assert!(
+        output.contains("static get e() { return C1.#e_accessor_storage; }"),
+        "Static accessor getter should reference class private storage field.\nOutput:\\n{output}"
+    );
+    assert!(
+        output.contains("static set f(value) { C1.#f_accessor_storage = value; }"),
+        "Static accessor setter should assign class private storage field.\nOutput:\\n{output}"
+    );
+    assert!(
+        !output.contains("constructor() {"),
+        "ES2022 accessor lowering should not synthesize a constructor here.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
+    let source = "class C2 {\n        #a1_accessor_storage = 1;\n        accessor a1 = 2;\n    }\n    \n    class C3 {\n        static #a2_accessor_storage = 1;\n        static {\n            class C3_Inner {\n                accessor a2 = 2;\n                static {\n                    #a2_accessor_storage in C3;\n                }\n            }\n        }\n    }\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("class C2"),
+        "Source class with collision should be emitted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#a1_1_accessor_storage;"),
+        "Public accessor `a1` should avoid colliding with existing #a1_accessor_storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get a1() { return this.#a1_accessor_storage; }"),
+        "a1 getter should not use unsuffixed storage name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("get a1() { return this.#a1_1_accessor_storage; }"),
+        "a1 getter should reference suffixed storage name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("#a2_1_accessor_storage = 2;"),
+        "Nested accessor `a2` should avoid collision with #a2_accessor_storage brand check usage.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: class with lowered static fields followed by another
 /// statement must not produce an extra blank line. The static field
 /// emission ends with `write_line()` after `ClassName.field = value;`,

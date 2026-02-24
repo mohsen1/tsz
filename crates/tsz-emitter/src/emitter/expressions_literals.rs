@@ -515,7 +515,7 @@ impl<'a> Printer<'a> {
                     self.increase_indent();
                 }
 
-                self.emit(prop);
+                self.emit_object_property(prop);
                 if has_trailing_comma {
                     self.write(",");
                 }
@@ -539,7 +539,7 @@ impl<'a> Printer<'a> {
                 if i > 0 {
                     self.write(", ");
                 }
-                self.emit(prop);
+                self.emit_object_property(prop);
             }
             if has_trailing_comma {
                 self.write(",");
@@ -555,7 +555,7 @@ impl<'a> Printer<'a> {
                 let Some(prop_node) = self.arena.get(prop) else {
                     continue;
                 };
-                self.emit(prop);
+                self.emit_object_property(prop);
 
                 let is_last = i == obj.elements.nodes.len() - 1;
 
@@ -790,7 +790,7 @@ impl<'a> Printer<'a> {
             if i > 0 {
                 self.write(", ");
             }
-            self.emit(prop);
+            self.emit_object_property(prop);
         }
         self.write(" }");
     }
