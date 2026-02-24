@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
         // NOTE: We do NOT suppress for UNKNOWN - accessing properties on unknown should error (TS2339)
         if type_id == TypeId::ERROR
             || type_id == TypeId::ANY
-            || type_queries::is_error_type(self.ctx.types, type_id)
+            || tsz_solver::is_error_type(self.ctx.types, type_id)
         {
             return;
         }
