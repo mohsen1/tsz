@@ -675,5 +675,5 @@ fn parse_region_delimiter(trimmed: &str) -> Option<RegionDelimiter> {
 }
 
 #[cfg(test)]
-#[path = "../tests/folding_tests.rs"]
+#[path = "../../tests/folding_tests.rs"]
 mod folding_tests;

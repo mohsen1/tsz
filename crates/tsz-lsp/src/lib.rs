@@ -32,8 +32,8 @@ pub mod completions;
 pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
+pub mod editor_ranges;
 pub mod export_signature;
-pub mod folding;
 pub mod formatting;
 pub mod hierarchy;
 pub mod highlighting;
@@ -45,7 +45,6 @@ pub mod navigation;
 pub mod project;
 pub mod rename;
 pub mod resolver;
-pub mod selection_range;
 pub mod signature_help;
 pub mod symbols;
 pub mod utils;
@@ -66,7 +65,7 @@ pub use code_actions::{
 };
 pub use completions::{CompletionItem, CompletionItemKind, Completions};
 pub use diagnostics::{DiagnosticSeverity, LspDiagnostic};
-pub use folding::{FoldingRange, FoldingRangeProvider};
+pub use editor_ranges::folding::{FoldingRange, FoldingRangeProvider};
 pub use formatting::{
     DocumentFormattingProvider, FormattingOptions, TextEdit as FormattingTextEdit,
 };
@@ -90,7 +89,7 @@ pub use symbols::DocumentSymbols;
 pub use symbols::{DocumentSymbol, DocumentSymbolProvider, SymbolKind};
 
 // Selection Range
-pub use selection_range::{SelectionRange, SelectionRangeProvider};
+pub use editor_ranges::selection_range::{SelectionRange, SelectionRangeProvider};
 
 // Type Definition
 pub use navigation::type_definition::TypeDefinitionProvider;
