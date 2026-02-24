@@ -26,9 +26,7 @@ pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> Arr
     tsz_solver::type_queries::classify_array_like(db, type_id)
 }
 
-pub(crate) fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::type_queries::unwrap_readonly(db, type_id)
-}
+pub(crate) use super::common::unwrap_readonly as unwrap_readonly_for_lookup;
 
 pub(crate) fn classify_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> IndexKeyKind {
     tsz_solver::type_queries::classify_index_key(db, type_id)

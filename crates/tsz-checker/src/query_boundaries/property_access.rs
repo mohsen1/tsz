@@ -1,15 +1,11 @@
 use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    array_element_type, callable_shape_for_type as callable_shape, is_string_type,
+    array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };
 
 pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_function_type(db, type_id)
-}
-
-pub(crate) fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::type_queries::unwrap_readonly(db, type_id)
 }
 
 pub(crate) fn tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
