@@ -105,7 +105,6 @@ impl<'a> CheckerState<'a> {
                     let lib_binders = self.get_lib_binders();
                     if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
-                        use tsz_binder::symbol_flags;
                         let valid_namespace_flags = symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
                             | symbol_flags::VALUE_MODULE
@@ -1545,9 +1544,7 @@ impl<'a> CheckerState<'a> {
                 // Register enum parent relationships for Task #17 (Enum Type Resolution)
                 if let Some(def_id) = def_id
                     && let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
-                {
-                    use tsz_binder::symbol_flags;
-                    if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                    && (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
                         let parent_sym_id = symbol.parent;
                         if let Some(&parent_def_id) =
                             self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
@@ -1555,7 +1552,6 @@ impl<'a> CheckerState<'a> {
                             env.register_enum_parent(def_id, parent_def_id);
                         }
                     }
-                }
             } else {
                 let sym_name = self
                     .ctx

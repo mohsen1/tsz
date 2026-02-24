@@ -30,7 +30,6 @@ impl<'a> CheckerState<'a> {
         &self,
         node: &tsz_parser::parser::node::Node,
     ) -> Option<&tsz_parser::parser::NodeList> {
-        use tsz_parser::parser::syntax_kind_ext;
         match node.kind {
             syntax_kind_ext::FUNCTION_DECLARATION => self
                 .ctx
@@ -84,7 +83,6 @@ impl<'a> CheckerState<'a> {
         &self,
         node: &tsz_parser::parser::node::Node,
     ) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext;
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.ctx.arena.get_property_decl(node).map(|p| p.name)
@@ -147,7 +145,6 @@ impl<'a> CheckerState<'a> {
     /// that "constructor" is not used as an accessor or generator name.
     pub(crate) fn check_class_member_name(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_parser::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -837,9 +834,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2408: Setters cannot return a value.
-        if return_data.expression.is_some() {
-            use tsz_parser::parser::syntax_kind_ext;
-            if let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx)
+        if return_data.expression.is_some()
+            && let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx)
                 && let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx)
                 && enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
@@ -851,7 +847,6 @@ impl<'a> CheckerState<'a> {
                 );
                 return;
             }
-        }
 
         // Get the expected return type from the function context
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);

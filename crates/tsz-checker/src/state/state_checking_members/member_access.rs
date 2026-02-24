@@ -431,7 +431,6 @@ impl<'a> CheckerState<'a> {
         // TS2386: Check optionality agreement for interface method overloads
         {
             use rustc_hash::FxHashMap;
-            use tsz_parser::parser::syntax_kind_ext;
 
             // Group method signatures by name
             let mut method_groups: FxHashMap<String, Vec<(NodeIndex, bool)>> = FxHashMap::default();
@@ -545,7 +544,6 @@ impl<'a> CheckerState<'a> {
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
     pub(crate) fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -740,7 +738,6 @@ impl<'a> CheckerState<'a> {
         container_node: NodeIndex,
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_parser::parser::syntax_kind_ext;
 
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
@@ -1076,7 +1073,6 @@ impl<'a> CheckerState<'a> {
         iface_node: NodeIndex,
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_parser::parser::syntax_kind_ext;
 
         // Collect names of own members so we skip them (already checked by AST walk)
         let mut own_names = std::collections::HashSet::new();
