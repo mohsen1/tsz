@@ -535,6 +535,7 @@ impl<'a> Printer<'a> {
         let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         let mut has_runtime_module_syntax = false;
+        let mut has_non_empty_runtime_export = false;
         let mut has_deferred_empty_export = false;
         for (stmt_i, &stmt_idx) in source.statements.nodes.iter().enumerate() {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -627,7 +628,7 @@ impl<'a> Printer<'a> {
 
             // Track whether any non-erased module-indicating statement exists
             // (needed for `export {};` insertion at end of file)
-            if !is_erased && !has_runtime_module_syntax {
+            if !is_erased {
                 let k = stmt_node.kind;
                 if k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
@@ -635,6 +636,7 @@ impl<'a> Printer<'a> {
                     || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 {
                     has_runtime_module_syntax = true;
+                    has_non_empty_runtime_export = true;
                 }
             }
 
@@ -768,8 +770,11 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit deferred `export {}` at end of file (moved from its source position).
-        if has_deferred_empty_export {
+        // Emit deferred `export {}` at end of file (moved from its source position),
+        // but only when no other non-erased import/export statements exist. When the
+        // file has real exports (e.g. `export { C };`), the `export {};` is redundant
+        // and tsc omits it.
+        if has_deferred_empty_export && !has_non_empty_runtime_export {
             self.write("export {};");
             self.write_line();
         }
@@ -921,6 +926,60 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("class RegularClass") || output.contains("var RegularClass"),
             "Class output should still be emitted for accessor-containing class in ES5 path.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_suppresses_redundant_export_empty_when_real_exports_exist() {
+        // When a file has both `export {};` and `export { C };`, the empty export
+        // is redundant and should be suppressed. tsc omits it.
+        let source = "export {};\nclass C {}\nexport { C };\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(
+            &parser.arena,
+            PrintOptions {
+                module: crate::emitter::ModuleKind::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should NOT contain `export {};` since `export { C };` is present
+        let export_empty_count = output.matches("export {};").count();
+        assert_eq!(
+            export_empty_count, 0,
+            "Redundant `export {{}}` should be suppressed when real exports exist.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("export { C }"),
+            "Real export should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_emits_export_empty_when_only_type_exports() {
+        // When a file's only module syntax is `export {};`, it should be preserved
+        // to maintain ESM semantics.
+        let source = "export {};\nconst x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(
+            &parser.arena,
+            PrintOptions {
+                module: crate::emitter::ModuleKind::ESNext,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("export {};"),
+            "Sole `export {{}}` should be preserved for ESM semantics.\nOutput:\n{output}"
         );
     }
 }
