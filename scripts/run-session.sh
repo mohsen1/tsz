@@ -120,7 +120,8 @@ fi
 
 # ─── Run with output capture ──────────────────────────────────────────────────
 # Runs a command with timeout, streaming output live to the terminal and
-# capturing to a file.  No PTY wrapper — signals (Ctrl+C) propagate naturally.
+# capturing to a file.  Process substitution keeps the command as a direct
+# child (not in a pipeline subshell), so Ctrl+C (SIGINT) propagates immediately.
 # Usage: run_with_capture <outfile> <timeout_secs> <cmd...>
 run_with_capture() {
   local outfile="$1" secs="$2"; shift 2
@@ -130,8 +131,10 @@ run_with_capture() {
     full_cmd=("$TIMEOUT_BIN" "$secs" "$@")
   fi
 
-  "${full_cmd[@]}" 2>&1 | tee "$outfile"
-  return "${PIPESTATUS[0]}"
+  "${full_cmd[@]}" > >(tee "$outfile") 2>&1
+  local rc=$?
+  sleep 0.1  # let tee flush remaining output
+  return $rc
 }
 
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
