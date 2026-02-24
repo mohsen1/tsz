@@ -10,6 +10,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -551,10 +552,27 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Find the implementation (function with body) — used as reference
+            // for modifier agreement checks. tsc uses the implementation's flags.
+            let impl_decl_idx = func_decls_for_2384.iter().copied().find(|&d| {
+                self.function_has_body(d)
+                    || self
+                        .ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| self.ctx.arena.get_method_decl(n))
+                        .is_some_and(|m| m.body.is_some())
+            });
+
             if has_ambient_func && has_non_ambient_func {
-                let first_is_ambient = self.is_ambient_declaration(func_decls_for_2384[0]);
-                for &decl_idx in &func_decls_for_2384[1..] {
-                    if self.is_ambient_declaration(decl_idx) != first_is_ambient {
+                let ref_is_ambient = impl_decl_idx
+                    .map(|d| self.is_ambient_declaration(d))
+                    .unwrap_or_else(|| self.is_ambient_declaration(func_decls_for_2384[0]));
+                for &decl_idx in &func_decls_for_2384 {
+                    if Some(decl_idx) == impl_decl_idx {
+                        continue;
+                    }
+                    if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
                         let error_node =
                             self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                         self.error_at_node(
@@ -562,6 +580,105 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                             diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                         );
+                    }
+                }
+            }
+
+            // TS2383: Overload signatures must all be exported or non-exported
+            if func_decls_for_2384.len() >= 2 {
+                let mut has_exported = false;
+                let mut has_non_exported = false;
+                let mut func_export_info: Vec<(NodeIndex, bool)> = Vec::new();
+                for &(decl_idx, flags, is_local, is_exported) in &declarations {
+                    if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
+                        func_export_info.push((decl_idx, is_exported));
+                        if is_exported {
+                            has_exported = true;
+                        } else {
+                            has_non_exported = true;
+                        }
+                    }
+                }
+                if has_exported && has_non_exported && func_export_info.len() >= 2 {
+                    let ref_exported = impl_decl_idx
+                        .and_then(|d| {
+                            func_export_info
+                                .iter()
+                                .find(|(idx, _)| *idx == d)
+                                .map(|(_, e)| *e)
+                        })
+                        .unwrap_or(func_export_info[0].1);
+                    for &(decl_idx, is_exported) in &func_export_info {
+                        if Some(decl_idx) == impl_decl_idx {
+                            continue;
+                        }
+                        if is_exported != ref_exported {
+                            let error_node =
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // TS2385: Overload signatures must all be public, private or protected
+            // Applies to class method overloads with mixed access modifiers
+            if func_decls_for_2384.len() >= 2 {
+                let access_infos: Vec<(NodeIndex, u8)> = func_decls_for_2384
+                    .iter()
+                    .map(|&decl_idx| (decl_idx, self.get_access_modifier(decl_idx)))
+                    .collect();
+                let ref_access = impl_decl_idx
+                    .map(|d| self.get_access_modifier(d))
+                    .unwrap_or(access_infos[0].1);
+                let has_mismatch = access_infos.iter().any(|(_, a)| *a != ref_access);
+                if has_mismatch {
+                    for &(decl_idx, access) in &access_infos {
+                        if Some(decl_idx) == impl_decl_idx {
+                            continue;
+                        }
+                        if access != ref_access {
+                            let error_node =
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // TS2386: Overload signatures must all be optional or required
+            // Applies to interface/class method overloads with mixed optionality
+            if func_decls_for_2384.len() >= 2 {
+                let optional_infos: Vec<(NodeIndex, bool)> = func_decls_for_2384
+                    .iter()
+                    .map(|&decl_idx| (decl_idx, self.is_declaration_optional(decl_idx)))
+                    .collect();
+                let ref_optional = impl_decl_idx
+                    .map(|d| self.is_declaration_optional(d))
+                    .unwrap_or(optional_infos[0].1);
+                let has_mismatch = optional_infos.iter().any(|(_, o)| *o != ref_optional);
+                if has_mismatch {
+                    for &(decl_idx, optional) in &optional_infos {
+                        if Some(decl_idx) == impl_decl_idx {
+                            continue;
+                        }
+                        if optional != ref_optional {
+                            let error_node =
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                            );
+                        }
                     }
                 }
             }
@@ -1711,5 +1828,70 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         func.body.is_some()
+    }
+
+    /// Get the access modifier of a declaration: 0 = public (default), 1 = private, 2 = protected.
+    fn get_access_modifier(&self, decl_idx: NodeIndex) -> u8 {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return 0;
+        };
+        let modifiers = match node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.as_ref()),
+            syntax_kind_ext::METHOD_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(node)
+                .and_then(|s| s.modifiers.as_ref()),
+            _ => None,
+        };
+        let Some(mods) = modifiers else {
+            return 0;
+        };
+        if self
+            .ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::PrivateKeyword)
+        {
+            1
+        } else if self
+            .ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::ProtectedKeyword)
+        {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// Check if a method declaration or signature is optional (has `question_token`).
+    fn is_declaration_optional(&self, decl_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        match node.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|m| m.question_token),
+            syntax_kind_ext::METHOD_SIGNATURE => self
+                .ctx
+                .arena
+                .get_signature(node)
+                .is_some_and(|s| s.question_token),
+            _ => false,
+        }
     }
 }

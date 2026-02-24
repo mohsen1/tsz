@@ -574,4 +574,160 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Check that overload signatures for a method agree on access modifiers (TS2385)
+    /// and optionality (TS2386). Called for method implementations that have overload
+    /// declarations.
+    pub(crate) fn check_overload_modifier_agreement(&mut self, impl_node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_scanner::SyntaxKind;
+
+        let Some(impl_sym_id) = self.ctx.binder.get_node_symbol(impl_node_idx) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(impl_sym_id) else {
+            return;
+        };
+        if symbol.declarations.len() < 2 {
+            return;
+        }
+
+        // Collect all overload declarations (signatures without body) for this symbol
+        let mut overload_decls: Vec<NodeIndex> = Vec::new();
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let is_signature = match decl_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(decl_node)
+                    .is_some_and(|m| m.body.is_none()),
+                k if k == syntax_kind_ext::METHOD_SIGNATURE => true,
+                _ => false,
+            };
+            if is_signature || decl_idx == impl_node_idx {
+                overload_decls.push(decl_idx);
+            }
+        }
+        if overload_decls.len() < 2 {
+            return;
+        }
+
+        // TS2385: Check access modifier consistency
+        let get_access = |idx: NodeIndex| -> u8 {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return 0;
+            };
+            let modifiers = match node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .and_then(|m| m.modifiers.as_ref()),
+                k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                    .ctx
+                    .arena
+                    .get_signature(node)
+                    .and_then(|s| s.modifiers.as_ref()),
+                _ => None,
+            };
+            let Some(mods) = modifiers else {
+                return 0;
+            };
+            if self
+                .ctx
+                .arena
+                .has_modifier_ref(Some(mods), SyntaxKind::PrivateKeyword)
+            {
+                1
+            } else if self
+                .ctx
+                .arena
+                .has_modifier_ref(Some(mods), SyntaxKind::ProtectedKeyword)
+            {
+                2
+            } else {
+                0
+            }
+        };
+
+        // Use implementation's access modifier as the canonical reference
+        let impl_access = get_access(impl_node_idx);
+        for &decl_idx in &overload_decls {
+            if decl_idx == impl_node_idx {
+                continue;
+            }
+            if get_access(decl_idx) != impl_access {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|n| match n.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            self.ctx.arena.get_method_decl(n).map(|m| m.name)
+                        }
+                        k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                            self.ctx.arena.get_signature(n).map(|s| s.name)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(decl_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                );
+            }
+        }
+
+        // TS2386: Check optionality consistency
+        let get_optional = |idx: NodeIndex| -> bool {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(node)
+                    .is_some_and(|m| m.question_token),
+                k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                    .ctx
+                    .arena
+                    .get_signature(node)
+                    .is_some_and(|s| s.question_token),
+                _ => false,
+            }
+        };
+
+        let impl_optional = get_optional(impl_node_idx);
+        for &decl_idx in &overload_decls {
+            if decl_idx == impl_node_idx {
+                continue;
+            }
+            if get_optional(decl_idx) != impl_optional {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|n| match n.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            self.ctx.arena.get_method_decl(n).map(|m| m.name)
+                        }
+                        k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                            self.ctx.arena.get_signature(n).map(|s| s.name)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(decl_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_OPTIONAL_OR_REQUIRED,
+                );
+            }
+        }
+    }
 }

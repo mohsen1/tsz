@@ -103,6 +103,9 @@ mod enum_merge_tests;
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "../tests/overload_modifier_tests.rs"]
+mod overload_modifier_tests;
+#[cfg(test)]
 #[path = "../tests/rest_parameter_tests.rs"]
 mod rest_parameter_tests;
 #[cfg(test)]

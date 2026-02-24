@@ -657,6 +657,7 @@ impl<'a> CheckerState<'a> {
         if method.body.is_some() {
             self.check_overload_modifier_consistency(member_idx);
             self.check_overload_compatibility(member_idx);
+            self.check_overload_modifier_agreement(member_idx);
         }
 
         self.pop_type_parameters(type_param_updates);
