@@ -205,6 +205,27 @@ impl ModuleKind {
             Self::ES2015 | Self::ES2020 | Self::ES2022 | Self::ESNext | Self::Preserve
         )
     }
+
+    /// Check if this module kind supports dynamic `import()` expressions.
+    ///
+    /// Dynamic imports require ES2020+, CommonJS, AMD, System, UMD, Node16,
+    /// or `NodeNext`. ES2015 and None do not support them (TS1323).
+    #[must_use]
+    pub const fn supports_dynamic_import(self) -> bool {
+        matches!(
+            self,
+            Self::ES2020
+                | Self::ES2022
+                | Self::ESNext
+                | Self::CommonJS
+                | Self::AMD
+                | Self::System
+                | Self::UMD
+                | Self::Node16
+                | Self::NodeNext
+                | Self::Preserve
+        )
+    }
 }
 
 /// New line kind for source file emission.

@@ -196,6 +196,12 @@ impl<'a> CheckerState<'a> {
             let mut has_non_ambient_func = false;
             for &(decl_idx, flags, is_local, _) in &declarations {
                 if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
+                    // TS2384 only applies to overload signatures (bodyless declarations).
+                    // Skip implementations (declarations with bodies) — a non-ambient
+                    // implementation following ambient overloads is valid.
+                    if self.function_has_body(decl_idx) {
+                        continue;
+                    }
                     func_decls_for_2384.push(decl_idx);
                     if self.is_ambient_declaration(decl_idx) {
                         has_ambient_func = true;

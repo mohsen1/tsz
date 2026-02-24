@@ -149,6 +149,14 @@ impl<'a> CheckerState<'a> {
 
         // Check for dynamic import module resolution (TS2307)
         if self.is_dynamic_import(call) {
+            // TS1323: Dynamic imports require a module kind that supports them
+            if !self.ctx.compiler_options.module.supports_dynamic_import() {
+                self.error_at_node(
+                    idx,
+                    crate::diagnostics::diagnostic_messages::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
+                    diagnostic_codes::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
+                );
+            }
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
