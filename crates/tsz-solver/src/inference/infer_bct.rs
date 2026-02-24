@@ -1032,8 +1032,8 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn tuple_subtype_of(&self, source: &[TupleElement], target: &[TupleElement]) -> bool {
-        let source_required = source.iter().filter(|e| !e.optional && !e.rest).count();
-        let target_required = target.iter().filter(|e| !e.optional && !e.rest).count();
+        let source_required = crate::utils::required_element_count(source);
+        let target_required = crate::utils::required_element_count(target);
 
         if source_required < target_required {
             return false;

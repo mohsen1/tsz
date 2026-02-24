@@ -197,10 +197,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Count required (non-optional, non-rest) parameters.
     pub(crate) fn required_param_count(&self, params: &[ParamInfo]) -> usize {
-        params
-            .iter()
-            .filter(|param| !param.optional && !param.rest)
-            .count()
+        crate::utils::required_param_count(params)
     }
 
     /// Check return type compatibility with void special-casing.
