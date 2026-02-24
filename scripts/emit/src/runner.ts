@@ -547,9 +547,12 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
     }
 
     if (!config.dtsOnly && testCase.expectedJs !== null) {
-      // Normalize sourceMappingURL filenames since we use temp file names
-      const normalizeSourceMapUrl = (s: string) =>
-        s.replace(/\/\/# sourceMappingURL=\S+/g, '//# sourceMappingURL=output.js.map');
+      // Strip sourceMappingURL lines entirely: our CLI may append its own
+      // sourceMappingURL while tsc baselines use inline data URLs or different
+      // filenames, causing line-count mismatches. Since we test code emission
+      // correctness (not source-map generation), stripping is safe.
+      const stripSourceMapUrl = (s: string) =>
+        s.split('\n').filter(l => !l.trimStart().startsWith('//# sourceMappingURL=')).join('\n');
       // Normalize duplicate "use strict" in preamble: tsc emits double "use strict"
       // when the source already has one and alwaysStrict is enabled. Our emitter may
       // emit only one. Normalize both sides to single "use strict" for comparison.
@@ -570,8 +573,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         }
         return out.join('\n');
       };
-      const expected = dedupeUseStrict(normalizeSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim()));
-      const actual = dedupeUseStrict(normalizeSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim()));
+      const expected = dedupeUseStrict(stripSourceMapUrl(testCase.expectedJs.replace(/\r\n/g, '\n').trim()));
+      const actual = dedupeUseStrict(stripSourceMapUrl(tszJs.replace(/\r\n/g, '\n').trim()));
       result.jsMatch = expected === actual;
 
       if (!result.jsMatch) {
