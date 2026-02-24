@@ -942,6 +942,23 @@ impl<'a> CheckerState<'a> {
         split
     }
 
+    /// Check if a node is a literal `null` keyword or an identifier named `undefined`.
+    /// Used to distinguish `null.foo` / `undefined.bar` from `x.foo` where `x: null`.
+    fn is_literal_null_or_undefined_node(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+        if let Some(node) = self.ctx.arena.get(idx) {
+            node.kind == SyntaxKind::NullKeyword as u16
+                || (node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(node)
+                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+        } else {
+            false
+        }
+    }
+
     /// Report an error for nullish object access.
     /// Emits TS18050 when the value IS definitively null/undefined,
     /// or TS2531/2532/2533 when the value is POSSIBLY null/undefined.
@@ -962,18 +979,7 @@ impl<'a> CheckerState<'a> {
         // Check if the expression is a literal null/undefined keyword (not a variable)
         // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
         // TS18050 is emitted even without strictNullChecks, so check first
-        let is_literal_nullish = if let Some(node) = self.ctx.arena.get(idx) {
-            use tsz_scanner::SyntaxKind;
-            node.kind == SyntaxKind::NullKeyword as u16
-                || (node.kind == SyntaxKind::Identifier as u16
-                    && self
-                        .ctx
-                        .arena
-                        .get_identifier(node)
-                        .is_some_and(|ident| ident.escaped_text == "undefined"))
-        } else {
-            false
-        };
+        let is_literal_nullish = self.is_literal_null_or_undefined_node(idx);
 
         // When the expression IS a literal null/undefined keyword (e.g., null.foo or undefined.bar),
         // emit TS18050 "The value 'X' cannot be used here." (even without strictNullChecks)
@@ -1053,22 +1059,7 @@ impl<'a> CheckerState<'a> {
     /// Report an error for possibly nullish object access (legacy wrapper).
     /// Use `report_nullish_object` directly for new code.
     pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
-        // Legacy behavior: check if this is a literal null/undefined keyword
-        // If so, it's definitely nullish; otherwise, it's possibly nullish
-        use tsz_scanner::SyntaxKind;
-
-        let is_definitely_nullish = if let Some(node) = self.ctx.arena.get(idx) {
-            node.kind == SyntaxKind::NullKeyword as u16
-                || (node.kind == SyntaxKind::Identifier as u16
-                    && self
-                        .ctx
-                        .arena
-                        .get_identifier(node)
-                        .is_some_and(|ident| ident.escaped_text == "undefined"))
-        } else {
-            false
-        };
-
+        let is_definitely_nullish = self.is_literal_null_or_undefined_node(idx);
         self.report_nullish_object(idx, cause, is_definitely_nullish);
     }
 
