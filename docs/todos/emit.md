@@ -1,8 +1,43 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9951/13623 = 73.0% JS, ~777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9976/13623 = 73.2% JS, ~777/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Control-flow block bodies always expanded to multi-line** (+29 JS, +1 DTS):
+  tsc always expands blocks in control-flow statements (for, while, if, do-while,
+  try/catch) to multi-line, even when the source has them on a single line.
+  Only function/method/arrow/static-block bodies preserve single-line formatting.
+  Root cause: `emit_block` in `statements.rs` used `!is_function_body_block` in
+  the single-line condition, which allowed ALL non-function blocks to be single-line.
+  Fix: require `is_function_body_block = true` for single-line emission. Also set the
+  flag for class static blocks (`mod.rs`, `declarations_class.rs`) and ES5 lowered
+  method bodies in computed property contexts (`es5/helpers.rs`). Four unit tests added.
+  Tests fixed: constDeclarations, throwInEnclosingStatements, whileContinueStatements,
+  controlFlowPropertyDeclarations, destructureCatchClause(x4), es5-asyncFunction*
+  (target=es2015), esDecorators-decoratorExpression variants, and others.
+  JS: 9947→9976, DTS: 776→777, zero regressions.
+
+### Skipped / Investigated This Session (2026-02-24)
+- **Unnecessary `__importStar`/`__createBinding` helper emission** (~128 tests): The emitter
+  emits import-star helpers even when imports should be type-only elided. Requires checker
+  to populate `type_only_nodes` for import elision. Not fixable in emitter alone.
+- **JSX not transformed to `createElement` calls (jsx=react)** (~77 tests): JSX elements
+  pass through untransformed when `jsx=react`. The JSX→createElement transform is not yet
+  implemented in the emitter.
+- **Missing inline `exports.E = E = {}` for re-exported namespaces** (~57 occurrences): When
+  a namespace is re-exported via `export { m as foo }`, tsc folds `exports.foo = m = {}`
+  into the IIFE closing. Requires knowing at namespace declaration time that it will be
+  re-exported (checker integration needed for re-export alias awareness).
+- **`__extends` helper `for (var p in b) if (...)` line-break** (~7 tests): The helper
+  template string is correct but the emitter reformats `for...if` to multi-line. Only
+  affects bundled/outFile tests. Low impact.
+- **`emitting_function_body_block` not set in some ES5 emit paths** (~unknown): Several
+  function body emit calls in `es5/helpers.rs` (getter/setter bodies, various function
+  lowering paths at lines 607,620,789-957) don't set the flag. Not regressing with
+  current fix since those paths also have other differences. Could cause regressions if
+  more single-line block sites are discovered.
+
+### Previously Fixed This Session (2026-02-24)
 - **ES5 computed property comma expression always multi-line** (+18 JS):
   When lowering computed property names in object literals to ES5 (`{ [key]: val }` →
   `(_a = {}, _a[key] = val, _a)`), the comma expression was emitted on a single line.
