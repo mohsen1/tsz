@@ -1329,10 +1329,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get property name from a property name node.
     fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
-        crate::types_domain::type_checking_queries::get_literal_property_name(
-            self.ctx.arena,
-            name_idx,
-        )
+        crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
     }
 
     /// Check if a modifier list contains the readonly modifier.

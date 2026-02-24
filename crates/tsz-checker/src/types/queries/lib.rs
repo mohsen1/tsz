@@ -2,7 +2,7 @@
 //! utilities, constructor accessibility, and symbol exclusion logic.
 //!
 //! Type-only symbol detection has been extracted to
-//! `type_checking_queries_type_only.rs`.
+//! `queries/type_only.rs`.
 
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;

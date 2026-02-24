@@ -1215,7 +1215,7 @@ impl<'a> CheckerState<'a> {
     /// Get the interned Atom for a member name node, handling identifiers,
     /// string literals, and numeric literals (with canonical normalization).
     fn get_member_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
-        let name = crate::types_domain::type_checking_queries::get_literal_property_name(
+        let name = crate::types_domain::queries::core::get_literal_property_name(
             self.ctx.arena,
             name_idx,
         )?;
