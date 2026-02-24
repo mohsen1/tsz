@@ -1331,8 +1331,10 @@ impl BinderState {
                                         || name_node.kind
                                             == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                                 });
-                                Self::has_declare_modifier(arena, module.modifiers.as_ref())
-                                    || is_external
+                                arena.has_modifier_ref(
+                                    module.modifiers.as_ref(),
+                                    SyntaxKind::DeclareKeyword,
+                                ) || is_external
                             });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag

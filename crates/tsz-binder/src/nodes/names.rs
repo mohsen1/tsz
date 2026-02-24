@@ -493,11 +493,6 @@ impl BinderState {
         arena.has_modifier_ref(modifiers, SyntaxKind::PrivateKeyword)
     }
 
-    /// Check if modifiers list contains the 'declare' keyword.
-    pub(crate) fn has_declare_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
-        arena.has_modifier_ref(modifiers, SyntaxKind::DeclareKeyword)
-    }
-
     /// Check if modifiers list contains the 'const' keyword.
     pub(crate) fn has_const_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         arena.has_modifier_ref(modifiers, SyntaxKind::ConstKeyword)
