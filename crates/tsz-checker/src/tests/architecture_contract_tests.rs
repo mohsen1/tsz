@@ -673,16 +673,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         .expect("failed to read src/state/state_checking.rs for architecture guard");
     // Include split-off modules that are part of the state_checking logical module
     state_checking_src.push_str(
-        &fs::read_to_string("src/state/state_variable_checking.rs")
-            .expect("failed to read src/state/state_variable_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/variable_checking/core.rs")
+            .expect("failed to read src/state/variable_checking/core.rs for architecture guard"),
     );
     state_checking_src.push_str(
         &fs::read_to_string("src/state/state_property_checking.rs")
             .expect("failed to read src/state/state_property_checking.rs for architecture guard"),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state/state_variable_checking_destructuring.rs").expect(
-            "failed to read src/state/state_variable_checking_destructuring.rs for architecture guard",
+        &fs::read_to_string("src/state/variable_checking/destructuring.rs").expect(
+            "failed to read src/state/variable_checking/destructuring.rs for architecture guard",
         ),
     );
     state_checking_src.push_str(
@@ -717,13 +717,11 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_property_checking should route solver type-query access through query_boundaries::state_checking"
     );
     let state_variable_checking_destructuring_src = fs::read_to_string(
-        "src/state/state_variable_checking_destructuring.rs",
+        "src/state/variable_checking/destructuring.rs",
     )
-    .expect(
-        "failed to read src/state/state_variable_checking_destructuring.rs for architecture guard",
-    );
-    let state_variable_checking_src = fs::read_to_string("src/state/state_variable_checking.rs")
-        .expect("failed to read src/state/state_variable_checking.rs for architecture guard");
+    .expect("failed to read src/state/variable_checking/destructuring.rs for architecture guard");
+    let state_variable_checking_src = fs::read_to_string("src/state/variable_checking/core.rs")
+        .expect("failed to read src/state/variable_checking/core.rs for architecture guard");
     let state_class_checking_src = fs::read_to_string("src/state/state_class_checking.rs")
         .expect("failed to read src/state/state_class_checking.rs for architecture guard");
     let state_heritage_checking_src = fs::read_to_string("src/state/state_heritage_checking.rs")

@@ -1,6 +1,6 @@
 //! For-in / for-of loop variable checking.
 //!
-//! Extracted from `state_variable_checking.rs` to keep that file focused on
+//! Extracted from `core.rs` to keep that file focused on
 //! general variable declaration checking (`check_variable_declaration`).
 
 use crate::state::CheckerState;

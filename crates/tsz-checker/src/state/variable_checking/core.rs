@@ -1,6 +1,6 @@
 //! Variable declaration and destructuring checking.
 //!
-//! For-in / for-of loop variable checking is in `state_variable_checking_for_loop.rs`.
+//! For-in / for-of loop variable checking is in `for_loop.rs`.
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
@@ -1255,7 +1255,7 @@ impl<'a> CheckerState<'a> {
     // Destructuring pattern methods (report_empty_array_destructuring_bounds,
     // assign_binding_pattern_symbol_types, record_destructured_binding_group,
     // get_binding_element_type, rest_binding_array_type, is_only_undefined_or_null)
-    // are in `state_variable_checking_destructuring.rs`.
+    // are in `destructuring.rs`.
 }
 
 #[cfg(test)]
