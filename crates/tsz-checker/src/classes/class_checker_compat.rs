@@ -232,7 +232,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut inherited_member_sources: rustc_hash::FxHashMap<String, (String, TypeId)> =
+        // Maps member name -> (base_name, type_id, is_optional)
+        let mut inherited_member_sources: rustc_hash::FxHashMap<String, (String, TypeId, bool)> =
             rustc_hash::FxHashMap::default();
         let mut inherited_non_public_class_member_sources: rustc_hash::FxHashMap<String, String> =
             rustc_hash::FxHashMap::default();
@@ -339,7 +340,9 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
 
-                        let (member_key, member_type) = if base_member_node.kind == CALL_SIGNATURE {
+                        let (member_key, member_type, member_optional) = if base_member_node.kind
+                            == CALL_SIGNATURE
+                        {
                             (
                                 String::from("__call__"),
                                 instantiate_type(
@@ -347,6 +350,7 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_of_node(base_member_idx),
                                     &base_substitution,
                                 ),
+                                false,
                             )
                         } else if base_member_node.kind == METHOD_SIGNATURE
                             || base_member_node.kind == PROPERTY_SIGNATURE
@@ -364,6 +368,7 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_of_interface_member_simple(base_member_idx),
                                     &base_substitution,
                                 ),
+                                sig.question_token,
                             )
                         } else {
                             continue;
@@ -373,13 +378,17 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        if let Some((prev_base_name, prev_member_type)) =
+                        if let Some((prev_base_name, prev_member_type, prev_optional)) =
                             inherited_member_sources.get(&member_key)
                         {
                             if prev_base_name != &base_name {
-                                let incompatible =
+                                // TS2320 uses type identity, not assignability.
+                                // Properties are "not identical" if their types differ
+                                // OR if their optionality differs.
+                                let optionality_differs = member_optional != *prev_optional;
+                                let type_incompatible =
                                     !self.are_mutually_assignable(member_type, *prev_member_type);
-                                if incompatible {
+                                if type_incompatible || optionality_differs {
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
@@ -391,8 +400,10 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            inherited_member_sources
-                                .insert(member_key, (base_name.clone(), member_type));
+                            inherited_member_sources.insert(
+                                member_key,
+                                (base_name.clone(), member_type, member_optional),
+                            );
                         }
                     }
 
