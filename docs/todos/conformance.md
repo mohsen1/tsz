@@ -977,3 +977,32 @@ const enums DO get runtime bindings and are subject to TDZ.
 - `isolatedModules` unit tests can't run in the checker test harness (no global lib types → TS2318 bailout before TDZ checks). Tested via conformance suite instead.
 
 ## Current score: 4014/5997 (66.9%) — first 6000
+
+## TS1323 — Dynamic import module flag validation (Fixed, 2026-02-24)
+
+**Status**: Fixed. +4 tests passing in full suite (7974→7978), +1 in offset 6000.
+**Error code:** TS1323 ("Dynamic imports are only supported when the '--module' flag is set to
+'es2020', 'es2022', 'esnext', 'commonjs', 'amd', 'system', 'umd', 'node16', 'node18', 'node20',
+or 'nodenext'.")
+**Root cause**: No check existed for whether the module kind supports `import()` expressions.
+**Fix**: Added `ModuleKind::supports_dynamic_import()` method in `tsz-common/src/common.rs` and
+a TS1323 check in `type_computation_call.rs` within the `is_dynamic_import` path.
+7 unit tests in `ts1323_tests.rs`.
+
+### Remaining TS1323 tests (2 multi-file)
+- `importCallExpressionNestedES2015.ts` and `importCallExpressionNestedES20152.ts`: Error codes
+  match but fingerprints differ — multi-file test position mismatch.
+
+## TS2384 — Overload ambient consistency false positive fix (Fixed, 2026-02-24)
+
+**Status**: Fixed. +3 tests passing in full suite (7978→7981).
+**Error code:** TS2384 ("Overload signatures must all be ambient or non-ambient.")
+**Root cause**: The TS2384 check in `type_checking_global.rs` included implementation
+declarations (declarations with bodies) in the ambient/non-ambient comparison. TSC only
+checks overload *signatures* (bodyless declarations) — a non-ambient implementation following
+ambient overloads is valid (e.g., `declare function f(x: number): void; function f(x: any) { ... }`).
+**Fix**: Added `declaration_has_body()` helper in `type_checking_declarations.rs` and skip
+implementations from the TS2384 check.
+**Tests fixed**: `constructorOverloads7.ts` and 2 others.
+
+## Current score: 3967/6577 (60.3%) — offset 6000; 7981/12574 (63.5%) — full suite
