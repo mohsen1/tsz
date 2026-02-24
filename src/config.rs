@@ -905,7 +905,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // When ignoreDeprecations is set to "5.0", suppress TS5102 (tsc behavior).
         let ignore_deprecations_valid = matches!(
             compiler_opts.get("ignoreDeprecations"),
-            Some(serde_json::Value::String(v)) if v == "5.0" || v == "5.5"
+            Some(serde_json::Value::String(v)) if v == "5.0" || v == "5.5" || v == "6.0"
         );
         let mut removed_keys: Vec<String> = Vec::new();
         for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
@@ -997,7 +997,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // Valid values accepted by tsc 6.0: "5.0" and "5.5".
+        // Valid values accepted by tsc 6.0: "5.0", "5.5", and "6.0".
         // tsc emits TS5103 when the ignoreDeprecations value is invalid and would have been
         // used to suppress a deprecation warning. In practice, nearly all configs that set
         // ignoreDeprecations do so because they use deprecated features; tsz conservatively
@@ -1005,6 +1005,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
             && id_value != "5.5"
+            && id_value != "6.0"
         {
             let start = find_value_offset_in_source(&stripped, "ignoreDeprecations");
             let value_len = id_value.len() as u32 + 2; // include quotes
@@ -2938,7 +2939,7 @@ mod tests {
     fn test_ts5102_not_suppressed_with_invalid_ignore_deprecations() {
         // Invalid ignoreDeprecations value should NOT suppress TS5102
         let source =
-            r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
+            r#"{"compilerOptions":{"ignoreDeprecations":"7.0","noImplicitUseStrict":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
@@ -3089,12 +3090,12 @@ mod tests {
         // tsc only emits TS5103 when deprecated features are also present, but since tsz cannot
         // detect all deprecated features (e.g. deprecated source syntax like import assertions),
         // it conservatively emits TS5103 for any invalid ignoreDeprecations value.
-        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"7.0"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5103),
-            "Expected TS5103 for invalid ignoreDeprecations='6.0', got: {codes:?}"
+            "Expected TS5103 for invalid ignoreDeprecations='7.0', got: {codes:?}"
         );
     }
 
@@ -3117,12 +3118,12 @@ mod tests {
         // tsc emits TS5103 when an invalid ignoreDeprecations value is used alongside
         // a deprecated target alias like "es6" (deprecated in favor of "es2015").
         // This matches the arrowFunction conformance test pattern.
-        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0","target":"es6"}}"#;
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"7.0","target":"es6"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5103),
-            "Expected TS5103 for ignoreDeprecations='6.0' with deprecated target='es6', got: {codes:?}"
+            "Expected TS5103 for ignoreDeprecations='7.0' with deprecated target='es6', got: {codes:?}"
         );
     }
 
@@ -3131,12 +3132,12 @@ mod tests {
         // tsz emits TS5103 conservatively for any invalid ignoreDeprecations value,
         // regardless of target. Even non-deprecated targets like "es2018" will trigger
         // TS5103 in tsz (conservative approach since we can't detect all deprecated syntax).
-        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0","target":"es2018"}}"#;
+        let source = r#"{"compilerOptions":{"ignoreDeprecations":"7.0","target":"es2018"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5103),
-            "Expected TS5103 (conservative) for ignoreDeprecations='6.0' with target='es2018', got: {codes:?}"
+            "Expected TS5103 (conservative) for ignoreDeprecations='7.0' with target='es2018', got: {codes:?}"
         );
     }
 
