@@ -227,6 +227,46 @@ fn test_lowering_pass_using_flag_sets_disposable_helpers() {
 }
 
 #[test]
+fn test_lowering_pass_using_at_esnext_skips_disposable_helpers() {
+    let (arena, root) = parse("using d = { [Symbol.dispose]() {} };");
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ESNext);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let helpers = transforms.helpers();
+    assert!(
+        !helpers.add_disposable_resource,
+        "ES2025+ target should not emit __addDisposableResource helper for using declarations"
+    );
+    assert!(
+        !helpers.dispose_resources,
+        "ES2025+ target should not emit __disposeResources helper for using declarations"
+    );
+}
+
+#[test]
+fn test_lowering_pass_using_at_es2022_sets_disposable_helpers() {
+    let (arena, root) = parse("using d = { [Symbol.dispose]() {} };");
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2022);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.add_disposable_resource,
+        "Pre-ES2025 target should emit __addDisposableResource helper for using declarations"
+    );
+    assert!(
+        helpers.dispose_resources,
+        "Pre-ES2025 target should emit __disposeResources helper for using declarations"
+    );
+}
+
+#[test]
 fn test_lowering_pass_nested_arrow_in_class() {
     let (arena, root) = parse("class C { m() { const f = () => this; } }");
     let ctx = EmitContext::es5();

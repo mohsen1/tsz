@@ -113,35 +113,36 @@ impl<'a> Printer<'a> {
 
         for &decl_idx in &decl_list.declarations.nodes {
             if let Some(decl_node) = self.arena.get(decl_idx)
-                && let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                    if decl.initializer.is_none() {
-                        self.write("var ");
-                        self.emit(decl_idx);
-                        self.write(";");
-                        self.write_line();
-                        continue;
-                    }
-
-                    if let Some(name_node) = self.arena.get(decl.name)
-                        && name_node.kind == SyntaxKind::Identifier as u16
-                    {
-                        self.write("var ");
-                        self.emit_decl_name(decl.name);
-                        self.write(" = __addDisposableResource(");
-                        self.write(&env_name);
-                        self.write(", ");
-                        self.emit(decl.initializer);
-                        self.write(", ");
-                        self.write(if using_async { "true" } else { "false" });
-                        self.write(");");
-                    } else {
-                        self.emit(decl_idx);
-                        self.write(";");
-                    }
-
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+            {
+                if decl.initializer.is_none() {
+                    self.write("var ");
+                    self.emit(decl_idx);
+                    self.write(";");
                     self.write_line();
                     continue;
                 }
+
+                if let Some(name_node) = self.arena.get(decl.name)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                {
+                    self.write("var ");
+                    self.emit_decl_name(decl.name);
+                    self.write(" = __addDisposableResource(");
+                    self.write(&env_name);
+                    self.write(", ");
+                    self.emit(decl.initializer);
+                    self.write(", ");
+                    self.write(if using_async { "true" } else { "false" });
+                    self.write(");");
+                } else {
+                    self.emit(decl_idx);
+                    self.write(";");
+                }
+
+                self.write_line();
+                continue;
+            }
 
             self.emit(decl_idx);
             self.write(";");
