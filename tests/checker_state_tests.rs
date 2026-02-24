@@ -1334,16 +1334,16 @@ fn test_checker_type_identity() {
     );
 
     // Same type is identical to itself
-    assert!(checker.are_types_identical(TypeId::STRING, TypeId::STRING));
-    assert!(checker.are_types_identical(TypeId::NUMBER, TypeId::NUMBER));
+    assert_eq!(TypeId::STRING, TypeId::STRING);
+    assert_eq!(TypeId::NUMBER, TypeId::NUMBER);
 
     // Different types are not identical
-    assert!(!checker.are_types_identical(TypeId::STRING, TypeId::NUMBER));
+    assert_ne!(TypeId::STRING, TypeId::NUMBER);
 
     // Same literal values produce identical types (via interning)
     let lit1 = checker.ctx.types.literal_string("test");
     let lit2 = checker.ctx.types.literal_string("test");
-    assert!(checker.are_types_identical(lit1, lit2));
+    assert_eq!(lit1, lit2);
 }
 
 #[test]

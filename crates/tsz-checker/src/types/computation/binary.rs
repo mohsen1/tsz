@@ -423,7 +423,7 @@ impl<'a> CheckerState<'a> {
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
                 // TS2872: This kind of expression is always truthy.
-                self.check_always_truthy(left_idx, left_type);
+                self.check_always_truthy(left_idx);
 
                 // Propagate error types (don't collapse to unknown)
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {

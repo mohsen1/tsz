@@ -777,9 +777,6 @@ pub struct CheckerContext<'a> {
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
     pub type_resolution_fuel: RefCell<u32>,
-
-    /// Whether type resolution fuel was exhausted (for timeout detection).
-    pub fuel_exhausted: RefCell<bool>,
     // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
     // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
     // object shapes distinctly.
@@ -1517,16 +1514,10 @@ impl<'a> CheckerContext<'a> {
     pub fn consume_fuel(&self) -> bool {
         let mut fuel = self.type_resolution_fuel.borrow_mut();
         if *fuel == 0 {
-            *self.fuel_exhausted.borrow_mut() = true;
             return false;
         }
         *fuel -= 1;
         true
-    }
-
-    /// Check if type resolution fuel has been exhausted.
-    pub fn is_fuel_exhausted(&self) -> bool {
-        *self.fuel_exhausted.borrow()
     }
 
     /// Enter a recursive call. Returns true if recursion is allowed,

@@ -164,7 +164,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -312,7 +312,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -451,7 +451,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -592,7 +592,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -732,7 +732,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }
@@ -898,7 +898,7 @@ impl<'a> CheckerContext<'a> {
             js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
-            fuel_exhausted: RefCell::new(false),
+
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
         }
     }

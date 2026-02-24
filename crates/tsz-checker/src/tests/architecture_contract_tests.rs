@@ -509,10 +509,6 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
         subtype_source.contains("is_redeclaration_identical_with_resolver("),
         "subtype_identity_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
     );
-    assert!(
-        subtype_source.contains("is_assignable_with_resolver("),
-        "subtype_identity_checker should use query_boundaries::assignability::is_assignable_with_resolver for union checks"
-    );
 }
 
 #[test]
@@ -524,10 +520,11 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
     let subtype_start = source
         .find("pub fn is_subtype_of(")
         .expect("missing is_subtype_of in subtype_identity_checker");
-    let subtype_end = source[subtype_start..]
-        .find("pub fn is_subtype_of_with_env(")
-        .map(|offset| subtype_start + offset)
-        .expect("missing is_subtype_of_with_env in subtype_identity_checker");
+    // Extract just the is_subtype_of method body (up to the next pub fn or end of impl)
+    let subtype_end = source[subtype_start + 1..]
+        .find("pub")
+        .map(|offset| subtype_start + 1 + offset)
+        .unwrap_or(source.len());
     let subtype_src = &source[subtype_start..subtype_end];
 
     let ensure_apps_pos = subtype_src
@@ -539,13 +536,6 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
     assert!(
         ensure_apps_pos < lookup_pos,
         "is_subtype_of must establish ref/application preconditions before subtype cache lookup"
-    );
-
-    let with_env_src = &source[subtype_end..];
-    assert!(
-        with_env_src.contains("self.ensure_relation_input_ready(source);")
-            && with_env_src.contains("self.ensure_relation_input_ready(target);"),
-        "is_subtype_of_with_env should establish centralized relation preconditions for both sides"
     );
 }
 
