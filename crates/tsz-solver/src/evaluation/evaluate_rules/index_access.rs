@@ -250,11 +250,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .resolver()
             .resolve_lazy(def_id, self.evaluator.interner())
         {
-            // CRITICAL: Use evaluate_index_access directly (not recurse) to perform property lookup
-            // This resolves the class C and then finds the "foo" property within it
+            // Route through recurse_index_access (not evaluate_index_access directly)
+            // so the call goes through evaluate() and its RecursionGuard. This prevents
+            // stack overflow when Lazy types form cycles (e.g. DefId(1) → Lazy(DefId(1))).
             return Some(
                 self.evaluator
-                    .evaluate_index_access(resolved, self.index_type),
+                    .recurse_index_access(resolved, self.index_type),
             );
         }
         None
