@@ -43,7 +43,7 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 | `state_checking_members/ambient_signature_checks.rs` | 1,767 | 233 lines |
 | `types/type_node.rs` | 1,765 | 235 lines |
 | ~~`flow/control_flow.rs`~~ | ~~1,734~~ | ~~266 lines~~ | ✅ Split — extracted definite assignment traversal + variable declaration utilities (~370 LOC) into `control_flow_var_utils.rs`, reducing to 1,364 LOC |
-| `types/type_checking_utilities_jsdoc.rs` | 1,728 | 272 lines |
+| ~~`types/utilities/jsdoc.rs`~~ | ~~1,675~~ | ~~325 lines~~ | ✅ Split (46d0ff829) — extracted param tag validation, comment finding, text parsing (~740 LOC) into `jsdoc_params.rs`, reducing to 934 LOC |
 | ~~`checkers/member_declaration_checks.rs`~~ | ~~1,728~~ | ~~272 lines~~ | ✅ Split — extracted class type param ref checks, abstract overload/consecutive checks (~462 LOC) into `class_type_param_checks.rs`, reducing to 1,266 LOC |
 | `types/member_access.rs` | 1,674 | 326 lines |
 | ~~`flow/flow_graph_builder.rs`~~ | ~~1,666~~ | ~~334 lines~~ | ✅ Split — extracted expression flow handling (~526 LOC) into `flow_graph_builder_expressions.rs`, reducing to 1,171 LOC |

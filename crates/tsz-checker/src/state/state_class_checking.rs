@@ -678,8 +678,6 @@ impl<'a> CheckerState<'a> {
         !class_query::type_includes_undefined(self.ctx.types, prop_type)
     }
 
-    // Note: class_has_base, type_includes_undefined, find_constructor_body are in type_checking.rs
-
     /// Check for TS2565: Properties used before being assigned in the constructor.
     ///
     /// This function analyzes the constructor body to detect when a property
