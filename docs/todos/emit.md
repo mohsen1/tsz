@@ -1,6 +1,54 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9993/13623 = 73.3% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9994/13623 = 73.4% JS, ~777/1995 = 38.9% DTS)
+
+### Investigated (2026-02-24, session 2) — No Safe Single Fix Found
+
+Deep analysis of remaining 3629 JS failures. All simple fixes either caused regressions
+or turned out to be based on incorrect assumptions. Key findings:
+
+- **Trailing whitespace stripping** (attempted, reverted): Added `trim_end_matches` to
+  `write_line()` in source_writer.rs and ir_printer_helpers.rs. Caused 93-test regression
+  because tsc preserves trailing whitespace on indented blank lines (e.g., `    \n` inside
+  multi-line comments and between statements). A targeted fix would need to only trim in
+  specific contexts (JSDoc continuation lines), but affects only ~1 test.
+
+- **`{ }` vs `{}` brace spacing** (attempted, abandoned): Assumed tsc preserves source
+  formatting (`{}` stays `{}`, `{ }` stays `{ }`). Testing proved tsc ALWAYS normalizes
+  empty blocks to `{ }` regardless of source. Our emitter already does this correctly.
+  The 6 tests originally flagged actually have other differences too.
+
+- **`"use strict"` over-emission** (243 tests affected, 17 sole-diff): We emit `"use strict"`
+  in ~243 tests where tsc doesn't. Root causes are mixed:
+  - ~88 tests: `.js` source files with `allowJs` — likely a **test framework** issue where
+    the baseline parser treats the `.js` input file as expected output instead of the actual
+    bundled output file (e.g., `output.js`).
+  - ~155 tests: Missing UMD/System module wrappers, missing decorator transforms, or other
+    large-feature gaps where `"use strict"` is just one symptom of broader missing functionality.
+  - Not fixable with a simple emitter change.
+
+- **`export {};` sentinel** (~60 missing, ~40 extra): Bidirectional issue. Logic for when to
+  emit `export {};` depends on module resolution, `isolatedModules`, whether all imports/exports
+  were type-only erased, and more. Complex, high-risk to change.
+
+- **Trailing `//` comment stripping** (23+ tests): We preserve inline comments like
+  `}; // no error` that tsc strips. tsc has complex rules for which trailing comments survive
+  emit (depends on node association, type erasure, and comment position relative to erased
+  declarations). Each case is unique — no single rule to fix them all.
+
+- **`/// <reference>` directive positioning** (~5 tests): We emit `/// <reference path="..."/>`
+  at file top; tsc emits it after helper functions. But these tests also have OTHER major
+  diffs (missing JSX transforms, missing UMD wrappers), so fixing position alone wouldn't
+  flip them to passing.
+
+**Conclusion**: The remaining JS failures at 73.4% are dominated by missing features
+(decorator transforms, `using` declarations, UMD/System module wrappers, JSX transforms)
+and nuanced comment handling edge cases. No safe single-change fix was found that improves
+the pass rate without regressions. Next improvements likely require:
+1. Implementing decorator transform pipeline (~229+ `__decorate` references)
+2. Implementing `using`/`await using` declaration transforms (~96+ `__disposeResources` refs)
+3. Fixing UMD/System module wrapper emission
+4. Improving the emit test framework to handle `allowJs` baselines correctly
 
 ### Fixed This Session (2026-02-24)
 - **Revert d8eefb7 regressions (blank lines, semicolons, accessor format)** (recovery: 6069→9993 JS):
