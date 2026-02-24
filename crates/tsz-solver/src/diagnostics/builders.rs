@@ -190,9 +190,20 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     /// Create an "Expected N arguments but got M" diagnostic.
-    pub fn argument_count_mismatch(&mut self, expected: usize, got: usize) -> TypeDiagnostic {
+    /// When `expected_min < expected_max`, formats as "Expected 1-3 arguments, but got 0."
+    pub fn argument_count_mismatch(
+        &mut self,
+        expected_min: usize,
+        expected_max: usize,
+        got: usize,
+    ) -> TypeDiagnostic {
+        let expected_str = if expected_min < expected_max {
+            format!("{expected_min}-{expected_max}")
+        } else {
+            expected_max.to_string()
+        };
         TypeDiagnostic::error(
-            format!("Expected {expected} arguments, but got {got}."),
+            format!("Expected {expected_str} arguments, but got {got}."),
             codes::ARG_COUNT_MISMATCH,
         )
     }
@@ -396,13 +407,14 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
     /// Create an "Expected N arguments" diagnostic with span.
     pub fn argument_count_mismatch(
         &mut self,
-        expected: usize,
+        expected_min: usize,
+        expected_max: usize,
         got: usize,
         start: u32,
         length: u32,
     ) -> TypeDiagnostic {
         self.builder
-            .argument_count_mismatch(expected, got)
+            .argument_count_mismatch(expected_min, expected_max, got)
             .with_span(self.span(start, length))
     }
 
@@ -625,10 +637,16 @@ impl<'a> DiagnosticCollector<'a> {
     }
 
     /// Report an argument count mismatch error.
-    pub fn argument_count_mismatch(&mut self, expected: usize, got: usize, loc: &SourceLocation) {
+    pub fn argument_count_mismatch(
+        &mut self,
+        expected_min: usize,
+        expected_max: usize,
+        got: usize,
+        loc: &SourceLocation,
+    ) {
         let mut builder = DiagnosticBuilder::new(self.interner);
         let diag = builder
-            .argument_count_mismatch(expected, got)
+            .argument_count_mismatch(expected_min, expected_max, got)
             .with_span(loc.to_span());
         self.diagnostics.push(diag);
     }

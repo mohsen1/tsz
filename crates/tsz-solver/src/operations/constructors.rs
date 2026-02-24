@@ -177,12 +177,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if expected_max.is_none() {
                         any_has_rest = true;
                     }
-                    let expected = expected_max.unwrap_or(expected_min);
+                    let max = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
-                    max_expected = max_expected.max(expected);
+                    max_expected = max_expected.max(max);
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_count_mismatch(
-                            expected, actual,
+                            expected_min,
+                            max,
+                            actual,
                         ),
                     );
                 }
