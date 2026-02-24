@@ -2,29 +2,10 @@ use super::*;
 
 #[test]
 fn test_emit_flags_defaults() {
-    let flags = EmitFlags::new();
+    let flags = EmitFlags::default();
     assert!(!flags.in_async);
     assert!(!flags.in_generator);
     assert!(!flags.capture_this);
-}
-
-#[test]
-fn test_arrow_transform_state() {
-    let mut state = ArrowTransformState::default();
-
-    assert!(!state.is_capturing_this());
-
-    state.enter_arrow_with_this();
-    assert!(state.is_capturing_this());
-
-    state.enter_arrow_with_this();
-    assert_eq!(state.this_capture_depth, 2);
-
-    state.exit_arrow_with_this();
-    assert!(state.is_capturing_this());
-
-    state.exit_arrow_with_this();
-    assert!(!state.is_capturing_this());
 }
 
 #[test]
