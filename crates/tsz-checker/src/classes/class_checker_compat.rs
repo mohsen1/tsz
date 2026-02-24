@@ -178,10 +178,30 @@ impl<'a> CheckerState<'a> {
         };
         use tsz_solver::{TypeSubstitution, instantiate_type};
 
-        // Get heritage clauses (extends)
-        let Some(ref heritage_clauses) = iface_data.heritage_clauses else {
-            return;
-        };
+        // Get heritage clauses (extends) — must have at least one across all declarations
+        if iface_data.heritage_clauses.is_none() {
+            // Check if other declarations of this interface have heritage clauses
+            let has_heritage_elsewhere = self
+                .ctx
+                .binder
+                .node_symbols
+                .get(&_iface_idx.0)
+                .and_then(|&sym_id| self.ctx.binder.symbols.get(sym_id))
+                .is_some_and(|sym| {
+                    sym.declarations.iter().any(|&decl_idx| {
+                        decl_idx != _iface_idx
+                            && self.ctx.arena.get(decl_idx).is_some_and(|n| {
+                                self.ctx
+                                    .arena
+                                    .get_interface(n)
+                                    .is_some_and(|iface| iface.heritage_clauses.is_some())
+                            })
+                    })
+                });
+            if !has_heritage_elsewhere {
+                return;
+            }
+        }
 
         // Get the derived interface name for the error message
         let derived_name = if iface_data.name.is_some() {
@@ -198,164 +218,234 @@ impl<'a> CheckerState<'a> {
             String::from("<anonymous>")
         };
 
-        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16)> = Vec::new();
-        for &member_idx in &iface_data.members.nodes {
-            let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            if member_node.kind != METHOD_SIGNATURE && member_node.kind != PROPERTY_SIGNATURE {
-                continue;
-            }
-
-            let kind = member_node.kind;
-            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                continue;
-            };
-            let Some(name) = self.get_property_name(sig.name) else {
-                continue;
-            };
-            let type_id = self.get_type_of_interface_member(member_idx);
-            derived_members.push((name, type_id, member_idx, kind));
-        }
-
+        // Collect derived member names and full member info across ALL declarations of this
+        // interface (for merged interfaces, each declaration can contribute members).
         let mut derived_member_names: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
-        for (member_name, _, _, _) in &derived_members {
-            derived_member_names.insert(member_name.clone());
+        // (name, type, node_idx, kind) — used for TS2430 derived-vs-base compatibility checks.
+        let mut derived_members: Vec<(String, TypeId, NodeIndex, u16)> = Vec::new();
+
+        // Collect all interface declaration indices for this symbol
+        let all_iface_decls: Vec<NodeIndex> = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&_iface_idx.0)
+            .and_then(|&sym_id| self.ctx.binder.symbols.get(sym_id))
+            .map(|sym| {
+                sym.declarations
+                    .iter()
+                    .copied()
+                    .filter(|&decl_idx| {
+                        self.ctx
+                            .arena
+                            .get(decl_idx)
+                            .is_some_and(|n| self.ctx.arena.get_interface(n).is_some())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Only run the full cross-declaration check on the FIRST declaration to avoid
+        // emitting the same TS2320 error multiple times.
+        if all_iface_decls.first().copied() != Some(_iface_idx) && all_iface_decls.len() > 1 {
+            return;
         }
-        for &member_idx in &iface_data.members.nodes {
-            if let Some(member_node) = self.ctx.arena.get(member_idx)
-                && member_node.kind == CALL_SIGNATURE
+
+        for &decl_idx in &all_iface_decls {
+            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
             {
-                derived_member_names.insert(String::from("__call__"));
+                for &member_idx in &decl_iface.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind == CALL_SIGNATURE {
+                        derived_member_names.insert(String::from("__call__"));
+                    } else if (member_node.kind == METHOD_SIGNATURE
+                        || member_node.kind == PROPERTY_SIGNATURE)
+                        && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                        && let Some(name) = self.get_property_name(sig.name)
+                    {
+                        derived_member_names.insert(name.clone());
+                        let type_id = self.get_type_of_interface_member(member_idx);
+                        derived_members.push((name, type_id, member_idx, member_node.kind));
+                    }
+                }
             }
         }
 
-        // Maps member name -> (base_name, type_id, is_optional)
-        let mut inherited_member_sources: rustc_hash::FxHashMap<String, (String, TypeId, bool)> =
-            rustc_hash::FxHashMap::default();
+        // Maps member name -> (base_heritage_idx, base_name, type_id, is_optional)
+        // base_heritage_idx uniquely identifies each extends-clause entry, so
+        // `extends A<string>, A<number>` correctly detects conflicts even though
+        // both entries share the base name "A".
+        let mut inherited_member_sources: rustc_hash::FxHashMap<
+            String,
+            (NodeIndex, String, TypeId, bool),
+        > = rustc_hash::FxHashMap::default();
         let mut inherited_non_public_class_member_sources: rustc_hash::FxHashMap<String, String> =
             rustc_hash::FxHashMap::default();
 
-        // Process each heritage clause (extends)
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+        // Collect ALL heritage clauses across ALL declarations of this interface
+        let mut all_heritage_types: Vec<(NodeIndex, NodeIndex)> = Vec::new(); // (clause_idx, type_idx)
+        for &decl_idx in &all_iface_decls {
+            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
+                && let Some(ref heritage_clauses) = decl_iface.heritage_clauses
+            {
+                for &clause_idx in &heritage_clauses.nodes {
+                    if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                        && let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
+                        && heritage.token == SyntaxKind::ExtendsKeyword as u16
+                    {
+                        for &type_idx in &heritage.types.nodes {
+                            all_heritage_types.push((clause_idx, type_idx));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process each extended type across all heritage clauses
+        for &(_clause_idx, type_idx) in &all_heritage_types {
+            let Some(type_node) = self.ctx.arena.get(type_idx) else {
                 continue;
             };
 
-            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+            let (expr_idx, type_arguments) =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    (
+                        expr_type_args.expression,
+                        expr_type_args.type_arguments.as_ref(),
+                    )
+                } else {
+                    (type_idx, None)
+                };
+
+            let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
                 continue;
             };
 
-            // Only check extends clauses
-            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+            let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
                 continue;
+            };
+
+            let base_name_raw = self
+                .heritage_name_text(expr_idx)
+                .unwrap_or_else(|| base_symbol.escaped_name.clone());
+            // Include type arguments in the base name for error messages, e.g. "A<string>"
+            let base_name = if let Some(args) = type_arguments {
+                let arg_strs: Vec<String> = args
+                    .nodes
+                    .iter()
+                    .map(|&arg_idx| {
+                        let tid = self.get_type_from_type_node(arg_idx);
+                        self.format_type(tid)
+                    })
+                    .collect();
+                if arg_strs.is_empty() {
+                    base_name_raw
+                } else {
+                    format!("{}<{}>", base_name_raw, arg_strs.join(", "))
+                }
+            } else {
+                base_name_raw
+            };
+
+            let mut base_iface_indices = Vec::new();
+            for &decl_idx in &base_symbol.declarations {
+                if let Some(node) = self.ctx.arena.get(decl_idx)
+                    && self.ctx.arena.get_interface(node).is_some()
+                {
+                    base_iface_indices.push(decl_idx);
+                }
+            }
+            if base_iface_indices.is_empty() && base_symbol.value_declaration.is_some() {
+                let decl_idx = base_symbol.value_declaration;
+                if let Some(node) = self.ctx.arena.get(decl_idx)
+                    && self.ctx.arena.get_interface(node).is_some()
+                {
+                    base_iface_indices.push(decl_idx);
+                }
             }
 
-            // Process each extended interface
-            for &type_idx in &heritage.types.nodes {
-                let Some(type_node) = self.ctx.arena.get(type_idx) else {
-                    continue;
-                };
+            // Collect ALL members from this base (direct + inherited from ancestors).
+            // Use a worklist to walk the interface hierarchy without recursion.
+            // Each entry: (interface_decl_idx, type_args_for_this_level)
+            let mut worklist: Vec<(NodeIndex, Option<Vec<TypeId>>)> = Vec::new();
+            for &idx in &base_iface_indices {
+                let initial_args = type_arguments.map(|args| {
+                    args.nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect::<Vec<_>>()
+                });
+                worklist.push((idx, initial_args));
+            }
 
-                let (expr_idx, type_arguments) =
-                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                        (
-                            expr_type_args.expression,
-                            expr_type_args.type_arguments.as_ref(),
-                        )
-                    } else {
-                        (type_idx, None)
-                    };
+            // Track which member keys we've already seen from THIS base entry.
+            // Direct members shadow inherited ones, so we process closer bases first.
+            let mut seen_member_keys: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            // Prevent cycles in the interface hierarchy.
+            let mut visited_ifaces: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
 
-                let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
-                    continue;
-                };
-
-                let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id) else {
-                    continue;
-                };
-
-                let base_name = self
-                    .heritage_name_text(expr_idx)
-                    .unwrap_or_else(|| base_symbol.escaped_name.clone());
-
-                let mut base_iface_indices = Vec::new();
-                for &decl_idx in &base_symbol.declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_interface(node).is_some()
-                    {
-                        base_iface_indices.push(decl_idx);
-                    }
-                }
-                if base_iface_indices.is_empty() && base_symbol.value_declaration.is_some() {
-                    let decl_idx = base_symbol.value_declaration;
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_interface(node).is_some()
-                    {
-                        base_iface_indices.push(decl_idx);
-                    }
+            while let Some((iface_decl_idx, level_type_args)) = worklist.pop() {
+                if !visited_ifaces.insert(iface_decl_idx.0) {
+                    continue; // Already visited — cycle guard
                 }
 
-                for &base_iface_idx in &base_iface_indices {
-                    let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                let Some(iface_node) = self.ctx.arena.get(iface_decl_idx) else {
+                    continue;
+                };
+                let Some(iface) = self.ctx.arena.get_interface(iface_node) else {
+                    continue;
+                };
+
+                let (level_type_params, level_type_param_updates) =
+                    self.push_type_parameters(&iface.type_parameters);
+
+                let mut substitution_args = level_type_args.unwrap_or_default();
+                if substitution_args.len() < level_type_params.len() {
+                    for param in level_type_params.iter().skip(substitution_args.len()) {
+                        let fallback = param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN);
+                        substitution_args.push(fallback);
+                    }
+                }
+                if substitution_args.len() > level_type_params.len() {
+                    substitution_args.truncate(level_type_params.len());
+                }
+
+                let substitution = TypeSubstitution::from_args(
+                    self.ctx.types,
+                    &level_type_params,
+                    &substitution_args,
+                );
+
+                // Process direct members of this interface level
+                for &member_idx in &iface.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
                         continue;
                     };
-                    let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
-                        continue;
-                    };
 
-                    let (base_type_params, base_type_param_updates) =
-                        self.push_type_parameters(&base_iface.type_parameters);
-
-                    let mut base_type_args = Vec::new();
-                    if let Some(args) = type_arguments {
-                        for &arg_idx in &args.nodes {
-                            base_type_args.push(self.get_type_from_type_node(arg_idx));
-                        }
-                    }
-
-                    if base_type_args.len() < base_type_params.len() {
-                        for param in base_type_params.iter().skip(base_type_args.len()) {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
-                            base_type_args.push(fallback);
-                        }
-                    }
-                    if base_type_args.len() > base_type_params.len() {
-                        base_type_args.truncate(base_type_params.len());
-                    }
-
-                    let base_substitution = TypeSubstitution::from_args(
-                        self.ctx.types,
-                        &base_type_params,
-                        &base_type_args,
-                    );
-
-                    for &base_member_idx in &base_iface.members.nodes {
-                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
-                            continue;
-                        };
-
-                        let (member_key, member_type, member_optional) = if base_member_node.kind
-                            == CALL_SIGNATURE
-                        {
+                    let (member_key, member_type, member_optional) =
+                        if member_node.kind == CALL_SIGNATURE {
                             (
                                 String::from("__call__"),
                                 instantiate_type(
                                     self.ctx.types,
-                                    self.get_type_of_node(base_member_idx),
-                                    &base_substitution,
+                                    self.get_type_of_node(member_idx),
+                                    &substitution,
                                 ),
                                 false,
                             )
-                        } else if base_member_node.kind == METHOD_SIGNATURE
-                            || base_member_node.kind == PROPERTY_SIGNATURE
+                        } else if member_node.kind == METHOD_SIGNATURE
+                            || member_node.kind == PROPERTY_SIGNATURE
                         {
-                            let Some(sig) = self.ctx.arena.get_signature(base_member_node) else {
+                            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                                 continue;
                             };
                             let Some(name) = self.get_property_name(sig.name) else {
@@ -365,8 +455,8 @@ impl<'a> CheckerState<'a> {
                                 name,
                                 instantiate_type(
                                     self.ctx.types,
-                                    self.get_type_of_interface_member_simple(base_member_idx),
-                                    &base_substitution,
+                                    self.get_type_of_interface_member_simple(member_idx),
+                                    &substitution,
                                 ),
                                 sig.question_token,
                             )
@@ -374,131 +464,189 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
 
-                        if derived_member_names.contains(&member_key) {
-                            continue;
-                        }
+                    // Skip members already seen at a closer level in this base chain
+                    if !seen_member_keys.insert(member_key.clone()) {
+                        continue;
+                    }
 
-                        if let Some((prev_base_name, prev_member_type, prev_optional)) =
-                            inherited_member_sources.get(&member_key)
-                        {
-                            if prev_base_name != &base_name {
-                                // TS2320 uses type identity, not assignability.
-                                // Properties are "not identical" if their types differ
-                                // OR if their optionality differs.
-                                let optionality_differs = member_optional != *prev_optional;
-                                let type_incompatible =
-                                    !self.are_mutually_assignable(member_type, *prev_member_type);
-                                if type_incompatible || optionality_differs {
-                                    self.error_at_node(
+                    if derived_member_names.contains(&member_key) {
+                        continue;
+                    }
+
+                    if let Some((
+                        prev_heritage_idx,
+                        prev_base_name,
+                        prev_member_type,
+                        prev_optional,
+                    )) = inherited_member_sources.get(&member_key)
+                    {
+                        if *prev_heritage_idx != type_idx {
+                            let optionality_differs = member_optional != *prev_optional;
+                            let type_incompatible =
+                                !self.are_mutually_assignable(member_type, *prev_member_type);
+                            if type_incompatible || optionality_differs {
+                                self.error_at_node(
                                         iface_data.name,
                                         &format!(
                                             "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                     );
-                                    return;
-                                }
+                                self.pop_type_parameters(level_type_param_updates);
+                                return;
                             }
-                        } else {
-                            inherited_member_sources.insert(
-                                member_key,
-                                (base_name.clone(), member_type, member_optional),
-                            );
                         }
+                    } else {
+                        inherited_member_sources.insert(
+                            member_key,
+                            (type_idx, base_name.clone(), member_type, member_optional),
+                        );
                     }
-
-                    self.pop_type_parameters(base_type_param_updates);
                 }
 
-                // If the base is not an interface, check if it's a class with private/protected members (TS2430)
-                if base_iface_indices.is_empty() {
-                    // Check if the base is a class
-                    let mut base_class_idx = None;
-                    for &decl_idx in &base_symbol.declarations {
-                        if let Some(node) = self.ctx.arena.get(decl_idx)
-                            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                // Enqueue this interface's own bases (grandparent interfaces)
+                if let Some(ref heritage_clauses) = iface.heritage_clauses {
+                    for &hc_idx in &heritage_clauses.nodes {
+                        if let Some(hc_node) = self.ctx.arena.get(hc_idx)
+                            && let Some(hc) = self.ctx.arena.get_heritage_clause(hc_node)
+                            && hc.token == SyntaxKind::ExtendsKeyword as u16
                         {
-                            base_class_idx = Some(decl_idx);
-                            break;
-                        }
-                    }
-
-                    if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
-                        let decl_idx = base_symbol.value_declaration;
-                        if let Some(node) = self.ctx.arena.get(decl_idx)
-                            && node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        {
-                            base_class_idx = Some(decl_idx);
-                        }
-                    }
-
-                    if let Some(class_idx) = base_class_idx
-                        && let Some(class_node) = self.ctx.arena.get(class_idx)
-                        && let Some(class_data) = self.ctx.arena.get_class(class_node)
-                    {
-                        // Check if any interface member redeclares a private/protected class member
-                        for (member_name, _, derived_member_idx, _) in &derived_members {
-                            for &class_member_idx in &class_data.members.nodes {
-                                let Some(class_member_node) = self.ctx.arena.get(class_member_idx)
-                                else {
-                                    continue;
-                                };
-
-                                let (class_member_name, is_private_or_protected) =
-                                    match class_member_node.kind {
-                                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                                            if let Some(prop) =
-                                                self.ctx.arena.get_property_decl(class_member_node)
-                                            {
-                                                let name = self.get_property_name(prop.name);
-                                                let is_priv_prot = self
-                                                    .has_private_modifier(&prop.modifiers)
-                                                    || self.has_protected_modifier(&prop.modifiers);
-                                                (name, is_priv_prot)
-                                            } else {
-                                                continue;
-                                            }
-                                        }
-                                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                                            if let Some(method) =
-                                                self.ctx.arena.get_method_decl(class_member_node)
-                                            {
-                                                let name = self.get_property_name(method.name);
-                                                let is_priv_prot = self
-                                                    .has_private_modifier(&method.modifiers)
-                                                    || self
-                                                        .has_protected_modifier(&method.modifiers);
-                                                (name, is_priv_prot)
-                                            } else {
-                                                continue;
-                                            }
-                                        }
-                                        k if k == syntax_kind_ext::GET_ACCESSOR
-                                            || k == syntax_kind_ext::SET_ACCESSOR =>
-                                        {
-                                            if let Some(accessor) =
-                                                self.ctx.arena.get_accessor(class_member_node)
-                                            {
-                                                let name = self.get_property_name(accessor.name);
-                                                let is_priv_prot = self
-                                                    .has_private_modifier(&accessor.modifiers)
-                                                    || self.has_protected_modifier(
-                                                        &accessor.modifiers,
-                                                    );
-                                                (name, is_priv_prot)
-                                            } else {
-                                                continue;
-                                            }
-                                        }
-                                        _ => continue,
+                            for &ancestor_type_idx in &hc.types.nodes {
+                                let (ancestor_expr, ancestor_type_args_opt) =
+                                    if let Some(ancestor_node) =
+                                        self.ctx.arena.get(ancestor_type_idx)
+                                        && let Some(eat) =
+                                            self.ctx.arena.get_expr_type_args(ancestor_node)
+                                    {
+                                        let args: Vec<TypeId> = eat
+                                            .type_arguments
+                                            .as_ref()
+                                            .map(|a| {
+                                                a.nodes
+                                                    .iter()
+                                                    .map(|&arg_idx| {
+                                                        instantiate_type(
+                                                            self.ctx.types,
+                                                            self.get_type_from_type_node(arg_idx),
+                                                            &substitution,
+                                                        )
+                                                    })
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default();
+                                        (eat.expression, Some(args))
+                                    } else {
+                                        (ancestor_type_idx, None)
                                     };
 
-                                if let Some(class_member_name) = class_member_name
-                                    && &class_member_name == member_name
-                                    && is_private_or_protected
+                                if let Some(ancestor_sym_id) =
+                                    self.resolve_heritage_symbol(ancestor_expr)
+                                    && let Some(ancestor_sym) =
+                                        self.ctx.binder.get_symbol(ancestor_sym_id)
                                 {
-                                    // Interface redeclares a private/protected member as public - TS2430
-                                    self.error_at_node(
+                                    for &decl_idx in &ancestor_sym.declarations {
+                                        if let Some(dn) = self.ctx.arena.get(decl_idx)
+                                            && self.ctx.arena.get_interface(dn).is_some()
+                                        {
+                                            worklist
+                                                .push((decl_idx, ancestor_type_args_opt.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                self.pop_type_parameters(level_type_param_updates);
+            }
+
+            // If the base is not an interface, check if it's a class with private/protected members (TS2430)
+            if base_iface_indices.is_empty() {
+                // Check if the base is a class
+                let mut base_class_idx = None;
+                for &decl_idx in &base_symbol.declarations {
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    {
+                        base_class_idx = Some(decl_idx);
+                        break;
+                    }
+                }
+
+                if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
+                    let decl_idx = base_symbol.value_declaration;
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    {
+                        base_class_idx = Some(decl_idx);
+                    }
+                }
+
+                if let Some(class_idx) = base_class_idx
+                    && let Some(class_node) = self.ctx.arena.get(class_idx)
+                    && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                {
+                    // Check if any interface member redeclares a private/protected class member
+                    for (member_name, _, derived_member_idx, _) in &derived_members {
+                        for &class_member_idx in &class_data.members.nodes {
+                            let Some(class_member_node) = self.ctx.arena.get(class_member_idx)
+                            else {
+                                continue;
+                            };
+
+                            let (class_member_name, is_private_or_protected) =
+                                match class_member_node.kind {
+                                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                                        if let Some(prop) =
+                                            self.ctx.arena.get_property_decl(class_member_node)
+                                        {
+                                            let name = self.get_property_name(prop.name);
+                                            let is_priv_prot = self
+                                                .has_private_modifier(&prop.modifiers)
+                                                || self.has_protected_modifier(&prop.modifiers);
+                                            (name, is_priv_prot)
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                                        if let Some(method) =
+                                            self.ctx.arena.get_method_decl(class_member_node)
+                                        {
+                                            let name = self.get_property_name(method.name);
+                                            let is_priv_prot = self
+                                                .has_private_modifier(&method.modifiers)
+                                                || self.has_protected_modifier(&method.modifiers);
+                                            (name, is_priv_prot)
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::GET_ACCESSOR
+                                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                                    {
+                                        if let Some(accessor) =
+                                            self.ctx.arena.get_accessor(class_member_node)
+                                        {
+                                            let name = self.get_property_name(accessor.name);
+                                            let is_priv_prot = self
+                                                .has_private_modifier(&accessor.modifiers)
+                                                || self.has_protected_modifier(&accessor.modifiers);
+                                            (name, is_priv_prot)
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                    _ => continue,
+                                };
+
+                            if let Some(class_member_name) = class_member_name
+                                && &class_member_name == member_name
+                                && is_private_or_protected
+                            {
+                                // Interface redeclares a private/protected member as public - TS2430
+                                self.error_at_node(
                                         *derived_member_idx,
                                         &format!(
                                             "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
@@ -506,10 +654,8 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
 
-                                    if let Some((pos, end)) =
-                                        self.get_node_span(*derived_member_idx)
-                                    {
-                                        self.error(
+                                if let Some((pos, end)) = self.get_node_span(*derived_member_idx) {
+                                    self.error(
                                                     pos,
                                                     end - pos,
                                                     format!(
@@ -517,192 +663,189 @@ impl<'a> CheckerState<'a> {
                                                     ),
                                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                                 );
-                                    }
                                 }
                             }
                         }
+                    }
 
-                        // TS2320: Interface cannot extend two classes that each contribute a
-                        // private/protected member with the same name.
-                        for &class_member_idx in &class_data.members.nodes {
-                            let Some(member_info) =
-                                self.extract_class_member_info(class_member_idx, false)
-                            else {
-                                continue;
-                            };
+                    // TS2320: Interface cannot extend two classes that each contribute a
+                    // private/protected member with the same name.
+                    for &class_member_idx in &class_data.members.nodes {
+                        let Some(member_info) =
+                            self.extract_class_member_info(class_member_idx, false)
+                        else {
+                            continue;
+                        };
 
-                            if member_info.is_static
-                                || member_info.visibility == MemberVisibility::Public
-                            {
-                                continue;
-                            }
+                        if member_info.is_static
+                            || member_info.visibility == MemberVisibility::Public
+                        {
+                            continue;
+                        }
 
-                            if derived_member_names.contains(&member_info.name) {
-                                continue;
-                            }
+                        if derived_member_names.contains(&member_info.name) {
+                            continue;
+                        }
 
-                            if let Some(prev_base_name) =
-                                inherited_non_public_class_member_sources.get(&member_info.name)
-                            {
-                                if prev_base_name != &base_name {
-                                    self.error_at_node(
+                        if let Some(prev_base_name) =
+                            inherited_non_public_class_member_sources.get(&member_info.name)
+                        {
+                            if prev_base_name != &base_name {
+                                self.error_at_node(
                                             iface_data.name,
                                             &format!(
                                                 "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                         );
-                                    return;
-                                }
-                            } else {
-                                inherited_non_public_class_member_sources
-                                    .insert(member_info.name, base_name.clone());
+                                return;
                             }
+                        } else {
+                            inherited_non_public_class_member_sources
+                                .insert(member_info.name, base_name.clone());
                         }
                     }
-
-                    continue;
                 }
 
-                let Some(&base_root_idx) = base_iface_indices.first() else {
-                    continue;
-                };
+                continue;
+            }
 
-                let Some(base_root_node) = self.ctx.arena.get(base_root_idx) else {
-                    continue;
-                };
+            let Some(&base_root_idx) = base_iface_indices.first() else {
+                continue;
+            };
 
-                let Some(base_root_iface) = self.ctx.arena.get_interface(base_root_node) else {
-                    continue;
-                };
+            let Some(base_root_node) = self.ctx.arena.get(base_root_idx) else {
+                continue;
+            };
 
-                let mut type_args = Vec::new();
-                if let Some(args) = type_arguments {
-                    for &arg_idx in &args.nodes {
-                        type_args.push(self.get_type_from_type_node(arg_idx));
-                    }
+            let Some(base_root_iface) = self.ctx.arena.get_interface(base_root_node) else {
+                continue;
+            };
+
+            let mut type_args = Vec::new();
+            if let Some(args) = type_arguments {
+                for &arg_idx in &args.nodes {
+                    type_args.push(self.get_type_from_type_node(arg_idx));
                 }
+            }
 
-                let (base_type_params, base_type_param_updates) =
-                    self.push_type_parameters(&base_root_iface.type_parameters);
+            let (base_type_params, base_type_param_updates) =
+                self.push_type_parameters(&base_root_iface.type_parameters);
 
-                if type_args.len() < base_type_params.len() {
-                    for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
-                        type_args.push(fallback);
-                    }
+            if type_args.len() < base_type_params.len() {
+                for param in base_type_params.iter().skip(type_args.len()) {
+                    let fallback = param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN);
+                    type_args.push(fallback);
                 }
-                if type_args.len() > base_type_params.len() {
-                    type_args.truncate(base_type_params.len());
-                }
+            }
+            if type_args.len() > base_type_params.len() {
+                type_args.truncate(base_type_params.len());
+            }
 
-                let substitution =
-                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+            let substitution =
+                TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
-                for (member_name, member_type, derived_member_idx, derived_kind) in &derived_members
-                {
-                    let mut found = false;
+            for (member_name, member_type, derived_member_idx, derived_kind) in &derived_members {
+                let mut found = false;
 
-                    for &base_iface_idx in &base_iface_indices {
-                        let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                for &base_iface_idx in &base_iface_indices {
+                    let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                        continue;
+                    };
+                    let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
+                        continue;
+                    };
+
+                    for &base_member_idx in &base_iface.members.nodes {
+                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
                             continue;
                         };
-                        let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
-                            continue;
-                        };
 
-                        for &base_member_idx in &base_iface.members.nodes {
-                            let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
-                                continue;
-                            };
-
-                            let (base_member_name, base_type) = if base_member_node.kind
-                                == METHOD_SIGNATURE
-                                || base_member_node.kind == PROPERTY_SIGNATURE
-                            {
-                                if let Some(sig) = self.ctx.arena.get_signature(base_member_node) {
-                                    if let Some(name) = self.get_property_name(sig.name) {
-                                        let type_id =
-                                            self.get_type_of_interface_member(base_member_idx);
-                                        (name, type_id)
-                                    } else {
-                                        continue;
-                                    }
+                        let (base_member_name, base_type) = if base_member_node.kind
+                            == METHOD_SIGNATURE
+                            || base_member_node.kind == PROPERTY_SIGNATURE
+                        {
+                            if let Some(sig) = self.ctx.arena.get_signature(base_member_node) {
+                                if let Some(name) = self.get_property_name(sig.name) {
+                                    let type_id =
+                                        self.get_type_of_interface_member(base_member_idx);
+                                    (name, type_id)
                                 } else {
                                     continue;
                                 }
                             } else {
                                 continue;
-                            };
-
-                            if *member_name != base_member_name {
-                                continue;
                             }
+                        } else {
+                            continue;
+                        };
 
-                            found = true;
-                            let base_type =
-                                instantiate_type(self.ctx.types, base_type, &substitution);
+                        if *member_name != base_member_name {
+                            continue;
+                        }
 
-                            // For method signatures, also check required parameter
-                            // count: derived methods must not require more parameters
-                            // than the base method provides. This catches the
-                            // "target signature provides too few arguments" case.
-                            let param_count_incompatible = if *derived_kind == METHOD_SIGNATURE
-                                && base_member_node.kind == METHOD_SIGNATURE
-                            {
-                                let derived_required = self
-                                    .count_required_params_from_signature_node(*derived_member_idx);
-                                let base_required =
-                                    self.count_required_params_from_signature_node(base_member_idx);
-                                derived_required > base_required
-                            } else {
-                                false
-                            };
+                        found = true;
+                        let base_type = instantiate_type(self.ctx.types, base_type, &substitution);
 
-                            if param_count_incompatible
-                                || should_report_member_type_mismatch(
-                                    self,
-                                    *member_type,
-                                    base_type,
-                                    *derived_member_idx,
-                                )
-                            {
-                                let member_type_str = self.format_type(*member_type);
-                                let base_type_str = self.format_type(base_type);
+                        // For method signatures, also check required parameter
+                        // count: derived methods must not require more parameters
+                        // than the base method provides. This catches the
+                        // "target signature provides too few arguments" case.
+                        let param_count_incompatible = if *derived_kind == METHOD_SIGNATURE
+                            && base_member_node.kind == METHOD_SIGNATURE
+                        {
+                            let derived_required =
+                                self.count_required_params_from_signature_node(*derived_member_idx);
+                            let base_required =
+                                self.count_required_params_from_signature_node(base_member_idx);
+                            derived_required > base_required
+                        } else {
+                            false
+                        };
 
-                                self.error_at_node(
+                        if param_count_incompatible
+                            || should_report_member_type_mismatch(
+                                self,
+                                *member_type,
+                                base_type,
+                                *derived_member_idx,
+                            )
+                        {
+                            let member_type_str = self.format_type(*member_type);
+                            let base_type_str = self.format_type(base_type);
+
+                            self.error_at_node(
                                     iface_data.name,
                                     &format!(
                                         "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                     ),
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
-                                self.report_property_type_incompatible_detail(
-                                    iface_data.name,
-                                    member_name,
-                                    &member_type_str,
-                                    &base_type_str,
-                                    diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                );
+                            self.report_property_type_incompatible_detail(
+                                iface_data.name,
+                                member_name,
+                                &member_type_str,
+                                &base_type_str,
+                                diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                            );
 
-                                self.pop_type_parameters(base_type_param_updates);
-                                return;
-                            }
-
-                            break;
+                            self.pop_type_parameters(base_type_param_updates);
+                            return;
                         }
 
-                        if found {
-                            break;
-                        }
+                        break;
+                    }
+
+                    if found {
+                        break;
                     }
                 }
-
-                self.pop_type_parameters(base_type_param_updates);
             }
+
+            self.pop_type_parameters(base_type_param_updates);
         }
     }
 
