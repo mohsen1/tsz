@@ -641,6 +641,7 @@ impl<'a> CheckerState<'a> {
                 index,
                 expected,
                 actual,
+                ..
             } => {
                 if index < args.len() {
                     let arg_idx = args[index];

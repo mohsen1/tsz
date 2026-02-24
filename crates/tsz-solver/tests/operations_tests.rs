@@ -104,6 +104,7 @@ fn test_call_argument_type_mismatch() {
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 0);
             assert_eq!(expected, TypeId::NUMBER);
@@ -600,6 +601,7 @@ fn test_call_rest_parameter_type_mismatch() {
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 1);
             assert_eq!(expected, TypeId::NUMBER);
@@ -701,6 +703,7 @@ fn test_call_tuple_rest_argument_type_mismatch() {
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 1);
             assert_eq!(expected, TypeId::STRING);
@@ -808,6 +811,7 @@ fn test_call_tuple_rest_with_fixed_tail() {
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 1);
             assert_eq!(expected, TypeId::STRING);
@@ -1801,6 +1805,63 @@ fn test_call_generic_argument_type_mismatch_with_default() {
 }
 
 #[test]
+fn test_call_generic_direct_param_candidate_keeps_first_candidate_for_mismatch() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_string("");
+
+    let result = evaluator.resolve_call(func, &[one, two]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            fallback_return,
+        } => {
+            assert_eq!(index, 1);
+            assert_eq!(expected, one);
+            assert_eq!(actual, two);
+            assert_eq!(fallback_return, one);
+        }
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_call_generic_argument_count_mismatch() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -2045,6 +2106,7 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 0);
             assert_eq!(expected, TypeId::NUMBER);
@@ -3553,6 +3615,7 @@ fn test_resolve_call_generic_object_literal_repeated_property_uses_first_propert
             index,
             expected,
             actual,
+            ..
         } => {
             assert_eq!(index, 0);
             let expected_type = interner.object(vec![

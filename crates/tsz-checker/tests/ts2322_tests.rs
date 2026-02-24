@@ -979,6 +979,44 @@ fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
 }
 
 #[test]
+fn test_ts2322_arrow_expression_body_jsdoc_cast_reports_template_return_mismatch() {
+    let source = r#"
+        /** @template T
+         * @param {T|undefined} value value or not
+         * @returns {T} result value
+         */
+        const foo1 = value => /** @type {string} */({ ...value });
+
+        /** @template T
+         * @param {T|undefined} value value or not
+         * @returns {T} result value
+         */
+        const foo2 = value => /** @type {string} */(/** @type {T} */({ ...value }));
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "mytest.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let has_2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+
+    assert_eq!(
+        has_2322, 2,
+        "Expected two TS2322 errors from both inline cast arrow bodies, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_namespace_export_assignment_optional_to_required() {
     let source = r#"
         // @target: es2015

@@ -705,6 +705,7 @@ impl<'a> CheckerState<'a> {
                 index,
                 expected,
                 actual,
+                fallback_return,
             } => {
                 if self.should_defer_contextual_argument_mismatch(actual, expected) {
                     return TypeId::ERROR;
@@ -743,7 +744,12 @@ impl<'a> CheckerState<'a> {
                             self.check_argument_assignable_or_report(actual, expected, last_arg);
                     }
                 }
-                TypeId::ERROR
+
+                if fallback_return != TypeId::ERROR {
+                    fallback_return
+                } else {
+                    TypeId::ERROR
+                }
             }
             CallResult::TypeParameterConstraintViolation {
                 inferred_type,

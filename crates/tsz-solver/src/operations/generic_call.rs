@@ -71,6 +71,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Reusable visited set for type_contains_placeholder checks (avoids per-iteration alloc)
         let mut placeholder_visited = FxHashSet::default();
+        // Track placeholders that are used directly as argument targets.
+        // For those parameters we keep inference constrained so final argument checks
+        // can report concrete mismatches instead of silently widening to unions.
+        let mut direct_param_vars = FxHashSet::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
 
@@ -213,6 +217,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Direct placeholders (inference variables) are validated by final
             // constraint resolution below. Skipping eager checks here avoids
             // duplicate expensive assignability work on hot generic-call paths.
+            let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
+                && i >= instantiated_params.len().saturating_sub(1);
+
             if !var_map.contains_key(&target_type) {
                 placeholder_visited.clear();
                 if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited)
@@ -225,6 +232,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             index: i,
                             expected: target_type,
                             actual: arg_type,
+                            fallback_return: TypeId::ERROR,
                         };
                     }
                 } else {
@@ -248,11 +256,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     index: i,
                                     expected: inst_constraint,
                                     actual: arg_type,
+                                    fallback_return: TypeId::ERROR,
                                 };
                             }
                         }
                     }
                 }
+            } else if !is_rest_param_arg {
+                direct_param_vars.insert(var_map[&target_type]);
             }
 
             // arg_type <: target_type
@@ -308,6 +319,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 placeholder_visited.clear();
                 let target_has_placeholders =
                     self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
+                let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
+                    && i >= instantiated_params.len().saturating_sub(1);
+
+                if target_has_placeholders
+                    && var_map.contains_key(&target_type)
+                    && !is_rest_param_arg
+                {
+                    direct_param_vars.insert(var_map[&target_type]);
+                }
 
                 if !target_has_placeholders {
                     // No placeholders in target - direct assignability check
@@ -318,6 +338,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             index: i,
                             expected: target_type,
                             actual: arg_type,
+                            fallback_return: TypeId::ERROR,
                         };
                     }
                 } else {
@@ -394,6 +415,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
             let has_constraints = matches!(&constraints, Some(c) if !c.is_empty());
+            let lower_bounds = constraints
+                .as_ref()
+                .map(|c| c.lower_bounds.clone())
+                .unwrap_or_default();
 
             trace!(
                 type_param_name = ?self.interner.resolve_atom(tp.name),
@@ -411,6 +436,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.checker.is_assignable_to(source, target)
                 }) {
                     Ok(ty) => {
+                        let ty = if direct_param_vars.contains(&var) {
+                            self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
+                        } else {
+                            ty
+                        };
                         trace!(
                             resolved_type = ?ty,
                             "Type parameter resolved successfully from constraints"
@@ -446,6 +476,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             instantiate_type(self.interner, constraint, &final_subst)
                         } else {
                             TypeId::ERROR
+                        };
+                        let fallback = if direct_param_vars.contains(&var) {
+                            self.resolve_direct_parameter_inference_type(&lower_bounds, fallback)
+                        } else {
+                            fallback
                         };
                         trace!(
                             fallback_type = ?fallback,
@@ -601,6 +636,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             s
         };
+        let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
         let final_args: Vec<TypeId> = if placeholder_subst.is_empty() {
             arg_types.to_vec()
         } else {
@@ -625,11 +661,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.check_argument_types_with(&instantiated_params, &final_args, true, func.is_method)
         {
             tracing::debug!("Final check failed: {:?}", result);
-            return result;
+            return match result {
+                CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                    ..
+                } => CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                    fallback_return: return_type,
+                },
+                _ => result,
+            };
         }
         tracing::debug!("Final check succeeded");
-
-        let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
 
         // Instantiate the type predicate if present, so the checker can use it
         // for flow narrowing with the correct (inferred) type arguments.
@@ -657,6 +704,60 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         CallResult::Success(return_type)
+    }
+
+    fn resolve_direct_parameter_inference_type(
+        &self,
+        lower_bounds: &[TypeId],
+        inferred: TypeId,
+    ) -> TypeId {
+        if lower_bounds.len() <= 1 {
+            return inferred;
+        }
+
+        let inferred_union_members = match self.interner.lookup(inferred) {
+            Some(TypeData::Union(member_list_id)) => {
+                self.interner.type_list(member_list_id).to_vec()
+            }
+            _ => return inferred,
+        };
+
+        // If this is already a single-member union, keep it as-is.
+        if inferred_union_members.len() <= 1 {
+            return inferred;
+        }
+
+        // Direct arguments should stay narrow when there are heterogeneous candidates.
+        // Otherwise TypeScript-style checks can get masked by a broad union result.
+        if lower_bounds
+            .iter()
+            .all(|ty| self.is_mergeable_direct_inference_candidate(*ty))
+        {
+            return inferred;
+        }
+
+        // Fall back to the first lower-bound candidate so later argument checks
+        // drive assignability failures on the mismatch site.
+        lower_bounds[0]
+    }
+
+    fn is_mergeable_direct_inference_candidate(&self, ty: TypeId) -> bool {
+        match self.interner.lookup(ty) {
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_),
+            ) => true,
+            Some(TypeData::Union(members)) => {
+                let members = self.interner.type_list(members);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|member| self.is_mergeable_direct_inference_candidate(*member))
+            }
+            _ => false,
+        }
     }
 
     /// Fast path for identity-style generic calls:

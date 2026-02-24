@@ -100,6 +100,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index: i,
                     expected: param_type,
                     actual: *arg_type,
+                    fallback_return: TypeId::ERROR,
                 });
             }
         }
