@@ -13,12 +13,8 @@
 - **Root cause**: Core assignability, property resolution, and argument type checking gaps
 - **Difficulty**: HIGH (broad, incremental)
 
-### TS2353 — Intersection freshness false positives (~76 tests)
-- **Root cause**: `tsz-solver/src/intern/intersection.rs` propagates `FRESH_LITERAL` flag
-  via OR when merging objects in an intersection. Intersected types appear fresh when they
-  shouldn't, triggering false excess property checks.
-- **Fix needed**: Change freshness propagation to AND instead of OR for intersection merging.
-- **Difficulty**: MEDIUM-HIGH
+### ~~TS2353 — Intersection freshness false positives~~ RESOLVED
+- Fixed: intersection merging now uses AND logic for FRESH_LITERAL propagation
 
 ### TS2353 — Remaining excess property gaps
 - **Spread freshness**: Objects via spread (`{...a}`) should be non-fresh — requires freshness tracking through spread
@@ -254,12 +250,8 @@
 - **Fix needed**: Binder-aware cross-file symbol resolution
 - **Difficulty**: HARD
 
-### TS2693 — Remaining false positives (9 tests)
-- False TS2693 for `number[]`, `string[]`, `boolean[]` in value positions (e.g., `var na = new number[]`)
-- tsc emits only TS1011 for the missing bracket argument
-- **Fix**: Suppress TS2693 when parent is element access with missing argument
-- **Files**: `type_computation_access.rs` (lines 27-73), `type_computation_identifier.rs` (lines 867-883)
-- **Difficulty**: EASY
+### ~~TS2693 — Remaining false positives (9 tests)~~ RESOLVED
+- Fixed: TS2693 suppressed when identifier is expression of element access with missing argument
 
 ### TS2702 — Namespace-scoped type-as-namespace resolution (remaining tests)
 - `errorForUsingPropertyOfTypeAsType01.ts` Tests 1-5: Checker resolves `Foo.bar` inside namespace

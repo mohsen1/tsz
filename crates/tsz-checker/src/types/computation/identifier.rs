@@ -878,6 +878,20 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
+            // Suppress TS2693 when this identifier is the expression of an element
+            // access with a missing argument (e.g., `new number[]`).  The parser
+            // already emits TS1011 and tsc does not emit TS2693 in this case.
+            if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
+                && parent_ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+            {
+                use tsz_parser::parser::syntax_kind_ext;
+                if parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                        && access.name_or_argument.is_none() {
+                            return TypeId::ERROR;
+                        }
+            }
             self.error_type_only_value_at(name, idx);
             return TypeId::ERROR;
         }
