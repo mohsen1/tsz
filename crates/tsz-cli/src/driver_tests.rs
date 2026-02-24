@@ -1,5 +1,6 @@
 use super::FileReadResult;
 use super::check_module_resolution_compatibility;
+use super::check_module_resolution_compatibility_mut;
 use super::no_input_diagnostics_for_config;
 use super::read_source_file;
 use crate::config::ResolvedCompilerOptions;
@@ -7,8 +8,10 @@ use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
 use tsz::config::ModuleResolutionKind;
+use tsz::emitter::PrinterOptions;
 use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::Diagnostic;
+use tsz::checker::diagnostics::diagnostic_codes;
 
 #[test]
 fn test_module_resolution_requires_matching_module() {
@@ -23,6 +26,38 @@ fn test_module_resolution_requires_matching_module() {
 
     let diag = check_module_resolution_compatibility(&resolved, None);
     assert!(diag.is_some());
+}
+
+#[test]
+fn test_module_resolution_incompatibility_preserves_existing_config_diagnostics() {
+    let mut config_diagnostics = vec![Diagnostic::error(
+        "tsconfig.json".to_string(),
+        1,
+        5,
+        "pre-existing config diagnostic".to_string(),
+        18003,
+    )];
+
+    let mut printer = PrinterOptions::default();
+    printer.module = ModuleKind::CommonJS;
+    let resolved = ResolvedCompilerOptions {
+        printer,
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        ..Default::default()
+    };
+
+    let had_error = check_module_resolution_compatibility_mut(
+        &resolved,
+        Some(Path::new("tsconfig.json")),
+        &mut config_diagnostics,
+    );
+    assert!(had_error);
+    assert_eq!(config_diagnostics.len(), 2);
+    let codes: Vec<u32> = config_diagnostics.iter().map(|diag| diag.code).collect();
+    assert!(codes.contains(&18003));
+    assert!(codes.contains(
+        &diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO
+    ));
 }
 
 #[test]

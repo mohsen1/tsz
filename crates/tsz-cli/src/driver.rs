@@ -692,7 +692,7 @@ fn compile_inner(
     };
     let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
     let config = loaded.config;
-    let config_diagnostics = loaded.diagnostics;
+    let mut config_diagnostics = loaded.diagnostics;
 
     // TS5103 (invalid ignoreDeprecations value) is fatal in tsc: it stops compilation
     // and reports only the config error. Match this behavior to avoid extra diagnostics.
@@ -740,9 +740,13 @@ fn compile_inner(
         resolved.checker.module = default_module;
     }
 
-    if let Some(diag) = check_module_resolution_compatibility(&resolved, tsconfig_path.as_deref()) {
+    if check_module_resolution_compatibility_mut(
+        &resolved,
+        tsconfig_path.as_deref(),
+        &mut config_diagnostics,
+    ) {
         return Ok(CompilationResult {
-            diagnostics: vec![diag],
+            diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
             files_read: Vec::new(),
             file_infos: Vec::new(),
@@ -1173,6 +1177,19 @@ pub(super) fn no_input_diagnostics_for_config(
     // tsc emits TS18003 without file position (file="", pos=0).
     config_diagnostics.push(Diagnostic::error(String::new(), 0, 0, message, 18003));
     config_diagnostics
+}
+
+fn check_module_resolution_compatibility_mut(
+    resolved: &ResolvedCompilerOptions,
+    tsconfig_path: Option<&Path>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> bool {
+    if let Some(diag) = check_module_resolution_compatibility(resolved, tsconfig_path) {
+        diagnostics.push(diag);
+        true
+    } else {
+        false
+    }
 }
 
 fn check_module_resolution_compatibility(
