@@ -1,33 +1,12 @@
 use tsz_solver::operations::CallResult;
 use tsz_solver::{
-    AssignabilityChecker, FunctionShape, QueryDatabase, TupleElement, TypeDatabase, TypeId,
-    TypeSubstitution,
+    AssignabilityChecker, FunctionShape, QueryDatabase, TypeDatabase, TypeId, TypeSubstitution,
 };
 
-pub(crate) fn array_element_type_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<TypeId> {
-    tsz_solver::type_queries::get_array_element_type(db, type_id)
-}
-
-pub(crate) fn tuple_elements_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<TupleElement>> {
-    tsz_solver::type_queries::get_tuple_elements(db, type_id)
-}
-
-pub(crate) fn is_type_parameter_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter_like(db, type_id)
-}
-
-pub(crate) fn lazy_def_id_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_solver::DefId> {
-    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
-}
+pub(crate) use super::common::array_element_type as array_element_type_for_type;
+pub(crate) use super::common::is_type_parameter_like as is_type_parameter_type;
+pub(crate) use super::common::lazy_def_id as lazy_def_id_for_type;
+pub(crate) use super::common::tuple_elements as tuple_elements_for_type;
 
 pub(crate) fn get_contextual_signature(
     db: &dyn TypeDatabase,

@@ -89,3 +89,7 @@ pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Op
 pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_unit_type(db, type_id)
 }
+
+pub(crate) fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::unwrap_readonly(db, type_id)
+}
