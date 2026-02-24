@@ -350,7 +350,7 @@ impl<'a> CheckerState<'a> {
             let method_has_declare = self.has_declare_modifier(&method.modifiers);
             let is_ambient = in_declared_class
                 || method_has_declare
-                || self.ctx.file_name.ends_with(".d.ts")
+                || self.ctx.is_declaration_file()
                 || self.is_ambient_declaration(member_idx);
 
             if is_ambient {
@@ -519,7 +519,7 @@ impl<'a> CheckerState<'a> {
                 .enclosing_class
                 .as_ref()
                 .is_some_and(|c| c.is_declared);
-            let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
+            let is_ambient_file = self.ctx.is_declaration_file();
 
             if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any {
                 let method_name = self.get_property_name(method.name);
@@ -1147,7 +1147,7 @@ impl<'a> CheckerState<'a> {
                     .enclosing_class
                     .as_ref()
                     .is_some_and(|c| c.is_declared);
-                let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
+                let is_ambient_file = self.ctx.is_declaration_file();
                 let is_async = self.has_async_modifier(&accessor.modifiers);
 
                 if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any_accessor

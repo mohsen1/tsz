@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
         let Some(class) = self.ctx.arena.get_class(node) else {
             return false;
         };
-        if self.ctx.file_name.ends_with(".d.ts") {
+        if self.ctx.is_declaration_file() {
             return true;
         }
 
@@ -1163,7 +1163,7 @@ impl<'a> CheckerState<'a> {
         let Some(function) = self.ctx.arena.get_function(node) else {
             return false;
         };
-        if self.ctx.file_name.ends_with(".d.ts") {
+        if self.ctx.is_declaration_file() {
             return true;
         }
 

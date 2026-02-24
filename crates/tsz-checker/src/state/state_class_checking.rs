@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
         // In tsc, .d.ts files are inherently ambient even without the `declare` keyword.
         // Note: Abstract classes DO get TS2564 errors - they can have constructors
         // and properties must be initialized either with defaults or in the constructor
-        if is_declared || self.ctx.file_name.ends_with(".d.ts") {
+        if is_declared || self.ctx.is_declaration_file() {
             return;
         }
 

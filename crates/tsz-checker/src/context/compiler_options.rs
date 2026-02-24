@@ -8,6 +8,17 @@ use tsz_solver::judge::JudgeConfig;
 
 use super::CheckerContext;
 
+/// Check if a file name represents a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts).
+///
+/// Use this for checking file names other than the current file.
+/// For the current file, prefer `CheckerContext::is_declaration_file()`.
+pub fn is_declaration_file_name(file_name: &str) -> bool {
+    file_name.ends_with(".d.ts")
+        || file_name.ends_with(".d.tsx")
+        || file_name.ends_with(".d.mts")
+        || file_name.ends_with(".d.cts")
+}
+
 impl<'a> CheckerContext<'a> {
     // =========================================================================
     // Compiler Option Accessors
@@ -18,11 +29,9 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.strict
     }
 
-    /// Check if the current file is a declaration file (.d.ts, .d.mts, .d.cts).
+    /// Check if the current file is a declaration file (.d.ts, .d.tsx, .d.mts, .d.cts).
     pub fn is_declaration_file(&self) -> bool {
-        self.file_name.ends_with(".d.ts")
-            || self.file_name.ends_with(".d.mts")
-            || self.file_name.ends_with(".d.cts")
+        is_declaration_file_name(&self.file_name)
     }
 
     /// Check if a declaration is ambient (in a `.d.ts` file, has `declare` keyword,
