@@ -718,17 +718,8 @@ impl std::hash::Hash for OrderedFloat {
     }
 }
 
-/// Visibility modifier for class properties
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
-pub enum Visibility {
-    /// Public property - structural compatibility applies
-    #[default]
-    Public,
-    /// Private property - nominal compatibility only
-    Private,
-    /// Protected property - nominal compatibility only
-    Protected,
-}
+// Visibility is defined in tsz-common for cross-crate sharing (parser, solver, checker, lowering)
+pub use tsz_common::Visibility;
 
 /// Property information for object types
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]

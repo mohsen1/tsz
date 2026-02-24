@@ -1705,25 +1705,10 @@ impl<'a> TypeLowering<'a> {
             .has_modifier(modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword)
     }
 
-    /// Get visibility from modifiers list
-    /// Returns Private, Protected, or Public (default)
+    /// Get visibility from modifiers list.
+    /// Delegates to [`NodeArena::get_visibility_from_modifiers`].
     fn get_visibility_from_modifiers(&self, modifiers: &Option<NodeList>) -> Visibility {
-        use tsz_scanner::SyntaxKind;
-
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    match mod_node.kind {
-                        x if x == SyntaxKind::PrivateKeyword as u16 => return Visibility::Private,
-                        x if x == SyntaxKind::ProtectedKeyword as u16 => {
-                            return Visibility::Protected;
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-        }
-        Visibility::Public
+        self.arena.get_visibility_from_modifiers(modifiers)
     }
 
     /// Check if a modifiers list contains a const keyword (for const type parameters)
