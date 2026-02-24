@@ -102,9 +102,11 @@ fn ts2385_static_methods_checked_separately() {
         }",
     );
     let count = codes.iter().filter(|&&c| c == 2385).count();
+    // tsc emits TS2385 twice for the static overload signature: once from
+    // the duplicate-identifier check and once from overload-modifier agreement.
     assert_eq!(
-        count, 1,
-        "Expected 1 TS2385 for static mismatch, got {count}: {codes:?}"
+        count, 2,
+        "Expected 2 TS2385 for static mismatch (matches tsc), got {count}: {codes:?}"
     );
 }
 

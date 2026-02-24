@@ -45,6 +45,7 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 | ~~`flow/control_flow.rs`~~ | ~~1,734~~ | ~~266 lines~~ | ✅ Split — extracted definite assignment traversal + variable declaration utilities (~370 LOC) into `control_flow_var_utils.rs`, reducing to 1,364 LOC |
 | `types/type_checking_utilities_jsdoc.rs` | 1,728 | 272 lines |
 | `types/type_checking_queries_class.rs` | 1,713 | 287 lines |
+| ~~`types/type_checking_global.rs`~~ | ~~1,897~~ | ~~103 lines~~ | ✅ Split (64a0a757b) — extracted duplicate identifier/declaration conflict checking (~1,544 LOC) into `type_checking_duplicate_identifiers.rs`, reducing to 363 LOC |
 
 Previously near-threshold files (all successfully split): `state_class_checking.rs` (919), `type_computation_call.rs` (796), `member_declaration_checks.rs` (1,695), `type_computation_access.rs` (889), `type_checking_queries_lib.rs` (1,313), `control_flow_narrowing.rs` (1,204), `type_computation.rs` (1,119), `control_flow_assignment.rs` (878), `class_type.rs` (1,026).
 
