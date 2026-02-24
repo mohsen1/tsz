@@ -1,6 +1,18 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9984/13623 = 73.3% JS, ~777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10030/13623 = 73.6% JS, ~776/1995 = 38.9% DTS)
+
+### Fixed (2026-02-24, session 6) — Dispose Helper Over-Emission at ES2025+
+
+- **`__addDisposableResource` / `__disposeResources` helper over-emission at ES2025+ targets** (+46 JS):
+  The lowering pass unconditionally set the `add_disposable_resource` and `dispose_resources`
+  helper flags whenever a `using` declaration was detected, regardless of target. At ES2025+
+  targets (where `using` is native syntax), these helpers are unnecessary and produced spurious
+  output. Fix: gate the helper flag setting on `!self.ctx.options.target.supports_es2025()` in
+  `visit_children.rs`. Two unit tests added (ESNext skips helpers, ES2022 sets them).
+  Tests fixed: `awaitUsingDeclarations.*(target=esnext)`, `usingDeclarations.*(target=esnext)`,
+  and related esnext-target variants across ~46 test cases.
+  JS: 9984→10030, DTS: 776→776, zero regressions.
 
 ### Fixed (2026-02-24, session 5) — Using Declaration Missing Semicolon at ES2025+
 
