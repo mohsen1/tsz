@@ -500,7 +500,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Helper: Report TS8004 error for TypeScript-only type parameters.
-    fn error_if_ts_only_type_params(
+    pub(crate) fn error_if_ts_only_type_params(
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
     ) {
@@ -819,14 +819,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn has_static_modifier_in_arena(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-    ) -> bool {
-        arena.has_modifier(modifiers, tsz_scanner::SyntaxKind::StaticKeyword)
-    }
-
     pub(crate) fn declaration_symbol_flags(
         &self,
         arena: &tsz_parser::parser::NodeArena,
@@ -875,7 +867,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR => {
                 let mut flags = symbol_flags::GET_ACCESSOR;
                 if let Some(accessor) = arena.get_accessor(node)
-                    && self.has_static_modifier_in_arena(arena, &accessor.modifiers)
+                    && arena.has_modifier(&accessor.modifiers, SyntaxKind::StaticKeyword)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -884,7 +876,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::SET_ACCESSOR => {
                 let mut flags = symbol_flags::SET_ACCESSOR;
                 if let Some(accessor) = arena.get_accessor(node)
-                    && self.has_static_modifier_in_arena(arena, &accessor.modifiers)
+                    && arena.has_modifier(&accessor.modifiers, SyntaxKind::StaticKeyword)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -893,7 +885,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::METHOD_DECLARATION => {
                 let mut flags = symbol_flags::METHOD;
                 if let Some(method) = arena.get_method_decl(node)
-                    && self.has_static_modifier_in_arena(arena, &method.modifiers)
+                    && arena.has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -902,7 +894,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 let mut flags = symbol_flags::PROPERTY;
                 if let Some(prop) = arena.get_property_decl(node)
-                    && self.has_static_modifier_in_arena(arena, &prop.modifiers)
+                    && arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
                 {
                     flags |= symbol_flags::STATIC;
                 }

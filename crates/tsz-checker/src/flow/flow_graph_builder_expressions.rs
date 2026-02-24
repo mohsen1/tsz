@@ -12,7 +12,6 @@
 //!   computed property names
 
 use tsz_binder::flow_flags;
-use tsz_parser::parser::base::NodeList;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -469,7 +468,11 @@ impl<'a> FlowGraphBuilder<'a> {
                         }
 
                         // Static initializer executes
-                        if self.has_static_modifier(&prop_modifiers) && prop_initializer.is_some() {
+                        if self
+                            .arena
+                            .has_modifier(&prop_modifiers, SyntaxKind::StaticKeyword)
+                            && prop_initializer.is_some()
+                        {
                             self.handle_expression_for_suspension_points(prop_initializer);
                             // Track assignment for static fields
                             let flow = self.create_flow_node(
@@ -516,11 +519,5 @@ impl<'a> FlowGraphBuilder<'a> {
         }
 
         self.record_node_flow(idx);
-    }
-
-    /// Check if modifiers list contains 'static'.
-    pub(super) fn has_static_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::StaticKeyword)
     }
 }

@@ -64,16 +64,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
                     self.emit_node(type_ref.type_name);
                     if let Some(ref type_args) = type_ref.type_arguments {
-                        self.write("<");
-                        let mut first = true;
-                        for &arg_idx in &type_args.nodes {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-                            self.emit_type(arg_idx);
-                        }
-                        self.write(">");
+                        self.emit_type_arguments(type_args);
                     }
                 }
             }
@@ -85,16 +76,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(ref type_args) = expr.type_arguments
                         && !type_args.nodes.is_empty()
                     {
-                        self.write("<");
-                        let mut first = true;
-                        for &arg_idx in &type_args.nodes {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-                            self.emit_type(arg_idx);
-                        }
-                        self.write(">");
+                        self.emit_type_arguments(type_args);
                     }
                 }
             }
@@ -269,16 +251,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(ref type_args) = type_query.type_arguments
                         && !type_args.nodes.is_empty()
                     {
-                        self.write("<");
-                        let mut first = true;
-                        for &arg_idx in &type_args.nodes {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-                            self.emit_type(arg_idx);
-                        }
-                        self.write(">");
+                        self.emit_type_arguments(type_args);
                     }
                 }
             }
@@ -457,6 +430,20 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_node(type_idx);
             }
         }
+    }
+
+    /// Emit a `<T1, T2, ...>` type argument list.
+    fn emit_type_arguments(&mut self, type_args: &tsz_parser::parser::NodeList) {
+        self.write("<");
+        let mut first = true;
+        for &arg_idx in &type_args.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_type(arg_idx);
+        }
+        self.write(">");
     }
 
     pub(crate) fn emit_entity_name(&mut self, node_idx: NodeIndex) {
