@@ -365,16 +365,17 @@ impl<'a> Printer<'a> {
                         // (merged with class/enum/function).
                         if let Some(should_declare_var) =
                             Self::namespace_var_flag_from_directive(inner.as_ref())
-                            && !should_declare_var {
-                                // Mark as already declared so emit_namespace_iife skips
-                                // the `var N;` / `let N;` preamble.
-                                if let Some(module_decl) = self.arena.get_module(node) {
-                                    let ns_name = self.get_identifier_text_idx(module_decl.name);
-                                    if !ns_name.is_empty() {
-                                        self.declared_namespace_names.insert(ns_name);
-                                    }
+                            && !should_declare_var
+                        {
+                            // Mark as already declared so emit_namespace_iife skips
+                            // the `var N;` / `let N;` preamble.
+                            if let Some(module_decl) = self.arena.get_module(node) {
+                                let ns_name = self.get_identifier_text_idx(module_decl.name);
+                                if !ns_name.is_empty() {
+                                    self.declared_namespace_names.insert(ns_name);
                                 }
                             }
+                        }
                         self.emit_node_default(node, idx);
                         return;
                     }
