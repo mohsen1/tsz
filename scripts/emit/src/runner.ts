@@ -67,6 +67,7 @@ interface TestCase {
   jsxImportSource?: string;
   moduleDetection?: string;
   preserveConstEnums: boolean;
+  outFile?: string;
 }
 
 interface TestResult {
@@ -141,6 +142,7 @@ function getCacheKey(
   jsxImportSource: string = '',
   moduleDetection: string = '',
   preserveConstEnums: boolean = false,
+  outFile: string = '',
 ): string {
   const tszBin = process.env.TSZ_BIN;
   let engineSalt = '';
@@ -152,7 +154,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${outFile}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -429,6 +431,21 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
     const preserveConstEnums = directives.preserveconstenums === true;
 
+    // Fix up outFile baseline parsing: when @outFile is specified, the baseline
+    // may contain both JS input files and the bundled output file. The parser
+    // only handles `out.js` by default, so we fix up the expected output for
+    // custom outFile names (e.g., dummy.js, output.js).
+    const outFile = typeof directives.outfile === 'string' ? directives.outfile : undefined;
+    if (outFile && outFile !== 'out.js' && baseline.files.has(outFile)) {
+      baseline.js = baseline.files.get(outFile) ?? baseline.js;
+      baseline.jsFileName = outFile;
+    }
+    const outDtsFile = outFile?.replace(/\.js$/, '.d.ts');
+    if (outDtsFile && outDtsFile !== 'out.d.ts' && baseline.files.has(outDtsFile)) {
+      baseline.dts = baseline.files.get(outDtsFile) ?? baseline.dts;
+      baseline.dtsFileName = outDtsFile;
+    }
+
     return {
       baselineFile,
       testPath: baseline.testPath,
@@ -458,6 +475,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       jsxImportSource,
       moduleDetection,
       preserveConstEnums,
+      outFile,
     } as TestCase;
   })));
 
@@ -505,6 +523,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.jsxImportSource ?? '',
       testCase.moduleDetection ?? '',
       testCase.preserveConstEnums,
+      testCase.outFile ?? '',
     );
     let tszJs: string;
     let tszDts: string | null = null;
@@ -536,7 +555,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         jsxImportSource: testCase.jsxImportSource,
         moduleDetection: testCase.moduleDetection,
         preserveConstEnums: testCase.preserveConstEnums,
-        outFile: testCase.expectedJsFileName === 'out.js' ? 'out.js' : undefined,
+        outFile: testCase.outFile,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
