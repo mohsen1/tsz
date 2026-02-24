@@ -1,6 +1,29 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5267/7163 = 73.5% JS, ~415/1039 = 39.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5274/7163 = 73.6% JS, ~415/1039 = 39.9% DTS)
+
+### Fixed (2026-02-24, session 4) — Object Literal Trailing Comment Displacement
+
+- **Trailing comment displacement in object literals** (+8 JS): Parser's `node.end` extends
+  past trailing trivia (comments, whitespace), so `emit_unemitted_comments_between(prop_node.end, ...)`
+  started scanning AFTER the comment, missing it. tsc emits `{ x: 1 // error\n}` but tsz
+  was displacing the comment to after `};`. Fix: use `find_token_end_before_trivia()` to get
+  the actual code-end position, then `emit_trailing_comments(token_end)` for the last property.
+  Also added fallback trailing comma detection for inline comments (the backward scanner in
+  `has_trailing_comma_in_source` doesn't skip inline `//` comments, so commas followed by
+  inline comments were missed). Two unit tests added.
+  Tests fixed: `objectTypeWithOptionalProperty1`, `YieldExpression20_es6`, and 6 others.
+  JS: 5266→5274, DTS unchanged, zero regressions.
+
+### Skipped / Investigated (2026-02-24, session 4)
+
+- **Comment displacement in non-object contexts** (~220+ tests): The same `node.end`-past-trivia
+  issue affects other contexts (class members, function parameters, array elements). Each needs
+  a similar `find_token_end_before_trivia` + `emit_trailing_comments` approach in its respective
+  emit function.
+- **Comment displacement in transforms** (~100+ tests): Comments above classes/functions get
+  dropped during ES5 class lowering and decorator transforms. These require per-transform
+  comment preservation logic.
 
 ### Fixed (2026-02-24, session 3) — Enum Constant Folding
 

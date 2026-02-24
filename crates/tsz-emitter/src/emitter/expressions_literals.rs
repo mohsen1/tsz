@@ -558,21 +558,27 @@ impl<'a> Printer<'a> {
                 self.emit(prop);
 
                 let is_last = i == obj.elements.nodes.len() - 1;
-                let has_trailing_line_comment = if is_last {
-                    self.source_text.is_some_and(|text| {
-                        let start = std::cmp::min(prop_node.end as usize, text.len());
-                        let end = std::cmp::min(node.end as usize, text.len());
-                        start < end && text[start..end].contains("//")
-                    })
-                } else {
-                    false
-                };
-                if !is_last || has_trailing_comma || has_trailing_line_comment {
-                    if is_last && has_trailing_line_comment {
-                        self.write(", ");
-                    } else {
-                        self.write(",");
-                    }
+
+                // Use token_end (before trivia) for comment scanning.
+                // The parser's node.end extends past trailing trivia (comments,
+                // whitespace) into the next token's position, so using node.end
+                // directly would miss trailing same-line comments.
+                let token_end = self.find_token_end_before_trivia(prop_node.pos, prop_node.end);
+
+                // For the last property, has_trailing_comma_in_source may miss
+                // commas followed by inline comments (e.g., `x: 1, // comment`)
+                // because its backward scan doesn't skip inline comments.
+                // As a fallback, check if find_token_end_before_trivia landed
+                // right after a comma (it treats commas as non-trivia tokens).
+                let needs_comma = !is_last
+                    || has_trailing_comma
+                    || self.source_text.is_some_and(|text| {
+                        let bytes = text.as_bytes();
+                        let te = token_end as usize;
+                        te > 0 && te <= bytes.len() && bytes[te - 1] == b','
+                    });
+                if needs_comma {
+                    self.write(",");
                 }
 
                 // Check if next property is on the same line in source
@@ -582,7 +588,7 @@ impl<'a> Printer<'a> {
                     // Check if there's a trailing comment on the same line after the comma
                     // If so, add a space between the comma and the comment
                     let has_same_line_comment = self.source_text.is_some_and(|text| {
-                        let from = prop_node.end as usize;
+                        let from = token_end as usize;
                         let to = std::cmp::min(next_pos as usize, text.len());
                         if from >= to {
                             return false;
@@ -601,8 +607,7 @@ impl<'a> Printer<'a> {
                     if has_same_line_comment {
                         self.write(" ");
                     }
-                    let wrote_newline =
-                        self.emit_unemitted_comments_between(prop_node.end, next_pos);
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, next_pos);
                     if wrote_newline {
                         // Line comment wrote the newline already — don't add another
                     } else if self.are_on_same_line_in_source(prop, next_prop) {
@@ -613,8 +618,10 @@ impl<'a> Printer<'a> {
                         self.write_line();
                     }
                 } else {
-                    let wrote_newline =
-                        self.emit_unemitted_comments_between(prop_node.end, node.end);
+                    // Last property: emit same-line trailing comments first,
+                    // then any remaining comments before closing brace
+                    self.emit_trailing_comments(token_end);
+                    let wrote_newline = self.emit_unemitted_comments_between(token_end, node.end);
                     if !wrote_newline {
                         self.write_line();
                     }
@@ -862,6 +869,47 @@ mod tests {
         assert!(
             output.contains("{ b1: 1, }"),
             "Trailing comma should be preserved in object literal initializer.\nOutput:\n{output}"
+        );
+    }
+
+    /// Trailing comma + inline comment detection: `x: 1, // comment` preserves comma.
+    /// `find_token_end_before_trivia` treats `,` as non-trivia, so `token_end` is
+    /// past the comma. The fallback comma detection must find it.
+    #[test]
+    fn trailing_comma_with_inline_comment_detected() {
+        let source = "var b = {\n    x: 1, // comment\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // The trailing comma must be preserved even when followed by an inline comment
+        assert!(
+            output.contains("x: 1,"),
+            "Trailing comma should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Block comment between properties on same line should be preserved.
+    #[test]
+    fn block_comment_between_properties_preserved() {
+        let source = "var o = {\n    a: 1, /* trailing */\n    b: 2\n};\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("1, /* trailing */"),
+            "Block comment should stay on same line after comma.\nOutput:\n{output}"
         );
     }
 }
