@@ -729,11 +729,11 @@ impl Server {
             if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
                 current.push(ch);
             } else {
-                flush(&mut current, &mut out, &underscored);
+                flush(&mut current, &mut out, underscored);
                 out.push(ch);
             }
         }
-        flush(&mut current, &mut out, &underscored);
+        flush(&mut current, &mut out, underscored);
         out
     }
 
@@ -957,7 +957,7 @@ impl Server {
         }
 
         for path in scan_paths {
-            let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(&path) else {
+            let Some((arena, _binder, _root, source_text)) = self.parse_and_bind_file(path) else {
                 continue;
             };
             for node in &arena.nodes {

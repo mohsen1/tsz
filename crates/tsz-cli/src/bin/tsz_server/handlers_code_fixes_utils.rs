@@ -668,11 +668,7 @@ pub(super) fn extract_jsdoc_imported_names(content: &str) -> std::collections::H
         };
         let close = open + 1 + close_rel;
         for raw_spec in trimmed[open + 1..close].split(',') {
-            let imported = raw_spec
-                .trim()
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
+            let imported = raw_spec.split_whitespace().next().unwrap_or_default();
             if !imported.is_empty() {
                 names.insert(imported.to_string());
             }

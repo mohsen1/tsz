@@ -689,11 +689,13 @@ impl Server {
         let imports = &after_prefix[..close_brace].trim();
         let after_imports = &after_prefix[close_brace + import_suffix.len()..];
         for quote in ['"', '\''] {
-            let quote_start = after_imports.find(quote)?;
-            let rest = &after_imports[quote_start + 1..];
-            let quote_end = rest.find(quote)?;
-            let module_specifier = &rest[..quote_end];
-            return Some((module_specifier, imports));
+            if let Some(quote_start) = after_imports.find(quote) {
+                let rest = &after_imports[quote_start + 1..];
+                if let Some(quote_end) = rest.find(quote) {
+                    let module_specifier = &rest[..quote_end];
+                    return Some((module_specifier, imports));
+                }
+            }
         }
         None
     }
@@ -1173,8 +1175,8 @@ impl Server {
                     Some(&forced_auto_import_prefs),
                 );
             }
-            let snippet_items = if (include_class_member_snippets || requested_class_member_snippet)
-                && (!is_member_completion || requested_class_member_snippet)
+            let snippet_items = if requested_class_member_snippet
+                || (include_class_member_snippets && !is_member_completion)
             {
                 self.class_member_snippet_items(
                     &provider,
@@ -1297,7 +1299,7 @@ impl Server {
                                     .position_to_offset(edit.range.end, &source_text)
                                     .unwrap_or(start);
                                 let new_text = Self::normalize_mts_auto_import_edit_text(
-                                    &file,
+                                    file,
                                     item.kind,
                                     &source_text,
                                     &edit.new_text,
@@ -1324,7 +1326,7 @@ impl Server {
                             if synthesized.is_empty() {
                                 synthesized = self
                                     .class_member_snippet_transitive_default_import_text_changes(
-                                        &file,
+                                        file,
                                         &source_text,
                                         insert_text,
                                         &item.label,
@@ -1336,10 +1338,9 @@ impl Server {
                         }
                         if !text_changes.is_empty() {
                             if file.ends_with(".mts") {
-                                for idx in 0..text_changes.len() {
-                                    let Some(new_text) = text_changes[idx]
-                                        .get("newText")
-                                        .and_then(serde_json::Value::as_str)
+                                for change in &mut text_changes {
+                                    let Some(new_text) =
+                                        change.get("newText").and_then(serde_json::Value::as_str)
                                     else {
                                         continue;
                                     };
@@ -1367,13 +1368,13 @@ impl Server {
                                         continue;
                                     };
 
-                                    let start = text_changes[idx]
+                                    let start = change
                                         .get("span")
                                         .and_then(|span| span.get("start"))
                                         .and_then(serde_json::Value::as_u64)
                                         .map(|n| n as u32)
                                         .unwrap_or(0);
-                                    let length = text_changes[idx]
+                                    let length = change
                                         .get("span")
                                         .and_then(|span| span.get("length"))
                                         .and_then(serde_json::Value::as_u64)
@@ -1383,7 +1384,7 @@ impl Server {
                                         continue;
                                     }
 
-                                    if let Some(change_obj) = text_changes[idx].as_object_mut() {
+                                    if let Some(change_obj) = change.as_object_mut() {
                                         change_obj.insert(
                                             "span".to_string(),
                                             serde_json::json!({
@@ -1403,7 +1404,7 @@ impl Server {
                             } else {
                                 Self::auto_import_code_action_description(
                                     &source_text,
-                                    &file,
+                                    file,
                                     item.source.as_deref(),
                                     &edits,
                                     &item.label,

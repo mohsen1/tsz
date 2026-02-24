@@ -117,10 +117,9 @@ impl Server {
             }
             if let Some(canonical_loc) =
                 self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
+                && let Some(def) = self.definition_info_from_location(&canonical_loc)
             {
-                if let Some(def) = self.definition_info_from_location(&canonical_loc) {
-                    return Some(serde_json::json!([def]));
-                }
+                return Some(serde_json::json!([def]));
             }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
@@ -170,30 +169,24 @@ impl Server {
             }
             if let Some(canonical_loc) =
                 self.canonical_definition_for_alias_position(&file, &arena, &source_text, offset)
+                && let Some(definition) = self.definition_info_from_location(&canonical_loc)
             {
-                if let Some(definition) = self.definition_info_from_location(&canonical_loc) {
-                    let text_span = if Self::is_quoted_import_or_export_specifier_offset(
+                let text_span = if Self::is_quoted_import_or_export_specifier_offset(
+                    &arena,
+                    &source_text,
+                    offset,
+                ) {
+                    let node_idx = tsz::lsp::utils::find_node_at_or_before_offset(
                         &arena,
-                        &source_text,
                         offset,
-                    ) {
-                        let node_idx = tsz::lsp::utils::find_node_at_or_before_offset(
-                            &arena,
-                            offset,
-                            &source_text,
-                        );
-                        if node_idx.is_some() {
-                            if let Some(node) = arena.get(node_idx) {
-                                serde_json::json!({
-                                    "start": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.pos, &source_text)),
-                                    "end": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.end, &source_text)),
-                                })
-                            } else {
-                                serde_json::json!({
-                                    "start": Self::lsp_to_tsserver_position(position),
-                                    "end": Self::lsp_to_tsserver_position(position),
-                                })
-                            }
+                        &source_text,
+                    );
+                    if node_idx.is_some() {
+                        if let Some(node) = arena.get(node_idx) {
+                            serde_json::json!({
+                                "start": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.pos, &source_text)),
+                                "end": Self::lsp_to_tsserver_position(line_map.offset_to_position(node.end, &source_text)),
+                            })
                         } else {
                             serde_json::json!({
                                 "start": Self::lsp_to_tsserver_position(position),
@@ -205,16 +198,21 @@ impl Server {
                             "start": Self::lsp_to_tsserver_position(position),
                             "end": Self::lsp_to_tsserver_position(position),
                         })
-                    };
-                    let text_span = serde_json::json!({
-                        "start": text_span["start"].clone(),
-                        "end": text_span["end"].clone(),
-                    });
-                    return Some(serde_json::json!({
-                        "definitions": [definition],
-                        "textSpan": text_span,
-                    }));
-                }
+                    }
+                } else {
+                    serde_json::json!({
+                        "start": Self::lsp_to_tsserver_position(position),
+                        "end": Self::lsp_to_tsserver_position(position),
+                    })
+                };
+                let text_span = serde_json::json!({
+                    "start": text_span["start"].clone(),
+                    "end": text_span["end"].clone(),
+                });
+                return Some(serde_json::json!({
+                    "definitions": [definition],
+                    "textSpan": text_span,
+                }));
             }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
@@ -379,7 +377,7 @@ impl Server {
                 let restrict_to_quoted =
                     Self::quoted_specifier_literal_at_offset(&arena, &source_text, query_offset)
                         .is_some();
-                let definition_locs = vec![canonical_loc];
+                let definition_locs = [canonical_loc];
                 let refs: Vec<serde_json::Value> = locs
                     .iter()
                     .filter(|loc| {
@@ -764,19 +762,18 @@ impl Server {
                 Some((_symbol_id, refs)) => refs.is_empty(),
                 None => true,
             };
-            if use_quoted_alias_fallback {
-                if let Some(mut project) = self.build_project_for_file(&file)
-                    && let Some(entries) = self.build_quoted_alias_referenced_symbols(
-                        &mut project,
-                        &file,
-                        &arena,
-                        &source_text,
-                        query_offset,
-                        position,
-                    )
-                {
-                    return Some(serde_json::json!(entries));
-                }
+            if use_quoted_alias_fallback
+                && let Some(mut project) = self.build_project_for_file(&file)
+                && let Some(entries) = self.build_quoted_alias_referenced_symbols(
+                    &mut project,
+                    &file,
+                    &arena,
+                    &source_text,
+                    query_offset,
+                    position,
+                )
+            {
+                return Some(serde_json::json!(entries));
             }
 
             // Get references with the resolved symbol
