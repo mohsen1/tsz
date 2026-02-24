@@ -61,7 +61,7 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: The `queries/lib.rs` file (previously `type_checking_queries_lib.rs`) remains stable at ~1,313 lines. The perf commit (b81760973) extracted new logic into a separate `queries/lib_prime.rs` (113 lines). All 7 `type_checking_queries_*` files were reorganized into `types/queries/` subdirectory (c0b736bce).
 
-**Note**: The 7 `flow/control_flow_*.rs` files were reorganized into `flow/control_flow/` subdirectory (a1b53e74f), mirroring the binder `state_*.rs` → `state/` pattern. The 3 `flow_analysis_*.rs` files were similarly reorganized into `flow/flow_analysis/` subdirectory. Remaining candidate for similar treatment: `flow_graph_builder*.rs` (2 files).
+**Note**: The 7 `flow/control_flow_*.rs` files were reorganized into `flow/control_flow/` subdirectory (a1b53e74f), mirroring the binder `state_*.rs` → `state/` pattern. The 3 `flow_analysis_*.rs` files were similarly reorganized into `flow/flow_analysis/` subdirectory. The 2 `flow_graph_builder*.rs` files were similarly reorganized into `flow/flow_graph_builder/` subdirectory. All flow-domain file groups now use the subdirectory pattern.
 
 ### 4. Cross-Layer Imports — CLEAN
 

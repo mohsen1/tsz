@@ -1,6 +1,6 @@
 //! Expression-level flow graph construction for `FlowGraphBuilder`.
 //!
-//! Extracted from `flow_graph_builder.rs` to keep that file focused on
+//! Extracted from the main `flow_graph_builder` module to keep it focused on
 //! statement-level control flow construction. This module provides:
 //!
 //! - **Variable tracking**: assignment and declaration flow nodes
@@ -15,7 +15,7 @@ use tsz_binder::flow_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
-use super::flow_graph_builder::FlowGraphBuilder;
+use super::FlowGraphBuilder;
 
 impl<'a> FlowGraphBuilder<'a> {
     // =============================================================================
