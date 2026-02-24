@@ -103,8 +103,19 @@ impl ParserState {
                 // TS1029: static must come after accessibility, before certain others
                 if seen_abstract || seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_abstract {
+                        "abstract"
+                    } else if seen_override {
+                        "override"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
                     self.parse_error_at_current_token(
-                        "'static' modifier must precede current modifier.",
+                        &format!("'static' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
@@ -120,8 +131,17 @@ impl ParserState {
                 }
                 if seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_override {
+                        "override"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
                     self.parse_error_at_current_token(
-                        "'abstract' modifier must precede current modifier.",
+                        &format!("'abstract' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
@@ -137,8 +157,9 @@ impl ParserState {
                 }
                 if seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_accessor { "accessor" } else { "async" };
                     self.parse_error_at_current_token(
-                        "'readonly' modifier must precede current modifier.",
+                        &format!("'readonly' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
@@ -154,8 +175,15 @@ impl ParserState {
                 }
                 if seen_accessor || seen_async || seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let other = if seen_accessor {
+                        "accessor"
+                    } else if seen_async {
+                        "async"
+                    } else {
+                        "readonly"
+                    };
                     self.parse_error_at_current_token(
-                        "'override' modifier must precede current modifier.",
+                        &format!("'override' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
