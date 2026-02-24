@@ -7,8 +7,10 @@ use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,
     are_types_overlapping_with_env, check_assignable_gate_with_overrides,
     classify_for_assignability_eval, classify_for_excess_properties, contains_infer_types,
+    get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
     is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_callable_type,
-    is_relation_cacheable, object_shape_for_type,
+    is_keyof_type, is_relation_cacheable, is_type_parameter_like, keyof_object_properties,
+    map_compound_members, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -34,16 +36,14 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         db: &dyn tsz_solver::TypeDatabase,
     ) -> FxHashSet<Atom> {
-        if let Some(keyof_type) = tsz_solver::type_queries::get_keyof_type(db, type_id)
-            && let Some(key_type) =
-                tsz_solver::type_queries::keyof_object_properties(db, keyof_type)
-            && let Some(members) = tsz_solver::type_queries::get_union_members(db, key_type)
+        if let Some(keyof_type) = get_keyof_type(db, type_id)
+            && let Some(key_type) = keyof_object_properties(db, keyof_type)
+            && let Some(members) = get_union_members(db, key_type)
         {
             return members
                 .into_iter()
                 .filter_map(|m| {
-                    if let Some(str_lit) = tsz_solver::type_queries::get_string_literal_value(db, m)
-                    {
+                    if let Some(str_lit) = get_string_literal_value(db, m) {
                         return Some(str_lit);
                     }
                     None
@@ -332,11 +332,9 @@ impl<'a> CheckerState<'a> {
 
         // Distribution pass: normalize compound types so mixed representations do not
         // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
-        if let Some(distributed) =
-            tsz_solver::type_queries::map_compound_members(self.ctx.types, evaluated, |member| {
-                self.evaluate_type_for_assignability(member)
-            })
-        {
+        if let Some(distributed) = map_compound_members(self.ctx.types, evaluated, |member| {
+            self.evaluate_type_for_assignability(member)
+        }) {
             evaluated = distributed;
         }
 
@@ -476,13 +474,11 @@ impl<'a> CheckerState<'a> {
         let result = self.check_assignability_cached(source, target, 0, "is_assignable_to");
 
         // Post-check: keyof type checking logic
-        if let Some(keyof_type) = tsz_solver::type_queries::get_keyof_type(self.ctx.types, target)
-            && let Some(source_atom) =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
+        if let Some(keyof_type) = get_keyof_type(self.ctx.types, target)
+            && let Some(source_atom) = get_string_literal_value(self.ctx.types, source)
         {
             let source_str = self.ctx.types.resolve_atom(source_atom);
-            let allowed_keys =
-                tsz_solver::type_queries::get_allowed_keys(self.ctx.types, keyof_type);
+            let allowed_keys = get_allowed_keys(self.ctx.types, keyof_type);
             if !allowed_keys.contains(&source_str) {
                 return false;
             }
@@ -714,12 +710,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, target)
-            && let Some(str_lit) =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
+        if is_keyof_type(self.ctx.types, target)
+            && let Some(str_lit) = get_string_literal_value(self.ctx.types, source)
         {
-            let keyof_type =
-                tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
+            let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
             if !allowed_keys.contains(&str_lit) {
                 self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx);
@@ -774,12 +768,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, target)
-            && let Some(str_lit) =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
+        if is_keyof_type(self.ctx.types, target)
+            && let Some(str_lit) = get_string_literal_value(self.ctx.types, source)
         {
-            let keyof_type =
-                tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
+            let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
             if !allowed_keys.contains(&str_lit) {
                 self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
@@ -996,10 +988,8 @@ impl<'a> CheckerState<'a> {
                         // If a union member has no object shape and is a type parameter
                         // or the `object` intrinsic, it accepts any properties, so EPC
                         // should not apply.
-                        if tsz_solver::type_queries::is_type_parameter_like(
-                            self.ctx.types,
-                            resolved_member,
-                        ) || resolved_member == TypeId::OBJECT
+                        if is_type_parameter_like(self.ctx.types, resolved_member)
+                            || resolved_member == TypeId::OBJECT
                         {
                             return false;
                         }
@@ -1047,10 +1037,8 @@ impl<'a> CheckerState<'a> {
                     let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
                         // If an intersection member is a type parameter, it could accept
                         // any properties, so EPC should not apply (same logic as union case).
-                        if tsz_solver::type_queries::is_type_parameter_like(
-                            self.ctx.types,
-                            resolved_member,
-                        ) || resolved_member == TypeId::OBJECT
+                        if is_type_parameter_like(self.ctx.types, resolved_member)
+                            || resolved_member == TypeId::OBJECT
                         {
                             return false;
                         }
