@@ -501,11 +501,11 @@ impl<'a> TypeHierarchyProvider<'a> {
 
         let name = self.get_declaration_name(decl_idx)?;
         let kind = self.get_type_symbol_kind(decl_idx);
-        let range = self.get_range(decl_idx);
+        let range = node_range(self.arena, self.line_map, self.source_text, decl_idx);
 
         // Selection range is the name identifier range
         let selection_range = if let Some(name_idx) = self.get_declaration_name_idx(decl_idx) {
-            self.get_range(name_idx)
+            node_range(self.arena, self.line_map, self.source_text, name_idx)
         } else {
             // Fallback: use a small range at the start of the declaration
             let start = self.line_map.offset_to_position(node.pos, self.source_text);
@@ -556,11 +556,6 @@ impl<'a> TypeHierarchyProvider<'a> {
     /// Get the text of an identifier node.
     fn get_identifier_text(&self, node_idx: NodeIndex) -> Option<String> {
         identifier_text(self.arena, node_idx)
-    }
-
-    /// Convert a node to an LSP Range.
-    fn get_range(&self, node_idx: NodeIndex) -> Range {
-        node_range(self.arena, self.line_map, self.source_text, node_idx)
     }
 }
 

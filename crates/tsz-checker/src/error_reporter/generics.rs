@@ -1,6 +1,7 @@
 //! Generic type and comparison error reporting (TS2314, TS2344, TS2367, TS2352).
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -53,8 +54,8 @@ impl<'a> CheckerState<'a> {
 
         // Also suppress when either side CONTAINS error types (e.g., { new(): error }).
         // This happens when a forward-referenced class hasn't been fully resolved yet.
-        if tsz_solver::type_queries::contains_error_type_db(self.ctx.types, type_arg)
-            || tsz_solver::type_queries::contains_error_type_db(self.ctx.types, constraint)
+        if common::contains_error_type(self.ctx.types, type_arg)
+            || common::contains_error_type(self.ctx.types, constraint)
         {
             return;
         }

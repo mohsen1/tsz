@@ -771,7 +771,7 @@ impl<'a> Printer<'a> {
                         .get_method_decl(member_node)
                         .is_some_and(|m| m.body.is_none()),
                     // Abstract accessors without body are erased. Bodyless non-abstract
-                    // accessors (error case) are kept — tsc emits them with `{ }`.
+                    // accessors (error case) are kept — tsc emits them as `{}`.
                     // Abstract accessors WITH a body (error case) are also kept.
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>

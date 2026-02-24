@@ -486,8 +486,7 @@ fn abstract_method_without_body_is_erased() {
     );
 }
 
-/// Bodyless non-abstract accessors (error case in TS) must NOT be erased —
-/// tsc emits them with an empty body `{ }`.
+/// Bodyless non-abstract accessors (error case in TS) must NOT be erased.
 #[test]
 fn bodyless_non_abstract_accessor_is_not_erased() {
     let source = "class C {\n    get foo(): string;\n}\n";

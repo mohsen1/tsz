@@ -249,6 +249,11 @@ the pass rate without regressions. Next improvements likely require:
   JS: 6069→9993, DTS unchanged, zero regressions.
 
 ### Skipped / Investigated This Session (2026-02-24)
+- **Accessor spacing fix is now scoped**: `set/get` empty-body accessors in object literals and
+  bodyless non-abstract declarations are corrected to ` { }` in this session. Remaining high-impact
+  `autoAccessor*` and private-name accessor cases still fail and require broader transform/lowering
+  work (`autoAccessor1`–`autoAccessor11`, `privateName*Accessors*` variants).
+
 - **Accessor object literal format in JS passthrough** (~2 tests): `accessorDeclarationEmitJs` is a
   `.js` input file where tsc passes through the source formatting verbatim (no semicolons, preserved
   blank lines between statements). The emitter always adds semicolons and strips blank lines. Fixing

@@ -82,7 +82,6 @@ interface Derived extends Base {
 // =========================================================================
 
 #[test]
-#[ignore = "Known issue: resolve_type_symbol uses flat file_locals, needs scope-aware resolution for ambient modules"]
 fn test_module_namespace_same_name_interface_no_false_positive() {
     // This is the pattern from react16.d.ts that caused false TS2430.
     // In the react16.d.ts structure:

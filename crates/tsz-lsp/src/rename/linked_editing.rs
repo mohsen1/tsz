@@ -76,8 +76,8 @@ impl<'a> LinkedEditingProvider<'a> {
 
         Some(LinkedEditingRanges {
             ranges: vec![
-                self.get_range(open_tag_name),
-                self.get_range(close_tag_name),
+                node_range(self.arena, self.line_map, self.source_text, open_tag_name),
+                node_range(self.arena, self.line_map, self.source_text, close_tag_name),
             ],
             word_pattern: None,
         })
@@ -124,10 +124,5 @@ impl<'a> LinkedEditingProvider<'a> {
         }
 
         None
-    }
-
-    /// Convert a node's position to an LSP Range.
-    fn get_range(&self, idx: NodeIndex) -> Range {
-        node_range(self.arena, self.line_map, self.source_text, idx)
     }
 }
