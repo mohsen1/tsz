@@ -116,7 +116,22 @@ impl<'a> Printer<'a> {
             }
             self.map_opening_brace(node);
             self.write("{ ");
+            let var_insert_pos = if is_function_body_block {
+                Some(self.writer.len())
+            } else {
+                None
+            };
             self.emit(block.statements.nodes[0]);
+            // Inject hoisted temp vars inline for single-line function bodies.
+            // Temps like `_a` are created during emit (e.g. optional chaining lowering),
+            // so we insert `var _a; ` at the position right after `{ `.
+            if let Some(byte_offset) = var_insert_pos
+                && !self.hoisted_assignment_temps.is_empty()
+            {
+                let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
+                self.writer.insert_at(byte_offset, &var_decl);
+                self.hoisted_assignment_temps.clear();
+            }
             self.map_closing_brace(node);
             self.write(" }");
             self.ctx.block_scope_state.exit_scope();

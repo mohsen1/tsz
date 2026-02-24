@@ -1,8 +1,36 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5218/7163 = 72.8% JS, ~415/1039 = 39.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9921/13623 = 72.8% JS, ~776/1995 = 38.9% DTS)
 
-### Fixed This Session
+### Fixed This Session (2026-02-24)
+- **super optional chaining emit used wrong temp-capture pattern** (+tests):
+  `super.method?.()` and `super["method"]?.()` in classes were downleveled (ES2016-ES2019)
+  as `(_b = (_a = super).method) ... _b.call(_a)` — invalid JS because `super` cannot be
+  captured in a variable. Fixed `emit_optional_method_call_expression` in `expressions.rs`
+  to detect `SuperKeyword` and emit `(_a = super.method) ... _a.call(this)`, capturing the
+  full property access as a unit and using `this` as the call receiver.
+- **Hoisted temp vars missing in single-line function bodies**: `make_unique_name_hoisted`
+  creates temps like `_a` during emit, but the single-line block path in `statements.rs`
+  returned early without injecting `var _a;`. Added inline var injection via new
+  `insert_at` method on `SourceWriter`. This fixes `callChainWithSuper` and any other
+  optional-chaining-in-single-line-body tests.
+  Tests fixed: `callChainWithSuper(target=es2016..es2019)` and other single-line bodies.
+  JS: 9910→9921, DTS unchanged, zero regressions. Three unit tests added.
+
+### Skipped / Investigated This Session (2026-02-24)
+- **`export {};` sentinel under-emission** (~537 tests expect it): Requires checker to populate
+  `type_only_nodes` for import elision. Test runner uses `--noCheck --noLib`, so checker data
+  is unavailable. Pure emitter fix not feasible without checker integration.
+- **`__esModule` under-emission** (~11 sole-fix tests): Requires `.cts`/`.mts` file extension
+  awareness or `import.meta` detection for implicit CJS module detection.
+- **Comment displacement** (~138 sole-fix tests): Still the largest single category. Each
+  sub-pattern (decorator comments, trailing comments on signatures, etc.) needs individual work.
+- **Indentation-only diffs** (~66 tests): Mostly comment displacement causing indent changes.
+- **Extra `)` in non-super optional chaining** (pre-existing): The non-super path in
+  `emit_optional_method_call_expression` has an extra closing paren at line 471. Not fixed
+  this session to keep the change minimal; tracked for future fix.
+
+### Fixed Previous Session
 - **CJS-exported namespace IIFE used ES5 emitter at ES2015+ targets, converting let/const to var** (+18 JS):
   `export namespace N { let x = 1; const y = 2; }` inside CommonJS modules emitted `var x = 1;`
   and `var y = 2;` inside the IIFE body, even when targeting ES2015+. Root cause: in
