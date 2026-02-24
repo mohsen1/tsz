@@ -4191,7 +4191,6 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_infer_generic_method_property_bivariant_param() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -4335,7 +4334,6 @@ fn test_infer_generic_function_property_contravariant_param() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_infer_generic_method_property_bivariant_optional_param() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
