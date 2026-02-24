@@ -318,6 +318,10 @@ pub struct Printer<'a> {
     /// iterator/result temps, matching tsc temp ordering.
     pub(super) reserved_iterator_return_temps: FxHashMap<NodeIndex, String>,
 
+    /// Current nesting depth of function/method/constructor scopes.
+    /// Used to determine if we're inside a function scope (depth > 0) or at top level (0).
+    pub(super) function_scope_depth: u32,
+
     /// Current nesting depth for iterator for-of emission.
     pub(super) iterator_for_of_depth: usize,
 
@@ -424,6 +428,7 @@ impl<'a> Printer<'a> {
             file_identifiers: FxHashSet::default(),
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
+            function_scope_depth: 0,
             first_for_of_emitted: false,
             in_namespace_iife: false,
             enum_namespace_export: None,

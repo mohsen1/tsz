@@ -27,7 +27,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 let prev_emitting_function_body_block = self.emitting_function_body_block;
                 self.emitting_function_body_block = true;
+                self.function_scope_depth += 1;
                 self.emit(func.body);
+                self.function_scope_depth -= 1;
                 self.emitting_function_body_block = prev_emitting_function_body_block;
                 self.write_line();
             }
@@ -147,7 +149,9 @@ impl<'a> Printer<'a> {
         } else {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            self.function_scope_depth += 1;
             self.emit(func.body);
+            self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
     }
@@ -163,10 +167,10 @@ impl<'a> Printer<'a> {
         self.emit_function_parameters_js(&func.parameters.nodes);
         self.write(")");
 
-        // For arrow functions on ES2015+, TSC passes `this` to __awaiter if the
-        // body references `this`, since the arrow lexically captures `this` from
-        // the enclosing scope. If the body doesn't reference `this`, use `void 0`.
-        let this_arg = if contains_this_reference(self.arena, func.body) {
+        // For arrow functions on ES2015+, TSC passes `this` to __awaiter when
+        // the arrow is inside a function/method scope (where `this` is bound).
+        // At top level (file scope), use `void 0` since there's no meaningful `this`.
+        let this_arg = if self.function_scope_depth > 0 {
             "this"
         } else {
             "void 0"
@@ -469,6 +473,7 @@ impl<'a> Printer<'a> {
         // Push temp scope and block scope for function body - each function gets fresh variables.
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.function_scope_depth += 1;
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         self.prepare_logical_assignment_value_temps(func.body);
@@ -478,6 +483,7 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
     }
 
@@ -750,6 +756,58 @@ mod tests {
         assert!(
             output.contains("async (x) =>"),
             "Async arrow with source parens should keep them.\nOutput:\n{output}"
+        );
+    }
+
+    /// Async arrow inside a function body should pass `this` to __awaiter.
+    /// Arrow functions lexically capture `this` from the enclosing scope.
+    #[test]
+    fn async_arrow_in_function_passes_this_to_awaiter() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f() { (async () => { return 10; })(); }";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("__awaiter(this,"),
+            "Async arrow inside function should pass `this` to __awaiter.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    /// Async arrow at top level should pass `void 0` to __awaiter.
+    #[test]
+    fn async_arrow_at_top_level_passes_void_0_to_awaiter() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "const g = async () => { return 10; };";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("__awaiter(void 0,"),
+            "Async arrow at top level should pass `void 0` to __awaiter.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    /// Async arrow inside a class method should pass `this` to __awaiter.
+    #[test]
+    fn async_arrow_in_class_method_passes_this_to_awaiter() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "class C { method() { return (async () => 42)(); } }";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains("__awaiter(this,"),
+            "Async arrow inside class method should pass `this` to __awaiter.\nOutput:\n{}",
+            result.code
         );
     }
 }

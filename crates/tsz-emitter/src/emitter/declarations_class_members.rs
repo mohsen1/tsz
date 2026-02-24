@@ -130,6 +130,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            self.function_scope_depth += 1;
             let prev_in_generator = self.ctx.flags.in_generator;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
@@ -139,6 +140,7 @@ impl<'a> Printer<'a> {
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.ctx.flags.in_generator = prev_in_generator;
+            self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         }
     }
@@ -351,6 +353,7 @@ impl<'a> Printer<'a> {
 
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.function_scope_depth += 1;
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         if let Some(body_node) = self.arena.get(ctor.body) {
@@ -369,6 +372,7 @@ impl<'a> Printer<'a> {
         );
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
     }
 
@@ -856,6 +860,7 @@ impl<'a> Printer<'a> {
         if accessor.body.is_some() {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            self.function_scope_depth += 1;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
             self.prepare_logical_assignment_value_temps(accessor.body);
@@ -863,6 +868,7 @@ impl<'a> Printer<'a> {
             self.emit(accessor.body);
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
+            self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
@@ -897,6 +903,7 @@ impl<'a> Printer<'a> {
         if accessor.body.is_some() {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            self.function_scope_depth += 1;
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
             self.prepare_logical_assignment_value_temps(accessor.body);
@@ -904,6 +911,7 @@ impl<'a> Printer<'a> {
             self.emit(accessor.body);
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
+            self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
