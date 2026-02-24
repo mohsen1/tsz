@@ -118,29 +118,20 @@ elif command -v gtimeout >/dev/null 2>&1; then
   TIMEOUT_BIN="gtimeout"
 fi
 
-# ─── Run with PTY + capture (cross-platform) ─────────────────────────────────
-# Runs a command under `script` so the child gets a real PTY (output streams
-# live, Ctrl+C propagates).  Captured output is written to $1.
+# ─── Run with output capture ──────────────────────────────────────────────────
+# Runs a command with timeout, streaming output live to the terminal and
+# capturing to a file.  No PTY wrapper — signals (Ctrl+C) propagate naturally.
 # Usage: run_with_capture <outfile> <timeout_secs> <cmd...>
 run_with_capture() {
   local outfile="$1" secs="$2"; shift 2
 
-  # Build the command with timeout prefix
-  local full_cmd=()
+  local full_cmd=("$@")
   if [[ -n "$TIMEOUT_BIN" ]]; then
-    full_cmd+=("$TIMEOUT_BIN" "$secs")
+    full_cmd=("$TIMEOUT_BIN" "$secs" "$@")
   fi
-  full_cmd+=("$@")
 
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    # macOS: script -q <file> <command> [args...]
-    script -q "$outfile" "${full_cmd[@]}"
-  else
-    # Linux: script -qe -c "<command>" <file>
-    local cmd_str
-    cmd_str="$(printf '%q ' "${full_cmd[@]}")"
-    script -qe -c "$cmd_str" "$outfile"
-  fi
+  "${full_cmd[@]}" 2>&1 | tee "$outfile"
+  return "${PIPESTATUS[0]}"
 }
 
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
@@ -156,7 +147,9 @@ cleanup() {
   # Remove per-instance session script on final exit
   [[ -n "${_SESSION_TMPFILE:-}" && -f "$_SESSION_TMPFILE" ]] && rm -f "$_SESSION_TMPFILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 mktmp() {
   local f
@@ -497,7 +490,7 @@ try_runner() {
     echo "=== EXIT CODE: $exit_code ==="
   } >> "$LOG_FILE"
 
-  # Check for drain/rate-limit
+  # Analyze output for errors
   local combined
   combined="$(cat "$output_tmp" 2>/dev/null || true)"
 
