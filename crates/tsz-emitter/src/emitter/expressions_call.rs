@@ -1,9 +1,5 @@
 use super::Printer;
-use tsz_parser::parser::{
-    NodeIndex,
-    node::Node,
-    node_flags, syntax_kind_ext,
-};
+use tsz_parser::parser::{NodeIndex, node::Node, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
