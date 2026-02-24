@@ -4,12 +4,12 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
-use tsz::lsp::folding::FoldingRangeProvider;
+use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
+use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::inlay_hints::InlayHintsProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
-use tsz::lsp::selection_range::SelectionRangeProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
@@ -650,7 +650,7 @@ impl Server {
             let ranges = provider.get_selection_ranges(&positions);
 
             fn selection_range_to_json(
-                sr: &tsz::lsp::selection_range::SelectionRange,
+                sr: &tsz::lsp::editor_ranges::selection_range::SelectionRange,
             ) -> serde_json::Value {
                 let text_span = serde_json::json!({
                     "start": {
