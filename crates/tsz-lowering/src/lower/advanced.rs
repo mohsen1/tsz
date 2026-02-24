@@ -42,7 +42,7 @@ impl<'a> TypeLowering<'a> {
         let mut iterations = 0;
         loop {
             iterations += 1;
-            if iterations > Self::MAX_TREE_WALK_ITERATIONS {
+            if iterations > tsz_common::limits::MAX_TREE_WALK_ITERATIONS {
                 // Safety limit reached - return false to prevent infinite loop
                 return false;
             }

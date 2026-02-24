@@ -6,6 +6,8 @@ use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TypeGuard, TypeId, TypeResolver, TypeofKind};
 
+use crate::state::MAX_TREE_WALK_ITERATIONS;
+
 use super::control_flow::FlowAnalyzer;
 
 impl<'a> FlowAnalyzer<'a> {
@@ -39,7 +41,6 @@ impl<'a> FlowAnalyzer<'a> {
     /// - Variables captured from OUTER scope reset narrowing (for let/var)
     pub(crate) fn is_captured_variable(&self, reference: NodeIndex) -> bool {
         use tsz_binder::ScopeId;
-        const MAX_TREE_WALK_ITERATIONS: usize = 1000;
 
         // Resolve the identifier reference to its symbol
         let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
