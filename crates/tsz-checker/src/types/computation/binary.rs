@@ -936,39 +936,12 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
-            // Check for type overlap for equality/inequality operators (TS2367)
-            let is_equality_op = matches!(
-                op_kind,
-                k if k == SyntaxKind::EqualsEqualsToken as u16
-                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
-            );
-            let is_inequality_op = matches!(
-                op_kind,
-                k if k == SyntaxKind::ExclamationEqualsToken as u16
-                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
-            );
-
-            if is_equality_op || is_inequality_op {
-                let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
-                let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
-
-                // Check if the types have any overlap (skip if NaN, handled above)
-                // Also skip if either type is `never` — tsc doesn't emit TS2367 for never.
-                if !is_left_nan
-                    && !is_right_nan
-                    && left_type != TypeId::NEVER
-                    && right_type != TypeId::NEVER
-                    && !self.are_types_overlapping(left_type, right_type)
-                {
-                    // TS2367: This condition will always return 'false'/'true'
-                    self.error_comparison_no_overlap(
-                        left_type,
-                        right_type,
-                        is_equality_op,
-                        node_idx,
-                    );
-                }
-            }
+            // NOTE: TS2367 overlap checking for equality/inequality operators is handled
+            // entirely by the narrowed-type check above (lines 605-624) which uses
+            // `types_have_no_overlap` with `literal_type_from_initializer` narrowing.
+            // A second check using `are_types_overlapping` was removed because it used
+            // raw (unnarrowed) types and a different overlap function, producing false
+            // positives for empty object types ({}) vs type parameters and other cases.
 
             type_stack.push(result_type);
         }
@@ -1088,6 +1061,21 @@ mod tests {
     }
 
     #[test]
+    fn no_duplicate_ts2367_for_same_type_comparison() {
+        // Comparing values of the same type should not emit TS2367.
+        // This verifies the duplicate TS2367 check removal doesn't regress
+        // by ensuring same-type comparisons remain clean.
+        let diags =
+            check_source_diagnostics("const a: number = 1; const b: number = 2; if (a === b) {}");
+        let has_2367 = diags.iter().any(|d| d.code == 2367);
+        assert!(
+            !has_2367,
+            "Should NOT emit TS2367 for number vs number comparison, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn ts2839_js_file_strict_eq_only() {
         // In JS files, only strict equality (===) triggers TS2839, not loose (==)
         let diags_strict = check_js_source_diagnostics("if ({} === {}) {}");
@@ -1103,6 +1091,73 @@ mod tests {
             !has_2839_loose,
             "Should NOT emit TS2839 for loose equality in JS file, got: {:?}",
             diags_loose.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    fn check_source_diagnostics_no_implicit_any(
+        source: &str,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let options = CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        };
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(source_file);
+        checker.ctx.diagnostics.clone()
+    }
+
+    #[test]
+    fn no_ts7006_for_null_default_parameter() {
+        // A parameter with `= null` should NOT trigger TS7006 because
+        // tsc infers the type as `null`, not implicit `any`.
+        let diags = check_source_diagnostics_no_implicit_any("function f(x = null) { return x; }");
+        let has_7006 = diags.iter().any(|d| d.code == 7006);
+        assert!(
+            !has_7006,
+            "Should NOT emit TS7006 for parameter with null default, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts7006_for_undefined_default_parameter() {
+        // A parameter with `= undefined` should NOT trigger TS7006 because
+        // tsc infers the type as `undefined`, not implicit `any`.
+        let diags =
+            check_source_diagnostics_no_implicit_any("function f(x = undefined) { return x; }");
+        let has_7006 = diags.iter().any(|d| d.code == 7006);
+        assert!(
+            !has_7006,
+            "Should NOT emit TS7006 for parameter with undefined default, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts7006_still_emitted_for_bare_parameter() {
+        // A parameter without a type annotation or initializer should still
+        // trigger TS7006 under noImplicitAny.
+        let diags = check_source_diagnostics_no_implicit_any("function f(x) { return x; }");
+        let has_7006 = diags.iter().any(|d| d.code == 7006);
+        assert!(
+            has_7006,
+            "Expected TS7006 for bare parameter under noImplicitAny, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
 }
