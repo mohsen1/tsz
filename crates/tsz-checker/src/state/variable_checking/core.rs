@@ -325,38 +325,7 @@ impl<'a> CheckerState<'a> {
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
         {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            if self.ctx.enclosing_class.is_some() {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                    &[name],
-                );
-                self.error_at_node(
-                    var_decl.name,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                );
-            } else if self.ctx.binder.is_external_module() {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                    &[name],
-                );
-                self.error_at_node(
-                    var_decl.name,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                );
-            } else {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    &[name],
-                );
-                self.error_at_node(
-                    var_decl.name,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                );
-            }
+            self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
         }
 
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
