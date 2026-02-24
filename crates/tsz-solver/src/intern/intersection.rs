@@ -378,11 +378,13 @@ impl TypeInterner {
         let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
-        let mut merged_flags = ObjectFlags::empty();
+        let mut merged_fresh = true;
 
         for obj in &objects {
-            // Propagate FRESH_LITERAL flag if any constituent has it
-            merged_flags |= obj.flags & ObjectFlags::FRESH_LITERAL;
+            // Freshness is only preserved when *all* intersected object members are fresh.
+            if !obj.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                merged_fresh = false;
+            }
             // Merge properties
             for prop in &obj.properties {
                 // Check if property already exists using HashMap for O(1) lookup
@@ -463,6 +465,12 @@ impl TypeInterner {
 
         // Sort properties by name for consistent hashing
         merged_props.sort_by_key(|p| p.name.0);
+
+        let merged_flags = if merged_fresh {
+            ObjectFlags::FRESH_LITERAL
+        } else {
+            ObjectFlags::empty()
+        };
 
         let shape = ObjectShape {
             flags: merged_flags,

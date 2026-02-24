@@ -524,6 +524,21 @@ fn test_intersection_disjoint_property_types() {
 }
 
 #[test]
+fn test_intersection_object_freshness_must_be_all_members() {
+    let interner = TypeInterner::new();
+
+    let fresh_a = interner.object_fresh(vec![PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER)]);
+    let fresh_b = interner.object_fresh(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+    let nonfresh_b = interner.object(vec![PropertyInfo::new(interner.intern_string("b"), TypeId::STRING)]);
+
+    let both_fresh = interner.intersection2(fresh_a, fresh_b);
+    assert!(is_fresh_object_type(&interner, both_fresh));
+
+    let mixed = interner.intersection2(fresh_a, nonfresh_b);
+    assert!(!is_fresh_object_type(&interner, mixed));
+}
+
+#[test]
 fn test_visibility_interning_distinct_shape_ids() {
     let interner = TypeInterner::new();
 
