@@ -303,12 +303,15 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 /// Check whether this is an explicit error type.
+///
+/// Returns true for `TypeId::ERROR` (fast-path) or any `TypeData::Error`.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    extract_type_data(types, type_id, |key| match key {
-        TypeData::Error => Some(true),
-        _ => None,
-    })
-    .unwrap_or(false)
+    type_id == TypeId::ERROR
+        || extract_type_data(types, type_id, |key| match key {
+            TypeData::Error => Some(true),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 /// Extract the function shape id if this is a function type.

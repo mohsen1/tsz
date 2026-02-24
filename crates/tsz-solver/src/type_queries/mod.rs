@@ -245,20 +245,6 @@ pub fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: TypeId) -
     )
 }
 
-/// Check if a type is the this type.
-///
-/// Returns true for `TypeData::ThisType`.
-pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::ThisType))
-}
-
-/// Check if a type is an error type.
-///
-/// Returns true for `TypeData::Error` or `TypeId::ERROR`.
-pub fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::ERROR || matches!(db.lookup(type_id), Some(TypeData::Error))
-}
-
 /// Check if a type needs evaluation before interface merging.
 ///
 /// Returns true for Application and Lazy types, which are meta-types that
