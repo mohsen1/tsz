@@ -1038,6 +1038,7 @@ ambient overloads is valid (e.g., `declare function f(x: number): void; function
 implementations from the TS2384 check.
 **Tests fixed**: `constructorOverloads7.ts` and 2 others.
 
+<<<<<<< HEAD
 ## TS2683 — False positive suppression for explicit `this` parameters and `any` receivers (Fixed, 2026-02-24)
 
 **Status**: Fixed. +4 tests passing in first-6000 slice (4017→4021, 67.1%).
@@ -1060,3 +1061,39 @@ implementations from the TS2384 check.
   mismatches (e.g., missing TS7006, TS2304, etc.) — TS2683 is no longer the blocking code.
 
 ## Current score: 4021/5997 (67.1%) — first-6000 slice
+
+## TS2702 — Type-as-namespace diagnostic distinction (Fixed, 2026-02-24)
+
+**Status**: Fixed. TS2702/TS2713 now emit correctly based on property existence.
+**Error codes:** TS2702 ("'{0}' only refers to a type, but is being used as a namespace here.")
+and TS2713 ("Cannot access '{0}.{1}' because ... Did you mean to retrieve the type ... with '{0}["{1}"]'?")
+**Root cause**: Previously, all "type used as namespace" qualified name errors unconditionally
+emitted TS2713 (with indexed access suggestion). TSC distinguishes: TS2713 fires when the
+accessed property *exists* on the type (suggesting `Foo["bar"]`), TS2702 fires when the
+property does *not* exist (generic error, no suggestion).
+**Fix**: Added solver query `type_has_property_by_str` in `tsz-solver/src/type_queries/data.rs`
+for union/intersection-aware property existence checking. For unions, ALL members must have
+the property for TS2713; for intersections, ANY member suffices. Routed through
+`query_boundaries/property_access.rs::type_has_property`. Modified `resolve_qualified_name`
+in `state/type_analysis/mod.rs` to conditionally emit TS2702 vs TS2713.
+**Tests**: 5 unit tests covering: empty interface (TS2702), interface with property (TS2713),
+union with non-shared property (TS2702), union with shared property (TS2713), type alias (TS2713).
+**Conformance**: No regression (7981/12574, 63.5%). The `invalidUseOfTypeAsNamespace.ts` compiler
+test now emits correct TS2702. The `errorForUsingPropertyOfTypeAsType01.ts` tests still fail
+due to pre-existing namespace/qualified-name resolution issues (TS2694/TS2503 emitted instead
+of reaching the TS2702/TS2713 path).
+
+### Deferred: namespace-scoped type-as-namespace resolution
+- `errorForUsingPropertyOfTypeAsType01.ts` Tests 1-5 still fail — the checker resolves
+  `Foo.bar` inside `namespace Test1 { export interface Foo {...} }` via namespace member
+  lookup (emitting TS2694 "no exported member") instead of the type-as-namespace path.
+  Fix requires changes to how qualified name resolution handles type-only symbols inside
+  namespaces.
+
+### Deferred: TS2353 intersection freshness false positives
+- During this session, identified that intersection merging in
+  `tsz-solver/src/intern/intersection.rs` (line 382-383) propagates `FRESH_LITERAL` flag
+  via OR. This causes intersected types to appear fresh when they shouldn't, triggering
+  false excess property checks. Affects ~76 tests. Not pursued — larger change needed.
+
+## Current score: 4021/5997 (67.1%) — first-6000 slice; 7981/12574 (63.5%) — full suite
