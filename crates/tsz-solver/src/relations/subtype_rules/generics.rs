@@ -1,23 +1,20 @@
 //! Generic type subtype checking.
 //!
 //! This module handles subtyping for TypeScript's generic and reference types:
-//! - Ref types (nominal references to type aliases, classes, interfaces)
+//! - Lazy(DefId) types (nominal references to type aliases, classes, interfaces)
 //! - `TypeQuery` (typeof expressions)
 //! - Type applications (Generic<T, U>)
 //! - Mapped types ({ [K in keyof T]: T[K] })
 //! - Type expansion and instantiation
 
+use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use crate::def::DefId;
 use crate::types::{MappedModifier, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
-    mapped_type_id, object_shape_id, object_with_index_shape_id, ref_symbol, type_param_info,
-    union_list_id,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
-use tsz_binder::SymbolId;
-
-use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -42,7 +39,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check Ref to Ref subtype with optional identity shortcut.
+    /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
     ///
     /// For class-to-class checks, uses `InheritanceGraph` for O(1) nominal subtyping
     /// before falling back to structural checking. This is critical for:
@@ -50,99 +47,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Correctness: Properly handles private/protected members (nominal, not structural)
     /// - Recursive types: Breaks cycles in class inheritance (e.g., `class Box { next: Box }`)
     ///
-    /// # DefId-Level Cycle Detection
-    ///
-    /// This function implements cycle detection at the `SymbolRef` level (analogous to `DefId`)
-    /// to catch recursive types before resolution. This prevents infinite expansion of
-    /// types like:
-    /// - `type List<T> = { head: T; tail: List<T> }`
-    /// - `interface Recursive { self: Recursive }`
-    ///
-    /// When we detect that we're comparing the same (`source_sym`, `target_sym`) pair that
-    /// we're already checking, we return `CycleDetected` (coinductive semantics) which
-    /// implements coinductive subtype checking for recursive types.
-    pub(crate) fn check_ref_ref_subtype(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        s_sym: SymbolRef,
-        t_sym: SymbolRef,
-    ) -> SubtypeResult {
-        // Identity check: same symbol is always a subtype of itself
-        if s_sym == t_sym {
-            return SubtypeResult::True;
-        }
-
-        // =======================================================================
-        // DefId-level cycle detection (before resolution!)
-        //
-        // This catches cycles in recursive type aliases and interfaces at the
-        // symbol level, preventing infinite expansion. We check this BEFORE
-        // resolving the symbols to their structural forms.
-        // =======================================================================
-        let ref_pair = (s_sym, t_sym);
-        if self.seen_refs.contains(&ref_pair) {
-            // We're in a cycle at the symbol level - return CycleDetected
-            // This implements coinductive semantics for recursive types
-            return SubtypeResult::CycleDetected;
-        }
-
-        // Also check the reversed pair for bivariant cross-recursion
-        let reversed_ref_pair = (t_sym, s_sym);
-        if self.seen_refs.contains(&reversed_ref_pair) {
-            return SubtypeResult::CycleDetected;
-        }
-
-        // Mark this pair as being checked
-        self.seen_refs.insert(ref_pair);
-
-        // O(1) nominal class subtype checking using InheritanceGraph
-        // This short-circuits expensive structural checks for class inheritance
-        if let (Some(graph), Some(is_class)) = (self.inheritance_graph, self.is_class_symbol) {
-            // Check if both symbols are classes (not interfaces or type aliases)
-            let s_is_class = is_class(s_sym);
-            let t_is_class = is_class(t_sym);
-
-            if s_is_class && t_is_class {
-                // Both are classes - use nominal inheritance check
-                // Convert SymbolRef to SymbolId for InheritanceGraph
-                let s_sid = SymbolId(s_sym.0);
-                let t_sid = SymbolId(t_sym.0);
-
-                if graph.is_derived_from(s_sid, t_sid) {
-                    // O(1) bitset check: source is a subclass of target
-                    self.seen_refs.remove(&ref_pair);
-                    return SubtypeResult::True;
-                }
-
-                // Not a subclass - fall through to structural check below
-                // This handles the case where a class is structurally compatible
-                // even though it doesn't inherit from the target
-            }
-        }
-
-        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(s_sym, self.interner)
-        };
-        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(t_sym, self.interner)
-        };
-        let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
-
-        // Remove from seen set after checking
-        self.seen_refs.remove(&ref_pair);
-
-        result
-    }
-
-    /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
-    ///
-    /// Handles cycles in Lazy(DefId) types and uses the `InheritanceGraph` bridge
-    /// for O(1) nominal class subtype checking.
+    /// Uses the `InheritanceGraph` bridge for O(1) nominal class subtype checking
+    /// and `RecursionGuard` for cycle detection at the DefId level.
     pub(crate) fn check_lazy_lazy_subtype(
         &mut self,
         source: TypeId,
@@ -247,48 +153,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
     }
 
-    /// Check Ref to structural type subtype.
-    ///
-    /// When the source type is a nominal reference (Ref), we must resolve it to
-    /// its structural type and then check subtyping against the target.
-    pub(crate) fn check_ref_subtype(
-        &mut self,
-        _source: TypeId,
-        target: TypeId,
-        sym: SymbolRef,
-    ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(sym, self.interner)
-        };
-        match resolved {
-            Some(s_resolved) => self.check_subtype(s_resolved, target),
-            None => SubtypeResult::False,
-        }
-    }
-
-    /// Check structural type to Ref subtype.
-    ///
-    /// When the target type is a nominal reference (Ref), we must resolve it to
-    /// its structural type and then check if the source is a subtype of that.
-    pub(crate) fn check_to_ref_subtype(
-        &mut self,
-        source: TypeId,
-        _target: TypeId,
-        sym: SymbolRef,
-    ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-            self.resolver.resolve_lazy(def_id, self.interner)
-        } else {
-            self.resolver.resolve_symbol_ref(sym, self.interner)
-        };
-        match resolved {
-            Some(t_resolved) => self.check_subtype(source, t_resolved),
-            None => SubtypeResult::False,
-        }
-    }
-
     /// Check `TypeQuery` (typeof) to structural type subtype.
     pub(crate) fn check_typequery_subtype(
         &mut self,
@@ -355,16 +219,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
             // Try to resolve DefId from the base to query variance
-            let def_id = if let Some(id) = lazy_def_id(self.interner, s_app.base) {
-                // Base is Lazy(DefId) - use DefId directly
-                Some(id)
-            } else if let Some(sym) = ref_symbol(self.interner, s_app.base) {
-                // Base is Ref(SymbolRef) - convert to DefId
-                self.resolver.symbol_to_def_id(sym)
-            } else {
-                // Base is neither Lazy nor Ref - can't get variance
-                None
-            };
+            let def_id = lazy_def_id(self.interner, s_app.base);
 
             if let Some(def_id) = def_id {
                 // Try to get variance from query_db first (if available).
@@ -443,14 +298,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // leads to false negatives. We detect cycles by tracking (source_base_DefId,
         // target_base_DefId) pairs — coinductive semantics assume the relation holds.
         // =======================================================================
-        let s_base_def = lazy_def_id(self.interner, s_app.base).or_else(|| {
-            ref_symbol(self.interner, s_app.base)
-                .and_then(|sym| self.resolver.symbol_to_def_id(sym))
-        });
-        let t_base_def = lazy_def_id(self.interner, t_app.base).or_else(|| {
-            ref_symbol(self.interner, t_app.base)
-                .and_then(|sym| self.resolver.symbol_to_def_id(sym))
-        });
+        let s_base_def = lazy_def_id(self.interner, s_app.base);
+        let t_base_def = lazy_def_id(self.interner, t_app.base);
 
         let app_def_pair = match (s_base_def, t_base_def) {
             (Some(s_def), Some(t_def)) => Some((s_def, t_def)),
@@ -569,22 +418,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        let (type_params, resolved_body) =
-            if let Some(def_id) = lazy_def_id(self.interner, app.base) {
-                let params = self.resolver.get_lazy_type_params(def_id)?;
-                let body = self.resolver.resolve_lazy(def_id, self.interner)?;
-                (params, body)
-            } else if let Some(symbol) = ref_symbol(self.interner, app.base) {
-                let params = self.resolver.get_type_params(symbol)?;
-                let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-                    self.resolver.resolve_lazy(def_id, self.interner)?
-                } else {
-                    self.resolver.resolve_symbol_ref(symbol, self.interner)?
-                };
-                (params, body)
-            } else {
-                return None;
-            };
+        let def_id = lazy_def_id(self.interner, app.base)?;
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
 
         // Skip if self-referential
         if let Some(resolved_app_id) = application_id(self.interner, resolved_body)
@@ -797,29 +633,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand an Application type to its structural form.
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
-    /// Supports both Ref(SymbolRef) and Lazy(DefId) bases for unified generic type expansion.
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
         use crate::{TypeSubstitution, instantiate_type};
 
         let app = self.interner.type_application(app_id);
 
-        // Try to get type params and resolved body from either Ref or Lazy base
-        let (type_params, resolved_body) = if let Some(symbol) = ref_symbol(self.interner, app.base)
-        {
-            let params = self.resolver.get_type_params(symbol)?;
-            let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-                self.resolver.resolve_lazy(def_id, self.interner)?
-            } else {
-                self.resolver.resolve_symbol_ref(symbol, self.interner)?
-            };
-            (params, body)
-        } else if let Some(def_id) = lazy_def_id(self.interner, app.base) {
-            let params = self.resolver.get_lazy_type_params(def_id)?;
-            let body = self.resolver.resolve_lazy(def_id, self.interner)?;
-            (params, body)
-        } else {
-            return None;
-        };
+        let def_id = lazy_def_id(self.interner, app.base)?;
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
 
         // Skip expansion if the resolved type is just this Application
         // (prevents infinite recursion on self-referential types)
@@ -975,19 +796,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(shape.properties.iter().map(|p| p.name).collect());
         }
 
-        // Handle DefId-based Lazy types (new API)
         if let Some(def_id) = lazy_def_id(self.interner, operand) {
             let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
-            if resolved == operand {
-                return None; // Avoid infinite recursion
-            }
-            return self.try_get_keyof_keys(resolved);
-        }
-
-        // Handle legacy SymbolRef-based types (old API)
-        if let Some(symbol) = ref_symbol(self.interner, operand) {
-            // Try to resolve the ref and get keys from the resolved type
-            let resolved = self.resolver.resolve_symbol_ref(symbol, self.interner)?;
             if resolved == operand {
                 return None; // Avoid infinite recursion
             }

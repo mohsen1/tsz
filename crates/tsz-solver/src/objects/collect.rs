@@ -108,23 +108,15 @@ where
     }
 }
 
-/// Helper function to resolve Lazy and Ref types
+/// Helper function to resolve Lazy types via DefId
 fn resolve_type<R>(type_id: TypeId, interner: &dyn TypeDatabase, resolver: &R) -> TypeId
 where
     R: TypeResolver,
 {
-    use crate::visitor::{lazy_def_id, ref_symbol};
+    use crate::visitor::lazy_def_id;
 
-    // Handle DefId-based Lazy types (new API)
     if let Some(def_id) = lazy_def_id(interner, type_id) {
-        return resolver.resolve_lazy(def_id, interner).unwrap_or(type_id);
-    }
-
-    // Handle legacy SymbolRef-based types (old API)
-    if let Some(symbol) = ref_symbol(interner, type_id) {
-        resolver
-            .resolve_symbol_ref(symbol, interner)
-            .unwrap_or(type_id)
+        resolver.resolve_lazy(def_id, interner).unwrap_or(type_id)
     } else {
         type_id
     }

@@ -35,7 +35,7 @@ use crate::types::{
     ObjectShapeId, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleListId,
     TypeApplicationId, TypeId, TypeListId, TypeParamInfo, Variance,
 };
-use crate::visitor::{lazy_def_id, ref_symbol};
+use crate::visitor::lazy_def_id;
 
 use std::sync::Arc;
 use tsz_common::interner::Atom;
@@ -412,14 +412,8 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         let app = self.db.type_application(TypeApplicationId(app_id));
         let current_polarity = self.get_current_polarity();
 
-        // 1. Extract DefId from the base type (Lazy or via Ref helper)
-        let base_def_id = if let Some(def_id) = lazy_def_id(self.db.as_type_database(), app.base) {
-            Some(def_id)
-        } else if let Some(symbol_ref) = ref_symbol(self.db.as_type_database(), app.base) {
-            self.db.symbol_to_def_id(symbol_ref)
-        } else {
-            None
-        };
+        // 1. Extract DefId from the base type
+        let base_def_id = lazy_def_id(self.db.as_type_database(), app.base);
 
         // 2. Look up variance of the base type's parameters (disambiguate QueryDatabase trait)
         use crate::caches::db::QueryDatabase as QDB;

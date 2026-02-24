@@ -24,8 +24,8 @@ use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
     enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
     keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
-    object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
-    tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
+    object_with_index_shape_id, readonly_inner_type, template_literal_id, tuple_list_id,
+    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::limits;
@@ -119,10 +119,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) resolver: &'a R,
     /// Unified recursion guard for TypeId-pair cycle detection, depth, and iteration limits.
     pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
-    /// Active `SymbolRef` pairs being checked (for DefId-level cycle detection)
-    /// This catches cycles in Ref types before they're resolved, preventing
-    /// infinite expansion of recursive type aliases and interfaces.
-    pub(crate) seen_refs: FxHashSet<(SymbolRef, SymbolRef)>,
     /// Unified recursion guard for DefId-pair cycle detection.
     /// Catches cycles in Lazy(DefId) types before they're resolved.
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
@@ -192,7 +188,6 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
-            seen_refs: FxHashSet::default(),
             def_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
@@ -226,7 +221,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
-            seen_refs: FxHashSet::default(),
             def_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
@@ -294,7 +288,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     #[inline]
     pub fn reset(&mut self) {
         self.guard.reset();
-        self.seen_refs.clear();
         self.def_guard.reset();
         self.sym_visiting.clear();
         self.eval_cache.clear();
@@ -338,14 +331,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .unwrap_or(type_id);
         }
 
-        // Handle legacy SymbolRef-based types (old API)
-        if let Some(symbol) = ref_symbol(self.interner, type_id) {
-            self.resolver
-                .resolve_symbol_ref(symbol, self.interner)
-                .unwrap_or(type_id)
-        } else {
-            type_id
-        }
+        type_id
     }
 
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
@@ -1143,25 +1129,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 SubtypeResult::False
             };
-        }
-
-        // =======================================================================
-        // Ref(SymbolRef) checks - now secondary to Lazy(DefId)
-        // =======================================================================
-
-        if let (Some(s_sym), Some(t_sym)) = (
-            ref_symbol(self.interner, source),
-            ref_symbol(self.interner, target),
-        ) {
-            return self.check_ref_ref_subtype(source, target, s_sym, t_sym);
-        }
-
-        if let Some(s_sym) = ref_symbol(self.interner, source) {
-            return self.check_ref_subtype(source, target, s_sym);
-        }
-
-        if let Some(t_sym) = ref_symbol(self.interner, target) {
-            return self.check_to_ref_subtype(source, target, t_sym);
         }
 
         if let (Some(s_sym), Some(t_sym)) = (

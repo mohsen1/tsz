@@ -12,8 +12,8 @@ use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, Type
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
     intrinsic_kind, is_this_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
-    object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
-    tuple_list_id, type_param_info, union_list_id,
+    object_with_index_shape_id, readonly_inner_type, template_literal_id, tuple_list_id,
+    type_param_info, union_list_id,
 };
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -182,13 +182,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        if let Some(sym) = ref_symbol(self.interner, source) {
-            let resolved = self.resolver.resolve_symbol_ref(sym, self.interner);
-            if let Some(resolved) = resolved {
-                return self.check_subtype(resolved, TypeId::OBJECT).is_true();
-            }
-        }
-
         false
     }
 
@@ -218,12 +211,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return info
                 .constraint
                 .is_some_and(|constraint| self.is_global_object_interface_type(constraint));
-        }
-
-        if let Some(sym) = ref_symbol(self.interner, source)
-            && let Some(resolved) = self.resolver.resolve_symbol_ref(sym, self.interner)
-        {
-            return self.is_global_object_interface_type(resolved);
         }
 
         true
@@ -296,13 +283,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return info
                 .constraint
                 .is_some_and(|constraint| self.is_callable_type(constraint));
-        }
-
-        if let Some(sym) = ref_symbol(self.interner, source) {
-            let resolved = self.resolver.resolve_symbol_ref(sym, self.interner);
-            if let Some(resolved) = resolved {
-                return self.is_callable_type(resolved);
-            }
         }
 
         false
