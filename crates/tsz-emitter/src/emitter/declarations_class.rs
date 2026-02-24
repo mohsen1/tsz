@@ -527,16 +527,29 @@ impl<'a> Printer<'a> {
                     .map_or_else(
                         || {
                             // Empty class: find the closing `}` to use as scan_end
-                            bytes[brace_end as usize..end]
-                                .iter()
-                                .position(|&b| b == b'}')
-                                .map_or(end, |p| brace_end as usize + p)
+                            let be = brace_end as usize;
+                            if be <= end {
+                                bytes[be..end]
+                                    .iter()
+                                    .position(|&b| b == b'}')
+                                    .map_or(end, |p| be + p)
+                            } else {
+                                end
+                            }
                         },
                         |m| m.pos as usize,
                     );
-                let has_newline = bytes[brace_end as usize..scan_end.min(end)]
-                    .iter()
-                    .any(|&b| b == b'\n' || b == b'\r');
+                let brace_end_usize = brace_end as usize;
+                let scan_end_clamped = scan_end.min(end);
+                let has_newline = if brace_end_usize <= scan_end_clamped {
+                    bytes[brace_end_usize..scan_end_clamped]
+                        .iter()
+                        .any(|&b| b == b'\n' || b == b'\r')
+                } else {
+                    // Malformed source: first member pos precedes the opening
+                    // brace we found — skip the suppression heuristic.
+                    false
+                };
                 if has_newline {
                     self.skip_trailing_same_line_comments(brace_end, node.end);
                 }

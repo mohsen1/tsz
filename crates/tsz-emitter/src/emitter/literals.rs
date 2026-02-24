@@ -478,9 +478,19 @@ impl<'a> Printer<'a> {
                 }
 
                 if i + 1 < bytes.len() {
-                    out.push('\\');
-                    out.push(bytes[i + 1] as char);
-                    i += 2;
+                    // The byte after `\` may be a multi-byte UTF-8 lead byte
+                    // (e.g. `\` followed by U+2028 LINE SEPARATOR which is 3
+                    // bytes in UTF-8).  Decode the full character so we
+                    // advance `i` past all of its bytes.
+                    let after = &text[i + 1..];
+                    if let Some(ch) = after.chars().next() {
+                        out.push('\\');
+                        out.push(ch);
+                        i += 1 + ch.len_utf8();
+                    } else {
+                        out.push('\\');
+                        i += 1;
+                    }
                 } else {
                     out.push('\\');
                     i += 1;
@@ -800,6 +810,34 @@ mod tests {
         assert!(
             output.contains("\\u0061"),
             "Unicode escape \\u0061 should be preserved in property name.\nGot: {output}"
+        );
+    }
+
+    /// Backslash followed by a multi-byte UTF-8 character (e.g. U+2028 LINE
+    /// SEPARATOR) in a string literal must not panic during downlevel emit.
+    /// Previously, `downlevel_codepoint_escapes_in_literal_text` treated the
+    /// byte after `\` as a single ASCII byte and advanced by 2, landing in the
+    /// middle of a multi-byte character.
+    #[test]
+    fn backslash_followed_by_multibyte_utf8_no_panic() {
+        use tsz_common::ScriptTarget;
+        // U+2028 LINE SEPARATOR is 3 bytes in UTF-8: E2 80 A8
+        // The source string: var x = "line 1\<LS> line 2";
+        let source = "var x = \"line 1\\\u{2028} line 2\";";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        // Should not panic, and should contain the string literal
+        assert!(
+            output.contains("line 1"),
+            "Output should contain the string literal.\nGot: {output}"
         );
     }
 }

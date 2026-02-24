@@ -963,3 +963,30 @@ fn trailing_comment_capped_at_class_close_brace() {
         "Closing brace comment must not be stolen by last member.\nOutput:\n{output}"
     );
 }
+
+/// Regression test: malformed source where the first `{` found from
+/// `node.pos` is inside a broken expression (not the class body) must not
+/// cause a slice panic when the first member's `pos` precedes that `{`.
+#[test]
+fn malformed_source_class_brace_scan_no_panic() {
+    // Simulate broken source where the parser produces a class whose first
+    // member's position is before the `{` found by the byte scanner.
+    // `retValue != 0 ^= {` creates a `{` inside a broken expression.
+    let source = r#"class C {
+    constructor() {
+        if (x != 0 ^= {
+            return 1;
+        }
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    // Should not panic — just produce some output
+    let _output = printer.finish().code;
+}
