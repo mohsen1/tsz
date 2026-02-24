@@ -368,16 +368,7 @@ impl<'a> CheckerState<'a> {
     ) {
         // TS8004: Type parameters on class expression in JS files
         if self.is_js_file() {
-            if let Some(ref type_params) = class.type_parameters
-                && !type_params.nodes.is_empty()
-            {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                        type_params.nodes[0],
-                        diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    );
-            }
+            self.error_if_ts_only_type_params(&class.type_parameters);
 
             // Also check members for JS grammar errors
             for &member_idx in &class.members.nodes {

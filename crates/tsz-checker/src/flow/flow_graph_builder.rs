@@ -240,17 +240,10 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
 
-            // For-in statement
-            syntax_kind_ext::FOR_IN_STATEMENT => {
+            // For-in / for-of statements (identical flow graph structure)
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
                 if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                    self.build_for_in_statement(for_in_of);
-                }
-            }
-
-            // For-of statement
-            syntax_kind_ext::FOR_OF_STATEMENT => {
-                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                    self.build_for_of_statement(for_in_of);
+                    self.build_for_in_of_statement(for_in_of);
                 }
             }
 
@@ -644,48 +637,10 @@ impl<'a> FlowGraphBuilder<'a> {
         self.current_flow = merge_label;
     }
 
-    /// Build flow graph for a for-in statement.
-    fn build_for_in_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
-        // Create loop label
-        let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if self.current_flow.is_some()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label)
-        {
-            node.antecedent.push(self.current_flow);
-        }
-
-        // Create merge label
-        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
-
-        // Push loop context
-        self.flow_stack.push(FlowContext {
-            break_label: merge_label,
-            continue_label: Some(loop_label),
-            context_type: FlowContextType::Loop,
-            finally_block: NodeIndex::NONE,
-            label: NodeIndex::NONE,
-        });
-
-        // Track initializer (variable declaration)
-        if for_in_of.initializer.is_some() {
-            self.build_statement(for_in_of.initializer);
-        }
-
-        self.current_flow = loop_label;
-
-        // Bind loop body
-        self.build_statement(for_in_of.statement);
-
-        // Loop back
-        self.add_antecedent(loop_label, self.current_flow);
-        self.add_antecedent(merge_label, self.current_flow);
-
-        self.flow_stack.pop();
-        self.current_flow = merge_label;
-    }
-
-    /// Build flow graph for a for-of statement.
-    fn build_for_of_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
+    /// Build flow graph for a for-in or for-of statement.
+    /// Both produce identical control flow structure: loop label, merge label,
+    /// initializer, body, and back-edge wiring.
+    fn build_for_in_of_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if self.current_flow.is_some()
