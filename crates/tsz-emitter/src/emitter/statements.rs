@@ -96,17 +96,18 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Single-line blocks: preserve single-line formatting from source.
-        // tsc only emits single-line blocks when the original source was single-line.
-        // It never collapses multi-line blocks to single lines.
-        // (But not when we need to inject `var _this = this;` — that forces multi-line.)
+        // Single-line blocks: tsc only preserves single-line formatting for
+        // function/method/arrow body blocks.  Control-flow blocks (for, while,
+        // if, do, try, etc.) are always expanded to multi-line, even when the
+        // source was single-line.
+        // (Forced multi-line when we need to inject `var _this = this;`.)
         let is_single_statement = block.statements.nodes.len() == 1;
         let should_emit_single_line = is_single_statement
             && self.is_single_line(node)
             && !needs_this_capture
-            && (!is_function_body_block
-                || (self.hoisted_assignment_value_temps.is_empty()
-                    && self.hoisted_for_of_temps.is_empty()));
+            && is_function_body_block
+            && self.hoisted_assignment_value_temps.is_empty()
+            && self.hoisted_for_of_temps.is_empty();
 
         if should_emit_single_line {
             if is_function_body_block {

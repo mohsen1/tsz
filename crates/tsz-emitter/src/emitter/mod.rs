@@ -912,10 +912,13 @@ impl<'a> Printer<'a> {
             }
 
             // Class static block: `static { ... }`
+            // Treated like a function body for single-line formatting purposes.
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 self.write("static ");
-                // The static block uses the same data as a Block node
+                let prev = self.emitting_function_body_block;
+                self.emitting_function_body_block = true;
                 self.emit_block(node, idx);
+                self.emitting_function_body_block = prev;
             }
 
             // If statement

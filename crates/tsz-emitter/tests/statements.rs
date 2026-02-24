@@ -929,3 +929,78 @@ fn multiple_comments_before_closing_brace() {
         "Multiple comments before closing brace should stay inside.\nOutput:\n{output}"
     );
 }
+
+/// tsc always expands control-flow blocks (for, while, if, do) to multi-line,
+/// even when the source code has them on a single line.
+#[test]
+fn for_loop_single_line_block_expands_to_multiline() {
+    let source = r#"for (var i = 0;;) { throw i; }"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("{\n    throw i;\n}"),
+        "for-loop single-line block should expand to multi-line.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn if_single_line_block_expands_to_multiline() {
+    let source = r#"if (x < 0) { throw new Error(); }"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("{\n    throw new Error();\n}"),
+        "if-statement single-line block should expand to multi-line.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn while_single_line_block_expands_to_multiline() {
+    let source = r#"while (true) { break; }"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("{\n    break;\n}"),
+        "while-loop single-line block should expand to multi-line.\nOutput:\n{output}"
+    );
+}
+
+/// Function body single-line blocks should STAY single-line (tsc preserves these).
+#[test]
+fn function_body_single_line_stays_single_line() {
+    let source = r#"function f() { return 1; }"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("{ return 1; }"),
+        "Function body single-line block should stay single-line.\nOutput:\n{output}"
+    );
+}

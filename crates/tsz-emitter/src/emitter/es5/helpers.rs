@@ -270,11 +270,14 @@ impl<'a> Printer<'a> {
         self.write(" (");
         let param_transforms = self.emit_function_parameters_es5(&method.parameters.nodes);
         self.write(") ");
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(method.body, &param_transforms);
         } else {
             self.emit(method.body);
         }
+        self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
     }
 
