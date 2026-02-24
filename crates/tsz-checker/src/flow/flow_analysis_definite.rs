@@ -1,10 +1,10 @@
 //! Definite assignment analysis (TS2454), TDZ analysis, and flow-based type narrowing.
 
 use crate::FlowAnalyzer;
-use crate::query_boundaries::definite_assignment::find_property_in_object_by_str;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
+use crate::query_boundaries::state_checking::find_property_in_object_by_str;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use std::rc::Rc;
 use tsz_binder::{SymbolId, flow_flags};
@@ -233,21 +233,22 @@ impl<'a> CheckerState<'a> {
         // Start with the full source type members
         let source_member_count = source_members.len();
         let mut remaining_members = source_members;
-        let member_binding_type =
-            |member: TypeId, binding: &crate::context::DestructuredBindingInfo| -> Option<TypeId> {
-                if !binding.property_name.is_empty() {
-                    let mut current = member;
-                    for segment in binding.property_name.split('.') {
-                        let prop = find_property_in_object_by_str(self, current, segment)?;
-                        current = prop.type_id;
-                    }
-                    Some(current)
-                } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, member) {
-                    elems.get(binding.element_index as usize).map(|e| e.type_id)
-                } else {
-                    None
+        let member_binding_type = |member: TypeId,
+                                   binding: &crate::context::DestructuredBindingInfo|
+         -> Option<TypeId> {
+            if !binding.property_name.is_empty() {
+                let mut current = member;
+                for segment in binding.property_name.split('.') {
+                    let prop = find_property_in_object_by_str(self.ctx.types, current, segment)?;
+                    current = prop.type_id;
                 }
-            };
+                Some(current)
+            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, member) {
+                elems.get(binding.element_index as usize).map(|e| e.type_id)
+            } else {
+                None
+            }
+        };
         let symbol_identifier_ref = |sym: SymbolId| -> Option<NodeIndex> {
             let mut declaration_ident: Option<NodeIndex> = None;
             for (&node_id, &node_sym) in &self.ctx.binder.node_symbols {
@@ -492,8 +493,8 @@ impl<'a> CheckerState<'a> {
                 let mut current = *member;
                 let mut resolved = Some(current);
                 for segment in info.property_name.split('.') {
-                    resolved =
-                        find_property_in_object_by_str(self, current, segment).map(|p| p.type_id);
+                    resolved = find_property_in_object_by_str(self.ctx.types, current, segment)
+                        .map(|p| p.type_id);
                     if let Some(next) = resolved {
                         current = next;
                     } else {
