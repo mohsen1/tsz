@@ -96,7 +96,6 @@ function test<P extends Props>(props: Readonly<P>) {
 }
 
 #[test]
-#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_with_default_type_parameter() {
     let source = r#"
 function foo<T = string>(x: T): T {
@@ -139,7 +138,6 @@ const result4 = foo<number>([]); // TS2345: never[] not assignable to number
 }
 
 #[test]
-#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_class_type_parameter_constraint() {
     let source = r#"
 class Container<T extends number> {
@@ -240,7 +238,6 @@ useConsumer(consDerived); // TS2322 if invariance (should error)
 }
 
 #[test]
-#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_function_type_inference() {
     let source = r#"
 function pair<T, U>(first: T, second: U): [T, U] {
@@ -282,7 +279,6 @@ const result3 = pair<number, number>(1, "hello"); // TS2345: string not assignab
 }
 
 #[test]
-#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_no_type_arguments_needed_for_inferred_generics() {
     let source = r#"
 function identity<T>(x: T): T {
@@ -325,7 +321,6 @@ const result4 = identity<string>(42); // TS2345: number not assignable to string
 }
 
 #[test]
-#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_multiple_type_parameters_with_defaults() {
     let source = r#"
 function foo<T = number, U = string>(x: T, y: U): [T, U] {
