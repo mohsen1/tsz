@@ -416,7 +416,21 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 4012/5997 (66.9%) — first-6000; 7964/12574 (63.3%) — full suite
+## Current score: 4014/5997 (66.9%) — first-6000
+
+### Session progress (2026-02-24, TS2320 optionality):
+- **TS2320 optionality fix (+1 test)**: Interface extension compatibility check now
+  tracks property optionality (question_token) alongside type. TS2320 fires when
+  same-named properties from different base types differ in optionality (e.g.,
+  `x?: number` vs `x: number`), matching tsc behavior. Test:
+  `inheritSameNamePropertiesWithDifferentOptionality.ts`. Added 4 unit tests in
+  `ts2320_tests.rs`.
+- **Investigated remaining quick wins**: Most NOT IMPL codes (TS18003, TS2661) are
+  either multi-file test issues or infrastructure gaps (TS18003 needs tsconfig-based
+  file discovery; TS2661 tests need @filename multi-file support). 20 diff=0 tests
+  have correct error codes but fingerprint mismatches (position/message differences).
+  337 false positive tests mostly involve fingerprint-level mismatches, not extra codes.
+  Remaining improvements require deep type system work.
 
 ### Session progress (2026-02-23, TS2397):
 - **TS2397 (implemented)**: Emit "Declaration name conflicts with built-in global identifier '{0}'"
