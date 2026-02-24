@@ -166,11 +166,10 @@ impl<'a> DiagnosticBuilder<'a> {
         TypeDiagnostic::error(format!("Cannot find name '{name}'."), code)
     }
 
-    /// Create a "Type X is not callable" diagnostic.
-    pub fn not_callable(&mut self, type_id: TypeId) -> TypeDiagnostic {
-        let type_str = self.formatter.format(type_id);
+    /// Create a "This expression is not callable" diagnostic (TS2349).
+    pub fn not_callable(&mut self, _type_id: TypeId) -> TypeDiagnostic {
         TypeDiagnostic::error(
-            format!("Type '{type_str}' has no call signatures."),
+            "This expression is not callable.".to_string(),
             codes::NOT_CALLABLE,
         )
     }

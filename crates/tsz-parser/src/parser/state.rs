@@ -1232,7 +1232,7 @@ impl ParserState {
     /// Error: Type expected (TS1110)
     pub(crate) fn error_type_expected(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
-        self.parse_error_at_current_token("Type expected", diagnostic_codes::TYPE_EXPECTED);
+        self.parse_error_at_current_token("Type expected.", diagnostic_codes::TYPE_EXPECTED);
     }
 
     /// Error: Identifier expected (TS1003), or Invalid character (TS1127)
@@ -1256,7 +1256,7 @@ impl ParserState {
         if self.should_report_error() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                "Identifier expected",
+                "Identifier expected.",
                 diagnostic_codes::IDENTIFIER_EXPECTED,
             );
         }

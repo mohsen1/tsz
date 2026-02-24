@@ -548,17 +548,29 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Get property name for error message. Use fallback for complex computed properties.
-            let name = self.get_property_name(prop.name).unwrap_or_else(|| {
-                // For complex computed properties (e.g., [getKey()]), use a descriptive fallback
-                match &key {
+            // Get property name for error message.
+            // For computed properties, always use key-based formatting to preserve brackets
+            // (tsc displays computed properties as [x], ["h"], etc. in diagnostics).
+            let format_key_name = |key: &PropertyKey| -> String {
+                match key {
                     PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{s}]"),
                     PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{s}\"]"),
                     PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{n}]"),
                     PropertyKey::Private(s) => format!("#{s}"),
                     PropertyKey::Ident(s) => s.clone(),
                 }
-            });
+            };
+            let is_computed = self
+                .ctx
+                .arena
+                .get(prop.name)
+                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let name = if is_computed {
+                format_key_name(&key)
+            } else {
+                self.get_property_name(prop.name)
+                    .unwrap_or_else(|| format_key_name(&key))
+            };
 
             tracked.insert(key.clone());
             properties.push((key, name, prop.name));

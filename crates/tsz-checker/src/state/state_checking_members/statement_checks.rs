@@ -368,7 +368,7 @@ impl<'a> CheckerState<'a> {
                     // Continue can only target iteration labels (label found but not on loop) - TS1115
                     self.error_at_node(
                         stmt_idx,
-                        "A 'continue' statement can only target a label of an enclosing iteration statement.",
+                        "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
                         diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
                     );
                 }
@@ -377,7 +377,7 @@ impl<'a> CheckerState<'a> {
                 // Label not found - emit TS1115 (same as when label exists but not on iteration)
                 self.error_at_node(
                     stmt_idx,
-                    "A 'continue' statement can only target a label of an enclosing iteration statement.",
+                    "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
                     diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
                 );
             }

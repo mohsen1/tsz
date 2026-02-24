@@ -1085,12 +1085,12 @@ impl ParserState {
 
         if is_duplicate {
             self.parse_error_at_current_token(
-                "extends clause already seen.",
+                "'extends' clause already seen.",
                 diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
             );
         } else if seen_implements {
             self.parse_error_at_current_token(
-                "extends clause must precede implements clause.",
+                "'extends' clause must precede 'implements' clause.",
                 diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE,
             );
         }
@@ -1159,7 +1159,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         if *seen_implements {
             self.parse_error_at_current_token(
-                "implements clause already seen.",
+                "'implements' clause already seen.",
                 diagnostic_codes::IMPLEMENTS_CLAUSE_ALREADY_SEEN,
             );
         }
