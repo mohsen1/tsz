@@ -1183,4 +1183,50 @@ matching the existing pattern in `check_const_assignment()` and `check_increment
   comparison instead of mutual assignability for method signatures.
 - **`exactOptionalPropertyTypes`** — compiler option not yet supported.
 
-## Current score: 4023/5997 (67.1%) — first-6000 slice; 7989/12574 (63.5%) — full suite
+## TS7006 — False positive for null/undefined default parameters (Fixed)
+
+**Status**: Fixed. +2 tests passing.
+**Error code:** TS7006 ("Parameter 'x' implicitly has an 'any' type.")
+**Root cause:** `maybe_report_implicit_any_parameter` in `implicit_any_checks.rs` special-cased
+`null` and `undefined` initializers as not providing a type. In tsc, `= null` gives the
+parameter type `null` and `= undefined` gives type `undefined` — these are valid types, not
+implicit `any`.
+**Fix:** Removed the null/undefined special-casing. All initializers now suppress TS7006.
+**Validation:** Added unit tests `no_ts7006_for_null_default_parameter`,
+`no_ts7006_for_undefined_default_parameter`, `ts7006_still_emitted_for_bare_parameter`.
+**Tests fixed:** `implicitAnyDeclareFunctionWithoutFormalType.ts`,
+`noImplicitAnyDestructuringParameterDeclaration.ts`.
+
+### Remaining TS7006 gaps (investigated, deferred)
+- **Generic constraint contextual typing** (2 pure tests + 6 mixed): `inferentialTypingUsingApparentType1.ts`,
+  `inferentialTypingUsingApparentType2.ts` — solver doesn't use the apparent type (constraint) of
+  type parameters for contextual typing during generic inference.
+- **Module augmentation** (7 mixed tests): callbacks like `arr.map(x => ...)` not contextually typed
+  through augmented interface methods.
+- **Binding pattern references** (1 test): `intraBindingPatternReferences.ts` — cross-reference
+  between binding pattern elements for contextual typing not implemented.
+
+## TS2367 — Duplicate overlap check removal (Code cleanup)
+
+**Status**: Fixed (code cleanup). Removed redundant second TS2367 check in `binary.rs` that used
+raw unnarrowed types via `are_types_overlapping`. The primary check (using `types_have_no_overlap`
+with `literal_type_from_initializer` narrowing) is sufficient. Also removed unused
+`error_comparison_no_overlap` helper from `generics.rs`.
+
+### Remaining TS2367 gaps
+- **Empty object `{}` vs type parameter `T`**: `emptyAnonymousObjectNarrowing.ts` still emits false
+  TS2367 from the primary check because `types_have_no_overlap` falls through to `is_assignable_to`
+  which doesn't handle unconstrained type parameters being assignable to `{}`.
+- **Unreachable code after always-true comparisons**: `capturedLetConstInLoop6.ts` emits TS2367 for
+  `const x = 1; if (x == 2)` in loop bodies where `x == 1` always takes the `break`, making
+  `x == 2` unreachable. Requires control flow unreachability detection.
+
+## TS2353 — Intersection freshness false positives (Investigated, deferred)
+
+**Status**: Known issue. Affects ~76 tests.
+**Root cause:** `tsz-solver/src/intern/intersection.rs` line 382-383 propagates `FRESH_LITERAL` flag
+via OR when merging objects in an intersection. This causes intersected types to appear fresh when
+they shouldn't, triggering false excess property checks. Fix requires changing freshness
+propagation semantics (AND instead of OR for intersection merging).
+
+## Current score: 4029/5997 (67.2%) — first-6000 slice
