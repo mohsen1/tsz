@@ -6,7 +6,7 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
-use crate::inference::infer::{InferenceContext, InferenceError};
+use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::types::{
@@ -75,6 +75,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For those parameters we keep inference constrained so final argument checks
         // can report concrete mismatches instead of silently widening to unions.
         let mut direct_param_vars = FxHashSet::default();
+        let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
 
@@ -208,10 +209,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
-            // Skip contextually sensitive arguments (will process in Round 2)
-            if self.is_contextually_sensitive(arg_type) {
+            // Keep round-2 contextual arguments for full checking, but only process
+            // non-contextual arguments (and non-contextual parts of mixed objects) in
+            // round 1.
+            let Some((contextual_arg_type, contextual_target_type)) =
+                self.contextual_round1_arg_types(arg_type, target_type)
+            else {
                 has_context_sensitive_args = true;
                 continue;
+            };
+            if self.is_contextually_sensitive(arg_type) {
+                has_context_sensitive_args = true;
             }
 
             // Direct placeholders (inference variables) are validated by final
@@ -225,13 +233,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited)
                 {
                     // No placeholder in target_type - check assignability directly
-                    if !self.checker.is_assignable_to(arg_type, target_type)
-                        && !self.is_function_union_compat(arg_type, target_type)
+                    if !self
+                        .checker
+                        .is_assignable_to(contextual_arg_type, contextual_target_type)
+                        && !self
+                            .is_function_union_compat(contextual_arg_type, contextual_target_type)
                     {
                         return CallResult::ArgumentTypeMismatch {
                             index: i,
-                            expected: target_type,
-                            actual: arg_type,
+                            expected: contextual_target_type,
+                            actual: contextual_arg_type,
                             fallback_return: TypeId::ERROR,
                         };
                     }
@@ -249,13 +260,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             &mut placeholder_visited,
                         ) {
                             // Constraint is fully concrete - safe to check now
-                            if !self.checker.is_assignable_to(arg_type, inst_constraint)
-                                && !self.is_function_union_compat(arg_type, inst_constraint)
+                            if !self
+                                .checker
+                                .is_assignable_to(contextual_arg_type, inst_constraint)
+                                && !self
+                                    .is_function_union_compat(contextual_arg_type, inst_constraint)
                             {
                                 return CallResult::ArgumentTypeMismatch {
                                     index: i,
                                     expected: inst_constraint,
-                                    actual: arg_type,
+                                    actual: contextual_arg_type,
                                     fallback_return: TypeId::ERROR,
                                 };
                             }
@@ -263,15 +277,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             } else if !is_rest_param_arg {
-                direct_param_vars.insert(var_map[&target_type]);
+                direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                    target_type,
+                    &var_map,
+                    &mut placeholder_probe_map,
+                    &mut placeholder_visited,
+                ));
             }
 
             // arg_type <: target_type
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
-                arg_type,
-                target_type,
+                contextual_arg_type,
+                contextual_target_type,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
         }
@@ -322,11 +341,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
                     && i >= instantiated_params.len().saturating_sub(1);
 
-                if target_has_placeholders
-                    && var_map.contains_key(&target_type)
-                    && !is_rest_param_arg
-                {
-                    direct_param_vars.insert(var_map[&target_type]);
+                if target_has_placeholders && !is_rest_param_arg {
+                    direct_param_vars.extend(self.collect_placeholder_vars_in_type(
+                        target_type,
+                        &var_map,
+                        &mut placeholder_probe_map,
+                        &mut placeholder_visited,
+                    ));
                 }
 
                 if !target_has_placeholders {
@@ -432,63 +453,123 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
 
             let ty = if has_constraints {
-                match infer_ctx.resolve_with_constraints_by(var, |source, target| {
-                    self.checker.is_assignable_to(source, target)
-                }) {
-                    Ok(ty) => {
-                        let ty = if direct_param_vars.contains(&var) {
-                            self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
-                        } else {
-                            ty
-                        };
-                        trace!(
-                            resolved_type = ?ty,
-                            "Type parameter resolved successfully from constraints"
-                        );
-                        ty
+                let mut resolved_direct = None;
+
+                if direct_param_vars.contains(&var)
+                    && let Some(constraint_ty) = tp.constraint
+                    && let Some(constraints) = constraints.as_ref()
+                    && constraints
+                        .lower_bounds.contains(&constraint_ty)
+                {
+                    let mut non_constraint_bounds = Vec::new();
+                    for bound in &constraints.lower_bounds {
+                        if *bound != constraint_ty && !non_constraint_bounds.contains(bound) {
+                            non_constraint_bounds.push(*bound);
+                        }
                     }
-                    Err(e) => {
-                        trace!(
-                            error = ?e,
-                            "Constraint resolution failed, using fallback"
+
+                    if !non_constraint_bounds.is_empty() {
+                        let candidate = self.resolve_direct_parameter_inference_type(
+                            &non_constraint_bounds,
+                            infer_ctx.best_common_type(&non_constraint_bounds),
                         );
+                        let upper_bounds_ok = constraints.upper_bounds.iter().all(|upper| {
+                            !matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                                && infer_ctx.is_subtype(candidate, *upper)
+                                || matches!(upper, &TypeId::ANY | &TypeId::UNKNOWN | &TypeId::ERROR)
+                        });
 
-                        // When the bounds violation comes from callback return type
-                        // inference (Round 2, ReturnType priority), tsc uses the inferred
-                        // type and reports TS2322 on the return expression rather than
-                        // falling back to the constraint and reporting TS2345 on the
-                        // whole callback argument.
-                        let use_inferred = matches!(&e, InferenceError::BoundsViolation { .. })
-                            && infer_ctx.all_candidates_are_return_type(var);
+                        if upper_bounds_ok {
+                            resolved_direct = Some(candidate);
+                        }
+                    }
+                }
 
-                        let fallback = if use_inferred {
-                            // Use the inferred type (lower bound from BoundsViolation)
-                            if let InferenceError::BoundsViolation { lower, .. } = &e {
-                                *lower
+                let ty = if let Some(resolved) = resolved_direct {
+                    let root = infer_ctx.table.find(var);
+                    let mut info = infer_ctx.table.probe_value(root);
+                    info.resolved = Some(resolved);
+                    infer_ctx.table.union_value(root, info);
+                    resolved
+                } else {
+                    match infer_ctx.resolve_with_constraints_by(var, |source, target| {
+                        self.checker.is_assignable_to(source, target)
+                    }) {
+                        Ok(ty) => {
+                            let ty = if direct_param_vars.contains(&var) {
+                                self.resolve_direct_parameter_inference_type(&lower_bounds, ty)
                             } else {
-                                panic!(
-                                    "invariant violation: expected bounds violation when using inferred fallback"
+                                ty
+                            };
+                            trace!(
+                                resolved_type = ?ty,
+                                "Type parameter resolved successfully from constraints"
+                            );
+                            ty
+                        }
+                        Err(e) => {
+                            trace!(
+                                error = ?e,
+                                "Constraint resolution failed, using fallback"
+                            );
+
+                            // When the bounds violation comes from callback return type
+                            // inference (Round 2, ReturnType priority), tsc uses the inferred
+                            // type and reports TS2322 on the return expression rather than
+                            // falling back to the constraint and reporting TS2345 on the
+                            // whole callback argument.
+                            let use_inferred = matches!(&e, InferenceError::BoundsViolation { .. })
+                                && infer_ctx.all_candidates_are_return_type(var);
+
+                            let fallback = if use_inferred {
+                                // Use the inferred type (lower bound from BoundsViolation)
+                                if let InferenceError::BoundsViolation { lower, .. } = &e {
+                                    *lower
+                                } else {
+                                    panic!(
+                                        "invariant violation: expected bounds violation when using inferred fallback"
+                                    )
+                                }
+                            } else if let Some(default) = tp.default {
+                                instantiate_type(self.interner, default, &final_subst)
+                            } else if let Some(constraint) = tp.constraint {
+                                instantiate_type(self.interner, constraint, &final_subst)
+                            } else {
+                                TypeId::ERROR
+                            };
+                            let fallback = if direct_param_vars.contains(&var) {
+                                self.resolve_direct_parameter_inference_type(
+                                    &lower_bounds,
+                                    fallback,
                                 )
-                            }
-                        } else if let Some(default) = tp.default {
-                            instantiate_type(self.interner, default, &final_subst)
-                        } else if let Some(constraint) = tp.constraint {
-                            instantiate_type(self.interner, constraint, &final_subst)
-                        } else {
-                            TypeId::ERROR
-                        };
-                        let fallback = if direct_param_vars.contains(&var) {
-                            self.resolve_direct_parameter_inference_type(&lower_bounds, fallback)
-                        } else {
+                            } else {
+                                fallback
+                            };
+                            trace!(
+                                fallback_type = ?fallback,
+                                use_inferred = use_inferred,
+                                "Using fallback type"
+                            );
                             fallback
-                        };
-                        trace!(
-                            fallback_type = ?fallback,
-                            use_inferred = use_inferred,
-                            "Using fallback type"
-                        );
-                        fallback
+                        }
                     }
+                };
+
+                // Generic source contextual instantiation can produce temporary placeholders
+                // (e.g. `__infer_src_*`) while collecting constraints for callback arguments.
+                // Those placeholders must never leak into final instantiated signatures.
+                if has_context_sensitive_args {
+                    let infer_subst = if let Some(ref cached) = infer_subst_cache {
+                        cached
+                    } else {
+                        infer_subst_cache = Some(infer_ctx.get_current_substitution());
+                        infer_subst_cache
+                            .as_ref()
+                            .expect("inference substitution cache just initialized")
+                    };
+                    self.normalize_inferred_placeholder_type(ty, infer_subst)
+                } else {
+                    ty
                 }
             } else if let Some(default) = tp.default {
                 let ty = instantiate_type(self.interner, default, &final_subst);
@@ -502,23 +583,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 trace!("Using UNKNOWN (unconstrained type parameter)");
                 // TypeScript infers 'unknown' for unconstrained type parameters without defaults
                 TypeId::UNKNOWN
-            };
-
-            // Generic source contextual instantiation can produce temporary placeholders
-            // (e.g. `__infer_src_*`) while collecting constraints for callback arguments.
-            // Those placeholders must never leak into final instantiated signatures.
-            let ty = if has_context_sensitive_args {
-                let infer_subst = if let Some(ref cached) = infer_subst_cache {
-                    cached
-                } else {
-                    infer_subst_cache = Some(infer_ctx.get_current_substitution());
-                    infer_subst_cache
-                        .as_ref()
-                        .expect("inference substitution cache just initialized")
-                };
-                self.normalize_inferred_placeholder_type(ty, infer_subst)
-            } else {
-                ty
             };
 
             final_subst.insert(tp.name, ty);
@@ -739,6 +803,120 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Fall back to the first lower-bound candidate so later argument checks
         // drive assignability failures on the mismatch site.
         lower_bounds[0]
+    }
+
+    fn collect_placeholder_vars_in_type(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, InferenceVar>,
+        probe_map: &mut FxHashMap<TypeId, InferenceVar>,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> FxHashSet<InferenceVar> {
+        if var_map.is_empty() {
+            return FxHashSet::default();
+        }
+
+        let mut result = FxHashSet::default();
+        for (&placeholder_id, &var) in var_map.iter() {
+            probe_map.clear();
+            probe_map.insert(placeholder_id, var);
+            visited.clear();
+            if self.type_contains_placeholder(ty, probe_map, visited) {
+                result.insert(var);
+            }
+        }
+
+        result
+    }
+
+    fn should_skip_contextual_arg_in_round1(&self, arg_type: TypeId) -> bool {
+        if !self.is_contextually_sensitive(arg_type) {
+            return false;
+        }
+
+        match self.interner.lookup(arg_type) {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                !shape
+                    .properties
+                    .iter()
+                    .any(|prop| !self.is_contextually_sensitive(prop.type_id))
+            }
+            _ => true,
+        }
+    }
+
+    fn contextual_round1_arg_types(
+        &self,
+        arg_type: TypeId,
+        target_type: TypeId,
+    ) -> Option<(TypeId, TypeId)> {
+        if !self.is_contextually_sensitive(arg_type) {
+            return Some((arg_type, target_type));
+        }
+
+        if self.should_skip_contextual_arg_in_round1(arg_type) {
+            return None;
+        }
+
+        let (Some(arg_obj), Some(target_obj)) =
+            (
+                match self.interner.lookup(arg_type) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+                match self.interner.lookup(target_type) {
+                    Some(TypeData::Object(shape_id))
+                    | Some(TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
+                    _ => None,
+                },
+            )
+        else {
+            return Some((arg_type, target_type));
+        };
+
+        let arg_shape = self.interner.object_shape(arg_obj);
+        let target_shape = self.interner.object_shape(target_obj);
+
+        let mut target_props_by_name: FxHashMap<_, _> = FxHashMap::default();
+        for prop in &target_shape.properties {
+            target_props_by_name.insert(prop.name, prop);
+        }
+
+        let mut arg_properties = Vec::new();
+        let mut target_properties = Vec::new();
+        for prop in &arg_shape.properties {
+            if self.is_contextually_sensitive(prop.type_id) {
+                continue;
+            }
+
+            if let Some(target_prop) = target_props_by_name.get(&prop.name) {
+                arg_properties.push(prop.clone());
+                target_properties.push((**target_prop).clone());
+            }
+        }
+
+        if arg_properties.is_empty() {
+            return None;
+        }
+
+        if arg_properties.len() == arg_shape.properties.len()
+            && target_properties.len() == target_shape.properties.len()
+        {
+            return Some((arg_type, target_type));
+        }
+
+        let mut arg_shape = (*arg_shape).clone();
+        arg_shape.properties = arg_properties;
+
+        let mut target_shape = (*target_shape).clone();
+        target_shape.properties = target_properties;
+
+        Some((
+            self.interner.object_with_index(arg_shape),
+            self.interner.object_with_index(target_shape),
+        ))
     }
 
     fn is_mergeable_direct_inference_candidate(&self, ty: TypeId) -> bool {
@@ -974,17 +1152,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
-            // Skip contextually sensitive arguments (Checker will handle them in Round 2)
-            if self.is_contextually_sensitive(arg_type) {
+            let Some((contextual_arg_type, contextual_target_type)) =
+                self.contextual_round1_arg_types(arg_type, target_type)
+            else {
                 continue;
-            }
+            };
 
             // Add constraint for non-contextual arguments
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
-                arg_type,
-                target_type,
+                contextual_arg_type,
+                contextual_target_type,
                 InferencePriority::NakedTypeVariable,
             );
         }
