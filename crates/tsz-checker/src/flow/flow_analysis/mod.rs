@@ -25,6 +25,9 @@
 //! - Loop statements
 //! - Return/throw exits
 
+pub(crate) mod definite;
+pub(crate) mod usage;
+
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -1254,5 +1257,5 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Definite assignment analysis methods are in flow_analysis_definite.rs
+    // Definite assignment analysis methods are in flow_analysis/definite.rs
 }

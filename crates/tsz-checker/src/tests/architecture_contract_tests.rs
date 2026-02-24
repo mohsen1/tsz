@@ -630,8 +630,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         control_flow_src.contains("query::is_assignable_strict_null("),
         "FlowAnalyzer strict-null assignability should route through flow_analysis boundary helpers"
     );
-    let flow_analysis_definite_src = fs::read_to_string("src/flow/flow_analysis_definite.rs")
-        .expect("failed to read src/flow/flow_analysis_definite.rs for architecture guard");
+    let flow_analysis_definite_src = fs::read_to_string("src/flow/flow_analysis/definite.rs")
+        .expect("failed to read src/flow/flow_analysis/definite.rs for architecture guard");
     assert!(
         flow_analysis_definite_src.contains("find_property_in_object_by_str("),
         "flow_analysis_definite property lookup should route through definite_assignment query boundaries"
