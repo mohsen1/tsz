@@ -45,6 +45,7 @@ mod declarations_namespace;
 mod es5;
 mod expressions;
 mod expressions_binary_downlevel;
+mod expressions_call;
 mod expressions_literals;
 mod functions;
 mod helpers;
