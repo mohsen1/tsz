@@ -447,31 +447,14 @@ impl<'a> CheckerState<'a> {
                 let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
                     continue;
                 };
-                if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    || stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                {
-                    let name = if stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                        self.ctx
-                            .arena
-                            .get_type_alias(stmt_node)
-                            .and_then(|alias| self.ctx.arena.get(alias.name))
-                            .and_then(|node| self.ctx.arena.get_identifier(node))
-                            .map(|ident| ident.escaped_text.clone())
-                    } else {
-                        self.ctx
-                            .arena
-                            .get_interface(stmt_node)
-                            .and_then(|iface| self.ctx.arena.get(iface.name))
-                            .and_then(|node| self.ctx.arena.get_identifier(node))
-                            .map(|ident| ident.escaped_text.clone())
-                    };
-                    if let Some(name) = name
+                if (stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+                    && let Some(name) = self.get_declaration_name_text(stmt_idx)
                         && name == member_name
                         && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&stmt_idx.0)
                     {
                         return Some(sym_id);
                     }
-                }
                 if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                     continue;
                 }
@@ -492,62 +475,8 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     | syntax_kind_ext::ENUM_DECLARATION
                     | syntax_kind_ext::MODULE_DECLARATION => {
-                        let name = match clause_node.kind {
-                            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_function(clause_node)
-                                .and_then(|func| self.ctx.arena.get(func.name))
-                                .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
-                            k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_class(clause_node)
-                                .and_then(|class| self.ctx.arena.get(class.name))
-                                .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
-                            k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_interface(clause_node)
-                                .and_then(|iface| self.ctx.arena.get(iface.name))
-                                .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
-                            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_type_alias(clause_node)
-                                .and_then(|alias| self.ctx.arena.get(alias.name))
-                                .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
-                            k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_enum(clause_node)
-                                .and_then(|enm| self.ctx.arena.get(enm.name))
-                                .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
-                            k if k == syntax_kind_ext::MODULE_DECLARATION => self
-                                .ctx
-                                .arena
-                                .get_module(clause_node)
-                                .and_then(|module| self.ctx.arena.get(module.name))
-                                .and_then(|node| {
-                                    self.ctx
-                                        .arena
-                                        .get_identifier(node)
-                                        .map(|ident| ident.escaped_text.clone())
-                                        .or_else(|| {
-                                            self.ctx
-                                                .arena
-                                                .get_literal(node)
-                                                .map(|lit| lit.text.clone())
-                                        })
-                                }),
-                            _ => None,
-                        };
-                        if let Some(name) = name
+                        if let Some(name) =
+                            self.get_declaration_name_text(export_decl.export_clause)
                             && name == member_name
                             && let Some(&sym_id) = self
                                 .ctx
@@ -570,22 +499,8 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 };
                                 for &decl_idx in &decl_list.declarations.nodes {
-                                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                                        continue;
-                                    };
-                                    let Some(decl) =
-                                        self.ctx.arena.get_variable_declaration(decl_node)
-                                    else {
-                                        continue;
-                                    };
-                                    let Some(name_node) = self.ctx.arena.get(decl.name) else {
-                                        continue;
-                                    };
-                                    let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                    else {
-                                        continue;
-                                    };
-                                    if ident.escaped_text == member_name
+                                    if let Some(name) = self.get_declaration_name_text(decl_idx)
+                                        && name == member_name
                                         && let Some(&sym_id) =
                                             self.ctx.binder.node_symbols.get(&decl_idx.0)
                                     {
