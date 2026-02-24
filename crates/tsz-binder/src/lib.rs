@@ -15,9 +15,6 @@ mod modules;
 mod nodes;
 pub mod scopes;
 pub mod state;
-mod state_flow_helpers;
-mod state_lib_merge;
-mod state_resolution;
 pub mod symbols;
 
 // Re-export for external consumers.

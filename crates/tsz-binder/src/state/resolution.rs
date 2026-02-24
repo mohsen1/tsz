@@ -11,7 +11,7 @@ use tracing::{Level, debug, span};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
-use super::state::{BinderState, MAX_SCOPE_WALK_ITERATIONS};
+use super::{BinderState, MAX_SCOPE_WALK_ITERATIONS};
 
 impl BinderState {
     // =========================================================================

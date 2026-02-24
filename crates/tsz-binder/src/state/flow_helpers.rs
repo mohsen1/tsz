@@ -3,7 +3,7 @@
 //! This module provides factory methods for creating flow graph nodes
 //! used in control flow analysis (branch labels, conditions, assignments, etc.).
 
-use crate::state::BinderState;
+use super::BinderState;
 use crate::{FlowNodeId, flow_flags};
 use tsz_parser::NodeIndex;
 

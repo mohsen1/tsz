@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::{Atom, Interner};
 
-use super::state::{BinderState, LibContext};
+use super::{BinderState, LibContext};
 
 impl BinderState {
     // =========================================================================
