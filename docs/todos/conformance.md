@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8075/12574 (64.2%) — full suite, fingerprint level
+**Current score**: ~8068/12574 (64.2%) — full suite, fingerprint level
 
 ---
 
@@ -373,7 +373,7 @@ All items below have been validated against the codebase (implementations + test
 | TS2688 | Cannot find type definition file (tsconfig types array) | +35 tests |
 | TS2430/TS6053 | .lib/ diagnostic filtering in conformance runner | +2 tests |
 | TS5095 | Option 'bundler' requires compatible module kind | +15, +4 tests |
-| TS5103 | Invalid ignoreDeprecations value (accepts "5.0", "6.0" only — removed bogus "5.5") | +16, +48, +1 tests |
+| TS5103 | Invalid ignoreDeprecations value (only "5.0" valid; reject "5.5" and "6.0") | +16, +48 tests |
 | TS18003 | No inputs found in config file (fingerprint alignment) | +36 tests |
 | TS5052 | checkJs requires allowJs | +1 test |
 | TS1194 | Export declarations in ambient namespaces | +2 tests |
