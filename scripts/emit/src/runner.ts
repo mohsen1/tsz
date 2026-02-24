@@ -68,6 +68,7 @@ interface TestCase {
   moduleDetection?: string;
   preserveConstEnums: boolean;
   outFile?: string;
+  emitDeclarationOnly: boolean;
 }
 
 interface TestResult {
@@ -430,6 +431,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
     const preserveConstEnums = directives.preserveconstenums === true;
+    const emitDeclarationOnly = directives.emitdeclarationonly === true;
 
     // Fix up outFile baseline parsing: when @outFile is specified, the baseline
     // may contain both JS input files and the bundled output file. The parser
@@ -476,6 +478,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       moduleDetection,
       preserveConstEnums,
       outFile,
+      emitDeclarationOnly,
     } as TestCase;
   })));
 
@@ -565,7 +568,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
-    if (!config.dtsOnly && testCase.expectedJs !== null) {
+    if (!config.dtsOnly && testCase.expectedJs !== null && !testCase.emitDeclarationOnly) {
       // Strip sourceMappingURL lines entirely: our CLI may append its own
       // sourceMappingURL while tsc baselines use inline data URLs or different
       // filenames, causing line-count mismatches. Since we test code emission

@@ -2,7 +2,7 @@ use super::{ModuleKind, Printer};
 use crate::context::transform::IdentifierId;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::emit_utils;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -960,7 +960,8 @@ impl<'a> Printer<'a> {
     /// Returns true if the file contains any ES6 module syntax (import/export),
     /// excluding `export =` which is legacy `CommonJS`.
     /// TypeScript emits __esModule for ANY module syntax, including type-only
-    /// imports/exports, declared exports, and exported interfaces/type aliases.
+    /// imports/exports, declared exports, exported interfaces/type aliases,
+    /// and `import.meta` usage (which makes the file a module per spec).
     pub(super) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
         // If file has a runtime `export =`, do not emit __esModule.
         // Type-only `export =` aliases (e.g. interface) are filtered out.
@@ -1007,6 +1008,38 @@ impl<'a> Printer<'a> {
                         }
                     }
                 }
+            }
+        }
+
+        // `import.meta` usage makes the file a module (ESM-only syntax).
+        // Must check the full AST since `import.meta` can appear in any expression.
+        if self.contains_import_meta(statements) {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if any statement contains an `import.meta` expression.
+    /// Walks the AST looking for `PropertyAccessExpression` nodes where the
+    /// expression is the `import` keyword (the AST shape for `import.meta`).
+    fn contains_import_meta(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(node)
+                    && let Some(expr_node) = self.arena.get(access.expression)
+                        && expr_node.kind == SyntaxKind::ImportKeyword as u16 {
+                            return true;
+                        }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
             }
         }
         false
@@ -1461,6 +1494,58 @@ export namespace F {
         assert!(
             output.contains("module.exports = B;"),
             "module.exports = B; should be present.\nOutput:\n{output}"
+        );
+    }
+
+    /// A file using `import.meta` (with no import/export syntax) should be
+    /// treated as a module and get the CJS __esModule preamble. `import.meta`
+    /// is ESM-only syntax, making the file implicitly a module.
+    #[test]
+    fn import_meta_triggers_esmodule_marker() {
+        let source = r#"const url = import.meta.url;
+console.log(url);
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("Object.defineProperty(exports, \"__esModule\""),
+            "File with import.meta should emit __esModule marker.\nOutput:\n{output}"
+        );
+    }
+
+    /// A file without any module syntax or import.meta should NOT get __esModule.
+    #[test]
+    fn no_import_meta_no_esmodule_marker() {
+        let source = r#"const x = 1;
+console.log(x);
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("__esModule"),
+            "File without module syntax should NOT get __esModule marker.\nOutput:\n{output}"
         );
     }
 }
