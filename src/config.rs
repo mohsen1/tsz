@@ -149,6 +149,8 @@ pub struct CompilerOptions {
     pub no_emit_on_error: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub isolated_modules: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub verbatim_module_syntax: Option<bool>,
     /// Custom conditions for package.json exports resolution
     #[serde(default)]
     pub custom_conditions: Option<Vec<String>>,
@@ -725,6 +727,12 @@ pub fn resolve_compiler_options(
 
     if let Some(isolated_modules) = options.isolated_modules {
         resolved.checker.isolated_modules = isolated_modules;
+    }
+
+    // verbatimModuleSyntax implies isolatedModules in tsc — const enums get
+    // runtime bindings and are subject to TDZ checks.
+    if options.verbatim_module_syntax == Some(true) {
+        resolved.checker.isolated_modules = true;
     }
 
     if let Some(always_strict) = options.always_strict {
@@ -1834,6 +1842,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_emit,
             no_emit_on_error,
             isolated_modules,
+            verbatim_module_syntax,
             custom_conditions,
             es_module_interop,
             allow_synthetic_default_imports,

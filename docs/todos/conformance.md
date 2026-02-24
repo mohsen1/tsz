@@ -950,4 +950,30 @@ Called from method, constructor, and function declaration checking paths.
   files due to JSDoc `@this` inference. We already suppress TS2683 in JS files entirely.
 - **TS6196 (3 tests)**: Already implemented; test failures are due to other codes in same test.
 
-## Current score: 7976/12574 (63.4%) — full suite
+## TS2450 — const enum forward reference false positive (Fixed)
+
+**Status**: Fixed.
+**Error code:** TS2450 ("Enum '{0}' used before its declaration.")
+**Tests fixed:** blockScopedEnumVariablesUseBeforeDef.ts (+4 variants: base, _preserve, _isolatedModules, _verbatimModuleSyntax)
+**Net gain:** +3 in first-6000 (4014→4014)
+
+### Root cause
+tsz emitted TS2450 for ALL enums used before their declaration, but tsc skips this
+for `const enum` declarations because they're compile-time only — no runtime binding,
+no temporal dead zone. Exception: with `isolatedModules` or `verbatimModuleSyntax`,
+const enums DO get runtime bindings and are subject to TDZ.
+
+### Fix
+1. Added const enum exemption to all four TDZ check functions in `flow_analysis_usage.rs`:
+   - `is_variable_used_before_declaration_in_static_block`
+   - `is_variable_used_before_declaration_in_computed_property`
+   - `is_variable_used_before_declaration_in_heritage_clause`
+   - `is_class_or_enum_used_before_declaration` (main function — was missing isolatedModules guard)
+2. Added `verbatim_module_syntax` field to `CompilerOptions` in `src/config.rs` and wired
+   `verbatimModuleSyntax: true` → `resolved.checker.isolated_modules = true` in `resolve_compiler_options`.
+3. Added 7 unit tests in `ts2450_const_enum_tests.rs`.
+
+### Deferred
+- `isolatedModules` unit tests can't run in the checker test harness (no global lib types → TS2318 bailout before TDZ checks). Tested via conformance suite instead.
+
+## Current score: 4014/5997 (66.9%) — first 6000

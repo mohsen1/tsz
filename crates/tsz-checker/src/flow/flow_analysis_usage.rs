@@ -787,6 +787,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // const enums are compile-time only — no runtime binding, no TDZ.
+        // Exception: with isolatedModules, const enums get runtime bindings
+        // and are subject to TDZ just like regular enums.
+        if symbol.flags & symbol_flags::CONST_ENUM != 0
+            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+            && !self.ctx.isolated_modules()
+        {
+            return false;
+        }
+
         // Skip cross-file symbols — TDZ position comparison only valid within same file
         if symbol.decl_file_idx != u32::MAX
             && symbol.decl_file_idx != self.ctx.current_file_idx as u32
@@ -862,6 +872,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // const enums are compile-time only — no runtime binding, no TDZ.
+        // Exception: with isolatedModules, const enums get runtime bindings
+        // and are subject to TDZ just like regular enums.
+        if symbol.flags & symbol_flags::CONST_ENUM != 0
+            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+            && !self.ctx.isolated_modules()
+        {
+            return false;
+        }
+
         // Skip cross-file symbols — TDZ position comparison only valid within same file
         if symbol.decl_file_idx != u32::MAX
             && symbol.decl_file_idx != self.ctx.current_file_idx as u32
@@ -920,6 +940,16 @@ impl<'a> CheckerState<'a> {
             != 0;
 
         if !is_block_scoped {
+            return false;
+        }
+
+        // const enums are compile-time only — no runtime binding, no TDZ.
+        // Exception: with isolatedModules, const enums get runtime bindings
+        // and are subject to TDZ just like regular enums.
+        if symbol.flags & symbol_flags::CONST_ENUM != 0
+            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+            && !self.ctx.isolated_modules()
+        {
             return false;
         }
 
@@ -986,6 +1016,16 @@ impl<'a> CheckerState<'a> {
             & (symbol_flags::CLASS | symbol_flags::ENUM | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0;
         if !is_block_scoped {
+            return false;
+        }
+
+        // const enums are compile-time only — no runtime binding, no TDZ.
+        // Exception: with isolatedModules, const enums get runtime bindings
+        // and are subject to TDZ just like regular enums.
+        if symbol.flags & symbol_flags::CONST_ENUM != 0
+            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+            && !self.ctx.isolated_modules()
+        {
             return false;
         }
 
