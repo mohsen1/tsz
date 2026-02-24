@@ -568,37 +568,8 @@ impl<'a> FlowAnalyzer<'a> {
         self.literal_atom_and_kind_from_node_or_type(idx)
     }
 
-    pub(crate) fn skip_parenthesized(&self, mut idx: NodeIndex) -> NodeIndex {
-        loop {
-            let Some(node) = self.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.arena.get_parenthesized(node)
-            {
-                idx = paren.expression;
-                continue;
-            }
-            // Skip non-null assertions (expr!) — TypeScript treats these as transparent
-            // for narrowing purposes, so `x!.prop` should narrow the same as `x.prop`.
-            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
-                && let Some(unary) = self.arena.get_unary_expr_ex(node)
-            {
-                idx = unary.expression;
-                continue;
-            }
-            // Skip comma expressions - they evaluate to their rightmost operand
-            // This allows narrowing to work through expressions like (a, b).prop
-            // Fast path: check kind first before calling get_binary_expr
-            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                && let Some(bin) = self.arena.get_binary_expr(node)
-                && bin.operator_token == SyntaxKind::CommaToken as u16
-            {
-                idx = bin.right;
-                continue;
-            }
-            return idx;
-        }
+    pub(crate) fn skip_parenthesized(&self, idx: NodeIndex) -> NodeIndex {
+        self.arena.skip_parenthesized_and_assertions_and_comma(idx)
     }
 
     pub(crate) fn skip_parens_and_assertions(&self, idx: NodeIndex) -> NodeIndex {
