@@ -88,43 +88,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Report TS2367: This condition will always return 'false'/'true' since the types have no overlap.
-    ///
-    /// The message depends on the operator:
-    /// - For `===` and `==`: "always return 'false'"
-    /// - For `!==` and `!=`: "always return 'true'"
-    pub fn error_comparison_no_overlap(
-        &mut self,
-        left_type: TypeId,
-        right_type: TypeId,
-        is_equality: bool,
-        idx: NodeIndex,
-    ) {
-        // Suppress cascade errors from unresolved types
-        if left_type == TypeId::ERROR
-            || right_type == TypeId::ERROR
-            || left_type == TypeId::ANY
-            || right_type == TypeId::ANY
-            || left_type == TypeId::UNKNOWN
-            || right_type == TypeId::UNKNOWN
-        {
-            return;
-        }
-
-        if let Some(loc) = self.get_source_location(idx) {
-            let left_str = self.format_type(left_type);
-            let right_str = self.format_type(right_type);
-            let result = if is_equality { "false" } else { "true" };
-            let message = format_message(
-                diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
-                &[result, &left_str, &right_str],
-            );
-            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA));
-        }
-    }
-
     /// Report TS2352: Conversion of type 'X' to type 'Y' may be a mistake because neither type
-    /// sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+    /// sufficiently overlaps with the other. If this was intentional, convert the expression to
+    /// 'unknown' first.
     pub fn error_type_assertion_no_overlap(
         &mut self,
         source_type: TypeId,

@@ -23,24 +23,11 @@ impl<'a> CheckerState<'a> {
         if param.type_annotation.is_some() {
             return;
         }
-        // Check if parameter has an initializer
+        // Check if parameter has an initializer — any initializer (including null/undefined)
+        // provides a type for the parameter. tsc infers `null` or `undefined` as the type,
+        // so these do NOT trigger TS7006.
         if param.initializer.is_some() {
-            // TypeScript infers type from initializer, EXCEPT for null and undefined
-            // Parameters initialized with null/undefined still trigger TS7006
-            use tsz_scanner::SyntaxKind;
-            let initializer_is_null_or_undefined =
-                if let Some(init_node) = self.ctx.arena.get(param.initializer) {
-                    init_node.kind == SyntaxKind::NullKeyword as u16
-                        || init_node.kind == SyntaxKind::UndefinedKeyword as u16
-                } else {
-                    false
-                };
-
-            // Skip only if initializer is NOT null or undefined
-            if !initializer_is_null_or_undefined {
-                return;
-            }
-            // Otherwise continue to emit TS7006 for null/undefined initializers
+            return;
         }
         if self.is_this_parameter_name(param.name) {
             return;
