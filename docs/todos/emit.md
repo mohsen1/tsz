@@ -1,8 +1,38 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9931/13623 = 72.9% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5800/7967 = 72.8% JS, ~463/1159 = 39.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Async arrow `__awaiter(this)` vs `__awaiter(void 0)` inside function scopes** (+6 JS):
+  When lowering async arrow functions (ES5/ES2015 targets), tsz always checked whether the
+  arrow body contained an explicit `this` reference to decide the `thisArg` passed to
+  `__awaiter`. tsc instead uses scope context: `this` inside function/method/constructor/
+  accessor scopes, `void 0` at module/top level. This is because arrow functions lexically
+  capture `this`, so inside a function scope the arrow should forward the enclosing `this`.
+  Fix: added `function_scope_depth: u32` counter to the Printer struct. Incremented at
+  function declaration body, method/constructor/get/set accessor body, and arrow function
+  body entry points. The async arrow lowering checks `function_scope_depth > 0` instead of
+  `contains_this_reference`. Three unit tests added.
+  Tests fixed: `asyncIIFE`, `asyncArrowFunction1`, and others with nested async arrows.
+  JS: 5794→5800, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session (2026-02-24)
+- **Static block / class expression transforms** (~45 tests): Class static blocks (`static { }`)
+  need a transform for ES2021 and below targets. Class expressions used as values also need
+  special handling. Complex transform, not a quick win.
+- **`__generator` state machine transform** (~28-40 tests): Generator function lowering to ES5
+  requires a full state machine transform (`__generator` helper). Very complex, would need
+  a dedicated implementation effort.
+- **`using` / `await using` downlevel** (~18 tests): ES2025 `using` declarations need transform
+  for older targets. Requires `__addDisposableResource` / `__disposeResources` helpers.
+- **Const enum value substitution** (needs checker): tsc substitutes const enum member accesses
+  with their computed values (e.g., `E.A` → `0 /* E.A */`). Requires checker/solver to provide
+  constant-evaluated enum values to the emitter. Not feasible with `--noCheck`.
+- **`/// <reference>` directive stripping** (~few tests): tsc strips `/// <reference types="...">`
+  directives in JS output. Requires detecting the directive comment pattern before the first
+  non-comment token. Few tests affected.
+
+### Previously Fixed This Session (2026-02-24)
 - **Missing parens around downlevel optional chains in binary/unary/ternary contexts** (+7 JS):
   When lowering optional chains (`?.`) for ES2019 and below, the emitted ternary
   `x === null || x === void 0 ? void 0 : x.b` was not wrapped in parens when used
