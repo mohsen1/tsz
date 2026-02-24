@@ -161,6 +161,12 @@
 #### Run note (2026-02-24)
 - **Deferred**: `tests/conformance/suite/types` slices for `TS2322/TS2345/TS2339` remain out-of-scope for this pass; they still require cross-layer Solver/Checker compatibility-gate refactors (`query_boundaries`, `CompatChecker`, `Lazy(DefId)`-aware relation traversal).
 
+#### Run note (2026-02-24, session 2)
+- **Fixed**: TS5103 — removed bogus "5.5" from valid ignoreDeprecations list (+1 test).
+- **Fixed**: TS2435/TS1035 — module augmentations inside ambient external modules no longer false-positive TS2435 or TS1035 (+4 tests).
+- **Investigated but deferred**: TS5071 — implied `resolveJsonModule=true` via `moduleResolution: bundler`. Needs two coordinated changes: (1) detect bundler-implied resolveJsonModule, (2) fall back error position to `module` key when `resolveJsonModule` is absent. ~20 lines, MEDIUM complexity.
+- **Investigated but deferred**: TS2451 — multi-file block-scoped variable redeclaration. Cross-file symbol resolution only adds local declarations to conflict set. Fixing requires project-level aggregation of conflicts.
+
 ### TS2451 — False positives (7 tests)
 - Two patterns:
   - (a) Wrong code choice (TS2451 vs TS2300) for var/let redeclaration conflicts
@@ -360,7 +366,7 @@ All items below have been validated against the codebase (implementations + test
 | TS2688 | Cannot find type definition file (tsconfig types array) | +35 tests |
 | TS2430/TS6053 | .lib/ diagnostic filtering in conformance runner | +2 tests |
 | TS5095 | Option 'bundler' requires compatible module kind | +15, +4 tests |
-| TS5103 | Invalid ignoreDeprecations value (accepts "5.0", "5.5") | +16, +48 tests |
+| TS5103 | Invalid ignoreDeprecations value (accepts "5.0", "6.0" only — removed bogus "5.5") | +16, +48, +1 tests |
 | TS18003 | No inputs found in config file (fingerprint alignment) | +36 tests |
 | TS5052 | checkJs requires allowJs | +1 test |
 | TS1194 | Export declarations in ambient namespaces | +2 tests |
@@ -406,3 +412,4 @@ All items below have been validated against the codebase (implementations + test
 | TS5070/TS5071/TS5098 | resolveJsonModule/resolvePackageJson validation | +9 tests |
 | TS2528 | Multiple default exports position fix | +1 test |
 | TS18003 | Windows-style path handling in conformance runner | +10 tests |
+| TS2435/TS1035 | Module augmentation in ambient modules: skip TS2435 for string-named parents, skip TS1035 in ambient context | +4 tests |

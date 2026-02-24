@@ -2,6 +2,7 @@
 
 use std::path::{Component, Path, PathBuf};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 
 use crate::declarations::DeclarationChecker;
 
@@ -232,8 +233,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check if a node is inside a namespace/module declaration.
     /// This is used for TS2435 (ambient modules cannot be nested).
+    /// Returns true only if a parent is an identifier-named namespace/module
+    /// (e.g., `namespace M { }`). String-named ambient external modules
+    /// (e.g., `declare module "foo" { }`) do NOT count — nested string-named
+    /// modules inside them are module augmentations, which are valid.
     pub(crate) fn is_inside_namespace(&self, node_idx: NodeIndex) -> bool {
-        // Walk up the parent chain to see if we're inside a namespace
         let mut current = node_idx;
 
         // Skip the first iteration (the node itself)
@@ -248,13 +252,21 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 break;
             };
 
-            // If we find a namespace/module declaration in the parent chain,
-            // the ambient module is nested
             if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                return true;
+                // Check if this parent module has an identifier name (namespace)
+                // vs a string literal name (ambient external module).
+                // Only identifier-named parents constitute a nesting violation.
+                if let Some(module_data) = self.ctx.arena.get_module(node)
+                    && let Some(name_node) = self.ctx.arena.get(module_data.name)
+                    && name_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    // Parent is an ambient external module — skip it,
+                    // nested string-named modules are module augmentations (valid)
+                } else {
+                    return true;
+                }
             }
 
-            // Move to the next parent
             if let Some(ext) = self.ctx.arena.get_extended(current) {
                 current = ext.parent;
             } else {
