@@ -888,41 +888,49 @@ impl<'a> CheckerState<'a> {
                 self.ctx.push_yield_type(None);
             }
 
-            if let Some(jsdoc_expected_return) = jsdoc_return_context
+            let expected_expression_return_type = has_type_annotation
+                .then_some(annotated_return_type.unwrap_or(return_type))
+                .or(jsdoc_return_context);
+            if expected_expression_return_type.is_some()
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
-                // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
-                // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
-                let mut actual_return_node = body;
-                let actual_return = self
-                    .jsdoc_type_annotation_for_node_direct(actual_return_node)
-                    .or_else(|| {
-                        // Parenthesized expression wrappers can separate the annotation
-                        // from the final body node in `.js` files (for cast-like syntax).
-                        while let Some(parent_idx) = self
-                            .ctx
-                            .arena
-                            .get_extended(actual_return_node)
-                            .map(|ext| ext.parent)
-                        {
-                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                                break;
-                            };
-                            if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                break;
-                            }
-                            actual_return_node = parent_idx;
-                            if let Some(ty) =
-                                self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+                let expected_return_type = expected_expression_return_type.unwrap();
+                if expected_return_type != TypeId::ANY
+                    && !self.type_contains_error(expected_return_type)
+                {
+                    // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
+                    // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
+                    let mut actual_return_node = body;
+                    let actual_return = self
+                        .jsdoc_type_annotation_for_node_direct(actual_return_node)
+                        .or_else(|| {
+                            // Parenthesized expression wrappers can separate the annotation
+                            // from the final body node in `.js` files (for cast-like syntax).
+                            while let Some(parent_idx) = self
+                                .ctx
+                                .arena
+                                .get_extended(actual_return_node)
+                                .map(|ext| ext.parent)
                             {
-                                return Some(ty);
+                                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                    break;
+                                };
+                                if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                    break;
+                                }
+                                actual_return_node = parent_idx;
+                                if let Some(ty) =
+                                    self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+                                {
+                                    return Some(ty);
+                                }
                             }
-                        }
-                        None
-                    })
-                    .unwrap_or_else(|| self.get_type_of_node(body));
-                self.check_assignable_or_report(actual_return, jsdoc_expected_return, body);
+                            None
+                        })
+                        .unwrap_or_else(|| self.get_type_of_node(body));
+                    self.check_assignable_or_report(actual_return, expected_return_type, body);
+                }
             }
             // Skip body statement checking for function declarations.
             // Function declarations are checked via check_function_declaration (in
@@ -1356,5 +1364,47 @@ impl<'a> CheckerState<'a> {
         }
 
         updates
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CheckerState;
+    use crate::context::CheckerOptions;
+    use crate::diagnostics::diagnostic_codes;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn diagnostics_for_source(source: &str) -> Vec<u32> {
+        let file_name = "test.ts".to_string();
+        let mut parser = ParserState::new(file_name.clone(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            file_name,
+            CheckerOptions::default(),
+        );
+        checker.check_source_file(root);
+
+        checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn expression_body_arrow_with_return_annotation_reports_type_mismatch() {
+        let diagnostics = diagnostics_for_source("const f = (): number => \"str\";");
+        let target = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+
+        assert!(
+            diagnostics.contains(&target),
+            "expected TS2322, got diagnostics: {diagnostics:?}"
+        );
     }
 }
