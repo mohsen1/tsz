@@ -845,13 +845,24 @@ impl<'a> CheckerState<'a> {
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
             .is_some_and(|clause| clause.is_type_only);
         let mut emitted_dts_import_error = false;
-        if module_name.ends_with(".d.ts") && !is_type_only_import {
+        let dts_ext = if module_name.ends_with(".d.ts") {
+            Some((".d.ts", ".ts", ".js"))
+        } else if module_name.ends_with(".d.mts") {
+            Some((".d.mts", ".mts", ".mjs"))
+        } else if module_name.ends_with(".d.cts") {
+            Some((".d.cts", ".cts", ".cjs"))
+        } else {
+            None
+        };
+        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
+            && !is_type_only_import
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let base = module_name.trim_end_matches(".d.ts");
+            let base = module_name.trim_end_matches(dts_suffix);
             let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                ".ts"
+                ts_ext
             } else {
-                ".js"
+                js_ext
             };
             let suggested = format!("{base}{ext}");
             let message = format_message(
@@ -1038,15 +1049,19 @@ impl<'a> CheckerState<'a> {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
-                    let base = if module_name.ends_with(".d.ts") {
-                        module_name.trim_end_matches(".d.ts")
+                    let (base, ts_ext, js_ext) = if module_name.ends_with(".d.ts") {
+                        (module_name.trim_end_matches(".d.ts"), ".ts", ".js")
+                    } else if module_name.ends_with(".d.mts") {
+                        (module_name.trim_end_matches(".d.mts"), ".mts", ".mjs")
+                    } else if module_name.ends_with(".d.cts") {
+                        (module_name.trim_end_matches(".d.cts"), ".cts", ".cjs")
                     } else {
-                        module_name.as_str()
+                        (module_name.as_str(), ".ts", ".js")
                     };
                     let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
-                        ".ts"
+                        ts_ext
                     } else {
-                        ".js"
+                        js_ext
                     };
                     let suggested = format!("{base}{ext}");
                     let message = format_message(
