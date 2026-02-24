@@ -1,10 +1,48 @@
-//! Element access, super keyword, and await type computation.
+//! Element access, super keyword, await type computation, and optional chain detection.
 
 use crate::state::{CheckerState, EnumKind};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Checks if a node is an optional chain expression (`?.`).
+///
+/// Handles property access (`o?.b`), element access (`o?.[0]`), and
+/// call expressions (`o?.b()` / `o.b?.()`).
+pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+        {
+            if let Some(access) = arena.get_access_expr(node) {
+                access.question_dot_token
+            } else {
+                false
+            }
+        }
+        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            // Check if this call is part of an optional chain.
+            // A call can be optional in two ways:
+            // 1. The callee itself is optional: `o?.b()` -> callee `o?.b` has question_dot_token
+            // 2. The call has an optional token: `o.b?.()` -> call node has OPTIONAL_CHAIN flag
+            if (node.flags as u32) & tsz_parser::parser::node_flags::OPTIONAL_CHAIN != 0 {
+                return true;
+            }
+            if let Some(call) = arena.get_call_expr(node) {
+                is_optional_chain(arena, call.expression)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
 
 const MAX_AWAIT_DEPTH: u32 = 10;
 
@@ -39,14 +77,13 @@ impl<'a> CheckerState<'a> {
         // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
         // the object type from `o?.b` includes `undefined`. Strip nullish types when this
         // element access is a continuation of an optional chain.
-        let object_type = if !access.question_dot_token
-            && crate::optional_chain::is_optional_chain(self.ctx.arena, access.expression)
-        {
-            let (non_nullish, _) = self.split_nullish_type(object_type);
-            non_nullish.unwrap_or(object_type)
-        } else {
-            object_type
-        };
+        let object_type =
+            if !access.question_dot_token && is_optional_chain(self.ctx.arena, access.expression) {
+                let (non_nullish, _) = self.split_nullish_type(object_type);
+                non_nullish.unwrap_or(object_type)
+            } else {
+                object_type
+            };
 
         let literal_string = self.get_literal_string_from_node(access.name_or_argument);
         let numeric_string_index = literal_string
