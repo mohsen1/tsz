@@ -919,10 +919,10 @@ impl Server {
                 }
 
                 let next_name = Self::unquote(left);
-                if let Some(module_name) = module_spec.clone() {
+                if let Some(ref module_name) = module_spec {
                     return self.resolve_export_alias_definition(
                         &target_file,
-                        &module_name,
+                        module_name,
                         &next_name,
                         depth + 1,
                     );

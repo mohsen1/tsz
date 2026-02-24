@@ -120,7 +120,6 @@ impl<'a> CheckerState<'a> {
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut static_string_index: Option<IndexSignature> = None;
         let mut static_number_index: Option<IndexSignature> = None;
-        let mut _has_static_nominal_members = false;
 
         // Process all static class members
         for &member_idx in &class.members.nodes {
@@ -135,9 +134,6 @@ impl<'a> CheckerState<'a> {
                     };
                     if !self.has_static_modifier(&prop.modifiers) {
                         continue;
-                    }
-                    if self.member_requires_nominal(&prop.modifiers, prop.name) {
-                        _has_static_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name(prop.name) else {
                         continue;
@@ -194,9 +190,6 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&method.modifiers) {
                         continue;
                     }
-                    if self.member_requires_nominal(&method.modifiers, method.name) {
-                        _has_static_nominal_members = true;
-                    }
                     let Some(name) = self.get_property_name(method.name) else {
                         continue;
                     };
@@ -235,9 +228,6 @@ impl<'a> CheckerState<'a> {
                     };
                     if !self.has_static_modifier(&accessor.modifiers) {
                         continue;
-                    }
-                    if self.member_requires_nominal(&accessor.modifiers, accessor.name) {
-                        _has_static_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name(accessor.name) else {
                         continue;

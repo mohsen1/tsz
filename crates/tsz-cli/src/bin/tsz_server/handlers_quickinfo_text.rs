@@ -5,7 +5,7 @@
 //! `handlers_quickinfo.rs` to keep that file under the 2000-LOC threshold.
 
 /// Check if a byte is a valid JS identifier character (ASCII alphanumeric, `_`, or `$`).
-pub(super) fn is_js_identifier_char(byte: u8) -> bool {
+pub(super) const fn is_js_identifier_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
 }
 
