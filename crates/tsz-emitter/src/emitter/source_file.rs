@@ -860,13 +860,15 @@ impl<'a> Printer<'a> {
             // `export enum` / `export const enum` — the enum is inside an ExportDeclaration
             if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                 && let Some(export_data) = self.arena.get_export_decl(stmt_node)
-                    && export_data.export_clause.is_some() {
-                        let clause_idx = export_data.export_clause;
-                        if let Some(clause_node) = self.arena.get(clause_idx)
-                            && clause_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                                self.try_register_const_enum(&mut evaluator, clause_idx);
-                            }
-                    }
+                && export_data.export_clause.is_some()
+            {
+                let clause_idx = export_data.export_clause;
+                if let Some(clause_node) = self.arena.get(clause_idx)
+                    && clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
+                {
+                    self.try_register_const_enum(&mut evaluator, clause_idx);
+                }
+            }
         }
     }
 

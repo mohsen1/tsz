@@ -14,10 +14,11 @@ impl<'a> Printer<'a> {
 
         // Const enum inlining: replace `EnumName.Member` with `value /* EnumName.Member */`
         if !self.const_enum_values.is_empty()
-            && let Some(inlined) = self.try_inline_const_enum_property_access(access) {
-                self.write(&inlined);
-                return;
-            }
+            && let Some(inlined) = self.try_inline_const_enum_property_access(access)
+        {
+            self.write(&inlined);
+            return;
+        }
 
         if access.question_dot_token {
             if self.ctx.options.target.supports_es2020() {
@@ -173,10 +174,11 @@ impl<'a> Printer<'a> {
 
         // Const enum inlining: replace `EnumName["Member"]` with `value /* EnumName["Member"] */`
         if !self.const_enum_values.is_empty()
-            && let Some(inlined) = self.try_inline_const_enum_element_access(access) {
-                self.write(&inlined);
-                return;
-            }
+            && let Some(inlined) = self.try_inline_const_enum_element_access(access)
+        {
+            self.write(&inlined);
+            return;
+        }
 
         if access.question_dot_token {
             if self.ctx.options.target.supports_es2020() {
