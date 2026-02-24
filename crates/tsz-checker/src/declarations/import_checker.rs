@@ -16,8 +16,12 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Returns the appropriate "module not found" diagnostic code and message.
-    /// Uses TS2792 when module resolution is "classic"-like (non-Node module kinds),
-    /// otherwise TS2307.
+    /// Uses TS2792 when the implied module resolution is "Classic", otherwise TS2307.
+    ///
+    /// tsc uses `getEmitModuleResolutionKind(compilerOptions) === Classic` to decide.
+    /// When `moduleResolution` is not explicitly set, it defaults based on `module`:
+    ///   - CommonJS → Node10, Node16 → Node16, `NodeNext` → `NodeNext`, Preserve → Bundler
+    ///   - Everything else (None/AMD/UMD/System/ES2015/ES2020/ES2022/ESNext) → Classic
     pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
@@ -27,18 +31,23 @@ impl<'a> CheckerState<'a> {
 
         use tsz_common::common::ModuleKind;
 
-        let module_kind_prefers_2792 = matches!(
+        // Mirror tsc's getEmitModuleResolutionKind: these module kinds default to Classic
+        // resolution when moduleResolution is not explicitly set.
+        // Note: None (unset) is excluded because tsc resolves it based on target — typically
+        // CommonJS (→ Node10, not Classic) for target < ES2015.
+        // Preserve is excluded because it defaults to Bundler resolution.
+        // CommonJS/Node16/NodeNext have their own non-Classic resolutions.
+        let implied_classic_resolution = matches!(
             self.ctx.compiler_options.module,
-            ModuleKind::System
-                | ModuleKind::AMD
+            ModuleKind::AMD
                 | ModuleKind::UMD
+                | ModuleKind::System
                 | ModuleKind::ES2015
                 | ModuleKind::ES2020
                 | ModuleKind::ES2022
                 | ModuleKind::ESNext
-                | ModuleKind::Preserve
         );
-        let use_2792 = module_kind_prefers_2792;
+        let use_2792 = implied_classic_resolution;
 
         if use_2792 {
             (
