@@ -478,6 +478,9 @@ impl<'a> Printer<'a> {
                         || self
                             .arena
                             .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
                     {
                         continue;
                     }

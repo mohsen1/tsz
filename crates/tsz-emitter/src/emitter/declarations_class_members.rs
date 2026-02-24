@@ -404,6 +404,7 @@ impl<'a> Printer<'a> {
                         || kind == SyntaxKind::PrivateKeyword as u32
                         || kind == SyntaxKind::ProtectedKeyword as u32
                         || kind == SyntaxKind::ReadonlyKeyword as u32
+                        || kind == SyntaxKind::OverrideKeyword as u32
                     {
                         return true;
                     }
