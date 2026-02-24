@@ -377,10 +377,8 @@ impl Server {
         let member_type = checker.format_type(member_type_id);
         *type_cache = Some(checker.extract_cache());
 
-        let display_string = format!(
-            "(property) {}.{}: {}",
-            container_type_name, member_name, member_type
-        );
+        let display_string =
+            format!("(property) {container_type_name}.{member_name}: {member_type}");
         let raw_doc = jsdoc_for_node(arena, root, member_decl_idx, source_text);
         let parsed_doc = parse_jsdoc(&raw_doc);
         let documentation = parsed_doc.summary.unwrap_or_default();
@@ -594,10 +592,8 @@ impl Server {
             params_segment =
                 params_segment.replace(&format!(": {param_name}"), &format!(": {replacement}"));
         }
-        let display_string = format!(
-            "constructor {}{}: {}",
-            instance_type, params_segment, instance_type
-        );
+        let display_string =
+            format!("constructor {instance_type}{params_segment}: {instance_type}");
 
         let start = line_map.offset_to_position(callee_node.pos, source_text);
         let end = line_map.offset_to_position(callee_node.end, source_text);
@@ -837,7 +833,7 @@ impl Server {
         let name_node = arena.get(parameter.name)?;
         let start = line_map.offset_to_position(name_node.pos, source_text);
         let end = line_map.offset_to_position(name_node.end, source_text);
-        let display_string = format!("(parameter) {}: {}", parameter_name, parameter_type);
+        let display_string = format!("(parameter) {parameter_name}: {parameter_type}");
         Some(HoverInfo {
             contents: vec![format!("```typescript\n{display_string}\n```")],
             range: Some(tsz::lsp::position::Range::new(start, end)),
@@ -1098,10 +1094,8 @@ impl Server {
                         &member_name,
                     )
                 {
-                    let display_string = format!(
-                        "(property) {}.{}: {}",
-                        container_hint, member_name, member_type
-                    );
+                    let display_string =
+                        format!("(property) {container_hint}.{member_name}: {member_type}");
                     let start = line_map.offset_to_position(member_probe, &source_text);
                     let end = line_map
                         .offset_to_position(member_probe + member_name.len() as u32, &source_text);
@@ -1176,10 +1170,8 @@ impl Server {
                                     &member_name,
                                 )
                         {
-                            let display_string = format!(
-                                "(property) {}.{}: {}",
-                                container_hint, member_name, member_type
-                            );
+                            let display_string =
+                                format!("(property) {container_hint}.{member_name}: {member_type}");
                             let start = line_map.offset_to_position(base_offset, &source_text);
                             let end = line_map.offset_to_position(
                                 base_offset + member_name.len() as u32,

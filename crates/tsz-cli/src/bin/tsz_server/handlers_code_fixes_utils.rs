@@ -732,8 +732,8 @@ fn is_same_import_candidate_symbol(a: &ImportCandidate, b: &ImportCandidate) -> 
         (
             tsz::lsp::code_actions::ImportCandidateKind::Default,
             tsz::lsp::code_actions::ImportCandidateKind::Default,
-        ) => true,
-        (
+        )
+        | (
             tsz::lsp::code_actions::ImportCandidateKind::Namespace,
             tsz::lsp::code_actions::ImportCandidateKind::Namespace,
         ) => true,

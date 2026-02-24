@@ -1073,11 +1073,11 @@ impl Server {
             let items = if is_member_completion {
                 provider_items
             } else {
-                Self::merge_non_member_completion_items(provider_items, project_items.clone())
+                Self::merge_non_member_completion_items(provider_items, project_items)
             };
             let mut items = items;
             if !snippet_items.is_empty() {
-                items = Self::merge_non_member_completion_items(items, snippet_items.clone());
+                items = Self::merge_non_member_completion_items(items, snippet_items);
                 items = Self::prioritize_class_member_snippet_items(items);
                 items = Self::normalize_class_member_snippet_items(items);
             }
