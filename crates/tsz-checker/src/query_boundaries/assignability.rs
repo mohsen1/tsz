@@ -1,6 +1,6 @@
 use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
-pub(crate) use super::common::object_shape_for_type;
+pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 pub(crate) use tsz_solver::type_queries::{AssignabilityEvalKind, ExcessPropertiesKind};
 
 pub(crate) fn classify_for_assignability_eval(
@@ -21,10 +21,6 @@ pub(crate) fn contains_infer_types(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 
 pub(crate) fn contains_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_any_type(db, type_id)
-}
-
-pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
 }
 
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
