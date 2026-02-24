@@ -27,18 +27,17 @@
 #[macro_use]
 pub mod provider_macro;
 pub mod code_actions;
-pub mod code_lens;
 pub mod completions;
 pub mod dependency_graph;
 pub mod diagnostics;
 pub mod document_links;
+pub mod editor_decorations;
 pub mod editor_ranges;
 pub mod export_signature;
 pub mod formatting;
 pub mod hierarchy;
 pub mod highlighting;
 pub mod hover;
-pub mod inlay_hints;
 pub mod jsdoc;
 pub use tsz_common::position;
 pub mod navigation;
@@ -95,7 +94,12 @@ pub use editor_ranges::selection_range::{SelectionRange, SelectionRangeProvider}
 pub use navigation::type_definition::TypeDefinitionProvider;
 
 // Code Lens
-pub use code_lens::{CodeLens, CodeLensCommand, CodeLensData, CodeLensKind, CodeLensProvider};
+pub use editor_decorations::code_lens::{
+    CodeLens, CodeLensCommand, CodeLensData, CodeLensKind, CodeLensProvider,
+};
+
+// Inlay Hints
+pub use editor_decorations::inlay_hints::{InlayHint, InlayHintKind, InlayHintsProvider};
 
 // Symbol Index
 pub use symbols::SymbolIndex;
