@@ -3,6 +3,10 @@
 //! This is a clean implementation of the binder that works directly with
 //! Node and `NodeArena`, avoiding the old Node enum pattern matching.
 
+mod flow_helpers;
+mod lib_merge;
+mod resolution;
+
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::{
@@ -1463,5 +1467,4 @@ impl BinderState {
 }
 
 #[cfg(test)]
-#[path = "state_tests.rs"]
 mod tests;
