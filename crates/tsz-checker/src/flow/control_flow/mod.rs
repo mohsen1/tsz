@@ -18,6 +18,13 @@
 //! }
 //! ```
 
+pub(crate) mod assignment;
+pub(crate) mod condition_narrowing;
+pub(crate) mod narrowing;
+pub(crate) mod references;
+pub(crate) mod type_guards;
+pub(crate) mod var_utils;
+
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;

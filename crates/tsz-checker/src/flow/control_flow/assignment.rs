@@ -1,9 +1,9 @@
 //! Assignment type resolution and destructuring matching for `FlowAnalyzer`.
 //!
 //! Condition-based narrowing (switch clauses, binary/logical expressions, typeof/instanceof)
-//! has been extracted to `control_flow_condition_narrowing.rs`.
+//! has been extracted to `condition_narrowing.rs`.
 
-use crate::control_flow::{FlowAnalyzer, PropertyKey};
+use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype, fallback_compound_assignment_result, get_array_element_type,
     is_compound_assignment_operator, map_compound_assignment_to_binary, union_members_for_type,

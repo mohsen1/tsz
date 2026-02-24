@@ -2,7 +2,7 @@
 //! typeof, discriminants, and literal comparisons.
 //!
 //! Reference matching, literal parsing, and symbol resolution utilities are in
-//! `control_flow_references.rs`.
+//! `references.rs`.
 
 use rustc_hash::FxHashMap;
 use tsz_binder::symbol_flags;
@@ -17,7 +17,7 @@ use tsz_solver::{
     },
 };
 
-use super::control_flow::{FlowAnalyzer, PredicateSignature};
+use super::{FlowAnalyzer, PredicateSignature};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn assignment_affects_reference(&self, left: NodeIndex, target: NodeIndex) -> bool {

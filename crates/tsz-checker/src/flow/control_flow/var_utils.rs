@@ -1,6 +1,6 @@
 //! Variable declaration utilities and definite assignment traversal for `FlowAnalyzer`.
 //!
-//! Extracted from `control_flow.rs` to keep that file focused on the core
+//! Extracted from the main `control_flow` module to keep it focused on the core
 //! flow-type narrowing algorithm. This module provides:
 //!
 //! - **Definite assignment**: worklist-based graph traversal (`check_definite_assignment`)
@@ -12,7 +12,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-use super::control_flow::FlowAnalyzer;
+use super::FlowAnalyzer;
 
 impl<'a> FlowAnalyzer<'a> {
     /// Iterative flow graph traversal for definite assignment checks.
