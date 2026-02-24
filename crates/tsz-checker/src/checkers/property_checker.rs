@@ -45,6 +45,11 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .is_some();
 
+        if self.union_restricted_property_is_missing(object_expr, property_name, object_type) {
+            self.error_property_not_exist_at(property_name, object_type, error_node);
+            return false;
+        }
+
         // TypeScript allows `super["x"]` element-access forms without applying
         // the stricter method-only/private-protected checks used for `super.x`.
         if self.is_super_expression(object_expr) && !is_property_identifier {
@@ -191,6 +196,60 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn union_restricted_property_is_missing(
+        &mut self,
+        _object_expr: NodeIndex,
+        property_name: &str,
+        object_type: tsz_solver::TypeId,
+    ) -> bool {
+        use crate::query_boundaries::state_checking;
+
+        if self.ctx.enclosing_class.is_some() {
+            return false;
+        }
+
+        let Some(members) = state_checking::union_members(self.ctx.types, object_type) else {
+            return false;
+        };
+
+        if members.len() < 2 {
+            return false;
+        }
+
+        let is_static = self.is_constructor_type(object_type);
+
+        let mut first_declaring_class: Option<NodeIndex> = None;
+        let mut restricted_count = 0usize;
+
+        for member in members {
+            let member = self.resolve_type_for_property_access(member);
+            let Some(class_idx) = self.get_class_decl_from_type(member) else {
+                continue;
+            };
+
+            let Some(access_info) =
+                self.find_member_access_info(class_idx, property_name, is_static)
+            else {
+                if restricted_count > 0 {
+                    return true;
+                }
+                continue;
+            };
+
+            restricted_count += 1;
+
+            if let Some(first_decl) = first_declaring_class {
+                if first_decl != access_info.declaring_class_idx {
+                    return true;
+                }
+            } else {
+                first_declaring_class = Some(access_info.declaring_class_idx);
+            }
+        }
+
+        restricted_count > 1
     }
     // =========================================================================
     // Computed Property Name Validation
@@ -459,10 +518,101 @@ impl<'a> CheckerState<'a> {
                             type_name_idx,
                             diagnostic_messages::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
                             diagnostic_codes::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
-                        );
+                    );
                     return;
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_diagnostics(source: &str) -> Vec<u32> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+
+        checker.check_source_file(root);
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|diag| diag.code)
+            .collect()
+    }
+
+    fn has_code(diagnostics: &[u32], code: u32) -> bool {
+        diagnostics.contains(&code)
+    }
+
+    #[test]
+    fn union_restricted_property_access_missing_member_emits_ts2339() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class A {
+                readonly x: number = 0;
+            }
+            class B {
+                y: string = "";
+            }
+            let value: A | B;
+            value.x;
+        "#,
+        );
+
+        assert!(has_code(&diagnostics, 2339));
+    }
+
+    #[test]
+    fn union_restricted_property_access_same_declaring_class_is_allowed() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                x: number = 0;
+            }
+            class Derived extends Base {
+                y: string = "";
+            }
+            let value: Base | Derived;
+            value.x;
+        "#,
+        );
+
+        assert!(!has_code(&diagnostics, 2339));
+    }
+
+    #[test]
+    fn union_restricted_property_access_different_decls_emits_ts2339() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class A {
+                private x: number = 0;
+            }
+            class B {
+                private x: number = 1;
+            }
+            let value: A | B;
+            value.x;
+        "#,
+        );
+
+        assert!(has_code(&diagnostics, 2339));
     }
 }
