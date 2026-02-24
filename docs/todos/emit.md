@@ -1,6 +1,42 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10031/13623 = 73.6% JS, ~778/1995 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10048/13623 = 73.8% JS, ~780/1995 = 39.1% DTS)
+
+### Fixed (2026-02-24, session 9) — Test Runner outFile Baseline Handling
+
+- **Test runner outFile baseline mismatch** (+17 JS, +1 DTS):
+  The baseline parser only recognized `out.js` as a bundled output filename. Tests with
+  `@outFile: dummy.js`, `@outFile: output.js`, or other custom names had their expected
+  output misidentified as input source files. This caused the runner to compare our emitter
+  output against the original JS source instead of the bundled output.
+  Fix: After parsing test directives, extract `@outFile` name and fix up the baseline's
+  expected JS/DTS output to point to the correct bundled output segment. Also pass the
+  outFile name through to the CLI transpiler so `--outFile` is used for all outFile tests,
+  not just `out.js`.
+  JS: 10031→10048, DTS: 779→780, zero regressions (9196 unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 9)
+
+- **Remaining outFile failures** (~58 tests still fail): Of the 75 outFile tests that
+  fail, only 18 were fixed by the baseline handling. The remaining ~58 have other issues:
+  System module wrappers, AMD define() wrappers, shebang/prologue directive ordering,
+  bundled emit with multiple source files, etc. These require actual emitter work.
+- **"use strict" over-emission** (~26 tests sole-diff): These 26 tests all involve
+  outFile or allowJs scenarios. With the outFile fix, some may now pass; the remaining
+  ones are caused by our emitter adding "use strict" for JS pass-through files where
+  tsc doesn't. The `alwaysStrict` default (true in TS6) interacts with JS file handling.
+- **Parameter/inline comment stripping** (~213 tests affected): Source JSDoc comments
+  in parameter lists (`/** this is comment about a*/`) are stripped during emit. tsc
+  preserves these. Affects many `declFile*` tests. Would require comment preservation
+  in the emitter's parameter emission path.
+- **JS pass-through formatting** (~12 tests): For `.js` input files with `allowJs`,
+  our emitter reformats empty function bodies (`{}` → `{ }`) where tsc preserves source
+  formatting. Would require a source-passthrough mode for JS files.
+- **__createBinding helper mismatch** (~174 tests): Tests have __createBinding diffs,
+  but most are caused by deeper module system issues (wrong module format, missing
+  CJS/AMD/UMD wrappers) not helper version mismatches.
+- **`export default class  {`** (extra space, 4 DTS tests): Anonymous default class
+  export has extra space before `{` in DTS emit. Small cosmetic fix in declaration emitter.
 
 ### Fixed (2026-02-24, session 8) — DTS Multi-Line Object Type Formatting
 
