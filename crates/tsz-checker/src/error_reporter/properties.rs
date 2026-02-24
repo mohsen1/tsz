@@ -20,6 +20,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         idx: NodeIndex,
     ) {
+        use crate::query_boundaries::common::contains_type_parameters;
         use tsz_solver::type_queries;
 
         // Suppress error if type is ERROR/ANY or an Error type wrapper
@@ -37,7 +38,7 @@ impl<'a> CheckerState<'a> {
         // This keeps follow-on property errors from obscuring the primary root cause
         // (typically assignability/inference diagnostics).
         if type_queries::is_union_type(self.ctx.types, type_id)
-            && type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+            && contains_type_parameters(self.ctx.types, type_id)
         {
             return;
         }

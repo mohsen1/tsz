@@ -612,7 +612,7 @@ impl<'a> CheckerState<'a> {
         if object_type == TypeId::ERROR || object_type == TypeId::ANY {
             return false;
         }
-        if !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type) {
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, object_type) {
             return false;
         }
 

@@ -459,7 +459,7 @@ impl<'a> CheckerState<'a> {
 
     fn should_suppress_concat_overload_error(&mut self, idx: NodeIndex) -> bool {
         use crate::query_boundaries::call_checker::array_element_type_for_type;
-        use tsz_solver::type_queries::contains_type_parameters_db;
+        use crate::query_boundaries::common::contains_type_parameters;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
@@ -493,7 +493,7 @@ impl<'a> CheckerState<'a> {
         args.nodes.iter().all(|&arg_idx| {
             let arg_type = self.get_type_of_node(arg_idx);
             array_element_type_for_type(self.ctx.types, arg_type).is_some()
-                && contains_type_parameters_db(self.ctx.types, arg_type)
+                && contains_type_parameters(self.ctx.types, arg_type)
         })
     }
 
