@@ -1109,12 +1109,16 @@ impl<'a> CheckerState<'a> {
         // point to a node in another file's arena.
         if is_cross_file {
             if let Some(class) = decl_arena.get_class(decl_node)
-                && self.has_declare_modifier_in_arena(decl_arena, &class.modifiers)
+                && decl_arena
+                    .has_modifier(&class.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
             {
                 return false;
             }
             if let Some(enum_decl) = decl_arena.get_enum(decl_node)
-                && self.has_declare_modifier_in_arena(decl_arena, &enum_decl.modifiers)
+                && decl_arena.has_modifier(
+                    &enum_decl.modifiers,
+                    tsz_scanner::SyntaxKind::DeclareKeyword,
+                )
             {
                 return false;
             }
@@ -1207,16 +1211,6 @@ impl<'a> CheckerState<'a> {
         }
 
         true
-    }
-
-    /// Check if a modifier list in a specific arena contains the `declare` keyword.
-    /// Used in multi-file mode where `self.ctx.arena` may not be the declaration's arena.
-    pub(crate) fn has_declare_modifier_in_arena(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-    ) -> bool {
-        arena.has_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a node is in a type-only context (type annotation, type query, heritage clause).

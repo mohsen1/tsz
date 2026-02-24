@@ -670,7 +670,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 type_id: method_type,
                                 write_type: method_type,
                                 optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
+                                readonly: self.ctx.arena.has_modifier(
+                                    &sig.modifiers,
+                                    tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                                ),
                                 is_method: true,
                                 visibility: Visibility::Public,
                                 parent_id: None,
@@ -686,7 +689,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 type_id,
                                 write_type: type_id,
                                 optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
+                                readonly: self.ctx.arena.has_modifier(
+                                    &sig.modifiers,
+                                    tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                                ),
                                 is_method: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
@@ -743,7 +749,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else {
                     TypeId::ANY
                 };
-                let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+                let readonly = self.ctx.arena.has_modifier(
+                    &index_sig.modifiers,
+                    tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                );
                 let info = IndexSignature {
                     key_type,
                     value_type,
@@ -1330,13 +1339,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get property name from a property name node.
     fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
         crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
-    }
-
-    /// Check if a modifier list contains the readonly modifier.
-    fn has_readonly_modifier(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
-        self.ctx
-            .arena
-            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword)
     }
 
     /// Get the context reference (for read-only access).

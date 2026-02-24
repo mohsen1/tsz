@@ -31,7 +31,9 @@ impl BinderState {
                 && let Some(parent_module) = arena.get_module(parent_node)
             {
                 // Check if this ancestor has `declare` modifier
-                if Self::has_declare_modifier(arena, parent_module.modifiers.as_ref()) {
+                if arena
+                    .has_modifier_ref(parent_module.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
+                {
                     return true;
                 }
                 // Check if this ancestor has a string-literal name
@@ -209,7 +211,10 @@ impl BinderState {
             if module_symbol_id.is_some() && module.body.is_some() {
                 let mut is_ambient_module = !is_augmentation
                     && (declared_module_specifier.is_some()
-                        || Self::has_declare_modifier(arena, module.modifiers.as_ref()));
+                        || arena.has_modifier_ref(
+                            module.modifiers.as_ref(),
+                            SyntaxKind::DeclareKeyword,
+                        ));
 
                 // Nested namespaces inside ambient contexts should treat declarations
                 // as ambient-exported for symbol visibility. This covers:

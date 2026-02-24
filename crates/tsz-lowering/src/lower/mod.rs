@@ -890,7 +890,9 @@ impl<'a> TypeLowering<'a> {
 
         let default = (data.default != NodeIndex::NONE).then(|| self.lower_type(data.default));
 
-        let is_const = self.has_const_modifier(&data.modifiers);
+        let is_const = self
+            .arena
+            .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
 
         Some(TypeParamInfo {
             is_const,
@@ -1049,7 +1051,10 @@ impl<'a> TypeLowering<'a> {
                                     type_id,
                                     write_type: type_id,
                                     optional: sig.question_token,
-                                    readonly: self.has_readonly_modifier(&sig.modifiers),
+                                    readonly: self.arena.has_modifier(
+                                        &sig.modifiers,
+                                        tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                                    ),
                                     is_method: true,
                                     visibility: Visibility::Public,
                                     parent_id: None,
@@ -1392,7 +1397,10 @@ impl<'a> TypeLowering<'a> {
                         if let Some(name) = self.lower_signature_name(sig.name) {
                             let mut signature = self.lower_call_signature(sig);
                             signature.is_method = true;
-                            let readonly = self.has_readonly_modifier(&sig.modifiers);
+                            let readonly = self.arena.has_modifier(
+                                &sig.modifiers,
+                                tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                            );
                             parts.merge_method(name, signature, sig.question_token, readonly);
                         }
                     }
@@ -1646,7 +1654,9 @@ impl<'a> TypeLowering<'a> {
         let param_data = self.arena.get_parameter(param_node)?;
         let key_type = self.lower_type(param_data.type_annotation);
         let value_type = self.lower_type(sig.type_annotation);
-        let readonly = self.has_readonly_modifier(&sig.modifiers);
+        let readonly = self
+            .arena
+            .has_modifier(&sig.modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword);
 
         Some(IndexSignature {
             key_type,
@@ -1674,10 +1684,12 @@ impl<'a> TypeLowering<'a> {
             let name = self.lower_signature_name(sig.name)?;
 
             // Check for readonly modifier
-            let readonly = self.has_readonly_modifier(&sig.modifiers);
+            let readonly = self
+                .arena
+                .has_modifier(&sig.modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword);
 
             // Get visibility (for type literals, always Public)
-            let visibility = self.get_visibility_from_modifiers(&sig.modifiers);
+            let visibility = self.arena.get_visibility_from_modifiers(&sig.modifiers);
             let type_id = self.lower_type(sig.type_annotation);
             let write_type = if readonly { TypeId::NONE } else { type_id };
 
@@ -1694,23 +1706,5 @@ impl<'a> TypeLowering<'a> {
         } else {
             None
         }
-    }
-
-    /// Check if a modifiers list contains a readonly keyword
-    fn has_readonly_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword)
-    }
-
-    /// Get visibility from modifiers list.
-    /// Delegates to [`NodeArena::get_visibility_from_modifiers`].
-    fn get_visibility_from_modifiers(&self, modifiers: &Option<NodeList>) -> Visibility {
-        self.arena.get_visibility_from_modifiers(modifiers)
-    }
-
-    /// Check if a modifiers list contains a const keyword (for const type parameters)
-    fn has_const_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ConstKeyword)
     }
 }
