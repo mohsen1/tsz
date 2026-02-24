@@ -44,6 +44,7 @@ mod declarations_class_members;
 mod declarations_namespace;
 mod es5;
 mod expressions;
+mod expressions_access;
 mod expressions_binary_downlevel;
 mod expressions_call;
 mod expressions_literals;
