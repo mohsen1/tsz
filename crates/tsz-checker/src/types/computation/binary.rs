@@ -1094,7 +1094,6 @@ mod tests {
         );
     }
 
-
     fn check_source_diagnostics_no_implicit_any(
         source: &str,
     ) -> Vec<crate::diagnostics::Diagnostic> {
