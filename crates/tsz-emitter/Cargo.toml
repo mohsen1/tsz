@@ -32,5 +32,9 @@ path = "tests/comment_tests.rs"
 name = "variable_declaration_emit_tests"
 path = "tests/variable_declaration_emit_tests.rs"
 
+[[test]]
+name = "optional_chaining_tests"
+path = "tests/optional_chaining_tests.rs"
+
 [lints]
 workspace = true

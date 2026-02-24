@@ -351,6 +351,15 @@ impl SourceWriter {
     /// Insert a complete line (text + newline) at the given byte offset and line number.
     /// Shifts all source map mappings at or after the given line by 1.
     /// The inserted text should NOT include a trailing newline (it's added automatically).
+    /// Insert text at a byte offset without adding a newline or shifting lines.
+    /// Used for injecting inline content like `var _a; ` in single-line function bodies.
+    pub fn insert_at(&mut self, byte_offset: usize, text: &str) {
+        self.output.insert_str(byte_offset, text);
+        // Source map column offsets for mappings on the same line would need adjustment,
+        // but for hoisted var declarations the insert point is before all mapped content
+        // on this line, so subsequent mappings shift naturally via the enlarged output.
+    }
+
     pub fn insert_line_at(&mut self, byte_offset: usize, at_line: u32, text: &str) {
         let line_with_newline = format!("{}{}", text, self.new_line);
         self.output.insert_str(byte_offset, &line_with_newline);

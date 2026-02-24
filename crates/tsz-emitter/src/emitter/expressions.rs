@@ -395,6 +395,41 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Check if the base expression is `super` — it cannot be captured in a temp variable.
+        // For `super.method?.()`, emit: `(_a = super.method) === null || _a === void 0 ? void 0 : _a.call(this)`
+        let is_super = self
+            .arena
+            .get(access.expression)
+            .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
+
+        if is_super {
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            // Capture `super.method` or `super["method"]` as a unit
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write("super.");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("super[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&func_temp);
+            self.write(".call(");
+            if self.ctx.arrow_state.this_capture_depth > 0 {
+                self.write("_this");
+            } else {
+                self.write("this");
+            }
+            self.emit_optional_call_tail_arguments(args.as_ref());
+            return;
+        }
+
         let this_temp = self.make_unique_name_hoisted();
         let func_temp = self.make_unique_name_hoisted();
 
