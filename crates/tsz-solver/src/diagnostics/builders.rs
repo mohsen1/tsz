@@ -450,17 +450,6 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
             .readonly_property(prop_name)
             .with_span(self.span(start, length))
     }
-
-    /// Add a related location to an existing diagnostic.
-    pub fn add_related(
-        &self,
-        diag: TypeDiagnostic,
-        message: impl Into<String>,
-        start: u32,
-        length: u32,
-    ) -> TypeDiagnostic {
-        diag.with_related(self.span(start, length), message)
-    }
 }
 
 // =============================================================================
