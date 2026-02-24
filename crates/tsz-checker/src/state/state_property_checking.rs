@@ -1567,33 +1567,7 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::context::CheckerOptions;
-    use crate::state::CheckerState;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
-
-    fn check_source_diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let source_file = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), source_file);
-
-        let types = TypeInterner::new();
-        let options = CheckerOptions::default();
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            options,
-        );
-
-        checker.ctx.set_lib_contexts(Vec::new());
-        checker.check_source_file(source_file);
-        checker.ctx.diagnostics.clone()
-    }
+    use crate::test_utils::check_source_diagnostics;
 
     #[test]
     fn ts2353_spread_object_literal_reports_explicit_excess_property_only() {

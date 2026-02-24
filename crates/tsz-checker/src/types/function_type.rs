@@ -1369,32 +1369,10 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::CheckerState;
-    use crate::context::CheckerOptions;
     use crate::diagnostics::diagnostic_codes;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
 
     fn diagnostics_for_source(source: &str) -> Vec<u32> {
-        let file_name = "test.ts".to_string();
-        let mut parser = ParserState::new(file_name.clone(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let types = TypeInterner::new();
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            file_name,
-            CheckerOptions::default(),
-        );
-        checker.check_source_file(root);
-
-        checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+        crate::test_utils::check_source_codes(source)
     }
 
     #[test]

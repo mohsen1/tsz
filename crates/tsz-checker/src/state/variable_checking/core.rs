@@ -1238,36 +1238,8 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod test_utils {
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
-
-    use crate::context::CheckerOptions;
-    use crate::state::CheckerState;
-
     pub fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let types = TypeInterner::new();
-        let options = CheckerOptions::default();
-
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            options,
-        );
-
-        checker.check_source_file(root);
-
-        checker
-            .ctx
-            .diagnostics
+        crate::test_utils::check_source_diagnostics(source)
             .iter()
             .filter(|d| d.code == error_code)
             .map(|d| (d.start, d.message_text.clone()))

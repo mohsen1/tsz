@@ -679,57 +679,22 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use crate::context::CheckerOptions;
-    use crate::state::CheckerState;
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use crate::test_utils::{check_source, check_source_diagnostics};
 
+    /// Alias: default options already have `strict_null_checks: true`.
     fn check_source_with_strict_null(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let source_file = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), source_file);
-
-        let types = TypeInterner::new();
-        // Default already has strict_null_checks: true
-        let options = CheckerOptions::default();
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            options,
-        );
-
-        checker.ctx.set_lib_contexts(Vec::new());
-        checker.check_source_file(source_file);
-        checker.ctx.diagnostics.clone()
+        check_source_diagnostics(source)
     }
 
     fn check_source_without_strict_null(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let source_file = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), source_file);
-
-        let types = TypeInterner::new();
-        let options = CheckerOptions {
-            strict_null_checks: false,
-            ..CheckerOptions::default()
-        };
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            options,
-        );
-
-        checker.ctx.set_lib_contexts(Vec::new());
-        checker.check_source_file(source_file);
-        checker.ctx.diagnostics.clone()
+        check_source(
+            source,
+            "test.ts",
+            CheckerOptions {
+                strict_null_checks: false,
+                ..CheckerOptions::default()
+            },
+        )
     }
 
     #[test]
