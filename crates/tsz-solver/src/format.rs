@@ -468,7 +468,7 @@ impl<'a> TypeFormatter<'a> {
             self.format(return_type)
         };
         format!(
-            "{}{}({}) {} {}",
+            "{}{}({}){} {}",
             prefix,
             type_params,
             params.join(", "),
@@ -557,7 +557,7 @@ impl<'a> TypeFormatter<'a> {
             shape.this_type,
             shape.return_type,
             shape.is_constructor,
-            "=>",
+            " =>",
         )
     }
 
@@ -579,7 +579,7 @@ impl<'a> TypeFormatter<'a> {
                     sig.this_type,
                     sig.return_type,
                     false,
-                    "=>",
+                    " =>",
                 );
             }
             if shape.construct_signatures.len() == 1 && shape.call_signatures.is_empty() {
@@ -590,7 +590,7 @@ impl<'a> TypeFormatter<'a> {
                     sig.this_type,
                     sig.return_type,
                     true,
-                    "=>",
+                    " =>",
                 );
             }
         }

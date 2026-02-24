@@ -141,9 +141,10 @@ impl ParserState {
                     break;
                 }
                 // Trailing commas are allowed in parameter lists
-                // Only emit an error if we have another parameter without a comma
-                if !self.is_token(SyntaxKind::CloseParenToken) && self.is_parameter_start() {
-                    // Emit TS1005 for missing comma between parameters: f(a b)
+                // Emit appropriate error based on context
+                if !self.is_token(SyntaxKind::CloseParenToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
                     self.error_comma_expected();
                 }
                 break;
