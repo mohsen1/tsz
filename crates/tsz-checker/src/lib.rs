@@ -130,6 +130,9 @@ mod ts1501_tests;
 #[path = "../tests/ts2300_tests.rs"]
 mod ts2300_tests;
 #[cfg(test)]
+#[path = "../tests/ts2320_tests.rs"]
+mod ts2320_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
