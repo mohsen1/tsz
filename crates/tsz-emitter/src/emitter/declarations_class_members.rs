@@ -1053,6 +1053,21 @@ mod tests {
     }
 
     #[test]
+    fn object_literal_accessor_empty_body_has_space_braces() {
+        let source = "export const t = {\n    set setter(v) {},\n};";
+        let output = emit_ts(source);
+
+        assert!(
+            !output.contains("set setter(v) {},"),
+            "Object-literal setter should not use compact empty-body formatting.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("set setter(v) { },"),
+            "Object-literal setter should preserve trailing comma when present.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn generator_method_overloads_preserve_asterisk() {
         // When overloaded generator methods are emitted, the implementation
         // method should retain the * (generator asterisk).
