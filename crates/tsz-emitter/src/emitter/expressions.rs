@@ -86,11 +86,14 @@ impl<'a> Printer<'a> {
         // wrapped in parens to avoid precedence issues.
         // e.g., `x?.kind === null` → `(x === null || x === void 0 ? void 0 : x.kind) === null`
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
         if !is_assignment_or_comma {
             self.ctx.flags.optional_chain_needs_parens = true;
+            self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
         self.emit(binary.left);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
 
         // Check if there's a line break between the operator and the right operand
         // in the source. TypeScript preserves these line breaks.
@@ -134,9 +137,11 @@ impl<'a> Printer<'a> {
                 // Set parens flag for right operand of non-assignment/comma operators
                 if !is_assignment_or_comma {
                     self.ctx.flags.optional_chain_needs_parens = true;
+                    self.ctx.flags.nullish_coalescing_needs_parens = true;
                 }
                 self.emit(binary.right);
                 self.ctx.flags.optional_chain_needs_parens = prev_optional;
+                self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
                 self.decrease_indent();
                 self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
@@ -146,9 +151,11 @@ impl<'a> Printer<'a> {
         // Set parens flag for right operand of non-assignment/comma operators
         if !is_assignment_or_comma {
             self.ctx.flags.optional_chain_needs_parens = true;
+            self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
         self.emit(binary.right);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.in_binary_operand = prev_in_binary;
     }
 
@@ -184,12 +191,15 @@ impl<'a> Printer<'a> {
         // e.g., `!await x` → `!(yield x)` not `!yield x`
         let prev = self.ctx.flags.in_binary_operand;
         self.ctx.flags.in_binary_operand = true;
-        // When lowering optional chains (e.g., `++o?.a` → `++(o === null ... : o.a)`),
+        // When lowering optional chains or nullish coalescing (e.g., `++o?.a`, `!(a ?? b)`),
         // the ternary must be wrapped in parens to preserve precedence.
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
         self.ctx.flags.optional_chain_needs_parens = true;
+        self.ctx.flags.nullish_coalescing_needs_parens = true;
         self.emit(unary.operand);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.in_binary_operand = prev;
     }
 
@@ -198,12 +208,15 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // When lowering optional chains (e.g., `o?.a++` → `(o === null ... : o.a)++`),
+        // When lowering optional chains or nullish coalescing (e.g., `o?.a++`, `(a ?? b)++`),
         // the ternary must be wrapped in parens to preserve precedence.
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
         self.ctx.flags.optional_chain_needs_parens = true;
+        self.ctx.flags.nullish_coalescing_needs_parens = true;
         self.emit(unary.operand);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         // Map the postfix operator (e.g., ++ or --) to its source position
         if let Some(operand_node) = self.arena.get(unary.operand) {
             self.map_token_after_skipping_whitespace(operand_node.end, node.end);
@@ -367,7 +380,16 @@ impl<'a> Printer<'a> {
         }
 
         self.write("(");
+        // The explicit parens already provide grouping, so clear the
+        // "needs parens" flags to avoid double-parenthesization when the
+        // inner expression is a downlevel optional chain or nullish coalescing.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = false;
+        self.ctx.flags.nullish_coalescing_needs_parens = false;
         self.emit(paren.expression);
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.write(")");
     }
 
@@ -449,14 +471,18 @@ impl<'a> Printer<'a> {
         let (newline_before_question, newline_before_colon) =
             self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
 
-        // When lowering optional chains in the condition (e.g., `o?.b ? 1 : 0`
-        // → `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`),
+        // When lowering optional chains or nullish coalescing in the condition
+        // (e.g., `o?.b ? 1 : 0` → `(o === null ... : o.b) ? 1 : 0`,
+        //  `(a ?? 'foo') ? 1 : 2` → `(a !== null && a !== void 0 ? a : 'foo') ? 1 : 2`),
         // the ternary must be wrapped in parens to avoid ambiguity with
         // the outer conditional's `?`.
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
         self.ctx.flags.optional_chain_needs_parens = true;
+        self.ctx.flags.nullish_coalescing_needs_parens = true;
         self.emit(cond.condition);
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
 
         if newline_before_question {
             // Check if `?` is on the condition line (Case A) or the next line (Case B).
@@ -1433,6 +1459,77 @@ mod tests {
         assert!(
             output.contains("    : c ? f : g;"),
             "Case B: nested when_false must be on indented line.\nOutput:\n{output}"
+        );
+    }
+
+    /// When `??` is lowered in a binary expression operand (e.g., `(a ?? b) || c`),
+    /// the lowered ternary must be wrapped in parens to preserve precedence.
+    /// Without parens: `a !== null && a !== void 0 ? a : b || c` (wrong — `||` binds to `b`)
+    /// With parens: `(a !== null && a !== void 0 ? a : b) || c` (correct)
+    #[test]
+    fn nullish_coalescing_in_binary_gets_parens() {
+        // a ?? b || c — the ?? is the left operand of ||, needs parens when lowered
+        let source = "a ?? b || c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(a !== null && a !== void 0 ? a : b) || c"),
+            "Lowered ?? in binary operand must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When `??` is lowered in the condition of a ternary, the lowered ternary
+    /// must be wrapped in parens to avoid ambiguity with the outer `?:`.
+    /// e.g., `a ?? 'foo' ? 1 : 2` → `(a !== null && a !== void 0 ? a : 'foo') ? 1 : 2`
+    #[test]
+    fn nullish_coalescing_in_conditional_condition_gets_parens() {
+        let source = "const r = a ?? 'foo' ? 1 : 2;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(a !== null && a !== void 0 ? a : 'foo') ? 1 : 2"),
+            "Lowered ?? in conditional condition must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When the source already has explicit parens `(a ?? b)`, the lowered ternary
+    /// must NOT be double-parenthesized. The `ParenthesizedExpression` provides the
+    /// outer parens; the `nullish_coalescing_needs_parens` flag is cleared inside.
+    #[test]
+    fn nullish_coalescing_with_explicit_parens_no_double_wrap() {
+        // Source has explicit parens: (a ?? b) || c
+        let source = "(a ?? b) || c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should have single parens, not double
+        assert!(
+            output.contains("(a !== null && a !== void 0 ? a : b) || c"),
+            "Must have single parens from source ParenthesizedExpression.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("((a !== null"),
+            "Must NOT have double parens.\nOutput:\n{output}"
         );
     }
 }

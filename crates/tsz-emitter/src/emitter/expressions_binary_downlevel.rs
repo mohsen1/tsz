@@ -429,6 +429,15 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_nullish_coalescing_expression(&mut self, binary: &BinaryExprData) {
+        // When the lowered ternary appears inside a binary operand, conditional
+        // condition, or unary expression, wrap in parens to preserve precedence.
+        // e.g., `(a ?? b) || c` → `(a !== null && a !== void 0 ? a : b) || c`
+        let needs_parens = self.ctx.flags.nullish_coalescing_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.nullish_coalescing_needs_parens = false;
+        }
+
         if self.is_simple_nullish_expression(binary.left) {
             self.emit(binary.left);
             self.write(" !== null && ");
@@ -437,20 +446,23 @@ impl<'a> Printer<'a> {
             self.emit(binary.left);
             self.write(" : ");
             self.emit(binary.right);
-            return;
+        } else {
+            let value_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&value_temp);
+            self.write(" = ");
+            self.emit(binary.left);
+            self.write(") !== null && ");
+            self.write(&value_temp);
+            self.write(" !== void 0 ? ");
+            self.write(&value_temp);
+            self.write(" : ");
+            self.emit(binary.right);
         }
 
-        let value_temp = self.make_unique_name_hoisted();
-        self.write("(");
-        self.write(&value_temp);
-        self.write(" = ");
-        self.emit(binary.left);
-        self.write(") !== null && ");
-        self.write(&value_temp);
-        self.write(" !== void 0 ? ");
-        self.write(&value_temp);
-        self.write(" : ");
-        self.emit(binary.right);
+        if needs_parens {
+            self.write(")");
+        }
     }
 
     fn is_simple_logical_assignment_lhs(&self, node_idx: NodeIndex) -> bool {
