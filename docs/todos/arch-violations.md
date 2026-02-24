@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-22 (13th audit)
-**Branch**: main (commit e38a95d3f)
-**Status**: REFACTOR — grouped domain-specific checker files into checkers/ subdirectory
+**Date**: 2026-02-24 (14th audit)
+**Branch**: main (commit c0b736bce)
+**Status**: REFACTOR — grouped type_checking_queries_* files into types/queries/ subdirectory
 
 ---
 
@@ -47,12 +47,12 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 | ~~`checkers/member_declaration_checks.rs`~~ | ~~1,728~~ | ~~272 lines~~ | ✅ Split — extracted class type param ref checks, abstract overload/consecutive checks (~462 LOC) into `class_type_param_checks.rs`, reducing to 1,266 LOC |
 | `types/member_access.rs` | 1,674 | 326 lines |
 | ~~`flow/flow_graph_builder.rs`~~ | ~~1,666~~ | ~~334 lines~~ | ✅ Split — extracted expression flow handling (~526 LOC) into `flow_graph_builder_expressions.rs`, reducing to 1,171 LOC |
-| ~~`types/type_checking_queries_class.rs`~~ | ~~1,713~~ | ~~287 lines~~ | ✅ Split (9de7747a3) — extracted lib type resolution (~686 LOC) into `type_checking_queries_lib_resolution.rs`, reducing to 1,070 LOC |
+| ~~`types/type_checking_queries_class.rs`~~ | ~~1,713~~ | ~~287 lines~~ | ✅ Split (9de7747a3) — extracted lib type resolution (~686 LOC) into `queries/lib_resolution.rs`, reducing to 1,070 LOC |
 | ~~`types/type_checking_global.rs`~~ | ~~1,897~~ | ~~103 lines~~ | ✅ Split (64a0a757b) — extracted duplicate identifier/declaration conflict checking (~1,544 LOC) into `type_checking_duplicate_identifiers.rs`, reducing to 363 LOC |
 
 Previously near-threshold files (all successfully split): `state_class_checking.rs` (919), `type_computation_call.rs` (796), `member_declaration_checks.rs` (1,695), `type_computation_access.rs` (889), `type_checking_queries_lib.rs` (1,313), `control_flow_narrowing.rs` (1,204), `type_computation.rs` (1,119), `control_flow_assignment.rs` (878), `class_type.rs` (1,026).
 
-**Note**: The `type_checking_queries_lib.rs` file remains stable at 1,901 lines. The perf commit (b81760973) extracted new logic into a separate `type_checking_queries_lib_prime.rs` (113 lines), keeping the near-threshold file from growing. Good architectural practice.
+**Note**: The `queries/lib.rs` file (previously `type_checking_queries_lib.rs`) remains stable at ~1,313 lines. The perf commit (b81760973) extracted new logic into a separate `queries/lib_prime.rs` (113 lines). All 7 `type_checking_queries_*` files were reorganized into `types/queries/` subdirectory (c0b736bce).
 
 ### 4. Cross-Layer Imports — CLEAN
 
