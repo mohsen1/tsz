@@ -387,16 +387,17 @@ impl<'a> TypeFormatter<'a> {
 
         // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`
         if prop.is_method
-            && let Some(TypeData::Function(f_id)) = self.interner.lookup(prop.type_id) {
-                let shape = self.interner.function_shape(f_id);
-                let type_params = self.format_type_params(&shape.type_params);
-                let params = self.format_params(&shape.params, shape.this_type);
-                let return_str = self.format(shape.return_type);
-                return format!(
-                    "{readonly}{name}{optional}{type_params}({params}): {return_str}",
-                    params = params.join(", ")
-                );
-            }
+            && let Some(TypeData::Function(f_id)) = self.interner.lookup(prop.type_id)
+        {
+            let shape = self.interner.function_shape(f_id);
+            let type_params = self.format_type_params(&shape.type_params);
+            let params = self.format_params(&shape.params, shape.this_type);
+            let return_str = self.format(shape.return_type);
+            return format!(
+                "{readonly}{name}{optional}{type_params}({params}): {return_str}",
+                params = params.join(", ")
+            );
+        }
 
         let type_str = self.format(prop.type_id);
         format!("{readonly}{name}{optional}: {type_str}")
