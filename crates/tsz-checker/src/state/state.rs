@@ -1204,6 +1204,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // Type resolution, type analysis, type environment, and checking methods
-    // are in state_type_resolution.rs, state_type_analysis.rs,
-    // state_type_environment.rs, state_checking.rs, and state_checking_members.rs
+    // are in type_resolution/, type_analysis/, type_environment/,
+    // state_checking.rs, and state_checking_members/
 }

@@ -384,13 +384,12 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "assignability_checker should use query_boundaries::assignability::is_relation_cacheable for relation-cache gating"
     );
 
-    let mut state_type_environment_src = fs::read_to_string("src/state/state_type_environment.rs")
-        .expect("failed to read src/state/state_type_environment.rs for architecture guard");
+    let mut state_type_environment_src = fs::read_to_string("src/state/type_environment/mod.rs")
+        .expect("failed to read src/state/type_environment/mod.rs for architecture guard");
     // Include split-off module that is part of the state_type_environment logical module
     state_type_environment_src.push_str(
-        &fs::read_to_string("src/state/state_type_environment_lazy.rs").expect(
-            "failed to read src/state/state_type_environment_lazy.rs for architecture guard",
-        ),
+        &fs::read_to_string("src/state/type_environment/lazy.rs")
+            .expect("failed to read src/state/type_environment/lazy.rs for architecture guard"),
     );
     assert!(
         !state_type_environment_src.contains("intern(TypeData::Enum("),

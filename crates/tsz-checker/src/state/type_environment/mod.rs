@@ -1,6 +1,8 @@
 //! Type environment building, application type evaluation, property access
 //! type resolution, and type node resolution.
 
+pub(crate) mod lazy;
+
 use crate::query_boundaries::state_type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
@@ -478,7 +480,7 @@ impl<'a> CheckerState<'a> {
     }
 
     // Lazy type resolution, property access type resolution, and type environment
-    // population methods are in `state_type_environment_lazy.rs`.
+    // population methods are in `lazy.rs`.
 
     /// Create a `TypeEnvironment` populated with resolved symbol types.
     ///
