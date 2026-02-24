@@ -243,15 +243,11 @@
 
 ## Scope / Symbol Resolution
 
-### TS2430 — react16.d.ts false positives (38 tests)
-- **Root cause**: `resolve_type_symbol()` uses flat `file_locals` map without scope awareness.
-  Inside `declare module "react"`, type aliases resolve to module-local interfaces instead of
-  global DOM types because `declare_symbol` unconditionally adds module-scoped symbols to `file_locals`.
-- **Attempted fix**: Using `resolve_identifier()` caused +1/-1 regression (binder scope chain
-  edge cases for multi-file module augmentation)
-- **Proper fix**: Either (a) fix `declare_symbol` to not add module-scoped shadows to `file_locals`,
-  or (b) implement scope-aware type reference resolution
-- **Difficulty**: HARD
+### TS2430 — react16.d.ts false positives (RESOLVED)
+- The underlying `file_locals` scope issue has been resolved by previous work.
+  Unit test `test_module_namespace_same_name_interface_no_false_positive` now passes.
+  Remaining TS2430 conformance failures are generic interface extension compatibility
+  and diagnostic position differences, not the react16 scope issue.
 
 ### TS2506 — Cross-binder SymbolId collision (`commentOnAmbientModule.ts`)
 - `resolve_heritage_symbol` resolves `D` from `a.ts` binder but looks up exports using `b.ts`
@@ -341,10 +337,9 @@ or a separate flag.
 merging objects. This makes intersected types appear fresh, triggering false excess property checks
 (~76 tests). Fix: AND instead of OR.
 
-### file_locals flat scope (TS2430)
-The binder's `file_locals` map is flat (no scope awareness). Inside `declare module "react"`,
-type aliases resolve to module-local shadows instead of global types. Fundamental architecture
-issue affecting 38+ tests.
+### file_locals flat scope (TS2430 — RESOLVED)
+The binder's `file_locals` scope issue that caused false TS2430 in react16.d.ts patterns
+has been resolved. Unit test confirms correct behavior.
 
 ### Lib loading and target level (TS2585)
 `lib.dom.d.ts` contains `/// <reference lib="es2015" />` which pulls ES2015 bindings regardless
