@@ -231,6 +231,62 @@ pub const SET_MODULE_DEFAULT_HELPER: &str = r#"var __setModuleDefault = (this &&
     o["default"] = v;
 });"#;
 
+/// Helper code for __addDisposableResource (disposable stack helper)
+pub const ADD_DISPOSABLE_RESOURCE_HELPER: &str = r#"var __addDisposableResource = (this && this.__addDisposableResource) || function (env, value, async) {
+    if (value !== null && value !== void 0) {
+        if (typeof value !== "object" && typeof value !== "function") throw new TypeError("Object expected.");
+        var dispose, inner;
+        if (async) {
+            if (!Symbol.asyncDispose) throw new TypeError("Symbol.asyncDispose is not defined.");
+            dispose = value[Symbol.asyncDispose];
+        }
+        if (dispose === void 0) {
+            if (!Symbol.dispose) throw new TypeError("Symbol.dispose is not defined.");
+            dispose = value[Symbol.dispose];
+            if (async) inner = dispose;
+        }
+        if (typeof dispose !== "function") throw new TypeError("Object not disposable.");
+        if (inner) dispose = function() { try { inner.call(this); } catch (e) { return Promise.reject(e); } };
+        env.stack.push({ value: value, dispose: dispose, async: async });
+    }
+    else if (async) {
+        env.stack.push({ async: true });
+    }
+    return value;
+};"#;
+
+/// Helper code for __disposeResources (disposable resource stack finalizer)
+pub const DISPOSE_RESOURCES_HELPER: &str = r#"var __disposeResources = (this && this.__disposeResources) || (function (SuppressedError) {
+    return function (env) {
+        function fail(e) {
+            env.error = env.hasError ? new SuppressedError(e, env.error, "An error was suppressed during disposal.") : e;
+            env.hasError = true;
+        }
+        var r, s = 0;
+        function next() {
+            while (r = env.stack.pop()) {
+                try {
+                    if (!r.async && s === 1) return s = 0, env.stack.push(r), Promise.resolve().then(next);
+                    if (r.dispose) {
+                        var result = r.dispose.call(r.value);
+                        if (r.async) return s |= 2, Promise.resolve(result).then(next, function(e) { fail(e); return next(); });
+                    }
+                    else s |= 1;
+                }
+                catch (e) {
+                    fail(e);
+                }
+            }
+            if (s === 1) return env.hasError ? Promise.reject(env.error) : Promise.resolve();
+            if (env.hasError) throw env.error;
+        }
+        return next();
+    };
+})(typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+    var e = new Error(message);
+    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+});"#;
+
 /// Tracks which helper functions are needed in the output.
 #[derive(Default, Clone)]
 pub struct HelpersNeeded {
@@ -259,6 +315,8 @@ pub struct HelpersNeeded {
     pub class_private_field_set: bool,
     pub class_private_field_in: bool,
     pub create_binding: bool,
+    pub add_disposable_resource: bool,
+    pub dispose_resources: bool,
     pub set_function_name: bool,
     pub prop_key: bool,
 }
@@ -348,6 +406,14 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
     }
     if helpers.class_private_field_in {
         output.push_str(CLASS_PRIVATE_FIELD_IN_HELPER);
+        output.push('\n');
+    }
+    if helpers.add_disposable_resource {
+        output.push_str(ADD_DISPOSABLE_RESOURCE_HELPER);
+        output.push('\n');
+    }
+    if helpers.dispose_resources {
+        output.push_str(DISPOSE_RESOURCES_HELPER);
         output.push('\n');
     }
 

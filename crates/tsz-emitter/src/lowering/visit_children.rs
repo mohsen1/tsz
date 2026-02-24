@@ -38,6 +38,11 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
                 if let Some(decl_list) = self.arena.get_variable(node) {
+                    if (node.flags as u32 & tsz_parser::parser::node_flags::USING) != 0 {
+                        self.transforms.helpers_mut().add_disposable_resource = true;
+                        self.transforms.helpers_mut().dispose_resources = true;
+                    }
+
                     if self.ctx.target_es5 {
                         self.transforms.insert(
                             idx,

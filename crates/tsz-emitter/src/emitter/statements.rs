@@ -1,6 +1,7 @@
 use super::{Printer, get_trailing_comment_ranges};
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -374,6 +375,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let has_using_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
+            self.arena
+                .get(*decl_list_idx)
+                .is_some_and(|decl_list| (decl_list.flags as u32 & node_flags::USING) != 0)
+        });
+
         // Skip ambient declarations (declare var/let/const)
         if self
             .arena
@@ -411,8 +418,14 @@ impl<'a> Printer<'a> {
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
-        self.map_trailing_semicolon(node);
-        self.write_semicolon();
+        // Skip the semicolon only when `using` declarations are being lowered
+        // (targets below ES2025). At ES2025+, `using` passes through as-is and
+        // needs a normal trailing semicolon like var/let/const.
+        let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
+        if !using_is_lowered {
+            self.map_trailing_semicolon(node);
+            self.write_semicolon();
+        }
 
         // Emit trailing comments (e.g., var x = 1; // comment).
         // Use a bounded scan range that excludes erased type annotations.

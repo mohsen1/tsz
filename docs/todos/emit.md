@@ -1,6 +1,33 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5274/7163 = 73.6% JS, ~415/1039 = 39.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9984/13623 = 73.3% JS, ~777/1995 = 38.9% DTS)
+
+### Fixed (2026-02-24, session 5) — Using Declaration Missing Semicolon at ES2025+
+
+- **`using` / `await using` declaration missing trailing semicolon at esnext target** (+24 JS, +1 DTS):
+  When emitting `using` declarations at ES2025+ targets (where `using` passes through unchanged),
+  the trailing semicolon was unconditionally skipped. This was because the ES5 lowering path
+  (`__addDisposableResource` / `__disposeResources`) handles its own statement termination, and
+  the semicolon skip was not conditioned on whether lowering was actually happening.
+  Fix: only skip the semicolon when `!self.ctx.options.target.supports_es2025()` (i.e., when
+  the `using` declaration is actually being lowered). Two unit tests added.
+  Tests fixed: `usingDeclarationsWithESClassDecorators.*`, `usingDeclarationsWithLegacyClassDecorators.*`,
+  and others at `(target=esnext)` variants.
+  JS: 9960→9984, DTS: 776→777, zero regressions.
+
+### Skipped / Investigated (2026-02-24, session 5)
+
+- **`"use strict"` sole-diff over-emission** (~17 tests): tsz adds `"use strict"` where tsc
+  doesn't. Affects JS files (`checkJsdocOnEndOfFile`, `topLevelThisAssignment`, etc.). Mixed
+  causes — some are `.js` input files, some are missing module detection. Not a single-fix.
+- **`Object.defineProperty(exports, "__esModule", ...)` under-emission** (~11 tests): CJS
+  modules missing the `__esModule` property definition. Tests: `importMeta(module=commonjs)`,
+  `moduleDuplicateIdentifiers`, etc. Requires module detection improvements.
+- **`export {};` over-emission** (~11 tests): tsz emits `export {};` but expected output has
+  `import { x } from "foo"` instead. Tests: `cachedModuleResolution*`. Module resolution issue.
+- **Enum constant folding gaps** (~136 tests have reverse mapping diffs): Reverse mapping is
+  implemented, but many tests fail due to incomplete constant folding (e.g., `Foo.a` not folded
+  to its numeric value) or comment displacement within enum bodies.
 
 ### Fixed (2026-02-24, session 4) — Object Literal Trailing Comment Displacement
 
@@ -292,7 +319,10 @@ the pass rate without regressions. Next improvements likely require:
   requires a full state machine transform (`__generator` helper). Very complex, would need
   a dedicated implementation effort.
 - **`using` / `await using` downlevel** (~18 tests): ES2025 `using` declarations need transform
-  for older targets. Requires `__addDisposableResource` / `__disposeResources` helpers.
+  for older targets. Initial support added for sync `using` lowering (`__addDisposableResource` /
+  `__disposeResources`), including `using` declaration scoping and env helpers. Remaining
+  work: async-`await using` finalization behavior (`__disposeResources` await plumbing) is still
+  incomplete.
 - **Const enum value substitution** (needs checker): tsc substitutes const enum member accesses
   with their computed values (e.g., `E.A` → `0 /* E.A */`). Requires checker/solver to provide
   constant-evaluated enum values to the emitter. Not feasible with `--noCheck`.
@@ -1565,8 +1595,9 @@ the pass rate without regressions. Next improvements likely require:
 14. **accessor keyword transform** (~34 tests): The `accessor` keyword on class
     fields requires a downlevel transform to getter/setter pairs. Not yet implemented.
 
-15. **`using` statement disposal helpers** (~26 tests): The `using` declaration
-    requires `__addDisposableResource` and related helpers. Not yet implemented.
+15. **`using` statement disposal helpers** (~26 tests): Partial ES5/legacy support now
+   exists for sync `using` via `__addDisposableResource` and `__disposeResources`.
+   `await using` finalization plumbing in async contexts remains open.
 
 16. **Import elision for unused value imports** (~11 tests): `import {x} from "foo"`
     where `x` is never used at runtime should be stripped, with `export {};` emitted to

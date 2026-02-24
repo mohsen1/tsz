@@ -2,6 +2,7 @@ use super::*;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node_flags;
 
 fn parse(source: &str) -> (NodeArena, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -170,6 +171,58 @@ fn test_lowering_pass_commonjs_non_export_function_no_transforms() {
     assert!(
         transforms.is_empty(),
         "Non-exported functions should not add CommonJS transforms"
+    );
+}
+
+#[test]
+fn test_lowering_pass_using_flag_sets_disposable_helpers() {
+    let (arena, root) = parse("using d = { [Symbol.dispose]() {} };");
+    let ctx = EmitContext::es5();
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let root_node = arena.get(root).expect("expected source file node");
+    let source = arena
+        .get_source_file(root_node)
+        .expect("expected source file data");
+    let stmt_idx = *source
+        .statements
+        .nodes
+        .first()
+        .expect("expected variable statement");
+    let stmt_node = arena
+        .get(stmt_idx)
+        .expect("expected variable statement node");
+    let var_stmt = arena
+        .get_variable(stmt_node)
+        .expect("expected variable statement data");
+    let decl_list_idx = *var_stmt
+        .declarations
+        .nodes
+        .first()
+        .expect("expected declaration list");
+    let decl_list_node = arena
+        .get(decl_list_idx)
+        .expect("expected declaration list node");
+
+    assert!(
+        (decl_list_node.flags as u32 & node_flags::USING) != 0,
+        "expected using declaration list flag"
+    );
+
+    assert!(
+        transforms.get(decl_list_idx).is_some(),
+        "expected ES5 variable list transform"
+    );
+    let helpers = transforms.helpers();
+    assert!(
+        helpers.add_disposable_resource,
+        "using declarations should require __addDisposableResource helper"
+    );
+    assert!(
+        helpers.dispose_resources,
+        "using declarations should require __disposeResources helper"
     );
 }
 
