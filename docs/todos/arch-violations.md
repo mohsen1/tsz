@@ -40,8 +40,13 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 
 | File | Lines | Headroom |
 |------|-------|----------|
-| `state_checking_members/ambient_signature_checks.rs` | 1,767 | 233 lines |
-| `types/type_node.rs` | 1,765 | 235 lines |
+| `state_checking_members/ambient_signature_checks.rs` | 1,301 | 699 lines |
+| `types/type_node.rs` | 1,534 | 466 lines |
+| `types/property_access_type.rs` | 1,569 | 431 lines |
+| `state/type_analysis/mod.rs` | 1,557 | 443 lines |
+| `types/type_checking/duplicate_identifiers.rs` | 1,549 | 451 lines |
+| `state/type_resolution/core.rs` | 1,542 | 458 lines |
+| `types/type_checking/core.rs` | 1,538 | 462 lines |
 | ~~`declarations/import_declaration_checker.rs`~~ | ~~1,620~~ | ~~380 lines~~ | ✅ Split — extracted import-equals validation (~672 LOC) into `import_equals_checker.rs`, reducing to 958 LOC |
 | ~~`state/state_property_checking.rs`~~ | ~~1,611~~ | ~~389 lines~~ | ✅ Split (81939ca00) — extracted readonly assignment checking (~510 LOC) into `state_readonly_checking.rs`, reducing to 1,099 LOC |
 | ~~`flow/control_flow.rs`~~ | ~~1,734~~ | ~~266 lines~~ | ✅ Split — extracted definite assignment traversal + variable declaration utilities (~370 LOC) into `control_flow_var_utils.rs`, reducing to 1,364 LOC |
@@ -55,6 +60,8 @@ All checker files are under the 2000-line limit. Many previously near-threshold 
 Previously near-threshold files (all successfully split): `state_class_checking.rs` (919), `type_computation_call.rs` (796), `member_declaration_checks.rs` (1,695), `type_computation_access.rs` (889), `type_checking_queries_lib.rs` (1,313), `control_flow_narrowing.rs` (1,204), `type_computation.rs` (1,119), `control_flow_assignment.rs` (878), `class_type.rs` (1,026).
 
 **Note**: The `queries/lib.rs` file (previously `type_checking_queries_lib.rs`) remains stable at ~1,313 lines. The perf commit (b81760973) extracted new logic into a separate `queries/lib_prime.rs` (113 lines). All 7 `type_checking_queries_*` files were reorganized into `types/queries/` subdirectory (c0b736bce).
+
+**Note**: The 7 `flow/control_flow_*.rs` files were reorganized into `flow/control_flow/` subdirectory (a1b53e74f), mirroring the binder `state_*.rs` → `state/` pattern. The 3 `flow_analysis_*.rs` files were similarly reorganized into `flow/flow_analysis/` subdirectory. Remaining candidate for similar treatment: `flow_graph_builder*.rs` (2 files).
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -344,7 +351,7 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
 ~~212. **Pre-existing test failure: `test_contextual_signature_instantiation_chain_no_false_ts2345`**~~ ✅ Fixed (728bb8dc5) — marked with `#[ignore]` since contextual signature instantiation chain inference is not yet supported. Was causing CI failures on every code-touching commit.
 213. **DRY violation (solver): `constrain_types_impl` is ~888 lines** — `operations/constraints.rs:61-949`. Single match megablock. `Function × Function` arm (lines 401–686) is ~285 lines with rest-param-to-tuple inference logic duplicated between non-generic (lines 437–472) and generic (lines 623–656) branches. Extract `constrain_function_params_and_return` and `constrain_rest_tuple_inference` helpers.
 214. **DRY violation (solver): three near-identical `constrain_*_to_*` functions** — `operations/constraints.rs:1066-1168`. `constrain_function_to_call_signature`, `constrain_call_signature_to_function`, `constrain_call_signature_to_call_signature` share identical structure (zip params, constrain this/return/predicate). Could unify via trait with `.params()`, `.return_type()`, `.type_predicate()` accessors.
-215. **Magic numbers: loop bounds and capacity hints** — `import_declaration_checker.rs:220` (`0..100`), `flow_analysis_usage.rs:441,468,491,508,543` (five `0..50` guards), `constraints.rs:518` (`with_capacity(28)`). Should be named constants.
+215. **Magic numbers: loop bounds and capacity hints** — `import_declaration_checker.rs:220` (`0..100`), `flow/flow_analysis/usage.rs:441,468,491,508,543` (five `0..50` guards), `constraints.rs:518` (`with_capacity(28)`). Should be named constants.
 216. **DRY violation (checker): `has_value`/`any_instantiated` module-value check duplicated** — `import_declaration_checker.rs:350-373` and `import_declaration_checker.rs:1391-1413` share identical "is namespace declaration instantiated → has runtime value" logic. Extract `symbol_has_runtime_value(flags, decls)`.
 ~~217. **Misplaced function cluster in `types/queries/core.rs`**: `check_callable_truthiness` cluster~~ ✅ Done (38dd7b4b8) — extracted TS2774/TS2872/TS2873 truthiness and callable-truthiness checking (~556 LOC) into `types/queries/callable_truthiness.rs`, reducing `core.rs` from 1,627 → 1,070 LOC.
 218. **DRY violation (checker): declaration name extraction chains in other files** — `function_type.rs` and `state_checking_members/member_access.rs` contain `get_function(node).and_then(|f| arena.get(f.name)).and_then(get_identifier).map(escaped_text)` chains that could use the new `get_declaration_name_text` helper (added in 21e358d00).
