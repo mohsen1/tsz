@@ -1987,3 +1987,64 @@ the pass rate without regressions. Next improvements likely require:
    - `propertyAccessNumericLiterals` still fails because tsc normalizes `0888` → `888`,
      `0777` → `511`, `1_000` → `1000`, etc. Our emitter preserves the source text.
    - This is a separate feature (literal normalization) from the double-dot fix.
+
+---
+
+## Session 12 — `import.meta` __esModule detection + emitDeclarationOnly runner fix
+
+**Date**: 2026-02-24
+**Baseline (start)**: JS 10074/13623 (73.9%), DTS 780/1995 (39.1%)
+**Baseline (end)**: JS 10072/13546 (74.4%), DTS 779/1995 (39.0%)
+
+The JS denominator dropped by 77 (13623 → 13546) because 77 `emitDeclarationOnly` tests
+were removed from JS comparison. Net +1 real JS pass from the `import.meta` fix.
+
+### Analysis Summary
+
+Examined sole-diff tests (tests with only 1 difference from expected):
+- 11 tests: missing `__esModule` line (import.meta-related subset)
+- 19 tests: extra `"use strict"` (mostly emitDeclarationOnly or JS pass-through)
+- 12 tests: `{}` vs `{ }` formatting (mostly emitDeclarationOnly)
+- 5 tests: missing `// Computed properties` comment
+
+Found 137 tests with `@emitDeclarationOnly: true` — these should not be compared for JS
+output since tsc emits no JS for them. The runner was creating ~77 false JS failures.
+
+### Fixes Applied
+
+1. **Test runner: skip JS comparison for emitDeclarationOnly tests (+77 false failures removed)**:
+   - `scripts/emit/src/runner.ts`: Added `emitDeclarationOnly: boolean` to `TestCase` interface.
+   - Parses `directives.emitdeclarationonly` from test file headers.
+   - Skips JS output comparison when `emitDeclarationOnly` is true — tsc emits no JS
+     for these tests, so comparing against the raw source is a false failure.
+
+2. **Emitter: detect `import.meta` for `__esModule` marker (+1 JS pass)**:
+   - `crates/tsz-emitter/src/emitter/module_emission.rs`: Added `contains_import_meta()` method.
+   - Files using `import.meta` are ES modules per spec (ESM-only syntax).
+   - `should_emit_es_module_marker` now returns true when `import.meta` is present,
+     ensuring `Object.defineProperty(exports, "__esModule", { value: true })` is emitted
+     for CJS output of these files.
+   - AST pattern: `PropertyAccessExpression` with `ImportKeyword` base expression.
+   - Stack-based traversal avoids recursion; uses `NodeAccess::get_children()`.
+   - Passing test: `importMeta(module=commonjs,target=esnext)`.
+   - Added 2 unit tests: `import_meta_triggers_esmodule_marker`, `no_import_meta_no_esmodule_marker`.
+
+### Investigated But Punted
+
+3. **"use strict" over-emission (~19 sole-diff tests)**:
+   - Same issue from session 11. Still the single largest sole-diff pattern.
+   - tsc's rules for "use strict" depend on module kind, strict mode flags, file type,
+     and impliedNodeFormat. Full fix requires deeper analysis of tsc's exact logic.
+
+4. **`{}` vs `{ }` empty object formatting (~12 tests)**:
+   - Minor formatting difference. Most instances are in emitDeclarationOnly tests (now skipped).
+   - Low priority cosmetic fix.
+
+5. **Missing `// Computed properties` comment (~5 tests)**:
+   - tsc emits this comment before computed property assignments in enum/namespace downlevel.
+   - Would require tracking computed vs static properties in the transform pipeline.
+
+6. **Remaining `__esModule` sole-diff tests (~8 tests)**:
+   - Some tests need `__esModule` but don't have `import.meta` — they use other ESM
+     indicators not yet detected (e.g., top-level `await`, re-export patterns).
+   - Needs broader module detection logic.
