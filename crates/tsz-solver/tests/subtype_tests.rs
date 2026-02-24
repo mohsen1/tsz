@@ -1434,7 +1434,6 @@ fn test_rest_unknown_bivariant_subtyping_toggle() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_rest_any_bivariant_subtyping_toggle() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -2490,7 +2489,6 @@ fn test_number_index_signature_vacuously_compatible_with_no_numeric_keys() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_number_index_signature_method_bivariant_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -2556,7 +2554,6 @@ fn test_number_index_signature_method_bivariant_property() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_string_index_signature_method_bivariant_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3458,7 +3455,6 @@ fn test_callable_rest_parameter_contravariance() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_method_bivariant_required_param() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3505,7 +3501,6 @@ fn test_method_bivariant_required_param() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_method_source_bivariant_against_function_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3570,7 +3565,6 @@ fn test_method_source_bivariant_against_function_property() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_function_source_bivariant_against_method_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3635,7 +3629,6 @@ fn test_function_source_bivariant_against_method_property() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_method_optional_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3682,7 +3675,6 @@ fn test_variance_optional_rest_method_optional_bivariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_method_rest_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3731,7 +3723,6 @@ fn test_variance_optional_rest_method_rest_bivariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_method_optional_with_this_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3779,7 +3770,6 @@ fn test_variance_optional_rest_method_optional_with_this_bivariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_method_rest_with_this_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3925,7 +3915,6 @@ fn test_variance_optional_rest_function_rest_with_this_contravariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_constructor_optional_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -3969,7 +3958,6 @@ fn test_variance_optional_rest_constructor_optional_bivariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_optional_rest_constructor_rest_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -4412,7 +4400,6 @@ fn test_this_parameter_variance() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_this_parameter_method_property_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -4481,7 +4468,6 @@ fn test_this_parameter_function_property_contravariant() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_this_parameter_method_source_bivariant_against_function_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -4536,7 +4522,6 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_this_parameter_function_source_bivariant_against_method_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -6560,7 +6545,6 @@ fn test_generic_mixed_variance_positions() {
 // =============================================================================
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_method_bivariant_wider_param() {
     // Methods are bivariant in their parameters (TypeScript legacy behavior)
     let interner = TypeInterner::new();
@@ -6609,7 +6593,6 @@ fn test_method_bivariant_wider_param() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_method_bivariant_callback_param() {
     // Method with callback parameter - bivariant behavior
     let interner = TypeInterner::new();
@@ -7914,7 +7897,6 @@ fn test_invariant_generic_mutable_box() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_invariant_ref_cell_pattern() {
     // RefCell<T> = { get(): T, set(v: T): void }
     // tsc uses bivariant method parameter checking, so methods are NOT
@@ -15749,7 +15731,6 @@ fn test_variance_array_element_unsound_covariance() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_method_bivariant_params() {
     // Methods are bivariant in their parameters (TypeScript unsoundness)
     let interner = TypeInterner::new();
@@ -16078,7 +16059,6 @@ fn test_variance_triple_nested_contravariance() {
 }
 
 #[test]
-#[ignore = "Method bivariance/strict function types not fully implemented"]
 fn test_variance_constructor_param_bivariant() {
     // Construct signatures use bivariant parameter checking (like methods).
     let interner = TypeInterner::new();
