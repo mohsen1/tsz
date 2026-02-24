@@ -1,6 +1,36 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10076/13623 = 74.0% JS, ~780/1995 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10074/13623 = 74.0% JS, ~779/1995 = 39.0% DTS)
+
+### Fixed (2026-02-24, session 11) — Nullish Coalescing Downlevel Parenthesization
+
+- **Nullish coalescing lowered ternary missing outer parentheses** (+3 JS):
+  When lowering `??` to ES2019 and below, the emitted ternary
+  (`a !== null && a !== void 0 ? a : b`) was not wrapped in parens when used
+  inside binary expressions, conditional conditions, or unary operators. This
+  produced semantically wrong JavaScript: `a ?? b || c` lowered to
+  `a !== null && a !== void 0 ? a : b || c` where `|| c` binds to just `b`
+  instead of the whole ternary result.
+  Fix: added `nullish_coalescing_needs_parens` flag (modeled on existing
+  `optional_chain_needs_parens`) set by binary, conditional-condition,
+  prefix-unary, and postfix-unary emitters. Also clear both flags inside
+  `emit_parenthesized` to avoid double-parenthesization when source has
+  explicit parens. Three unit tests added.
+  JS: 10071→10074, DTS: 779→779, zero regressions (9205 unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 11)
+
+- **Remaining nullish coalescing test failures** (11/23 still fail): The 11
+  remaining `nullishCoalescingOperator*` failures have other diffs beyond
+  parenthesization: `"use strict"` over-emission, comment header differences,
+  and async generator transform gaps. Not fixable with emitter changes alone.
+- **Class expression static property temp var assignment** (~74 tests): tsc
+  wraps class expressions with static property assignments in a comma expression
+  with temp var: `var _a; v = (_a = class C { }, _a.a = 1, _a)`. tsz emits
+  separate statements. Requires new transform logic, not a quick fix.
+- **`__setFunctionName` not emitted** (~151 tests): tsc emits
+  `__setFunctionName(ClassName, "ClassName")` for class expressions at ES2015+.
+  Not implemented in tsz.
 
 ### Fixed (2026-02-24, session 10) — Erased-Statement Comment Boundary
 
