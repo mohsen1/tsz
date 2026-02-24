@@ -7,6 +7,7 @@
 
 use super::base::{NodeIndex, NodeList};
 use super::node::NodeArena;
+use tsz_common::Visibility;
 use tsz_scanner::SyntaxKind;
 
 impl NodeArena {
@@ -60,5 +61,27 @@ impl NodeArena {
             }
         }
         None
+    }
+
+    /// Extract the visibility level from a modifier list.
+    ///
+    /// Scans for `private` or `protected` keywords; returns `Public` if neither is found.
+    /// This is the single source of truth for the modifier→Visibility mapping,
+    /// consolidating duplicate implementations across checker and lowering crates.
+    #[inline]
+    pub fn get_visibility_from_modifiers(&self, modifiers: &Option<NodeList>) -> Visibility {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::PrivateKeyword as u16 {
+                        return Visibility::Private;
+                    }
+                    if mod_node.kind == SyntaxKind::ProtectedKeyword as u16 {
+                        return Visibility::Protected;
+                    }
+                }
+            }
+        }
+        Visibility::Public
     }
 }

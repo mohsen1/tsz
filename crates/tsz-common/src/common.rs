@@ -259,6 +259,22 @@ impl NewLineKind {
     }
 }
 
+/// Visibility modifier for class/interface properties.
+///
+/// Used by the type system to determine nominal vs structural compatibility:
+/// - `Public` properties use structural compatibility
+/// - `Private` and `Protected` properties use nominal compatibility
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, Default)]
+pub enum Visibility {
+    /// Public property - structural compatibility applies
+    #[default]
+    Public,
+    /// Private property - nominal compatibility only
+    Private,
+    /// Protected property - nominal compatibility only
+    Protected,
+}
+
 #[cfg(test)]
 #[path = "../tests/common.rs"]
 mod tests;

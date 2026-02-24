@@ -209,19 +209,12 @@ impl<'a> CheckerState<'a> {
 
     /// Get the visibility from modifiers list.
     /// Returns Private, Protected, or Public (default).
+    /// Delegates to [`NodeArena::get_visibility_from_modifiers`].
     pub(crate) fn get_visibility_from_modifiers(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> tsz_solver::Visibility {
-        use tsz_solver::Visibility;
-
-        if self.has_private_modifier(modifiers) {
-            Visibility::Private
-        } else if self.has_protected_modifier(modifiers) {
-            Visibility::Protected
-        } else {
-            Visibility::Public
-        }
+        self.ctx.arena.get_visibility_from_modifiers(modifiers)
     }
 
     /// Get the access level from modifiers (private/protected).

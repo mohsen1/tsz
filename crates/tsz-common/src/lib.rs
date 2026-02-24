@@ -15,7 +15,7 @@ pub use interner::{Atom, Interner, ShardedInterner};
 
 // Common types - Shared constants to break circular dependencies
 pub mod common;
-pub use common::{ModuleKind, NewLineKind, ScriptTarget};
+pub use common::{ModuleKind, NewLineKind, ScriptTarget, Visibility};
 
 // Span - Source location tracking (byte offsets)
 pub mod span;
