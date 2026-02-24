@@ -6,10 +6,10 @@
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::lsp::folding::FoldingRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
+use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::inlay_hints::InlayHintsProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
 use tsz::lsp::selection_range::SelectionRangeProvider;
-use tsz::lsp::semantic_tokens::SemanticTokensProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
