@@ -1069,8 +1069,8 @@ impl Default for ExtendedNodeInfo {
     }
 }
 
-// Re-export types from node_access module for backward compatibility
-pub use super::node_access::{NodeAccess, NodeInfo, NodeView};
+// Re-export types from node_view module
+pub use super::node_view::{NodeAccess, NodeInfo, NodeView};
 
 #[cfg(test)]
 #[path = "../../tests/node_tests.rs"]
