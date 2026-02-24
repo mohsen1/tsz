@@ -2645,6 +2645,322 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
 }
 
 #[test]
+fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let callback_param_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let animal = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("name"),
+        TypeId::STRING,
+    )]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("name"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("breed"), TypeId::STRING),
+    ]);
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("cb")),
+                type_id: callback_param_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("value")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let callback_arg = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: animal,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[callback_arg, dog]);
+    assert_eq!(result, dog);
+}
+
+#[test]
+fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_type() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let query = interner.intern_string("query");
+    let body = interner.intern_string("body");
+    let pre = interner.intern_string("pre");
+    let schema = interner.intern_string("schema");
+    let handle = interner.intern_string("handle");
+    let req_arg = interner.intern_string("req");
+    let pre_arg = interner.intern_string("a");
+
+    let schema_constraint = interner.object(vec![
+        PropertyInfo::opt(query, TypeId::UNKNOWN),
+        PropertyInfo::opt(body, TypeId::UNKNOWN),
+    ]);
+    let schema_arg = interner.object(vec![PropertyInfo::new(
+        query,
+        interner.literal_string("query-string"),
+    )]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("TSchema"),
+        constraint: Some(schema_constraint),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let pre_target = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(pre_arg),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let pre_source = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(pre_arg),
+            type_id: schema_constraint,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let request_query = interner.index_access(t_type, interner.literal_string("query"));
+    let handle_target = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(req_arg),
+            type_id: request_query,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let handle_source = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(req_arg),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let shape_param = interner.object(vec![
+        PropertyInfo::new(pre, pre_target),
+        PropertyInfo::new(schema, t_type),
+        PropertyInfo::new(handle, handle_target),
+    ]);
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("options")),
+            type_id: shape_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let arg = interner.object(vec![
+        PropertyInfo::new(pre, pre_source),
+        PropertyInfo::new(schema, schema_arg),
+        PropertyInfo::new(handle, handle_source),
+    ]);
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
+    assert_eq!(result, schema_arg);
+}
+
+#[test]
+fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let query = interner.intern_string("query");
+    let pre = interner.intern_string("pre");
+    let schema = interner.intern_string("schema");
+    let handle = interner.intern_string("handle");
+
+    let schema_constraint = interner.object(vec![PropertyInfo::new(query, TypeId::STRING)]);
+    let schema_arg = interner.object(vec![PropertyInfo::new(
+        query,
+        interner.literal_string("query-string"),
+    )]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("TSchema"),
+        constraint: Some(schema_constraint),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let pre_target = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let pre_source = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: schema_constraint,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let handle_target = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: interner.index_access(t_type, interner.literal_string("query")),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let handle_source = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let shape_param = interner.object(vec![
+        PropertyInfo::new(pre, pre_target),
+        PropertyInfo::new(schema, t_type),
+        PropertyInfo::new(handle, handle_target),
+    ]);
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("route_args")),
+            type_id: shape_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let arg = interner.object(vec![
+        PropertyInfo::new(pre, pre_source),
+        PropertyInfo::new(schema, schema_arg),
+        PropertyInfo::new(handle, handle_source),
+    ]);
+
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
+    assert_eq!(result, schema_arg);
+}
+
+#[test]
 fn test_infer_generic_callable_param_from_callable() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
