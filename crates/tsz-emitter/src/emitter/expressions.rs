@@ -305,7 +305,7 @@ impl<'a> Printer<'a> {
         }
 
         if self.emit_parenthesized_object_literal_access(access.expression, |this| {
-            this.write(".");
+            this.write_dot_token(access.expression);
             this.emit_property_name_without_import_substitution(access.name_or_argument);
         }) {
             return;
@@ -339,7 +339,7 @@ impl<'a> Printer<'a> {
                     let after_dot = &between[dot_pos + 1..];
                     if after_dot.contains('\n') {
                         // Dot before newline: `expr.\n    name`
-                        self.write(".");
+                        self.write_dot_token(access.expression);
                         self.write_line();
                         self.increase_indent();
                         self.emit_property_name_without_import_substitution(
@@ -350,14 +350,14 @@ impl<'a> Printer<'a> {
                         // Newline before dot: `expr\n    .name`
                         self.write_line();
                         self.increase_indent();
-                        self.write(".");
+                        self.write_dot_token(access.expression);
                         self.emit_property_name_without_import_substitution(
                             access.name_or_argument,
                         );
                         self.decrease_indent();
                     }
                 } else {
-                    self.write(".");
+                    self.write_dot_token(access.expression);
                     self.emit_property_name_without_import_substitution(access.name_or_argument);
                 }
                 return;
@@ -368,8 +368,78 @@ impl<'a> Printer<'a> {
         if let Some(expr_node) = self.arena.get(access.expression) {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
-        self.write(".");
+        self.write_dot_token(access.expression);
         self.emit_property_name_without_import_substitution(access.name_or_argument);
+    }
+
+    /// Write the `.` token for property access, adding an extra `.` when the
+    /// expression is a numeric literal without a decimal point or exponent.
+    /// Without this, `0.toString()` would be parsed as the float `0.` followed
+    /// by `toString()`, which is a syntax error.  tsc emits `0..toString()`.
+    fn write_dot_token(&mut self, expr_idx: NodeIndex) {
+        // Unwrap parentheses, type assertions, and `as` expressions to find the
+        // innermost expression. After type erasure, `(<any>1)` becomes just `1`.
+        let mut idx = expr_idx;
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                break;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren) = self.arena.get_parenthesized(node) {
+                        idx = paren.expression;
+                        continue;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(assert) = self.arena.get_type_assertion(node) {
+                        idx = assert.expression;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            break;
+        }
+        if let Some(inner_node) = self.arena.get(idx)
+            && inner_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            // Check the source text of the numeric literal to see if it already
+            // contains a decimal point or exponent.  If not, we need "..".
+            let needs_extra_dot = if let Some(text) = self.source_text {
+                let start = inner_node.pos as usize;
+                let end = inner_node.end as usize;
+                if end <= text.len() && start < end {
+                    let lit = &text[start..end];
+                    let num_text = lit.trim();
+                    // Only plain decimal integers need `..`.
+                    // Hex (0x/0X), octal (0o/0O), and binary (0b/0B) never
+                    // need it because their prefix already disambiguates.
+                    let is_prefixed = num_text.starts_with("0x")
+                        || num_text.starts_with("0X")
+                        || num_text.starts_with("0o")
+                        || num_text.starts_with("0O")
+                        || num_text.starts_with("0b")
+                        || num_text.starts_with("0B");
+                    !is_prefixed
+                        && !num_text.contains('.')
+                        && !num_text.contains('e')
+                        && !num_text.contains('E')
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if needs_extra_dot {
+                self.write("..");
+                return;
+            }
+        }
+        self.write(".");
     }
 
     pub(super) fn emit_element_access(&mut self, node: &Node) {
@@ -1784,6 +1854,131 @@ mod tests {
         assert!(
             output.contains("    c;"),
             "Case A: when_false must be indented on new line.\nOutput:\n{output}"
+        );
+    }
+
+    // =====================================================================
+    // write_dot_token: numeric literal double-dot disambiguation
+    // =====================================================================
+
+    /// Plain integer property access needs `..` to disambiguate from float literal.
+    /// `1.toString()` is a syntax error; `1..toString()` is correct.
+    #[test]
+    fn numeric_literal_property_access_plain_integer() {
+        let source = "1 .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "Plain integer property access must use `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// Float literals already have a `.`, so they need only one dot for property access.
+    #[test]
+    fn numeric_literal_property_access_float() {
+        let source = "1.0 .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1.0.foo"),
+            "Float literal should use single dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("1.0..foo"),
+            "Float literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Exponent literals (e.g., `1e0`) don't need `..` because the exponent
+    /// part prevents the parser from treating the dot as part of the number.
+    #[test]
+    fn numeric_literal_property_access_exponent() {
+        let source = "1e0 .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("1e0..foo"),
+            "Exponent literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Hex literal `0xff` doesn't need `..` because the `0x` prefix disambiguates.
+    #[test]
+    fn numeric_literal_property_access_hex() {
+        let source = "0xff .foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("0xff..foo"),
+            "Hex literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion wrapping a numeric literal: `(<any>1).foo` → `1..foo`
+    /// after type erasure removes the assertion and redundant parens.
+    #[test]
+    fn numeric_literal_property_access_through_type_assertion() {
+        let source = "(<any>1).foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "Type-asserted integer must use `..` after erasure.\nOutput:\n{output}"
+        );
+    }
+
+    /// `as` assertion wrapping a numeric literal: `(1 as any).foo` → `1..foo`
+    #[test]
+    fn numeric_literal_property_access_through_as_expression() {
+        let source = "(1 as any).foo;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "`as` asserted integer must use `..` after erasure.\nOutput:\n{output}"
         );
     }
 

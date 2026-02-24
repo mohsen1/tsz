@@ -1721,3 +1721,41 @@ the pass rate without regressions. Next improvements likely require:
 5. **Const enum value substitution (~32 tests timeout)**: Tests like `constEnum1`, `constEnum2`
    etc. need the checker to resolve const enum member values and inline them at usage sites.
    This is a checker/emitter integration task, not a pure emitter fix.
+
+---
+
+## Session 2024-02-24: Numeric double-dot + export name dedup (+6 JS)
+
+**Baseline**: JS 10024/13623 (73.6%)
+**After**: JS 10030/13623 (73.6%)
+
+### Fixes Applied
+
+1. **Numeric literal double-dot for property access (+6 JS)**:
+   - When accessing a property on a plain integer literal, JS needs `..` to disambiguate
+     from a float literal (e.g., `1.toString()` is a syntax error, `1..toString()` is correct).
+   - Added `write_dot_token()` method in `expressions.rs` that checks if the expression
+     is a `NumericLiteral` without a decimal point or exponent.
+   - Unwraps `ParenthesizedExpression`, `TypeAssertion`, `AsExpression`, `SatisfiesExpression`
+     to handle type erasure cases like `(<any>1).foo` → `1..foo`.
+   - Hex (0x), octal (0o), binary (0b) literals skip the extra dot (prefix disambiguates).
+   - Tests: `castExpressionParentheses`, `commentsMultiModuleMultiFile`, and others.
+
+2. **Duplicate export names in void 0 initialization**:
+   - Merged declarations (e.g., two `export namespace N {}` blocks) or `export class + export {}`
+     could produce duplicate names in `exports.X = exports.X = void 0;`.
+   - Added `HashSet`-based deduplication at end of `collect_export_names()` in `module_commonjs.rs`.
+   - Affects tests like `mergedDeclarations*`, `moduleAugmentationDuringSolve`, etc.
+
+### Investigated But Punted
+
+3. **"use strict" over-emission for .js input files (~17 sole-diff tests)**:
+   - Attempted blanket suppression of "use strict" for `.js`/`.jsx` input files.
+   - Caused 112 regressions — some .js files in CJS mode DO need "use strict".
+   - tsc's rules depend on module kind, strict mode flags, file type, and other factors.
+   - Fully reverted. Needs deeper investigation of tsc's exact "use strict" emission rules.
+
+4. **Numeric literal normalization (legacy octals, numeric separators)**:
+   - `propertyAccessNumericLiterals` still fails because tsc normalizes `0888` → `888`,
+     `0777` → `511`, `1_000` → `1000`, etc. Our emitter preserves the source text.
+   - This is a separate feature (literal normalization) from the double-dot fix.
