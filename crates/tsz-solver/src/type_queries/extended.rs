@@ -70,29 +70,10 @@ pub fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
-/// Get string atom from a string literal type.
-pub fn get_string_literal_atom(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_common::interner::Atom> {
-    match classify_literal_type(db, type_id) {
-        LiteralTypeKind::String(atom) => Some(atom),
-        _ => None,
-    }
-}
-
 /// Get number value from a number literal type.
 pub fn get_number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<f64> {
     match classify_literal_type(db, type_id) {
         LiteralTypeKind::Number(value) => Some(value),
-        _ => None,
-    }
-}
-
-/// Get boolean value from a boolean literal type.
-pub fn get_boolean_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
-    match classify_literal_type(db, type_id) {
-        LiteralTypeKind::Boolean(value) => Some(value),
         _ => None,
     }
 }
@@ -168,73 +149,6 @@ fn is_invalid_index_type_inner(
     };
 
     if is_invalid { Some(type_id) } else { None }
-}
-
-// =============================================================================
-// Type Parameter Classification (Extended)
-// =============================================================================
-
-/// Classification for type parameter types.
-///
-/// This enum provides a structured way to handle type parameters without
-/// directly matching on `TypeData` in the checker layer.
-#[derive(Debug, Clone)]
-pub enum TypeParameterKind {
-    /// Type parameter with info
-    TypeParameter(crate::types::TypeParamInfo),
-    /// Infer type with info
-    Infer(crate::types::TypeParamInfo),
-    /// Type application - may contain type parameters
-    Application(crate::types::TypeApplicationId),
-    /// Union - may contain type parameters in members
-    Union(Vec<TypeId>),
-    /// Intersection - may contain type parameters in members
-    Intersection(Vec<TypeId>),
-    /// Callable - may have type parameters
-    Callable(crate::types::CallableShapeId),
-    /// Not a type parameter or type containing type parameters
-    NotTypeParameter,
-}
-
-/// Classify a type for type parameter handling.
-///
-/// Returns detailed information about type parameter types.
-pub fn classify_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> TypeParameterKind {
-    let Some(key) = db.lookup(type_id) else {
-        return TypeParameterKind::NotTypeParameter;
-    };
-
-    match key {
-        TypeData::TypeParameter(info) => TypeParameterKind::TypeParameter(info),
-        TypeData::Infer(info) => TypeParameterKind::Infer(info),
-        TypeData::Application(app_id) => TypeParameterKind::Application(app_id),
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            TypeParameterKind::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            TypeParameterKind::Intersection(members.to_vec())
-        }
-        TypeData::Callable(shape_id) => TypeParameterKind::Callable(shape_id),
-        _ => TypeParameterKind::NotTypeParameter,
-    }
-}
-
-/// Get the callable type parameter count.
-pub fn get_callable_type_param_count(db: &dyn TypeDatabase, type_id: TypeId) -> usize {
-    match db.lookup(type_id) {
-        Some(TypeData::Callable(shape_id)) => {
-            let shape = db.callable_shape(shape_id);
-            shape
-                .call_signatures
-                .iter()
-                .map(|sig| sig.type_params.len())
-                .max()
-                .unwrap_or(0)
-        }
-        _ => 0,
-    }
 }
 
 // =============================================================================

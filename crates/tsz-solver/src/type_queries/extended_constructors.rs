@@ -9,75 +9,6 @@ use crate::{TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
-// New Expression Type Classification
-// =============================================================================
-
-/// Classification for types in `new` expressions.
-#[derive(Debug, Clone)]
-pub enum NewExpressionTypeKind {
-    /// Callable type - check for construct signatures
-    Callable(crate::types::CallableShapeId),
-    /// Function type - always constructable
-    Function(crate::types::FunctionShapeId),
-    /// `TypeQuery` (typeof X) - needs symbol resolution
-    TypeQuery(crate::types::SymbolRef),
-    /// Intersection type - check all members for construct signatures
-    Intersection(Vec<TypeId>),
-    /// Union type - all members must be constructable
-    Union(Vec<TypeId>),
-    /// Type parameter with constraint
-    TypeParameter { constraint: Option<TypeId> },
-    /// Not constructable
-    NotConstructable,
-}
-
-/// Classify a type for new expression handling.
-pub fn classify_for_new_expression(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> NewExpressionTypeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return NewExpressionTypeKind::NotConstructable;
-    };
-
-    match key {
-        TypeData::Callable(shape_id) => NewExpressionTypeKind::Callable(shape_id),
-        TypeData::Function(shape_id) => NewExpressionTypeKind::Function(shape_id),
-        TypeData::TypeQuery(sym_ref) => NewExpressionTypeKind::TypeQuery(sym_ref),
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            NewExpressionTypeKind::Intersection(members.to_vec())
-        }
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            NewExpressionTypeKind::Union(members.to_vec())
-        }
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            NewExpressionTypeKind::TypeParameter {
-                constraint: info.constraint,
-            }
-        }
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            // Objects might contain callable properties that represent construct signatures
-            // Check if the object has a "new" property or if any property is callable with construct signatures
-            let shape = db.object_shape(shape_id);
-            for prop in &shape.properties {
-                // Check if this property is a callable type with construct signatures
-                if let Some(TypeData::Callable(callable_shape_id)) = db.lookup(prop.type_id) {
-                    let callable_shape = db.callable_shape(callable_shape_id);
-                    if !callable_shape.construct_signatures.is_empty() {
-                        // Found a callable property with construct signatures
-                        return NewExpressionTypeKind::Callable(callable_shape_id);
-                    }
-                }
-            }
-            NewExpressionTypeKind::NotConstructable
-        }
-        _ => NewExpressionTypeKind::NotConstructable,
-    }
-}
-
-// =============================================================================
 // Abstract Class Type Classification
 // =============================================================================
 
@@ -114,65 +45,6 @@ pub fn classify_for_abstract_check(
             AbstractClassCheckKind::Intersection(members.to_vec())
         }
         _ => AbstractClassCheckKind::NotAbstract,
-    }
-}
-
-// =============================================================================
-// Construct Signature Return Type Classification
-// =============================================================================
-
-/// Classification for extracting construct signature return types.
-#[derive(Debug, Clone)]
-pub enum ConstructSignatureKind {
-    /// Callable type with potential construct signatures
-    Callable(crate::types::CallableShapeId),
-    /// Lazy reference (`DefId`) - resolve and check
-    Lazy(DefId),
-    /// `TypeQuery` (typeof X) - check if class
-    TypeQuery(crate::types::SymbolRef),
-    /// Application type - needs evaluation
-    Application(crate::types::TypeApplicationId),
-    /// Union - all members must have construct signatures
-    Union(Vec<TypeId>),
-    /// Intersection - any member with construct signature is sufficient
-    Intersection(Vec<TypeId>),
-    /// Type parameter with constraint
-    TypeParameter { constraint: Option<TypeId> },
-    /// Function type - check `is_constructor` flag
-    Function(crate::types::FunctionShapeId),
-    /// No construct signatures available
-    NoConstruct,
-}
-
-/// Classify a type for construct signature extraction.
-pub fn classify_for_construct_signature(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> ConstructSignatureKind {
-    let Some(key) = db.lookup(type_id) else {
-        return ConstructSignatureKind::NoConstruct;
-    };
-
-    match key {
-        TypeData::Callable(shape_id) => ConstructSignatureKind::Callable(shape_id),
-        TypeData::Lazy(def_id) => ConstructSignatureKind::Lazy(def_id),
-        TypeData::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
-        TypeData::Application(app_id) => ConstructSignatureKind::Application(app_id),
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            ConstructSignatureKind::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            ConstructSignatureKind::Intersection(members.to_vec())
-        }
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            ConstructSignatureKind::TypeParameter {
-                constraint: info.constraint,
-            }
-        }
-        TypeData::Function(shape_id) => ConstructSignatureKind::Function(shape_id),
-        _ => ConstructSignatureKind::NoConstruct,
     }
 }
 
@@ -390,7 +262,7 @@ pub enum AbstractConstructorAnchor {
 }
 
 /// Classify a type for abstract constructor checking.
-pub fn classify_for_abstract_constructor(
+fn classify_for_abstract_constructor(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> AbstractConstructorKind {
