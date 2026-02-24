@@ -372,7 +372,9 @@ impl<'a> CheckerState<'a> {
 
         // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode
         // Use class-specific messaging in class bodies.
+        // Skip in ambient contexts (declare namespace/module/global) — tsc does not emit TS1100 there.
         if self.is_strict_mode_for_node(var_decl.name)
+            && !self.ctx.is_ambient_declaration(decl_idx)
             && let Some(ref name) = var_name
             && (name == "arguments" || name == "eval")
         {
