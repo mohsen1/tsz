@@ -452,6 +452,45 @@ impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
     }
 }
 
+/// Get the element type of a rest element, handling arrays and nested tuples.
+///
+/// For arrays, returns the element type. For tuples, returns the union of all element types.
+/// Otherwise returns the type as-is.
+fn rest_element_type_full(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if let Some(elem) = array_element_type(db, type_id) {
+        return elem;
+    }
+    if let Some(elements) = tuple_list_id(db, type_id) {
+        let elements = db.tuple_list(elements);
+        let types: Vec<TypeId> = elements
+            .iter()
+            .map(|e| tuple_element_type_with_rest(db, e))
+            .collect();
+        if types.is_empty() {
+            TypeId::NEVER
+        } else {
+            db.union(types)
+        }
+    } else {
+        type_id
+    }
+}
+
+/// Get the type of a tuple element, handling optional and rest elements.
+fn tuple_element_type_with_rest(db: &dyn TypeDatabase, element: &TupleElement) -> TypeId {
+    let mut type_id = if element.rest {
+        rest_element_type_full(db, element.type_id)
+    } else {
+        element.type_id
+    };
+
+    if element.optional {
+        type_id = db.union2(type_id, TypeId::UNDEFINED);
+    }
+
+    type_id
+}
+
 /// Visitor to handle tuple index access: `Tuple[K]`
 ///
 /// Evaluates what type is returned when indexing a tuple with various key types.
@@ -479,38 +518,7 @@ impl<'a> TupleKeyVisitor<'a> {
 
     /// Get the type of a tuple element, handling optional and rest elements
     fn tuple_element_type(&self, element: &TupleElement) -> TypeId {
-        let mut type_id = if element.rest {
-            self.rest_element_type(element.type_id)
-        } else {
-            element.type_id
-        };
-
-        if element.optional {
-            type_id = self.db.union2(type_id, TypeId::UNDEFINED);
-        }
-
-        type_id
-    }
-
-    /// Get the element type of a rest element (handles nested rest and array types)
-    fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        if let Some(elem) = array_element_type(self.db, type_id) {
-            return elem;
-        }
-        if let Some(elements) = tuple_list_id(self.db, type_id) {
-            let elements = self.db.tuple_list(elements);
-            let types: Vec<TypeId> = elements
-                .iter()
-                .map(|e| self.tuple_element_type(e))
-                .collect();
-            if types.is_empty() {
-                TypeId::NEVER
-            } else {
-                self.db.union(types)
-            }
-        } else {
-            type_id
-        }
+        tuple_element_type_with_rest(self.db, element)
     }
 
     /// Get the type at a specific literal index, handling rest elements
@@ -875,37 +883,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     pub(crate) fn rest_element_type(&self, type_id: TypeId) -> TypeId {
-        if let Some(elem) = array_element_type(self.interner(), type_id) {
-            return elem;
-        }
-        if let Some(elements) = tuple_list_id(self.interner(), type_id) {
-            let elements = self.interner().tuple_list(elements);
-            let types: Vec<TypeId> = elements
-                .iter()
-                .map(|e| self.tuple_element_type(e))
-                .collect();
-            if types.is_empty() {
-                TypeId::NEVER
-            } else {
-                self.interner().union(types)
-            }
-        } else {
-            type_id
-        }
-    }
-
-    pub(crate) fn tuple_element_type(&self, element: &TupleElement) -> TypeId {
-        let mut type_id = if element.rest {
-            self.rest_element_type(element.type_id)
-        } else {
-            element.type_id
-        };
-
-        if element.optional {
-            type_id = self.interner().union2(type_id, TypeId::UNDEFINED);
-        }
-
-        type_id
+        rest_element_type_full(self.interner(), type_id)
     }
 
     /// Evaluate index access on a tuple type
