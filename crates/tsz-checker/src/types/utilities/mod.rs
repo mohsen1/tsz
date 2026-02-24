@@ -3,6 +3,7 @@
 
 pub(crate) mod enum_utils;
 pub(crate) mod jsdoc;
+pub(crate) mod jsdoc_params;
 pub(crate) mod return_type;
 
 use crate::query_boundaries::type_checking_utilities as query;

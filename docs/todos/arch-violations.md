@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-24 (18th audit)
-**Branch**: main (commit 82eccb60a)
-**Status**: REFACTOR — grouped inlay_hints/code_lens LSP files into editor_decorations/ subdirectory
+**Date**: 2026-02-24 (19th audit)
+**Branch**: main (commit 1c1e9b928)
+**Status**: DEAD CODE — removed dead `ref_symbol()` and legacy Ref(SymbolRef) code paths (~275 LOC)
 
 ---
 
@@ -280,3 +280,10 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
 151. ~~**Dead code (solver + checker): WellKnownSymbolKey enum + 11 dead functions**~~ ✅ Done — removed `WellKnownSymbolKey` enum (76 LOC, zero references), `probe_assignability_cache` (query_cache.rs), `merge_from`/`transitive_reduction`/`add_property_candidate`/`collect_constraint` (infer.rs), `with_max_depth` (visitor.rs), `with_tracer` (subtype.rs), `build_object_with_index` (literal.rs), `for_yield` (contextual/mod.rs), `lawyer_mut` (compat.rs), `blocked_rules` (unsoundness_audit.rs), `has_promise_in_lib` (checker lib_queries.rs). Also removed unused `ObjectFlags` import. Net -230 lines.
 152. ~~**Checker `types/` directory sprawl**: 38 files at top level~~ ✅ Partially done — moved 9 `type_computation_*.rs` files (7,864 LOC) into `types/computation/` subdirectory with shorter names (`helpers`, `access`, `binary`, `call`, `call_helpers`, `complex`, `identifier`, `object_literal`, `tagged_template`). Updated `types/mod.rs`, `lib.rs` re-exports, architecture contract tests, inter-module `super::` references, and doc comments. ~~Remaining grouping candidates: `type_checking_utilities_*.rs` (4 files)~~ ✅ Done (a810e0347) — moved 4 files (4,487 LOC) into `types/utilities/` subdirectory (`mod.rs`, `enum_utils.rs`, `jsdoc.rs`, `return_type.rs`). Remaining grouping candidates: `type_checking_queries_*.rs` (6 files in `types/queries/` — already done).
 153. ~~**Checker `state/` directory sprawl**: `state_variable_checking_*` files~~ ✅ Done (f2549eb64) — moved 3 `state_variable_checking_*` files (2,401 LOC) into `state/variable_checking/` subdirectory (`core.rs`, `destructuring.rs`, `for_loop.rs`). Updated `state/mod.rs` and architecture contract test file paths. ~~Remaining grouping candidates: `state_type_analysis_*` (4 files, 3,907 LOC)~~ ✅ Done (37da4fbf8) — moved into `state/type_analysis/` subdirectory (`mod.rs`, `computed.rs`, `computed_helpers.rs`, `cross_file.rs`). ~~Remaining grouping candidates: `state_type_environment*` (2 files, 1,961 LOC)~~ ✅ Done (5fbc8f157) — moved into `state/type_environment/` subdirectory (`mod.rs`, `lazy.rs`). No remaining `state_*` file families to group.
+154. ~~**Dead code: `ref_symbol()` always returns `None` + 15 dead branches**~~ ✅ Done (1c1e9b928) — after TypeData::Ref → Lazy(DefId) migration, `ref_symbol()` could only return `None`. Removed the function, 3 dead methods (`check_ref_ref_subtype`, `check_ref_subtype`, `check_to_ref_subtype`), the `seen_refs: FxHashSet<(SymbolRef, SymbolRef)>` field from `SubtypeChecker`, and 15+ unreachable `if let Some(sym) = ref_symbol(...)` branches across 6 files. Net -275 lines.
+155. **Dead code candidates (checker): zero-caller functions in `subtype_identity_checker.rs`** — `are_types_identical` (line 148), `is_assignable_to_union` (line 260), `is_subtype_of_with_env` (line 100, only referenced in architecture test string search). All `pub` but never invoked.
+156. **Dead code candidates (checker): `is_fuel_exhausted` in `context/mod.rs`** — flag set by `consume_fuel` but never queried.
+157. **Dead code candidates (binder): `inject_lib_symbols` + `resolved_identifier_cache_len` in `state_lib_merge.rs`** — thin wrappers with zero callers.
+158. **DRY violation: `is_callable_type` triplicated** — identical `matches!(db.lookup(type_id), Some(TypeData::Callable(_) | TypeData::Function(_)))` in `type_queries/mod.rs:99`, `intern/mod.rs:1200`, `canonicalize.rs:493`.
+159. **DRY violation: `is_declaration_file` divergent** — `context/compiler_options.rs:22` checks `.d.ts/.d.mts/.d.cts`, `declarations_module_helpers.rs:10` checks only `.d.ts` (missing mts/cts), `driver_resolution.rs:1924` checks all three on `Path`.
+160. **Unwired LSP feature: `DocumentLinkProvider`** — fully implemented in `tsz-lsp/src/document_links.rs` (245 LOC) with tests, but no `textDocument/documentLink` handler in `tsz-server/main.rs`.
