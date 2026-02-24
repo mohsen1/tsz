@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-24 (14th audit)
-**Branch**: main (commit c0b736bce)
-**Status**: REFACTOR — grouped type_checking_queries_* files into types/queries/ subdirectory
+**Date**: 2026-02-24 (15th audit)
+**Branch**: main (commit f2549eb64)
+**Status**: REFACTOR — grouped state_variable_checking_* files into state/variable_checking/ subdirectory
 
 ---
 
@@ -279,3 +279,4 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
 150. ~~**Dead code (emitter): 12 speculative API methods**~~ ✅ Done (cbd4341cc) — removed `EmitFlags::new()`/`async_context()`/`generator_context()`, `ArrowTransformState::enter_arrow_with_this()`/`exit_arrow_with_this()`/`is_capturing_this()`/`mark_this_captured()`/`is_this_captured()`, `EnumValue::is_number()`/`is_string()`/`as_number()`/`as_string()`. All zero production callers. Net -96 lines.
 151. ~~**Dead code (solver + checker): WellKnownSymbolKey enum + 11 dead functions**~~ ✅ Done — removed `WellKnownSymbolKey` enum (76 LOC, zero references), `probe_assignability_cache` (query_cache.rs), `merge_from`/`transitive_reduction`/`add_property_candidate`/`collect_constraint` (infer.rs), `with_max_depth` (visitor.rs), `with_tracer` (subtype.rs), `build_object_with_index` (literal.rs), `for_yield` (contextual/mod.rs), `lawyer_mut` (compat.rs), `blocked_rules` (unsoundness_audit.rs), `has_promise_in_lib` (checker lib_queries.rs). Also removed unused `ObjectFlags` import. Net -230 lines.
 152. ~~**Checker `types/` directory sprawl**: 38 files at top level~~ ✅ Partially done — moved 9 `type_computation_*.rs` files (7,864 LOC) into `types/computation/` subdirectory with shorter names (`helpers`, `access`, `binary`, `call`, `call_helpers`, `complex`, `identifier`, `object_literal`, `tagged_template`). Updated `types/mod.rs`, `lib.rs` re-exports, architecture contract tests, inter-module `super::` references, and doc comments. Remaining grouping candidates: `type_checking_queries_*.rs` (6 files), `type_checking_utilities_*.rs` (4 files).
+153. ~~**Checker `state/` directory sprawl**: `state_variable_checking_*` files~~ ✅ Done (f2549eb64) — moved 3 `state_variable_checking_*` files (2,401 LOC) into `state/variable_checking/` subdirectory (`core.rs`, `destructuring.rs`, `for_loop.rs`). Updated `state/mod.rs` and architecture contract test file paths. Remaining grouping candidates: `state_type_analysis_*` (4 files, 3,907 LOC), `state_type_resolution_*` (3 files, 3,552 LOC), `state_type_environment*` (2 files, 1,961 LOC).
