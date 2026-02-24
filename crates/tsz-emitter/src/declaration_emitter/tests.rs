@@ -276,8 +276,8 @@ export var basePrototype = {
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export declare var basePrototype: { readonly primaryPath: any; };"),
-        "Expected fallback object literal accessor inference: {output}"
+        output.contains("export declare var basePrototype: {\n    readonly primaryPath: any;\n};"),
+        "Expected multi-line object literal accessor inference: {output}"
     );
 }
 

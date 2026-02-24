@@ -743,6 +743,10 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn infer_fallback_type_text(&self, node_id: NodeIndex) -> Option<String> {
+        self.infer_fallback_type_text_at(node_id, self.indent_level)
+    }
+
+    fn infer_fallback_type_text_at(&self, node_id: NodeIndex, depth: u32) -> Option<String> {
         if !node_id.is_some() {
             return None;
         }
@@ -760,7 +764,7 @@ impl<'a> DeclarationEmitter<'a> {
                 Some("any".to_string())
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                self.infer_object_literal_type_text(node_id)
+                self.infer_object_literal_type_text_at(node_id, depth)
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => Some("any[]".to_string()),
             _ => self
@@ -769,13 +773,18 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn infer_object_literal_type_text(&self, object_expr_idx: NodeIndex) -> Option<String> {
+    fn infer_object_literal_type_text_at(
+        &self,
+        object_expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         let object_node = self.arena.get(object_expr_idx)?;
         let object = self.arena.get_literal_expr(object_node)?;
         let mut members = Vec::new();
 
         for &member_idx in &object.elements.nodes {
-            if let Some(member_text) = self.infer_object_member_type_text(member_idx) {
+            if let Some(member_text) = self.infer_object_member_type_text_at(member_idx, depth + 1)
+            {
                 members.push(member_text);
             }
         }
@@ -783,11 +792,25 @@ impl<'a> DeclarationEmitter<'a> {
         if members.is_empty() {
             Some("{}".to_string())
         } else {
-            Some(format!("{{ {}; }}", members.join("; ")))
+            // Format as multi-line to match tsc's .d.ts output
+            let member_indent = "    ".repeat((depth + 1) as usize);
+            let closing_indent = "    ".repeat(depth as usize);
+            let formatted_members: Vec<String> = members
+                .iter()
+                .map(|m| format!("{member_indent}{m};"))
+                .collect();
+            Some(format!(
+                "{{\n{}\n{closing_indent}}}",
+                formatted_members.join("\n")
+            ))
         }
     }
 
-    fn infer_object_member_type_text(&self, member_idx: NodeIndex) -> Option<String> {
+    fn infer_object_member_type_text_at(
+        &self,
+        member_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
 
         match member_node.kind {
@@ -795,7 +818,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let data = self.arena.get_property_assignment(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
-                    .infer_fallback_type_text(data.initializer)
+                    .infer_fallback_type_text_at(data.initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -803,7 +826,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let data = self.arena.get_shorthand_property(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
                 let type_text = self
-                    .infer_fallback_type_text(data.object_assignment_initializer)
+                    .infer_fallback_type_text_at(data.object_assignment_initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -812,7 +835,7 @@ impl<'a> DeclarationEmitter<'a> {
                 let name = self.infer_property_name_text(data.name)?;
                 // Prefer explicit return type annotation, then fall back to any
                 let type_text = self
-                    .infer_fallback_type_text(data.type_annotation)
+                    .infer_fallback_type_text_at(data.type_annotation, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("readonly {name}: {type_text}"))
             }
@@ -921,7 +944,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
-            let mut printer = TypePrinter::new(interner);
+            let mut printer = TypePrinter::new(interner).with_indent_level(self.indent_level);
 
             // Add symbol arena if available for visibility checking
             if let Some(binder) = self.binder {
