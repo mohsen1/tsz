@@ -24,6 +24,7 @@
 
 use crate::context::emit::EmitContext;
 use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
+use crate::enums::evaluator::EnumValue;
 use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -358,6 +359,11 @@ pub struct Printer<'a> {
 
     /// Whether the current root source file has a JavaScript-like extension.
     pub(super) is_current_root_js_source: bool,
+
+    /// Const enum member values for inlining at usage sites.
+    /// Maps `enum_name -> (member_name -> EnumValue)`.
+    /// Populated during `emit_source_file` pre-pass; consumed during property/element access.
+    pub(super) const_enum_values: FxHashMap<String, FxHashMap<String, EnumValue>>,
 }
 
 impl<'a> Printer<'a> {
@@ -480,6 +486,7 @@ impl<'a> Printer<'a> {
             paren_in_new_callee: false,
             object_literal_accessor_depth: 0,
             is_current_root_js_source: false,
+            const_enum_values: FxHashMap::default(),
         }
     }
 

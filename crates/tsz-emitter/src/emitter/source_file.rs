@@ -1,6 +1,8 @@
 use super::Printer;
+use crate::enums::evaluator::EnumEvaluator;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -62,6 +64,13 @@ impl<'a> Printer<'a> {
         }
         self.generated_temp_names.clear();
         self.first_for_of_emitted = false;
+
+        // Pre-pass: collect const enum values for inlining at usage sites.
+        // tsc replaces property/element access to const enum members with their
+        // literal values (e.g., `Direction.Up` → `1 /* Direction.Up */`).
+        if !self.ctx.options.preserve_const_enums {
+            self.collect_const_enum_values(&source.statements);
+        }
 
         // Enter root scope for block-scoped variable tracking and `var` scope boundaries.
         // This ensures variables declared throughout the file are tracked for renaming.
@@ -827,6 +836,76 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+
+    /// Pre-pass: scan top-level statements for const enum declarations and
+    /// evaluate their member values. The results are stored in `const_enum_values`
+    /// so that property/element access expressions referencing const enum members
+    /// can be inlined during emit.
+    fn collect_const_enum_values(&mut self, statements: &NodeList) {
+        self.const_enum_values.clear();
+        let mut evaluator = EnumEvaluator::new(self.arena);
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Direct const enum declarations
+            if stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                self.try_register_const_enum(&mut evaluator, stmt_idx);
+                continue;
+            }
+
+            // `export enum` / `export const enum` — the enum is inside an ExportDeclaration
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_data) = self.arena.get_export_decl(stmt_node)
+                    && export_data.export_clause.is_some() {
+                        let clause_idx = export_data.export_clause;
+                        if let Some(clause_node) = self.arena.get(clause_idx)
+                            && clause_node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                                self.try_register_const_enum(&mut evaluator, clause_idx);
+                            }
+                    }
+        }
+    }
+
+    /// Register a single enum declaration if it is a const enum.
+    fn try_register_const_enum(&mut self, evaluator: &mut EnumEvaluator, enum_idx: NodeIndex) {
+        let Some(enum_node) = self.arena.get(enum_idx) else {
+            return;
+        };
+        let Some(enum_data) = self.arena.get_enum(enum_node) else {
+            return;
+        };
+
+        // Only process const enums (not regular enums)
+        if !self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        {
+            return;
+        }
+
+        // Skip ambient (declare) enums — they may reference values from other files
+        if self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return;
+        }
+
+        // Get enum name
+        let name = self.get_identifier_text_idx(enum_data.name);
+        if name.is_empty() {
+            return;
+        }
+
+        // Evaluate all member values
+        let values = evaluator.evaluate_enum(enum_idx);
+        if !values.is_empty() {
+            self.const_enum_values.insert(name, values);
+        }
     }
 
     pub(super) fn should_defer_for_of_comments(&self, node: &Node) -> bool {

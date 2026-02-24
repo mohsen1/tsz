@@ -1,9 +1,39 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~8360/11477 = 72.8% JS, ~701/1857 = 37.7% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10088/13546 = 74.5% JS, ~779/1995 = 39.0% DTS)
 
 Note: test count changed from 13546→11477 due to TypeScript submodule update (TS 6.0.0-dev.20260215).
 Pass rate decreased from 74.1%→72.8% — the new baseline files may introduce patterns not yet supported.
+
+### Fixed (2026-02-24, session 16) — Const Enum Value Inlining at Usage Sites
+
+- **Const enum property/element access not inlined** (+33 JS):
+  tsc replaces property access to const enum members with their literal values
+  at usage sites (e.g., `Direction.Up` → `1 /* Direction.Up */`). The tsz emitter
+  had the infrastructure (`EnumTransformer`, `EnumEvaluator`) but never wired it
+  into the actual emit pipeline — the enum values were computed but not applied
+  at property/element access expression sites.
+  Fix: Added a `const_enum_values` map to the `Printer` struct, populated during
+  a pre-pass in `emit_source_file` that scans top-level statements for const enum
+  declarations and evaluates their member values using `EnumEvaluator`. In
+  `emit_property_access` and `emit_element_access`, the emitter now checks if the
+  object is a registered const enum and inlines the value with the tsc comment format
+  (`value /* EnumName.Member */` for property access, `value /* EnumName["Member"] */`
+  for element access). Const enum declarations are already correctly erased.
+  Four unit tests added (property access, element access, declaration erasure, string values).
+  JS: 10055→10088, DTS: 779→779, zero regressions (551 emitter unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 16)
+
+- **Remaining const enum test failures** (~12 still fail): Some const enum tests have
+  other diffs beyond inlining: `"use strict"` over-emission, missing module wrappers,
+  `preserveConstEnums` interaction with module exports. Not fixable with inlining alone.
+- **Nested/imported const enums**: The pre-pass only scans top-level statements in the
+  current file. Const enums imported from other modules or declared inside namespaces
+  are not inlined. Would require cross-file const enum resolution or binder integration.
+- **Computed property names with const enums**: `[G.A]()` in class members — the const
+  enum inlining happens at expression access level, but computed property name contexts
+  may need special handling for the bracket wrapper.
 
 ### Fixed (2026-02-24, session 15) — Restore Trailing Semicolons on Object Literal Variable Declarations
 

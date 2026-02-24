@@ -12,6 +12,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Const enum inlining: replace `EnumName.Member` with `value /* EnumName.Member */`
+        if !self.const_enum_values.is_empty()
+            && let Some(inlined) = self.try_inline_const_enum_property_access(access) {
+                self.write(&inlined);
+                return;
+            }
+
         if access.question_dot_token {
             if self.ctx.options.target.supports_es2020() {
                 self.emit_optional_property_access(access, "?.");
@@ -163,6 +170,13 @@ impl<'a> Printer<'a> {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
+
+        // Const enum inlining: replace `EnumName["Member"]` with `value /* EnumName["Member"] */`
+        if !self.const_enum_values.is_empty()
+            && let Some(inlined) = self.try_inline_const_enum_element_access(access) {
+                self.write(&inlined);
+                return;
+            }
 
         if access.question_dot_token {
             if self.ctx.options.target.supports_es2020() {
@@ -336,6 +350,64 @@ impl<'a> Printer<'a> {
         self.suppress_commonjs_named_import_substitution = true;
         self.emit(node);
         self.suppress_commonjs_named_import_substitution = prev;
+    }
+
+    /// Try to inline a property access to a const enum member.
+    /// Returns `Some("value /* EnumName.Member */")` if the access targets a const enum.
+    fn try_inline_const_enum_property_access(&self, access: &AccessExprData) -> Option<String> {
+        // The expression must be a simple identifier (the enum name)
+        let expr_node = self.arena.get(access.expression)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
+
+        // Look up in const enum values
+        let members = self.const_enum_values.get(enum_name.as_str())?;
+
+        // The name must be a simple identifier (the member name)
+        let name_node = self.arena.get(access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let member_name = &self.arena.get_identifier(name_node)?.escaped_text;
+
+        let value = members.get(member_name.as_str())?;
+        Some(format!(
+            "{} /* {}.{} */",
+            value.to_js_literal(),
+            enum_name,
+            member_name
+        ))
+    }
+
+    /// Try to inline an element access to a const enum member.
+    /// Returns `Some("value /* EnumName[\"Member\"] */")` if the access targets a const enum.
+    fn try_inline_const_enum_element_access(&self, access: &AccessExprData) -> Option<String> {
+        // The expression must be a simple identifier (the enum name)
+        let expr_node = self.arena.get(access.expression)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
+
+        // Look up in const enum values
+        let members = self.const_enum_values.get(enum_name.as_str())?;
+
+        // The argument must be a string literal (the member name)
+        let arg_node = self.arena.get(access.name_or_argument)?;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        let member_name = &self.arena.get_literal(arg_node)?.text;
+
+        let value = members.get(member_name.as_str())?;
+        Some(format!(
+            "{} /* {}[\"{}\"] */",
+            value.to_js_literal(),
+            enum_name,
+            member_name
+        ))
     }
 
     /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.
@@ -686,6 +758,98 @@ mod tests {
         assert!(
             output.contains("1..foo"),
             "`as` asserted integer must use `..` after erasure.\nOutput:\n{output}"
+        );
+    }
+
+    // =====================================================================
+    // Const enum inlining
+    // =====================================================================
+
+    /// Const enum property access is inlined: `G.A` → `1 /* G.A */`
+    #[test]
+    fn const_enum_property_access_inlined() {
+        let source = "const enum G { A = 1, B = 2, C = A + B }\nvar a = G.A;\nvar c = G.C;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1 /* G.A */"),
+            "Const enum property access must be inlined with comment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("3 /* G.C */"),
+            "Computed const enum member (A+B=3) must be folded.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("= G.A"),
+            "Original property access must not appear in output.\nOutput:\n{output}"
+        );
+    }
+
+    /// Const enum element access is inlined: `G["A"]` → `1 /* G["A"] */`
+    #[test]
+    fn const_enum_element_access_inlined() {
+        let source = "const enum G { A = 1, B = 2 }\nvar a = G[\"A\"];\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1 /* G[\"A\"] */"),
+            "Const enum element access must be inlined with comment.\nOutput:\n{output}"
+        );
+    }
+
+    /// Const enum declaration is erased (not emitted) when `preserve_const_enums` is false.
+    #[test]
+    fn const_enum_declaration_erased() {
+        let source = "const enum Direction { Up = 1, Down = 2 }\nvar x = Direction.Up;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("Direction)"),
+            "Const enum IIFE must not appear in output.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("1 /* Direction.Up */"),
+            "Const enum usage must be inlined.\nOutput:\n{output}"
+        );
+    }
+
+    /// String const enum values are inlined with proper quoting.
+    #[test]
+    fn const_enum_string_values_inlined() {
+        let source = "const enum S { Hello = \"hello\", World = \"world\" }\nvar x = S.Hello;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("\"hello\" /* S.Hello */"),
+            "String const enum must be inlined with quoted value.\nOutput:\n{output}"
         );
     }
 }
