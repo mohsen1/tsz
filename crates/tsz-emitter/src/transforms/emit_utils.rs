@@ -331,6 +331,64 @@ pub(crate) fn is_await_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
         .is_some_and(|n| n.kind == syntax_kind_ext::AWAIT_EXPRESSION)
 }
 
+/// Check if a parameter's default initializer is a top-level `await` expression.
+pub(crate) fn param_initializer_has_top_level_await(
+    arena: &NodeArena,
+    param_idx: NodeIndex,
+) -> bool {
+    let Some(param_node) = arena.get(param_idx) else {
+        return false;
+    };
+    let Some(param) = arena.get_parameter(param_node) else {
+        return false;
+    };
+    if param.initializer.is_none() {
+        return false;
+    }
+    let Some(init_node) = arena.get(param.initializer) else {
+        return false;
+    };
+    init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+}
+
+/// Find the name of the first parameter whose default initializer is an `await` expression.
+///
+/// Used by async function lowering to detect the pattern `async function f(x = await y)`
+/// which requires special handling (TS2524-related workaround).
+pub(crate) fn first_await_default_param_name(
+    arena: &NodeArena,
+    params: &[NodeIndex],
+) -> Option<String> {
+    for &param_idx in params {
+        let Some(param_node) = arena.get(param_idx) else {
+            continue;
+        };
+        let Some(param) = arena.get_parameter(param_node) else {
+            continue;
+        };
+        if param.initializer.is_none() {
+            continue;
+        }
+        let Some(init_node) = arena.get(param.initializer) else {
+            continue;
+        };
+        if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+            continue;
+        }
+        let Some(name_node) = arena.get(param.name) else {
+            continue;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            continue;
+        }
+        let name = identifier_text_or_empty(arena, param.name);
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+    None
+}
+
 /// Check whether `name` is a valid JavaScript identifier name.
 ///
 /// Returns `true` if `name` starts with `_`, `$`, or an alphabetic char

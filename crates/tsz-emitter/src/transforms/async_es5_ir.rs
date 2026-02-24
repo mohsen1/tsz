@@ -54,7 +54,6 @@ use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 /// State for tracking async function transformation
 #[derive(Debug, Default)]
@@ -1066,54 +1065,14 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
-        let Some(param_node) = self.arena.get(param_idx) else {
-            return false;
-        };
-        let Some(param) = self.arena.get_parameter(param_node) else {
-            return false;
-        };
-        if param.initializer.is_none() {
-            return false;
-        }
-        let Some(init_node) = self.arena.get(param.initializer) else {
-            return false;
-        };
-        init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+        super::emit_utils::param_initializer_has_top_level_await(self.arena, param_idx)
     }
 
     fn first_await_default_param_name(
         &self,
         params: &tsz_parser::parser::NodeList,
     ) -> Option<String> {
-        for &param_idx in &params.nodes {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if param.initializer.is_none() {
-                continue;
-            }
-            let Some(init_node) = self.arena.get(param.initializer) else {
-                continue;
-            };
-            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
-                continue;
-            }
-            let Some(name_node) = self.arena.get(param.name) else {
-                continue;
-            };
-            if name_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let name =
-                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
-            if !name.is_empty() {
-                return Some(name);
-            }
-        }
-        None
+        super::emit_utils::first_await_default_param_name(self.arena, &params.nodes)
     }
 
     fn extract_preceding_line_comment(&self, pos: u32) -> Option<String> {
