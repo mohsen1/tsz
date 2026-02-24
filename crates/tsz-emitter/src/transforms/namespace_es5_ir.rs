@@ -773,7 +773,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 let ns_data = self.arena.get_module(member_node)?;
                 let name = get_identifier_text(self.arena, ns_data.name)?;
                 let should_declare_var = !declared_names.contains(&name);
-                self.transform_nested_namespace_with_var(ns_name, member_idx, should_declare_var)
+                self.transform_nested_namespace_core(ns_name, member_idx, should_declare_var, false)
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_data) = self.arena.get_export_decl(member_node) {
@@ -783,10 +783,11 @@ impl<'a> NamespaceES5Transformer<'a> {
                         let ns_data = self.arena.get_module(inner)?;
                         let name = get_identifier_text(self.arena, ns_data.name)?;
                         let should_declare_var = !declared_names.contains(&name);
-                        return self.transform_nested_namespace_exported_with_var(
+                        return self.transform_nested_namespace_core(
                             ns_name,
                             export_data.export_clause,
                             should_declare_var,
+                            true,
                         );
                     }
                     self.transform_namespace_member_exported(ns_name, export_data.export_clause)
@@ -812,10 +813,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.transform_function_in_namespace(ns_name, member_idx)
+                self.transform_function_in_namespace(ns_name, member_idx, false)
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.transform_class_in_namespace(ns_name, member_idx)
+                self.transform_class_in_namespace(ns_name, member_idx, false)
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.transform_variable_in_namespace(ns_name, member_idx)
@@ -824,7 +825,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 self.transform_nested_namespace(ns_name, member_idx)
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.transform_enum_in_namespace(ns_name, member_idx)
+                self.transform_enum_in_namespace(ns_name, member_idx, false)
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 self.transform_import_equals_in_namespace(ns_name, member_idx)
@@ -845,16 +846,16 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         match decl_node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.transform_function_exported(ns_name, decl_idx)
+                self.transform_function_in_namespace(ns_name, decl_idx, true)
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                self.transform_class_exported(ns_name, decl_idx)
+                self.transform_class_in_namespace(ns_name, decl_idx, true)
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.transform_variable_exported(ns_name, decl_idx)
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.transform_enum_exported(ns_name, decl_idx)
+                self.transform_enum_in_namespace(ns_name, decl_idx, true)
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.transform_nested_namespace_exported(ns_name, decl_idx)
@@ -927,11 +928,13 @@ impl<'a> NamespaceES5Transformer<'a> {
         })
     }
 
-    /// Transform a function in namespace
+    /// Transform a function in namespace. When `force_export` is true, the function
+    /// is always treated as exported (used for `export { function }` wrappers).
     fn transform_function_in_namespace(
         &self,
         ns_name: &str,
         func_idx: NodeIndex,
+        force_export: bool,
     ) -> Option<IRNode> {
         let func_data = self.arena.get_function_at(func_idx)?;
 
@@ -941,9 +944,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let is_exported = self
-            .arena
-            .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
 
@@ -969,43 +973,21 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
     }
 
-    /// Transform an exported function
-    fn transform_function_exported(&self, ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
-        let func_data = self.arena.get_function_at(func_idx)?;
-
-        if func_data.body.is_none() {
-            return None;
-        }
-
-        let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
-
-        // Convert function to IR (stripping type annotations)
-        let func_decl = IRNode::FunctionDecl {
-            name: func_name.clone(),
-            parameters: convert_function_parameters(self.arena, &func_data.parameters),
-            body: convert_function_body(self.arena, func_data.body),
-            body_source_range,
-        };
-
-        Some(IRNode::Sequence(vec![
-            func_decl,
-            IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: func_name.clone(),
-                value: Box::new(IRNode::Identifier(func_name)),
-            },
-        ]))
-    }
-
-    /// Transform a class in namespace
-    fn transform_class_in_namespace(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
+    /// Transform a class in namespace. When `force_export` is true, the class
+    /// is always treated as exported (used for `export { class }` wrappers).
+    fn transform_class_in_namespace(
+        &self,
+        ns_name: &str,
+        class_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
         let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
-        let is_exported = self
-            .arena
-            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
@@ -1023,26 +1005,6 @@ impl<'a> NamespaceES5Transformer<'a> {
         } else {
             Some(class_ir)
         }
-    }
-
-    /// Transform an exported class
-    fn transform_class_exported(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
-        let class_data = self.arena.get_class_at(class_idx)?;
-
-        let class_name = get_identifier_text(self.arena, class_data.name)?;
-
-        // Transform the class to ES5 using the class transformer
-        let mut class_transformer = ES5ClassTransformer::new(self.arena);
-        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
-
-        Some(IRNode::Sequence(vec![
-            class_ir,
-            IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: class_name.clone(),
-                value: Box::new(IRNode::Identifier(class_name)),
-            },
-        ]))
     }
 
     /// Transform a variable statement in namespace
@@ -1086,14 +1048,20 @@ impl<'a> NamespaceES5Transformer<'a> {
         )))
     }
 
-    /// Transform an enum in namespace
-    fn transform_enum_in_namespace(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
-        let enum_node = self.arena.get(enum_idx)?;
-        let enum_data = self.arena.get_enum(enum_node)?;
-
-        let is_exported = self
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
+    /// Transform an enum in namespace. When `force_export` is true, the enum
+    /// is always treated as exported (used for `export { enum }` wrappers).
+    fn transform_enum_in_namespace(
+        &self,
+        ns_name: &str,
+        enum_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let is_exported = force_export || {
+            let enum_node = self.arena.get(enum_idx)?;
+            let enum_data = self.arena.get_enum(enum_node)?;
+            self.arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+        };
 
         let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
@@ -1110,31 +1078,27 @@ impl<'a> NamespaceES5Transformer<'a> {
         Some(enum_ir)
     }
 
-    /// Transform an exported enum
-    fn transform_enum_exported(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
-        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
-
-        // Fold namespace export into IIFE closing
-        if let IRNode::EnumIIFE {
-            namespace_export, ..
-        } = &mut enum_ir
-        {
-            *namespace_export = Some(ns_name.to_string());
-        }
-
-        Some(enum_ir)
-    }
-
     /// Transform a nested namespace
     fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
-        self.transform_nested_namespace_with_var(parent_ns, ns_idx, true)
+        self.transform_nested_namespace_core(parent_ns, ns_idx, true, false)
     }
 
-    fn transform_nested_namespace_with_var(
+    fn transform_nested_namespace_exported(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        self.transform_nested_namespace_core(parent_ns, ns_idx, true, true)
+    }
+
+    /// Core implementation for nested namespace transforms. When `force_export` is true,
+    /// the namespace is always treated as exported (used for `export { namespace }` wrappers).
+    fn transform_nested_namespace_core(
         &self,
         parent_ns: &str,
         ns_idx: NodeIndex,
         should_declare_var: bool,
+        force_export: bool,
     ) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
@@ -1151,9 +1115,10 @@ impl<'a> NamespaceES5Transformer<'a> {
             return None;
         }
 
-        let is_exported = self
-            .arena
-            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform body
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
@@ -1178,67 +1143,6 @@ impl<'a> NamespaceES5Transformer<'a> {
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
             parent_name: is_exported.then(|| parent_ns.to_string()),
-            param_name,
-            skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
-        })
-    }
-
-    /// Transform an exported nested namespace
-    fn transform_nested_namespace_exported(
-        &self,
-        parent_ns: &str,
-        ns_idx: NodeIndex,
-    ) -> Option<IRNode> {
-        self.transform_nested_namespace_exported_with_var(parent_ns, ns_idx, true)
-    }
-
-    fn transform_nested_namespace_exported_with_var(
-        &self,
-        parent_ns: &str,
-        ns_idx: NodeIndex,
-        should_declare_var: bool,
-    ) -> Option<IRNode> {
-        let ns_data = self.arena.get_module_at(ns_idx)?;
-
-        // Skip ambient nested namespaces
-        if self
-            .arena
-            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
-        {
-            return None;
-        }
-
-        let name_parts = self.flatten_module_name(ns_data.name)?;
-        if name_parts.is_empty() {
-            return None;
-        }
-
-        // Always exported since this is from an export declaration
-        let is_exported = true;
-
-        // Transform body
-        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
-
-        // Skip non-instantiated namespaces (only contain types).
-        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(ns_data.body) {
-            return None;
-        }
-
-        // Detect collision: if a member name matches the innermost namespace name,
-        // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
-        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
-
-        let name = name_parts.first().cloned().unwrap_or_default();
-
-        Some(IRNode::NamespaceIIFE {
-            name,
-            name_parts,
-            body,
-            is_exported,
-            attach_to_exports: is_exported && self.is_commonjs,
-            should_declare_var,
-            parent_name: Some(parent_ns.to_string()),
             param_name,
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
