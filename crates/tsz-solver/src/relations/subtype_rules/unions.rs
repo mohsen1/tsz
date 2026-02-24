@@ -272,11 +272,7 @@ fn get_property_type_of_object(
 ) -> Option<TypeId> {
     let shape_id = get_object_shape_id(db, type_id)?;
     let shape = db.object_shape(shape_id);
-    let prop = shape
-        .properties
-        .binary_search_by(|p| p.name.cmp(&prop_name))
-        .ok()
-        .map(|idx| &shape.properties[idx])?;
+    let prop = crate::utils::lookup_property(db, &shape.properties, Some(shape_id), prop_name)?;
     if prop.optional {
         // Optional properties accept undefined
         Some(db.union2(prop.type_id, TypeId::UNDEFINED))
@@ -322,18 +318,15 @@ fn is_discriminant_for_union(
             None => return false, // All members must be object types
         };
         let shape = db.object_shape(shape_id);
-        let prop = match shape
-            .properties
-            .binary_search_by(|p| p.name.cmp(&prop_name))
-            .ok()
-        {
-            Some(idx) => &shape.properties[idx],
-            None => {
-                // Property missing — still valid if optional in source
-                // For discriminant purposes, treat missing as "undefined"
-                continue;
-            }
-        };
+        let prop =
+            match crate::utils::lookup_property(db, &shape.properties, Some(shape_id), prop_name) {
+                Some(p) => p,
+                None => {
+                    // Property missing — still valid if optional in source
+                    // For discriminant purposes, treat missing as "undefined"
+                    continue;
+                }
+            };
 
         let prop_type = prop.type_id;
         // Check if any constituent is a unit type
