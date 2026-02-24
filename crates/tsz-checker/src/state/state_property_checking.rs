@@ -93,9 +93,10 @@ impl<'a> CheckerState<'a> {
                     for (i, shape) in target_shapes.iter().enumerate() {
                         if let Some(target_prop) =
                             shape.properties.iter().find(|p| p.name == source_prop.name)
-                            && self.is_subtype_of(source_prop.type_id, target_prop.type_id) {
-                                matching_indices.push(i);
-                            }
+                            && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
+                        {
+                            matching_indices.push(i);
+                        }
                     }
                     // If this property narrows to a strict subset of members, use it
                     if !matching_indices.is_empty() && matching_indices.len() < target_shapes.len()
@@ -325,9 +326,10 @@ impl<'a> CheckerState<'a> {
             for (i, (_, shape)) in member_shapes.iter().enumerate() {
                 if let Some(target_prop) =
                     shape.properties.iter().find(|p| p.name == source_prop.name)
-                    && self.is_subtype_of(source_prop.type_id, target_prop.type_id) {
-                        matching.push(i);
-                    }
+                    && self.is_subtype_of(source_prop.type_id, target_prop.type_id)
+                {
+                    matching.push(i);
+                }
             }
             // Narrowed to a strict subset — pick the best match
             if !matching.is_empty() && matching.len() < member_shapes.len() {

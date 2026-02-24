@@ -450,11 +450,11 @@ impl<'a> CheckerState<'a> {
                 if (stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     || stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
                     && let Some(name) = self.get_declaration_name_text(stmt_idx)
-                        && name == member_name
-                        && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&stmt_idx.0)
-                    {
-                        return Some(sym_id);
-                    }
+                    && name == member_name
+                    && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&stmt_idx.0)
+                {
+                    return Some(sym_id);
+                }
                 if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
                     continue;
                 }
