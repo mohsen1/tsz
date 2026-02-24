@@ -1447,6 +1447,7 @@ fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeLis
         || arena.has_modifier(modifiers, SyntaxKind::PrivateKeyword)
         || arena.has_modifier(modifiers, SyntaxKind::ProtectedKeyword)
         || arena.has_modifier(modifiers, SyntaxKind::ReadonlyKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::OverrideKeyword)
 }
 
 // =============================================================================

@@ -666,3 +666,88 @@ fn multiline_class_opening_brace_comment_still_suppressed() {
         "Comment on multi-line class opening brace should be suppressed.\nOutput:\n{output}"
     );
 }
+
+/// `override` alone on a constructor parameter creates a parameter property.
+/// The emitter must emit `this.p1 = p1;` in the constructor body.
+#[test]
+fn override_alone_is_parameter_property() {
+    let source = r#"class Base { p1!: string; }
+class C extends Base {
+    constructor(override p1: "hello") {
+        super();
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("this.p1 = p1;"),
+        "`override` on constructor parameter should emit `this.p1 = p1;`.\nOutput:\n{output}"
+    );
+}
+
+/// `public override` on a constructor parameter should also emit `this.p1 = p1;`.
+#[test]
+fn public_override_is_parameter_property() {
+    let source = r#"class Base { p1!: string; }
+class C extends Base {
+    constructor(public override p1: "hello") {
+        super();
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("this.p1 = p1;"),
+        "`public override` on constructor parameter should emit `this.p1 = p1;`.\nOutput:\n{output}"
+    );
+}
+
+/// `declare` class fields must NOT emit `this.X = X;` in the constructor.
+/// They are ambient declarations that should be erased.
+#[test]
+fn declare_class_field_not_emitted_in_constructor() {
+    let source = "class C {\n    declare foo = 1;\n    bar = 2;\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("this.foo"),
+        "`declare` field should NOT emit `this.foo = 1;` in constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.bar = 2;"),
+        "Non-declare field should still emit in constructor.\nOutput:\n{output}"
+    );
+}

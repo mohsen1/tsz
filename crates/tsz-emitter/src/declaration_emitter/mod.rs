@@ -1002,6 +1002,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 || k == SyntaxKind::PrivateKeyword as u16
                                 || k == SyntaxKind::ProtectedKeyword as u16
                                 || k == SyntaxKind::ReadonlyKeyword as u16
+                                || k == SyntaxKind::OverrideKeyword as u16
                         } else {
                             false
                         }
