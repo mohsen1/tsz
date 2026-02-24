@@ -38,6 +38,12 @@ pub struct EmitFlags {
     /// Whether we're inside a binary/conditional expression operand.
     /// Used to wrap yield-from-await in parens for correct precedence.
     pub in_binary_operand: bool,
+
+    /// Whether a downlevel optional chain should wrap its lowered ternary
+    /// in parentheses. Set by prefix/postfix unary and conditional-condition
+    /// emitters so that `o?.b ? 1 : 0` lowers to `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`
+    /// and `o?.a++` lowers to `(o === null || o === void 0 ? void 0 : o.a)++`.
+    pub optional_chain_needs_parens: bool,
 }
 
 /// State for arrow function ES5 transformation
