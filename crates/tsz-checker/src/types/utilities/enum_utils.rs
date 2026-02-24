@@ -1,7 +1,7 @@
 //! Enum helpers, type overlap checking, readonly properties, and class/function utility methods.
 
 use crate::query_boundaries::type_checking_utilities as query;
-use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
+use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -904,8 +904,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// Unwraps parenthesized expressions and returns the class expression if found.
     pub(crate) fn class_expression_from_expr(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
-        const MAX_TREE_WALK_ITERATIONS: usize = 1000;
-
         let mut current = expr_idx;
         let mut iterations = 0;
         loop {
