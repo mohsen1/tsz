@@ -471,9 +471,9 @@ impl<'a> CheckerState<'a> {
                             && (m_node.kind == SyntaxKind::PrivateKeyword as u16
                                 || m_node.kind == SyntaxKind::ProtectedKeyword as u16
                                 || m_node.kind == SyntaxKind::PublicKeyword as u16)
-                            {
-                                return m_node.kind;
-                            }
+                        {
+                            return m_node.kind;
+                        }
                     }
                 }
                 SyntaxKind::PublicKeyword as u16 // no explicit modifier = public
@@ -487,9 +487,10 @@ impl<'a> CheckerState<'a> {
             if let Some(mods) = arena.get_declaration_modifiers(node) {
                 for &m_idx in &mods.nodes {
                     if let Some(m_node) = arena.get(m_idx)
-                        && m_node.kind == SyntaxKind::StaticKeyword as u16 {
-                            return true;
-                        }
+                        && m_node.kind == SyntaxKind::StaticKeyword as u16
+                    {
+                        return true;
+                    }
                 }
             }
             false

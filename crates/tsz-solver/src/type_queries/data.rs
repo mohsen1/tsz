@@ -453,16 +453,6 @@ pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     current
 }
 
-/// Check if a type is an object type (Object or `ObjectWithIndex`) and return true.
-///
-/// This is a convenience alias for `is_object_type` for symmetry with extraction functions.
-pub fn is_object_type_with_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(
-        db.lookup(type_id),
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
-    )
-}
-
 /// Get the type parameter info if this is a type parameter.
 ///
 /// Returns None if not a type parameter.
@@ -497,13 +487,6 @@ pub fn get_callable_shape(
         Some(TypeData::Callable(shape_id)) => Some(db.callable_shape(shape_id)),
         _ => None,
     }
-}
-
-/// Check if a type has at least one call signature.
-///
-/// Returns false if the type is not a callable shape.
-pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    get_callable_shape(db, type_id).is_some_and(|shape| !shape.call_signatures.is_empty())
 }
 
 /// Get call signatures from a callable type.

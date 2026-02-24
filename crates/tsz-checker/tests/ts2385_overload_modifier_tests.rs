@@ -18,10 +18,11 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let mut lib_files = Vec::new();
     for lib_path in &lib_paths {
         if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path) {
-                let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
-                lib_files.push(Arc::new(LibFile::from_source(file_name, content)));
-            }
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
+            lib_files.push(Arc::new(LibFile::from_source(file_name, content)));
+        }
     }
     lib_files
 }
@@ -68,10 +69,7 @@ fn ts2385_protected_overloads_private_impl() {
         }",
     );
     let count = codes.iter().filter(|&&c| c == 2385).count();
-    assert_eq!(
-        count, 2,
-        "Expected 2 TS2385 errors, got {count}: {codes:?}"
-    );
+    assert_eq!(count, 2, "Expected 2 TS2385 errors, got {count}: {codes:?}");
 }
 
 #[test]
