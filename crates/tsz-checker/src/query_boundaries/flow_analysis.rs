@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    array_element_type as get_array_element_type, contains_type_parameters,
+    array_element_type as get_array_element_type, contains_type_parameters, is_unit_type,
     tuple_elements as tuple_elements_for_type, union_members as union_members_for_type,
 };
 
@@ -65,10 +65,6 @@ pub(crate) fn fallback_compound_assignment_result(
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
-}
-
-pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_unit_type(db, type_id)
 }
 
 pub(crate) fn instance_type_from_constructor(
