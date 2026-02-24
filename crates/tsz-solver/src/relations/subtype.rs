@@ -322,18 +322,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
-    pub(crate) fn resolve_ref_type(&self, type_id: TypeId) -> TypeId {
-        // Handle DefId-based Lazy types (new API)
-        if let Some(def_id) = lazy_def_id(self.interner, type_id) {
-            return self
-                .resolver
-                .resolve_lazy(def_id, self.interner)
-                .unwrap_or(type_id);
-        }
-
-        type_id
-    }
-
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
             self.resolver

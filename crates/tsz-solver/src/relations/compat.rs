@@ -1226,7 +1226,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn resolve_weak_type_ref(&self, type_id: TypeId) -> TypeId {
-        self.subtype.resolve_ref_type(type_id)
+        self.subtype.resolve_lazy_type(type_id)
     }
 
     /// Check if a type is an empty object target.

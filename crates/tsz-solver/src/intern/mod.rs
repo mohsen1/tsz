@@ -1083,7 +1083,9 @@ impl TypeInterner {
         // In TypeScript, intersections of functions represent overloads, and
         // order matters. We need to separate callables from non-callables.
 
-        let has_callables = flat.iter().any(|&id| self.is_callable_type(id));
+        let has_callables = flat
+            .iter()
+            .any(|&id| crate::type_queries::is_callable_type(self, id));
 
         if !has_callables {
             // Fast path: No callables, sort everything for canonicalization
@@ -1097,7 +1099,7 @@ impl TypeInterner {
             // This preserves the order of callables as they are extracted
             let mut i = 0;
             while i < flat.len() {
-                if self.is_callable_type(flat[i]) {
+                if crate::type_queries::is_callable_type(self, flat[i]) {
                     callables.push(flat.remove(i));
                 } else {
                     i += 1;
@@ -1189,19 +1191,6 @@ impl TypeInterner {
         } else {
             flat.push(member);
         }
-    }
-
-    /// Check if a type is a function or callable (order-sensitive in intersections).
-    ///
-    /// In TypeScript, intersection types are commutative for structural types
-    /// (objects, primitives) but non-commutative for call signatures.
-    /// For example: `((a: string) => void) & ((a: number) => void)` has a different
-    /// overload order than the reverse.
-    fn is_callable_type(&self, id: TypeId) -> bool {
-        matches!(
-            self.lookup(id),
-            Some(TypeData::Function(_) | TypeData::Callable(_))
-        )
     }
 
     // Intersection normalization, empty object elimination, callable/object

@@ -166,7 +166,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     let mut structural = Vec::new();
                     let mut callables = Vec::new();
                     for m in c_members {
-                        if self.is_callable_type(m) {
+                        if crate::type_queries::is_callable_type(self.interner, m) {
                             callables.push(m);
                         } else {
                             structural.push(m);
@@ -487,14 +487,6 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         // Intern using the appropriate method
         // Note: object_with_index takes ObjectShape by value and sorts properties
         self.interner.object_with_index(new_shape)
-    }
-
-    /// Check if a type is a callable (Function or Callable).
-    fn is_callable_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.interner.lookup(type_id),
-            Some(TypeData::Function(_) | TypeData::Callable(_))
-        )
     }
 
     /// Canonicalize a single call signature with type parameter scope management.

@@ -49,9 +49,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Resolve Lazy/Ref types before checking
-        let a_resolved = self.resolve_ref_type(a);
-        let b_resolved = self.resolve_ref_type(b);
+        // Resolve Lazy types before checking
+        let a_resolved = self.resolve_lazy_type(a);
+        let b_resolved = self.resolve_lazy_type(b);
 
         // Special handling for TypeParameter and Infer
         if let Some(
