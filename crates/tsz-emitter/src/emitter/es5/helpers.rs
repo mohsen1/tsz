@@ -322,7 +322,7 @@ impl<'a> Printer<'a> {
     fn emit_object_literal_without_spread_es5(
         &mut self,
         elements: &[NodeIndex],
-        source_range: Option<(u32, u32)>,
+        _source_range: Option<(u32, u32)>,
     ) {
         let first_computed_idx = elements
             .iter()
@@ -337,24 +337,14 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        let source_is_multiline = source_range.is_some_and(|(pos, end)| {
-            self.source_text.is_some_and(|text| {
-                let start = pos as usize;
-                let end = end as usize;
-                start < end && end <= text.len() && text[start..end].contains('\n')
-            })
-        });
-        let single_computed_only = first_computed_idx == 0 && elements.len() == 1;
-        if single_computed_only && source_is_multiline {
-            self.write("(");
-            self.increase_indent();
-            self.write(&temp_var);
-            self.write(" = ");
-        } else {
-            self.write("(");
-            self.write(&temp_var);
-            self.write(" = ");
-        }
+        // tsc always formats the lowered comma expression as multi-line:
+        //   (_a = {},
+        //       _a[key] = value,
+        //       _a);
+        self.write("(");
+        self.increase_indent();
+        self.write(&temp_var);
+        self.write(" = ");
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
@@ -365,27 +355,17 @@ impl<'a> Printer<'a> {
 
         // Emit remaining properties as assignments
         for prop_idx in elements.iter().skip(first_computed_idx) {
-            if single_computed_only && source_is_multiline {
-                self.write(",");
-                self.write_line();
-            } else {
-                self.write(", ");
-            }
+            self.write(",");
+            self.write_line();
             self.emit_property_assignment_es5(*prop_idx, &temp_var);
         }
 
         // Return the temp variable
-        if single_computed_only && source_is_multiline {
-            self.write(",");
-            self.write_line();
-            self.write(&temp_var);
-            self.decrease_indent();
-            self.write(")");
-        } else {
-            self.write(", ");
-            self.write(&temp_var);
-            self.write(")");
-        }
+        self.write(",");
+        self.write_line();
+        self.write(&temp_var);
+        self.decrease_indent();
+        self.write(")");
     }
 
     /// Emit object literal with spread using __assign pattern
