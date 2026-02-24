@@ -31,10 +31,10 @@ impl<'a> CheckerState<'a> {
 
             for (i, ch) in flags.char_indices() {
                 let (_required_target, target_name) = match ch {
-                    'u' | 'y' => (tsz_common::ScriptTarget::ES2015, "ES2015"),
-                    's' => (tsz_common::ScriptTarget::ES2018, "ES2018"),
-                    'd' => (tsz_common::ScriptTarget::ES2022, "ES2022"),
-                    'v' => (tsz_common::ScriptTarget::ESNext, "ESNext"),
+                    'u' | 'y' => (tsz_common::ScriptTarget::ES2015, "es6"),
+                    's' => (tsz_common::ScriptTarget::ES2018, "es2018"),
+                    'd' => (tsz_common::ScriptTarget::ES2022, "es2022"),
+                    'v' => (tsz_common::ScriptTarget::ESNext, "esnext"),
                     _ => continue, // g, i, m are ES3+, other flags already handled by parser
                 };
 
