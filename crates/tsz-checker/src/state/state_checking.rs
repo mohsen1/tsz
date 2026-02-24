@@ -63,11 +63,25 @@ impl<'a> CheckerState<'a> {
         if !is_strict_mode_reserved_name(&ident.escaped_text) {
             return;
         }
+        self.emit_strict_mode_reserved_word_error(name_idx, &ident.escaped_text, true);
+    }
+
+    /// Emit the appropriate TS1212/TS1213/TS1214 diagnostic for a strict-mode reserved word.
+    ///
+    /// When `use_class_message` is true and we're inside a class, emits TS1213 (class context).
+    /// When inside a module, emits TS1214 (module context).
+    /// Otherwise emits TS1212 (general strict mode).
+    pub(crate) fn emit_strict_mode_reserved_word_error(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+        escaped_text: &str,
+        use_class_message: bool,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        if self.ctx.enclosing_class.is_some() {
+        if use_class_message && self.ctx.enclosing_class.is_some() {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                &[&ident.escaped_text],
+                &[escaped_text],
             );
             self.error_at_node(
                 name_idx,
@@ -77,7 +91,7 @@ impl<'a> CheckerState<'a> {
         } else if self.ctx.binder.is_external_module() {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                &[&ident.escaped_text],
+                &[escaped_text],
             );
             self.error_at_node(
                 name_idx,
@@ -87,7 +101,7 @@ impl<'a> CheckerState<'a> {
         } else {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                &[&ident.escaped_text],
+                &[escaped_text],
             );
             self.error_at_node(
                 name_idx,
@@ -95,6 +109,25 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
             );
         }
+    }
+
+    /// Emit TS1214 (module context) for a strict-mode reserved word.
+    /// Used by import declarations where the file is always a module.
+    pub(crate) fn emit_module_strict_mode_reserved_word_error(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+        escaped_text: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let message = format_message(
+            diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+            &[escaped_text],
+        );
+        self.error_at_node(
+            name_idx,
+            &message,
+            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+        );
     }
 
     // =========================================================================

@@ -703,7 +703,6 @@ impl<'a> CheckerState<'a> {
     /// TS1214: Check import binding names for strict-mode reserved words.
     /// Import declarations make the file a module (always strict mode), so TS1214 applies.
     fn check_import_binding_reserved_words(&mut self, import_clause_idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use crate::state_checking::is_strict_mode_reserved_name;
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -720,15 +719,7 @@ impl<'a> CheckerState<'a> {
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && is_strict_mode_reserved_name(&ident.escaped_text)
         {
-            let message = format_message(
-                            diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                            &[&ident.escaped_text],
-                        );
-            self.error_at_node(
-                            clause.name,
-                            &message,
-                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                        );
+            self.emit_module_strict_mode_reserved_word_error(clause.name, &ident.escaped_text);
         }
 
         // Check named bindings (namespace import or named imports)
@@ -747,15 +738,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 && is_strict_mode_reserved_name(&ident.escaped_text)
             {
-                let message = format_message(
-                                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                                    &[&ident.escaped_text],
-                                );
-                self.error_at_node(
-                                    ns_data.name,
-                                    &message,
-                                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                                );
+                self.emit_module_strict_mode_reserved_word_error(ns_data.name, &ident.escaped_text);
             }
         } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS {
             // `import { foo as package } from "./mod"` — check each specifier's local name
@@ -774,15 +757,10 @@ impl<'a> CheckerState<'a> {
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         && is_strict_mode_reserved_name(&ident.escaped_text)
                     {
-                        let message = format_message(
-                                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                                    &[&ident.escaped_text],
-                                );
-                        self.error_at_node(
-                                    name_to_check,
-                                    &message,
-                                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                                );
+                        self.emit_module_strict_mode_reserved_word_error(
+                            name_to_check,
+                            &ident.escaped_text,
+                        );
                     }
                 }
             }
