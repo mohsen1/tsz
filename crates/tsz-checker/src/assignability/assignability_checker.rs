@@ -1045,6 +1045,15 @@ impl<'a> CheckerState<'a> {
                 for member in members {
                     let resolved_member = self.resolve_type_for_property_access(member);
                     let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
+                        // If an intersection member is a type parameter, it could accept
+                        // any properties, so EPC should not apply (same logic as union case).
+                        if tsz_solver::type_queries::is_type_parameter_like(
+                            self.ctx.types,
+                            resolved_member,
+                        ) || resolved_member == TypeId::OBJECT
+                        {
+                            return false;
+                        }
                         continue;
                     };
 

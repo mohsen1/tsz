@@ -549,7 +549,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeData::ReadonlyType(inner) => {
+            // ReadonlyType and NoInfer are transparent wrappers for property access
+            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.resolve_property_access_inner(inner, prop_name, prop_atom)
             }
 
@@ -806,6 +807,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return result;
                 }
                 // 'this' type not resolved - return ANY to avoid false positives
+                // (checker should resolve 'this' before reaching solver)
                 PropertyAccessResult::Success {
                     type_id: TypeId::ANY,
                     write_type: None,
@@ -832,7 +834,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // Successfully resolved - resolve property on the concrete type
                     self.resolve_property_access_inner(resolved, prop_name, prop_atom)
                 } else {
-                    // Can't resolve - try apparent members
+                    // Can't resolve lazy type - try apparent members
                     let prop_atom =
                         prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                     if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
@@ -854,6 +856,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.resolve_property_access_inner(member_type, prop_name, prop_atom)
             }
 
+            // StringIntrinsic (Uppercase<T>, Lowercase<T>, etc.) — resolve as string
+            TypeData::StringIntrinsic { .. } => {
+                let prop_atom =
+                    prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+                self.resolve_string_property(prop_name, prop_atom)
+            }
+
             _ => {
                 // Unknown type key - try apparent members before giving up
                 let prop_atom =
@@ -862,7 +871,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return result;
                 }
                 // For truly unknown types, return ANY to avoid false positives
-                // This includes UniqueSymbol, Error, and any future type keys
                 PropertyAccessResult::Success {
                     type_id: TypeId::ANY,
                     write_type: None,

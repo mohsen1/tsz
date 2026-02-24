@@ -438,6 +438,12 @@ impl<'a> NarrowingContext<'a> {
                 }
             }
 
+            // 4. Handle NoInfer<T> — transparent wrapper, unwrap to inner type
+            if let Some(TypeData::NoInfer(inner)) = self.db.lookup(type_id) {
+                type_id = inner;
+                continue;
+            }
+
             // It's a structural type (Object, Union, Intersection, Primitive)
             break;
         }
