@@ -284,6 +284,139 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit all comments whose span lies within `[start_pos, end_pos)`.
+    /// When `insert_space_for_adjacent_inline` is true, a space is emitted before
+    /// same-line inline comments when the comment starts immediately after source
+    /// code (useful for JSX expression trailing comments).
+    /// When `normalize_leading_text` is true, indentation between line breaks in
+    /// the text leading up to a comment is normalized using the current writer
+    /// indentation instead of preserved byte-for-byte.
+    ///
+    /// Returns:
+    /// (`did_emit_comment`, `last_comment_end_pos`, `last_comment_had_trailing_newline`)
+    pub(super) fn emit_comments_in_range(
+        &mut self,
+        start_pos: u32,
+        end_pos: u32,
+        insert_space_for_adjacent_inline: bool,
+        normalize_leading_text: bool,
+    ) -> (bool, u32, bool) {
+        if self.ctx.options.remove_comments {
+            return (false, 0, false);
+        }
+
+        let Some(text) = self.source_text else {
+            return (false, 0, false);
+        };
+
+        let mut emitted_any = false;
+        let mut last_comment_end = 0u32;
+        let mut last_comment_had_trailing_newline = false;
+        let mut previous_comment_had_trailing_newline = false;
+        let mut cursor_pos = start_pos as usize;
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let (comment_pos, comment_end, comment_has_new_line) = {
+                let comment = &self.all_comments[self.comment_emit_idx];
+                (comment.pos, comment.end, comment.has_trailing_new_line)
+            };
+
+            if comment_pos >= end_pos {
+                break;
+            }
+
+            if comment_end <= start_pos {
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            let comment_pos_usize = comment_pos as usize;
+            if comment_pos_usize > cursor_pos {
+                let leading_text = crate::safe_slice::slice(text, cursor_pos, comment_pos_usize);
+                if normalize_leading_text {
+                    self.write_normalized_jsx_comment_leading_text(
+                        leading_text,
+                        previous_comment_had_trailing_newline,
+                    );
+                } else {
+                    self.write(leading_text);
+                }
+            } else if insert_space_for_adjacent_inline
+                && !comment_has_new_line
+                && !self.comment_preceded_by_newline(comment_pos)
+            {
+                self.write_space();
+            }
+
+            let comment_text =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize);
+            self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            if comment_has_new_line {
+                self.write_line();
+                cursor_pos = comment_end as usize;
+                if let Some(next) = text.as_bytes().get(comment_end as usize..) {
+                    if next.starts_with(b"\r\n") {
+                        cursor_pos += 2;
+                    } else if matches!(next.first(), Some(b'\n' | b'\r')) {
+                        cursor_pos += 1;
+                    }
+                }
+            } else {
+                cursor_pos = comment_end as usize;
+            }
+
+            emitted_any = true;
+            last_comment_end = comment_end;
+            last_comment_had_trailing_newline = comment_has_new_line;
+            self.comment_emit_idx += 1;
+            previous_comment_had_trailing_newline = comment_has_new_line;
+        }
+
+        (
+            emitted_any,
+            last_comment_end,
+            last_comment_had_trailing_newline,
+        )
+    }
+
+    fn write_normalized_jsx_comment_leading_text(
+        &mut self,
+        text: &str,
+        trim_leading_line_whitespace: bool,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        let bytes = text.as_bytes();
+        let mut cursor = 0usize;
+        if trim_leading_line_whitespace {
+            while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
+                cursor += 1;
+            }
+        }
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'\n' || bytes[cursor] == b'\r' {
+                self.write_line();
+                if bytes[cursor] == b'\r' && bytes.get(cursor + 1) == Some(&b'\n') {
+                    cursor += 2;
+                } else {
+                    cursor += 1;
+                }
+                while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
+                    cursor += 1;
+                }
+                continue;
+            }
+
+            let mut end = cursor + 1;
+            while end < bytes.len() && bytes[end] != b'\n' && bytes[end] != b'\r' {
+                end += 1;
+            }
+            self.write(&text[cursor..end]);
+            cursor = end;
+        }
+    }
+
     /// Compute the number of leading whitespace chars on the line containing `pos`.
     /// Used by `write_comment_with_reindent` to determine how much source indentation
     /// to strip from multi-line comment continuation lines.

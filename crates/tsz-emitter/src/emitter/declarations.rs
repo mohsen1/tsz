@@ -74,7 +74,7 @@ impl<'a> Printer<'a> {
 
         // Parameters - only emit names, not types for JavaScript
         // Map opening `(` to its source position (after name/type params)
-        {
+        let open_paren_pos = {
             let search_start = if let Some(ref tp) = func.type_parameters {
                 tp.nodes
                     .last()
@@ -86,25 +86,28 @@ impl<'a> Printer<'a> {
                 node.pos
             };
             self.map_token_after(search_start, node.end, b'(');
-        }
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
         self.write("(");
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        // Map closing `)` — scan backward from body start since parser may
-        // include `)` in the last parameter node's range.
-        {
-            let search_start = func
-                .parameters
-                .nodes
-                .first()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.pos);
-            let search_end = if func.body.is_some() {
-                self.arena.get(func.body).map_or(node.end, |n| n.pos)
-            } else {
-                node.end
-            };
-            self.map_closing_paren_backward(search_start, search_end);
-        }
+        let search_start = func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if func.body.is_some() {
+            self.arena.get(func.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        self.emit_function_parameters_with_trailing_comments(
+            &func.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
         self.write(")");
 
         // No return type for JavaScript — skip comments inside erased return type

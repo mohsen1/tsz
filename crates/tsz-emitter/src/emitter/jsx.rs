@@ -115,8 +115,69 @@ impl<'a> Printer<'a> {
         if expr.dot_dot_dot_token {
             self.write("...");
         }
-        self.emit(expr.expression);
+
+        if expr.expression.is_none() {
+            // JSX expression with only trivia/comments, e.g. `{}` or `{ // comment }`.
+            // Emit all comments inside the brace pair so they don't drift into the
+            // parent JSX element as trailing comments.
+            self.increase_indent();
+            let (has_comment, last_comment_end, last_comment_has_newline) =
+                self.emit_comments_in_range(node.pos + 1, node.end, false, true);
+            self.decrease_indent();
+            if has_comment
+                && !last_comment_has_newline
+                && self.should_emit_space_before_closing_jsx_brace(
+                    node.pos + 1,
+                    node.end,
+                    last_comment_end,
+                )
+            {
+                self.write(" ");
+            }
+        } else if let Some(expr_node) = self.arena.get(expr.expression) {
+            // Emit comments between `{` and the expression, such as `{
+            // /* comment */ expr }` in JSX context.
+            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, false);
+            self.emit(expr.expression);
+
+            // Emit comments between the expression and the closing brace.
+            let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+            self.emit_comments_in_range(expr_token_end, node.end, true, false);
+        }
         self.write("}");
+    }
+
+    fn should_emit_space_before_closing_jsx_brace(
+        &self,
+        expression_start: u32,
+        expression_end: u32,
+        last_comment_end: u32,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut pos = last_comment_end as usize;
+        let end = (expression_end as usize).min(bytes.len());
+
+        // TSC adds a space before a final `}` only in multi-line JSX
+        // expression trivia sections (for example, when a prior line comment
+        // keeps the final comment on its own line).
+        let has_line_break_in_expression = (expression_start as usize..last_comment_end as usize)
+            .any(|i| matches!(bytes[i], b'\n' | b'\r'));
+        if !has_line_break_in_expression {
+            return false;
+        }
+
+        while pos < end {
+            match bytes[pos] {
+                b' ' | b'\t' => pos += 1,
+                b'}' => return true,
+                _ => return false,
+            }
+        }
+
+        false
     }
 
     pub(super) fn emit_jsx_text(&mut self, node: &Node) {
@@ -219,6 +280,58 @@ mod tests {
         assert!(
             output.contains("<span>a</span>\n    <span>b</span>"),
             "Whitespace between JSX children should be preserved.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_expression_with_trailing_comment_in_expression_is_preserved() {
+        let source = "let x = <div>{null/* preserved */}</div>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("/* preserved */"),
+            "Trailing comment inside JSX expression should be preserved.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("{null}"),
+            "Trailing comment should not be dropped from JSX expression.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_expression_without_expression_preserves_inner_comments() {
+        let source = "let x = <div>{\n    // ???\n}</div>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("// ???"),
+            "Line comment inside a comment-only JSX expression should be preserved.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("{\n    // ???"),
+            "Comment should remain inside JSX expression braces with preserved newline.\nOutput: {output}"
+        );
+        assert!(
+            output.contains("{\n    // ???\n}"),
+            "Expression comment should keep surrounding braces and newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_expression_without_expression_normalizes_multiline_leading_comment_indentation() {
+        let source = "let x = <div>{\n    // ??? 1\n            // ??? 2\n}</div>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("{\n    // ??? 1\n    // ??? 2\n}"),
+            "Comment-only JSX expression lines should normalize leading indentation uniformly.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_expression_inline_block_comment_keeps_spacing() {
+        let source = "let x = <div>{\n    // ???\n/* ??? */}</div>;";
+        let output = emit_jsx(source);
+        assert!(
+            output.contains("/* ??? */ }"),
+            "Trailing inline block comment inside JSX expression should keep leading space before closing brace.\nOutput: {output}"
         );
     }
 }
