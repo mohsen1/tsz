@@ -1,5 +1,6 @@
 //! Modifier, member access, and query methods for `CheckerState`.
 
+use crate::query_boundaries::common::contains_type_parameters;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -887,8 +888,7 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let contains =
-            tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        let contains = contains_type_parameters(self.ctx.types, type_id);
         self.ctx
             .narrowing_cache
             .contains_type_parameters_cache
