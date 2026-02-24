@@ -125,6 +125,8 @@ fn standalone_function_emits_ts2683() {
     assert!(has_error(src, 2683));
 }
 
+// --- Tests from upstream (067fb8ba41) ---
+
 #[test]
 fn explicit_this_param_suppresses_ts2683() {
     // `this` in a function with explicit `this: any` parameter should NOT get TS2683
@@ -183,4 +185,68 @@ function foo(this: { x: number }) {
 }
 "#;
     assert!(!has_error(src, 2683));
+}
+
+// --- Additional tests (this session) ---
+
+#[test]
+fn explicit_this_param_no_ts2683() {
+    // `this` in a function with explicit `this:` parameter should NOT get TS2683
+    let src = "function foo(this: string) { return this; }";
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn explicit_this_param_object_type_no_ts2683() {
+    // `this` with an object-typed explicit `this` parameter should NOT get TS2683
+    let src = r#"
+function bigger(this: {}) {
+    return this;
+}
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn explicit_this_param_union_type_no_ts2683() {
+    // `this` with a union-typed explicit `this` parameter should NOT get TS2683
+    let src = r#"
+function bar(this: string | number) {
+    if (typeof this === "string") {
+        const x: string = this;
+    }
+}
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn property_assignment_any_receiver_no_ts2683() {
+    // `this` in a function assigned to a property of an `any`-typed object
+    // should NOT get TS2683 — `this` contextually becomes `any`
+    let src = r#"
+type Foo = any;
+const foo: Foo = {};
+foo.bar = function () {
+    const self: Foo = this;
+};
+"#;
+    assert!(!has_error(src, 2683));
+}
+
+#[test]
+fn nested_function_in_class_with_explicit_this_still_emits_ts2683() {
+    // Even if the class has `this`, a nested regular function creates its own `this`
+    // binding, so TS2683 should still fire for the nested function
+    let src = r#"
+class C {
+    value = 42;
+    method() {
+        function inner() {
+            return this;
+        }
+    }
+}
+"#;
+    assert!(has_error(src, 2683));
 }

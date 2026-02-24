@@ -1038,4 +1038,25 @@ ambient overloads is valid (e.g., `declare function f(x: number): void; function
 implementations from the TS2384 check.
 **Tests fixed**: `constructorOverloads7.ts` and 2 others.
 
-## Current score: 3967/6577 (60.3%) — offset 6000; 7981/12574 (63.5%) — full suite
+## TS2683 — False positive suppression for explicit `this` parameters and `any` receivers (Fixed, 2026-02-24)
+
+**Status**: Fixed. +4 tests passing in first-6000 slice (4017→4021, 67.1%).
+**Error code:** TS2683 ("'this' implicitly has type 'any' because it does not have a type annotation.")
+**Root cause**: Two related bugs:
+1. `is_this_in_nested_function_inside_class` in `scope_finder.rs` returned `true` for ALL
+   functions (standalone or nested), not just functions nested inside a class. This caused
+   the `ThisKeyword` dispatch in `dispatch.rs` to skip the valid `current_this_type()` value
+   and fall through to the TS2683 error path — even when an explicit `this:` parameter existed.
+2. In `function_type.rs`, contextual `this` inference from property assignments (`obj.prop = func`)
+   excluded `any`-typed receivers, causing `foo.bar = function() { this }` where `foo: any` to
+   incorrectly emit TS2683.
+**Fix**:
+- `scope_finder.rs`: Added early return `if self.ctx.enclosing_class.is_none() { return false; }`
+- `function_type.rs`: Removed `&& receiver != tsz_solver::TypeId::ANY` exclusion so `any` receivers
+  still provide contextual `this` type.
+**Tests added**: 5 new unit tests covering explicit `this` params (string, object, union types),
+  `any`-typed property receivers, and nested functions in classes.
+**Deferred**: ~9 of 13 identified TS2683-only-extra tests still fail due to other unrelated
+  mismatches (e.g., missing TS7006, TS2304, etc.) — TS2683 is no longer the blocking code.
+
+## Current score: 4021/5997 (67.1%) — first-6000 slice
