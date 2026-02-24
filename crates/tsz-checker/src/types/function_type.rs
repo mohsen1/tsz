@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
                                                 || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
                                                 && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
                                                     let receiver = self.get_type_of_node(access.expression);
-                                                    if receiver != tsz_solver::TypeId::ERROR && receiver != tsz_solver::TypeId::ANY {
+                                                    if receiver != tsz_solver::TypeId::ERROR {
                                                         return Some(receiver);
                                                     }
                                                 }

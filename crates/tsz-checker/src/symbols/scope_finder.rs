@@ -85,7 +85,15 @@ impl<'a> CheckerState<'a> {
     /// `FUNCTION_DECLARATION`) within a class body. In such cases, the regular function
     /// creates its own `this` binding, so the enclosing class's `this` type should
     /// not apply. Arrow functions are transparent to `this`, so they don't count.
+    ///
+    /// Only returns true when there IS an enclosing class context. Without a class,
+    /// a standalone function with an explicit `this` parameter should use its pushed
+    /// `this` type from the stack, not fall through to the TS2683 path.
     pub(crate) fn is_this_in_nested_function_inside_class(&self, idx: NodeIndex) -> bool {
+        // Without an enclosing class, there's nothing to be "nested inside"
+        if self.ctx.enclosing_class.is_none() {
+            return false;
+        }
         use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION};
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
             Some(f) => f,
