@@ -186,8 +186,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
             // TS1035: Only ambient modules can use quoted names.
             // `module "Foo" {}` without `declare` is invalid.
+            // Exception: module augmentations inside ambient contexts (e.g., inside
+            // `declare module "Map" { module "Observable" { } }`) are already ambient.
             if !has_declare
                 && is_string_named
+                && !self.is_in_ambient_context(module_idx)
                 && let Some(name_node) = self.ctx.arena.get(module.name)
             {
                 self.ctx.error(

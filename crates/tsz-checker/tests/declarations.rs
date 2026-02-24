@@ -527,3 +527,113 @@ constructor() {
         );
     }
 }
+
+#[test]
+fn test_ts2435_not_emitted_for_module_augmentation_in_ambient_module() {
+    // Module augmentations inside ambient external modules are valid.
+    // `module "Observable"` inside `declare module "Map"` should NOT trigger
+    // TS2435 ("Ambient modules cannot be nested") because the outer is a
+    // string-named ambient external module, not an identifier-named namespace.
+    let source = r#"
+declare module "Map" {
+    module "Observable" {
+        interface Observable { x: number }
+    }
+}
+"#;
+    let file_name = "test.d.ts".to_string();
+    let mut parser = ParserState::new(file_name.clone(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut ctx = CheckerContext::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name,
+        crate::context::CheckerOptions::default(),
+    );
+    ctx.set_current_file_idx(0);
+
+    if let Some(root_node) = parser.get_arena().get(root)
+        && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+    {
+        let mut checker = DeclarationChecker::new(&mut ctx);
+        for &stmt_idx in &sf_data.statements.nodes {
+            checker.check(stmt_idx);
+        }
+    }
+
+    let ts2435_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2435).collect();
+    assert_eq!(
+        ts2435_errors.len(),
+        0,
+        "Expected 0 TS2435 errors for module augmentation in ambient module, got {}: {:?}",
+        ts2435_errors.len(),
+        ts2435_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+
+    let ts1035_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 1035).collect();
+    assert_eq!(
+        ts1035_errors.len(),
+        0,
+        "Expected 0 TS1035 errors for module augmentation in ambient module, got {}: {:?}",
+        ts1035_errors.len(),
+        ts1035_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2435_emitted_for_ambient_module_in_namespace() {
+    // A string-named module inside an identifier-named namespace SHOULD
+    // trigger TS2435 — this is the case we must NOT suppress.
+    let source = r#"
+namespace M {
+    export declare module "Nested" { }
+}
+"#;
+    let file_name = "test.ts".to_string();
+    let mut parser = ParserState::new(file_name.clone(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut ctx = CheckerContext::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name,
+        crate::context::CheckerOptions::default(),
+    );
+    ctx.set_current_file_idx(0);
+
+    if let Some(root_node) = parser.get_arena().get(root)
+        && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+    {
+        let mut checker = DeclarationChecker::new(&mut ctx);
+        for &stmt_idx in &sf_data.statements.nodes {
+            checker.check(stmt_idx);
+        }
+    }
+
+    let ts2435_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2435).collect();
+    assert!(
+        !ts2435_errors.is_empty(),
+        "Expected TS2435 for ambient module nested in namespace, but got no errors. Diagnostics: {:?}",
+        ctx.diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
