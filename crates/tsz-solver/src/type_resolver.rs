@@ -407,16 +407,6 @@ impl TypeEnvironment {
         self.types.contains_key(&symbol.0)
     }
 
-    /// Number of resolved types.
-    pub fn len(&self) -> usize {
-        self.types.len()
-    }
-
-    /// Check if empty.
-    pub fn is_empty(&self) -> bool {
-        self.types.is_empty()
-    }
-
     // =========================================================================
     // DefId Resolution
     // =========================================================================

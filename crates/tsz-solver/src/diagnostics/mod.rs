@@ -437,9 +437,16 @@ pub mod codes {
     // Null/undefined errors
 
     // Implicit any errors (7xxx series)
+    // These aliases intentionally keep the solver's public diagnostics API stable
+    // even when the underlying `tsz-common` names are not referenced from this
+    // crate.
+    #[allow(unused_imports)]
     pub use dc::FUNCTION_EXPRESSION_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN as IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION;
+    #[allow(unused_imports)]
     pub use dc::MEMBER_IMPLICITLY_HAS_AN_TYPE as IMPLICIT_ANY_MEMBER;
+    #[allow(unused_imports)]
     pub use dc::PARAMETER_IMPLICITLY_HAS_AN_TYPE as IMPLICIT_ANY_PARAMETER;
+    #[allow(unused_imports)]
     pub use dc::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE as IMPLICIT_ANY_RETURN;
 }
 
