@@ -81,6 +81,25 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if `this` is inside a nested regular function (`FUNCTION_EXPRESSION` or
+    /// `FUNCTION_DECLARATION`) within a class body. In such cases, the regular function
+    /// creates its own `this` binding, so the enclosing class's `this` type should
+    /// not apply. Arrow functions are transparent to `this`, so they don't count.
+    pub(crate) fn is_this_in_nested_function_inside_class(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{FUNCTION_DECLARATION, FUNCTION_EXPRESSION};
+        let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
+            Some(f) => f,
+            None => return false,
+        };
+        let fn_node = match self.ctx.arena.get(enclosing_fn) {
+            Some(n) => n,
+            None => return false,
+        };
+        // If the nearest non-arrow function is a regular function (not a class member),
+        // then `this` has a new binding and the class `this` doesn't apply.
+        fn_node.kind == FUNCTION_EXPRESSION || fn_node.kind == FUNCTION_DECLARATION
+    }
+
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Check if `this` is inside a top-level arrow function that captures `globalThis`.

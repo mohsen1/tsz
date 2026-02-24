@@ -163,6 +163,9 @@ mod ts2558_new_type_args_tests;
 #[path = "../tests/ts2589_tests.rs"]
 mod ts2589_tests;
 #[cfg(test)]
+#[path = "../tests/ts2683_tests.rs"]
+mod ts2683_tests;
+#[cfg(test)]
 #[path = "../tests/ts2774_tests.rs"]
 mod ts2774_tests;
 #[cfg(test)]

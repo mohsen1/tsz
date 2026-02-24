@@ -520,19 +520,43 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
-                    self.checker.apply_flow_narrowing(idx, this_type)
-                } else if let Some(ref class_info) = self.checker.ctx.enclosing_class {
+                    // If `this` is inside a nested regular function, the this_type_stack
+                    // from the enclosing class member doesn't apply — the function creates
+                    // its own `this` binding.
+                    if !self.checker.is_this_in_nested_function_inside_class(idx) {
+                        return self.checker.apply_flow_narrowing(idx, this_type);
+                    }
+                    // Fall through — the nested function has its own `this`
+                }
+                if let Some(ref class_info) = self.checker.ctx.enclosing_class {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance type (e.g., for constructor default params)
-                    if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
-                        && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
-                    {
-                        let class_instance = self
-                            .checker
-                            .get_class_instance_type(class_info.class_idx, class_data);
-                        return self.checker.apply_flow_narrowing(idx, class_instance);
+                    // BUT: if `this` is inside a nested regular function (not a class member),
+                    // that function creates its own `this` binding, so don't use the class type.
+                    let has_intermediate_function =
+                        self.checker.is_this_in_nested_function_inside_class(idx);
+                    if !has_intermediate_function {
+                        if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
+                            && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
+                        {
+                            let class_instance = self
+                                .checker
+                                .get_class_instance_type(class_info.class_idx, class_data);
+                            return self.checker.apply_flow_narrowing(idx, class_instance);
+                        }
+                        TypeId::ANY
+                    } else {
+                        // Fall through to TS2683 / TS7041 checks below
+                        if self.checker.ctx.no_implicit_this() && !self.checker.is_js_file() {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.checker.error_at_node(
+                                idx,
+                                diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                                diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                            );
+                        }
+                        TypeId::ANY
                     }
-                    TypeId::ANY
                 } else if self.checker.this_has_contextual_owner(idx).is_some() {
                     // `this` in a class or object literal member but enclosing_class
                     // not yet set. Suppress TS2683 - `this` is contextually typed.
