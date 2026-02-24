@@ -9,6 +9,12 @@ use tsz_parser::NodeIndex;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
+/// Maximum recursion depth for namespace export merging.
+///
+/// Uses the shared `symbol_resolution_depth` counter to prevent infinite
+/// recursion when namespaces re-export each other circularly.
+const MAX_MERGE_DEPTH: u32 = 32;
+
 // =============================================================================
 // Namespace Type Checking
 // =============================================================================
@@ -43,7 +49,6 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
 
         // Check recursion depth to prevent stack overflow
-        const MAX_MERGE_DEPTH: u32 = 32;
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= MAX_MERGE_DEPTH {
             return ctor_type; // Prevent infinite recursion in merge
@@ -432,7 +437,6 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::PropertyInfo;
 
         // Check recursion depth to prevent stack overflow
-        const MAX_MERGE_DEPTH: u32 = 32;
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= MAX_MERGE_DEPTH {
             return _enum_type; // Prevent infinite recursion in merge

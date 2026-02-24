@@ -42,6 +42,13 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
+/// Maximum depth for nested `get_type_of_symbol` calls before giving up.
+///
+/// Prevents stack overflow when resolving deeply recursive or circular
+/// symbol references (e.g., mutually referencing type aliases, deeply
+/// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
+pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
+
 type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
 
@@ -687,6 +694,7 @@ pub struct CheckerContext<'a> {
     pub symbol_resolution_depth: Cell<u32>,
 
     /// Maximum symbol resolution depth before we give up (prevents stack overflow).
+    /// Default value: [`MAX_SYMBOL_RESOLUTION_DEPTH`].
     pub max_symbol_resolution_depth: u32,
 
     /// Lib file contexts for global type resolution (lib.es5.d.ts, lib.dom.d.ts, etc.).
