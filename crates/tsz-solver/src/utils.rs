@@ -4,9 +4,19 @@
 //! to avoid code duplication.
 
 use crate::caches::db::TypeDatabase;
-use crate::types::{ObjectShapeId, PropertyInfo, PropertyLookup, TupleElement, TypeId};
+use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeId};
 use crate::visitor::{array_element_type, tuple_list_id};
 use tsz_common::interner::Atom;
+
+/// Count the number of required (non-optional, non-rest) parameters.
+pub(crate) fn required_param_count(params: &[ParamInfo]) -> usize {
+    params.iter().filter(|p| p.is_required()).count()
+}
+
+/// Count the number of required (non-optional, non-rest) tuple elements.
+pub(crate) fn required_element_count(elements: &[TupleElement]) -> usize {
+    elements.iter().filter(|e| e.is_required()).count()
+}
 
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
 ///

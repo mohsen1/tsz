@@ -41,8 +41,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &[TupleElement],
     ) -> SubtypeResult {
         // Count required elements
-        let source_required = source.iter().filter(|e| !e.optional && !e.rest).count();
-        let target_required = target.iter().filter(|e| !e.optional && !e.rest).count();
+        let source_required = crate::utils::required_element_count(source);
+        let target_required = crate::utils::required_element_count(target);
 
         // Source must have at least as many required elements
         if source_required < target_required {

@@ -895,6 +895,13 @@ pub struct TupleElement {
     pub rest: bool,
 }
 
+impl TupleElement {
+    /// Returns `true` if this element is required (non-optional, non-rest).
+    pub const fn is_required(&self) -> bool {
+        !self.optional && !self.rest
+    }
+}
+
 /// Type predicate information (x is T / asserts x is T).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypePredicate {
@@ -1032,6 +1039,11 @@ pub struct ParamInfo {
 }
 
 impl ParamInfo {
+    /// Returns `true` if this parameter is required (non-optional, non-rest).
+    pub const fn is_required(&self) -> bool {
+        !self.optional && !self.rest
+    }
+
     /// Create a required parameter.
     pub const fn required(name: Atom, type_id: TypeId) -> Self {
         Self {

@@ -100,7 +100,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     pub(crate) fn arg_count_bounds(&self, params: &[ParamInfo]) -> (usize, Option<usize>) {
-        let required = params.iter().filter(|p| !p.optional && !p.rest).count();
+        let required = crate::utils::required_param_count(params);
         let rest_param = params.last().filter(|param| param.rest);
         let Some(rest_param) = rest_param else {
             return (required, Some(params.len()));

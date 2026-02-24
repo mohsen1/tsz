@@ -972,8 +972,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &[TupleElement],
         target: &[TupleElement],
     ) -> Option<SubtypeFailureReason> {
-        let source_required = source.iter().filter(|e| !e.optional && !e.rest).count();
-        let target_required = target.iter().filter(|e| !e.optional && !e.rest).count();
+        let source_required = crate::utils::required_element_count(source);
+        let target_required = crate::utils::required_element_count(target);
 
         if source_required < target_required {
             return Some(SubtypeFailureReason::TupleElementMismatch {

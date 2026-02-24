@@ -445,8 +445,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     signatures
                         .iter()
                         .find(|sig| {
-                            let min_args =
-                                sig.params.iter().filter(|p| !p.optional && !p.rest).count();
+                            let min_args = crate::utils::required_param_count(&sig.params);
                             let has_rest = sig.params.iter().any(|p| p.rest);
                             count >= min_args && (has_rest || count <= sig.params.len())
                         })
