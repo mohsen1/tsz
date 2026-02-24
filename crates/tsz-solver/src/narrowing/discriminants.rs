@@ -25,6 +25,28 @@ use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
 impl<'a> NarrowingContext<'a> {
+    /// Resolve a type into its union members and build a property evaluator.
+    ///
+    /// This is the shared setup for all discriminant/property-based narrowing:
+    /// 1. Resolves Lazy types
+    /// 2. Classifies into union members (or wraps a non-union as a single-element list)
+    /// 3. Creates a `PropertyAccessEvaluator` respecting any resolver override
+    fn resolve_members_and_evaluator(
+        &self,
+        type_id: TypeId,
+    ) -> (TypeId, Vec<TypeId>, PropertyAccessEvaluator<'_>) {
+        let resolved = self.resolve_type(type_id);
+        let members = match classify_for_union_members(self.db, resolved) {
+            UnionMembersKind::Union(list) => list.into_iter().collect::<Vec<_>>(),
+            UnionMembersKind::NotUnion => vec![resolved],
+        };
+        let evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
+        (resolved, members, evaluator)
+    }
+
     /// Find discriminant properties in a union type.
     ///
     /// A discriminant property is one where:
@@ -400,27 +422,12 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let resolved_type = self.resolve_type(union_type);
-
-        let single_member_storage: Vec<TypeId>;
-        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
-            UnionMembersKind::Union(members_list) => {
-                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
-                &single_member_storage
-            }
-            UnionMembersKind::NotUnion => {
-                single_member_storage = vec![resolved_type];
-                &single_member_storage
-            }
-        };
+        let (_resolved, members, property_evaluator) =
+            self.resolve_members_and_evaluator(union_type);
 
         let mut matching: Vec<TypeId> = Vec::new();
-        let property_evaluator = match self.resolver {
-            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
-            None => PropertyAccessEvaluator::new(self.db),
-        };
 
-        for &member in members {
+        for &member in &members {
             if member.is_any_or_unknown() {
                 matching.push(member);
                 continue;
@@ -497,36 +504,12 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // CRITICAL: Resolve Lazy types before checking for union members
-        // This ensures type aliases are resolved to their actual union types
-        let resolved_type = self.resolve_type(union_type);
+        let (resolved_type, members, property_evaluator) =
+            self.resolve_members_and_evaluator(union_type);
 
         trace!(
             "narrow_by_discriminant: union_type={}, resolved_type={}, property_path={:?}, literal_value={}",
             union_type.0, resolved_type.0, property_path, literal_value.0
-        );
-
-        // CRITICAL FIX: Use classify_for_union_members instead of union_list_id
-        // This correctly handles intersections containing unions, nested unions, etc.
-        let single_member_storage: Vec<TypeId>;
-        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
-            UnionMembersKind::Union(members_list) => {
-                // Convert Vec to slice for iteration
-                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
-                &single_member_storage
-            }
-            UnionMembersKind::NotUnion => {
-                // Not a union at all - treat as single member
-                single_member_storage = vec![resolved_type];
-                &single_member_storage
-            }
-        };
-
-        trace!("narrow_by_discriminant: members={:?}", members);
-
-        trace!(
-            "Checking {} member(s) for discriminant match",
-            members.len()
         );
 
         trace!(
@@ -537,7 +520,7 @@ impl<'a> NarrowingContext<'a> {
         if property_path.len() == 1
             && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
                 union_type,
-                members,
+                &members,
                 property_path[0],
                 literal_value,
                 true,
@@ -547,12 +530,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         let mut matching: Vec<TypeId> = Vec::new();
-        let property_evaluator = match self.resolver {
-            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
-            None => PropertyAccessEvaluator::new(self.db),
-        };
 
-        for &member in members {
+        for &member in &members {
             // Special case: any and unknown always match
             if member.is_any_or_unknown() {
                 trace!("Member {} is any/unknown, keeping in true branch", member.0);
@@ -677,24 +656,8 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // CRITICAL: Resolve Lazy types before checking for union members
-        // This ensures type aliases are resolved to their actual union types
-        let resolved_type = self.resolve_type(union_type);
-
-        // CRITICAL FIX: Use classify_for_union_members instead of union_list_id
-        // This correctly handles intersections containing unions, nested unions, etc.
-        // Consistent with narrow_by_discriminant.
-        let single_member_storage: Vec<TypeId>;
-        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
-            UnionMembersKind::Union(members_list) => {
-                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
-                &single_member_storage
-            }
-            UnionMembersKind::NotUnion => {
-                single_member_storage = vec![resolved_type];
-                &single_member_storage
-            }
-        };
+        let (_resolved, members, property_evaluator) =
+            self.resolve_members_and_evaluator(union_type);
 
         trace!(
             "Excluding discriminant value {} from union with {} members",
@@ -705,7 +668,7 @@ impl<'a> NarrowingContext<'a> {
         if property_path.len() == 1
             && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
                 union_type,
-                members,
+                &members,
                 property_path[0],
                 excluded_value,
                 false,
@@ -715,12 +678,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         let mut remaining: Vec<TypeId> = Vec::new();
-        let property_evaluator = match self.resolver {
-            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
-            None => PropertyAccessEvaluator::new(self.db),
-        };
 
-        for &member in members {
+        for &member in &members {
             // Special case: any and unknown always kept (could have any property value)
             if member.is_any_or_unknown() {
                 trace!(
@@ -824,30 +783,15 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        let resolved_type = self.resolve_type(union_type);
-
-        let single_member_storage: Vec<TypeId>;
-        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
-            UnionMembersKind::Union(members_list) => {
-                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
-                &single_member_storage
-            }
-            UnionMembersKind::NotUnion => {
-                single_member_storage = vec![resolved_type];
-                &single_member_storage
-            }
-        };
+        let (_resolved, members, property_evaluator) =
+            self.resolve_members_and_evaluator(union_type);
 
         // Put excluded values into a HashSet for O(1) lookup
         let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
 
         let mut remaining: Vec<TypeId> = Vec::new();
-        let property_evaluator = match self.resolver {
-            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
-            None => PropertyAccessEvaluator::new(self.db),
-        };
 
-        for &member in members {
+        for &member in &members {
             if member.is_any_or_unknown() {
                 remaining.push(member);
                 continue;
