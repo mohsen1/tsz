@@ -674,6 +674,14 @@ impl<'a> TypeFormatter<'a> {
         if let Some(sym_id) = shape.symbol
             && let Some(name) = self.format_symbol_name(sym_id)
         {
+            // Check if this is a module/namespace symbol — if so, prepend "typeof"
+            // to match tsc's display format (e.g., "typeof TypeScript", "typeof ts").
+            if let Some(arena) = self.symbol_arena
+                && let Some(sym) = arena.get(sym_id)
+                && (sym.flags & tsz_binder::symbol_flags::MODULE) != 0
+            {
+                return Some(format!("typeof {name}"));
+            }
             return Some(name);
         }
         if let Some(def_store) = self.def_store

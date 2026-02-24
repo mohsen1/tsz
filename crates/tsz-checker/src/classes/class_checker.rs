@@ -611,7 +611,10 @@ impl<'a> CheckerState<'a> {
         let derived_class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
+                    let mut name = ident.escaped_text.clone();
+                    // Append type parameters for tsc parity: "Foo<T, U>"
+                    self.append_type_param_names(&mut name, &class_data.type_parameters);
+                    name
                 } else {
                     String::from("<anonymous>")
                 }
@@ -675,6 +678,9 @@ impl<'a> CheckerState<'a> {
         let Some(base_class) = self.ctx.arena.get_class(base_node) else {
             return;
         };
+
+        // Append type parameters to base class name for tsc parity: "A<T>"
+        self.append_type_param_names(&mut base_class_name, &base_class.type_parameters);
 
         let mut type_args = Vec::new();
         if let Some(nodes) = base_type_argument_nodes.as_ref() {
@@ -1057,6 +1063,37 @@ impl<'a> CheckerState<'a> {
         );
 
         self.pop_type_parameters(base_type_param_updates);
+    }
+
+    /// Append type parameter names (e.g., `<T, U>`) to a class/interface name string.
+    /// This matches tsc's display format for TS2415/TS2430 error messages.
+    pub(crate) fn append_type_param_names(
+        &self,
+        name: &mut String,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        let Some(list) = type_parameters else {
+            return;
+        };
+        let mut param_names = Vec::new();
+        for &param_idx in &list.nodes {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+            if let Some(name_node) = self.ctx.arena.get(data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                param_names.push(ident.escaped_text.as_str());
+            }
+        }
+        if !param_names.is_empty() {
+            name.push('<');
+            name.push_str(&param_names.join(", "));
+            name.push('>');
+        }
     }
 
     // Index signature compatibility (TS2415), interface extension compatibility (TS2430),

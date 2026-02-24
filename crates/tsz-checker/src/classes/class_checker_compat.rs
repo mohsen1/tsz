@@ -207,7 +207,10 @@ impl<'a> CheckerState<'a> {
         let derived_name = if iface_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(iface_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
+                    let mut name = ident.escaped_text.clone();
+                    // Append type parameters for tsc parity: "Foo<T, U>"
+                    self.append_type_param_names(&mut name, &iface_data.type_parameters);
+                    name
                 } else {
                     String::from("<anonymous>")
                 }

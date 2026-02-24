@@ -315,7 +315,7 @@ fn test_spanned_diagnostic_builder_argument_count() {
     let interner = TypeInterner::new();
     let mut builder = SpannedDiagnosticBuilder::new(&interner, "test.ts");
 
-    let diag = builder.argument_count_mismatch(3, 1, 50, 15);
+    let diag = builder.argument_count_mismatch(3, 3, 1, 50, 15);
 
     assert!(diag.span.is_some());
     let span = diag.span.as_ref().unwrap();
@@ -425,7 +425,7 @@ fn test_diagnostic_builder_new_codes() {
     assert!(diag.message.contains("not callable"));
 
     // Test argument_count_mismatch
-    let diag = builder.argument_count_mismatch(2, 5);
+    let diag = builder.argument_count_mismatch(2, 2, 5);
     assert_eq!(diag.code, codes::ARG_COUNT_MISMATCH);
     assert!(diag.message.contains("2"));
     assert!(diag.message.contains("5"));

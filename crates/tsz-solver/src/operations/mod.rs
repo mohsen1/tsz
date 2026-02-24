@@ -937,12 +937,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     } else if expected_min == expected_max.unwrap_or(expected_min) {
                         exact_expected_counts.insert(expected_min);
                     }
-                    let expected = expected_max.unwrap_or(expected_min);
+                    let max = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
-                    max_expected = max_expected.max(expected);
+                    max_expected = max_expected.max(max);
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_count_mismatch(
-                            expected, actual,
+                            expected_min,
+                            max,
+                            actual,
                         ),
                     );
                 }

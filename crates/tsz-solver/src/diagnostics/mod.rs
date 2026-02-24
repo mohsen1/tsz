@@ -835,8 +835,18 @@ impl PendingDiagnosticBuilder {
     }
 
     /// Create an "Expected N arguments but got M" pending diagnostic.
-    pub fn argument_count_mismatch(expected: usize, got: usize) -> PendingDiagnostic {
-        PendingDiagnostic::error(codes::ARG_COUNT_MISMATCH, vec![expected.into(), got.into()])
+    /// When `expected_min < expected_max`, formats as "Expected 1-3 arguments".
+    pub fn argument_count_mismatch(
+        expected_min: usize,
+        expected_max: usize,
+        got: usize,
+    ) -> PendingDiagnostic {
+        let expected_arg: DiagnosticArg = if expected_min < expected_max {
+            DiagnosticArg::String(format!("{expected_min}-{expected_max}").into())
+        } else {
+            expected_max.into()
+        };
+        PendingDiagnostic::error(codes::ARG_COUNT_MISMATCH, vec![expected_arg, got.into()])
     }
 }
 

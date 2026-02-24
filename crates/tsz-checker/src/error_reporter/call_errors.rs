@@ -318,7 +318,8 @@ impl<'a> CheckerState<'a> {
     /// TS2554: Expected {0} arguments, but got {1}.
     pub fn error_argument_count_mismatch_at(
         &mut self,
-        expected: usize,
+        expected_min: usize,
+        expected_max: usize,
         got: usize,
         idx: NodeIndex,
     ) {
@@ -330,7 +331,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.file_name.as_str(),
             )
             .with_def_store(&self.ctx.definition_store);
-            let diag = builder.argument_count_mismatch(expected, got, loc.start, loc.length());
+            let diag = builder.argument_count_mismatch(
+                expected_min,
+                expected_max,
+                got,
+                loc.start,
+                loc.length(),
+            );
             self.ctx
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));
