@@ -5,6 +5,7 @@ pub(crate) mod state_class_checking;
 pub(crate) mod state_directive_checking;
 pub(crate) mod state_heritage_checking;
 pub(crate) mod state_property_checking;
+pub(crate) mod state_readonly_checking;
 pub mod type_analysis;
 pub mod type_environment;
 pub mod type_resolution;
