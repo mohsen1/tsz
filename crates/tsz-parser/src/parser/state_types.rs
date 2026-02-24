@@ -1338,7 +1338,10 @@ impl ParserState {
             // If parse_type_member returned NONE (couldn't parse) and we haven't advanced,
             // skip the current token to prevent infinite loops
             if member.is_none() && self.token_pos() == saved_pos {
-                self.error_unexpected_token();
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                );
                 self.next_token(); // Skip the problematic token
                 continue;
             }

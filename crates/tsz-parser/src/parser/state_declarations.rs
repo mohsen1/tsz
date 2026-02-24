@@ -191,8 +191,12 @@ impl ParserState {
 
             self.parse_type_member_separator_with_asi();
 
-            // If we didn't make progress, skip the current token to avoid infinite loop
+            // If we didn't make progress, emit TS1131 and skip the token to avoid infinite loop
             if self.token_pos() == start_pos && !self.is_token(SyntaxKind::CloseBraceToken) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                );
                 self.next_token();
             }
         }
