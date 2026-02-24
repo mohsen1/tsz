@@ -14,21 +14,12 @@ use crate::types::{
     CallSignature, CallableShape, FunctionShape, LiteralValue, ObjectShape, ObjectShapeId,
     ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId,
 };
-use crate::utils;
+use crate::utils::{self, TupleRestExpansion};
 use crate::visitor;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 use super::InferenceContext;
-
-struct TupleRestExpansion {
-    /// Fixed elements before the variadic portion (prefix)
-    fixed: Vec<TupleElement>,
-    /// The variadic element type (e.g., T for ...T[])
-    variadic: Option<TypeId>,
-    /// Fixed elements after the variadic portion (suffix/tail)
-    tail: Vec<TupleElement>,
-}
 
 impl<'a> InferenceContext<'a> {
     // =========================================================================
@@ -1149,41 +1140,6 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Array(elem)) => TupleRestExpansion {
-                fixed: Vec::new(),
-                variadic: Some(elem),
-                tail: Vec::new(),
-            },
-            Some(TypeData::Tuple(elements)) => {
-                let elements = self.interner.tuple_list(elements);
-                let mut fixed = Vec::new();
-                for (i, elem) in elements.iter().enumerate() {
-                    if elem.rest {
-                        let inner = self.expand_tuple_rest(elem.type_id);
-                        fixed.extend(inner.fixed);
-                        // Capture tail elements: inner.tail + elements after the rest
-                        let mut tail = inner.tail;
-                        tail.extend(elements[i + 1..].iter().cloned());
-                        return TupleRestExpansion {
-                            fixed,
-                            variadic: inner.variadic,
-                            tail,
-                        };
-                    }
-                    fixed.push(elem.clone());
-                }
-                TupleRestExpansion {
-                    fixed,
-                    variadic: None,
-                    tail: Vec::new(),
-                }
-            }
-            _ => TupleRestExpansion {
-                fixed: Vec::new(),
-                variadic: Some(type_id),
-                tail: Vec::new(),
-            },
-        }
+        utils::expand_tuple_rest(self.interner, type_id)
     }
 }

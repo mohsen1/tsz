@@ -9,21 +9,10 @@
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
+use crate::utils::{self, TupleRestExpansion};
 use crate::visitor::{array_element_type, tuple_list_id};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
-
-/// Expansion of a tuple rest element into its constituent parts.
-///
-/// Used to normalize variadic tuples for subtype checking.
-pub(crate) struct TupleRestExpansion {
-    /// Fixed elements before the variadic portion (prefix)
-    pub fixed: Vec<TupleElement>,
-    /// The variadic element type (e.g., T for ...T[])
-    pub variadic: Option<TypeId>,
-    /// Fixed elements after the variadic portion (suffix/tail)
-    pub tail: Vec<TupleElement>,
-}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check tuple subtyping.
@@ -319,52 +308,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - `tail`: Elements after the rest (rare, but valid in some TypeScript patterns)
     ///
     /// ## Examples:
-    /// - `[number, string]` → fixed: [number, string], variadic: None, tail: []
-    /// - `[number, ...string[]]` → fixed: [number], variadic: Some(string), tail: []
-    /// - `[...T[], number]` → fixed: [], variadic: Some(T), tail: [number]
-    ///
-    /// ## Recursive Expansion:
-    /// Nested rest elements are recursively expanded, so:
-    /// - `[A, ...[...B[], C]]` → fixed: [A], variadic: Some(B), tail: [C]
     pub(crate) fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
-        if let Some(elem) = array_element_type(self.interner, type_id) {
-            return TupleRestExpansion {
-                fixed: Vec::new(),
-                variadic: Some(elem),
-                tail: Vec::new(),
-            };
-        }
-
-        if let Some(elements) = tuple_list_id(self.interner, type_id) {
-            let elements = self.interner.tuple_list(elements);
-            let mut fixed = Vec::new();
-            for (i, elem) in elements.iter().enumerate() {
-                if elem.rest {
-                    let inner = self.expand_tuple_rest(elem.type_id);
-                    fixed.extend(inner.fixed);
-                    // Capture tail elements: inner.tail + elements after the rest
-                    let mut tail = inner.tail;
-                    tail.extend(elements[i + 1..].iter().cloned());
-                    return TupleRestExpansion {
-                        fixed,
-                        variadic: inner.variadic,
-                        tail,
-                    };
-                }
-                fixed.push(elem.clone());
-            }
-            return TupleRestExpansion {
-                fixed,
-                variadic: None,
-                tail: Vec::new(),
-            };
-        }
-
-        TupleRestExpansion {
-            fixed: Vec::new(),
-            variadic: Some(type_id),
-            tail: Vec::new(),
-        }
+        utils::expand_tuple_rest(self.interner, type_id)
     }
 
     /// Check if Array<`element_type`> (the interface) is a subtype of the target.

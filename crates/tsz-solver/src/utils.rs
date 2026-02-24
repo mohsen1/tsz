@@ -4,7 +4,8 @@
 //! to avoid code duplication.
 
 use crate::caches::db::TypeDatabase;
-use crate::types::{ObjectShapeId, PropertyInfo, PropertyLookup, TypeId};
+use crate::types::{ObjectShapeId, PropertyInfo, PropertyLookup, TupleElement, TypeId};
+use crate::visitor::{array_element_type, tuple_list_id};
 use tsz_common::interner::Atom;
 
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
@@ -240,6 +241,76 @@ pub(crate) fn optional_property_write_type(db: &dyn TypeDatabase, prop: &Propert
         db.union2(prop.write_type, TypeId::UNDEFINED)
     } else {
         prop.write_type
+    }
+}
+
+/// Expansion of a tuple rest element into its constituent parts.
+///
+/// Used to normalize variadic tuples for subtype checking, call argument
+/// matching, and best-common-type inference.
+pub(crate) struct TupleRestExpansion {
+    /// Fixed elements before the variadic portion (prefix)
+    pub fixed: Vec<TupleElement>,
+    /// The variadic element type (e.g., T for ...T[])
+    pub variadic: Option<TypeId>,
+    /// Fixed elements after the variadic portion (suffix/tail)
+    pub tail: Vec<TupleElement>,
+}
+
+/// Expand a type into its tuple rest structure.
+///
+/// Handles three cases:
+/// - Array types → empty fixed, variadic = element type, empty tail
+/// - Tuple types → splits at the first rest element, recursing into nested rests
+/// - Other types → treated as a variadic of the type itself
+///
+/// ## Examples:
+/// - `number[]` → fixed: [], variadic: Some(number), tail: []
+/// - `[string, number]` → fixed: [string, number], variadic: None, tail: []
+/// - `[string, ...number[]]` → fixed: [string], variadic: Some(number), tail: []
+/// - `[...T[], number]` → fixed: [], variadic: Some(T), tail: [number]
+///
+/// ## Recursive Expansion:
+/// Nested rest elements are recursively expanded, so:
+/// - `[A, ...[...B[], C]]` → fixed: [A], variadic: Some(B), tail: [C]
+pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> TupleRestExpansion {
+    if let Some(elem) = array_element_type(db, type_id) {
+        return TupleRestExpansion {
+            fixed: Vec::new(),
+            variadic: Some(elem),
+            tail: Vec::new(),
+        };
+    }
+
+    if let Some(elements) = tuple_list_id(db, type_id) {
+        let elements = db.tuple_list(elements);
+        let mut fixed = Vec::new();
+        for (i, elem) in elements.iter().enumerate() {
+            if elem.rest {
+                let inner = expand_tuple_rest(db, elem.type_id);
+                fixed.extend(inner.fixed);
+                // Capture tail elements: inner.tail + elements after the rest
+                let mut tail = inner.tail;
+                tail.extend(elements[i + 1..].iter().cloned());
+                return TupleRestExpansion {
+                    fixed,
+                    variadic: inner.variadic,
+                    tail,
+                };
+            }
+            fixed.push(elem.clone());
+        }
+        return TupleRestExpansion {
+            fixed,
+            variadic: None,
+            tail: Vec::new(),
+        };
+    }
+
+    TupleRestExpansion {
+        fixed: Vec::new(),
+        variadic: Some(type_id),
+        tail: Vec::new(),
     }
 }
 
