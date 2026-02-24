@@ -633,7 +633,7 @@ impl<'a> Printer<'a> {
                 let comment_text = safe_slice::slice(text, c.pos as usize, c.end as usize);
                 let has_trailing_new_line = c.has_trailing_new_line;
                 if !comment_text.is_empty() {
-                    self.write(comment_text);
+                    self.write_comment_with_reindent(comment_text, Some(c.pos));
                     if has_trailing_new_line {
                         self.write_line();
                     } else if emit_trailing_space {

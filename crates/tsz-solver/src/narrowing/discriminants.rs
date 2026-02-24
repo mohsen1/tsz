@@ -17,8 +17,8 @@ use crate::type_queries::{
 };
 use crate::types::{PropertyLookup, TypeId};
 use crate::visitor::{
-    intersection_list_id, is_literal_type_db, object_shape_id, object_with_index_shape_id,
-    union_list_id,
+    intersection_list_id, is_literal_type_through_type_constraints, object_shape_id,
+    object_with_index_shape_id, union_list_id,
 };
 use rustc_hash::FxHashSet;
 use tracing::{Level, span, trace};
@@ -92,7 +92,7 @@ impl<'a> NarrowingContext<'a> {
                 match prop_type {
                     Some(ty) => {
                         // Must be a literal type
-                        if is_literal_type_db(self.db, ty) {
+                        if is_literal_type_through_type_constraints(self.db, ty) {
                             // Must be unique among members
                             if seen_literals.contains(&ty) {
                                 is_discriminant = false;

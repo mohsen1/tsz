@@ -426,7 +426,6 @@ fn compile_imports_and_get_diagnostics(
 /// Complexity: HIGH - requires binder/checker coordination
 /// See: docs/conformance-work-session-summary.md
 #[test]
-#[ignore = "Flow analysis from invalid assignment - HIGH complexity"]
 fn test_flow_narrowing_from_invalid_assignment() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -1802,7 +1801,6 @@ good2({ when: value => false });
 /// Fix: Use `emitted_diagnostics` deduplication in `error_type_constraint_not_satisfied`
 /// to prevent emitting the same TS2344 at the same source position twice.
 #[test]
-#[ignore = "requires generic constraint checking (TS2344)"]
 fn test_ts2344_no_duplicate_errors() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
