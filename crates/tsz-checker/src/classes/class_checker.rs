@@ -877,7 +877,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             class_data.name,
                             &format!(
-                                "Class static side '{derived_class_name}' incorrectly extends base class static side '{base_class_name}'."
+                                "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                             ),
                             diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                         );

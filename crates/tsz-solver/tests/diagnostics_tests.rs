@@ -422,7 +422,7 @@ fn test_diagnostic_builder_new_codes() {
     // Test not_callable
     let diag = builder.not_callable(TypeId::NUMBER);
     assert_eq!(diag.code, codes::NOT_CALLABLE);
-    assert!(diag.message.contains("number"));
+    assert!(diag.message.contains("not callable"));
 
     // Test argument_count_mismatch
     let diag = builder.argument_count_mismatch(2, 5);
