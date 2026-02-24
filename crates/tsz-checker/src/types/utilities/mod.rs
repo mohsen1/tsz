@@ -1,6 +1,10 @@
 //! Parameter type utilities, type construction, and type resolution methods
 //! for `CheckerState`.
 
+pub(crate) mod enum_utils;
+pub(crate) mod jsdoc;
+pub(crate) mod return_type;
+
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
