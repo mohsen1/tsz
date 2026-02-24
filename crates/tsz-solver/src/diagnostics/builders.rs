@@ -226,64 +226,6 @@ impl<'a> DiagnosticBuilder<'a> {
             codes::EXCESS_PROPERTY,
         )
     }
-
-    // =========================================================================
-    // Implicit Any Diagnostics (TS7006, TS7008, TS7010, TS7011)
-    // =========================================================================
-
-    /// Create a "Parameter implicitly has an 'any' type" diagnostic (TS7006).
-    pub fn implicit_any_parameter(&mut self, param_name: &str) -> TypeDiagnostic {
-        TypeDiagnostic::error(
-            format!("Parameter '{param_name}' implicitly has an 'any' type."),
-            codes::IMPLICIT_ANY_PARAMETER,
-        )
-    }
-
-    /// Create a "Parameter implicitly has a specific type" diagnostic (TS7006 variant).
-    pub fn implicit_any_parameter_with_type(
-        &mut self,
-        param_name: &str,
-        implicit_type: TypeId,
-    ) -> TypeDiagnostic {
-        let type_str = self.formatter.format(implicit_type);
-        TypeDiagnostic::error(
-            format!("Parameter '{param_name}' implicitly has an '{type_str}' type."),
-            codes::IMPLICIT_ANY_PARAMETER,
-        )
-    }
-
-    /// Create a "Member implicitly has an 'any' type" diagnostic (TS7008).
-    pub fn implicit_any_member(&mut self, member_name: &str) -> TypeDiagnostic {
-        TypeDiagnostic::error(
-            format!("Member '{member_name}' implicitly has an 'any' type."),
-            codes::IMPLICIT_ANY_MEMBER,
-        )
-    }
-
-    /// Create an "implicitly has an 'any' return type" diagnostic (TS7010).
-    pub fn implicit_any_return(&mut self, func_name: &str, return_type: TypeId) -> TypeDiagnostic {
-        let type_str = self.formatter.format(return_type);
-        TypeDiagnostic::error(
-            format!(
-                "'{func_name}', which lacks return-type annotation, implicitly has an '{type_str}' return type."
-            ),
-            codes::IMPLICIT_ANY_RETURN,
-        )
-    }
-
-    /// Create a "Function expression implicitly has an 'any' return type" diagnostic (TS7011).
-    pub fn implicit_any_return_function_expression(
-        &mut self,
-        return_type: TypeId,
-    ) -> TypeDiagnostic {
-        let type_str = self.formatter.format(return_type);
-        TypeDiagnostic::error(
-            format!(
-                "Function expression, which lacks return-type annotation, implicitly has an '{type_str}' return type."
-            ),
-            codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
-        )
-    }
 }
 
 // =============================================================================

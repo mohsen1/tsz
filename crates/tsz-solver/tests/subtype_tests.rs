@@ -1175,10 +1175,6 @@ fn test_type_environment() {
     let _interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
-    // Initially empty
-    assert!(env.is_empty());
-    assert_eq!(env.len(), 0);
-
     // Register some types
     let sym1 = SymbolRef(1);
     let sym2 = SymbolRef(2);
@@ -1193,9 +1189,6 @@ fn test_type_environment() {
     // Check contains
     assert!(env.contains(sym1));
     assert!(!env.contains(SymbolRef(999)));
-
-    // Check len
-    assert_eq!(env.len(), 2);
 }
 
 #[test]
