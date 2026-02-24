@@ -166,6 +166,9 @@ mod ts2839_tests;
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
+#[path = "../tests/ts7041_tests.rs"]
+mod ts7041_tests;
+#[cfg(test)]
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]

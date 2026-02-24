@@ -554,6 +554,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
                     );
                     TypeId::ANY
+                } else if self.checker.ctx.no_implicit_this()
+                    && !self.checker.is_js_file()
+                    && self.checker.is_this_in_global_capturing_arrow(idx)
+                {
+                    // TS7041: 'this' in a top-level arrow function captures globalThis.
+                    // Fires when noImplicitThis is on, `this` is inside an arrow function,
+                    // and there is no enclosing class/object/function providing local `this`.
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                        diagnostic_codes::THE_CONTAINING_ARROW_FUNCTION_CAPTURES_THE_GLOBAL_VALUE_OF_THIS,
+                    );
+                    TypeId::ANY
                 } else {
                     TypeId::ANY
                 }
