@@ -292,33 +292,6 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
 }
 
 // =============================================================================
-// KeyOf Type Classification
-// =============================================================================
-
-/// Classification for computing keyof types.
-#[derive(Debug, Clone)]
-pub enum KeyOfTypeKind {
-    /// Object type with properties
-    Object(crate::types::ObjectShapeId),
-    /// No keys available
-    NoKeys,
-}
-
-/// Classify a type for keyof computation.
-pub fn classify_for_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> KeyOfTypeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return KeyOfTypeKind::NoKeys;
-    };
-
-    match key {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            KeyOfTypeKind::Object(shape_id)
-        }
-        _ => KeyOfTypeKind::NoKeys,
-    }
-}
-
-// =============================================================================
 // String Literal Key Extraction
 // =============================================================================
 
@@ -528,14 +501,6 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
     }
 }
 
-/// Get literal value from a type if it's a literal.
-pub fn get_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::LiteralValue> {
-    match db.lookup(type_id) {
-        Some(TypeData::Literal(value)) => Some(value),
-        _ => None,
-    }
-}
-
 /// Widen a literal type to its corresponding primitive type.
 ///
 /// - `1` -> `number`
@@ -704,68 +669,6 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
             }
         }
         _ => TypeQueryKind::Other,
-    }
-}
-
-// =============================================================================
-// Type Contains Classification (for type_contains_any_inner)
-// =============================================================================
-
-/// Classification for recursive type traversal.
-#[derive(Debug, Clone)]
-pub enum TypeContainsKind {
-    Array(TypeId),
-    Tuple(crate::types::TupleListId),
-    Members(Vec<TypeId>),
-    Object(crate::types::ObjectShapeId),
-    Function(crate::types::FunctionShapeId),
-    Callable(crate::types::CallableShapeId),
-    Application(crate::types::TypeApplicationId),
-    Conditional(crate::types::ConditionalTypeId),
-    Mapped(crate::types::MappedTypeId),
-    IndexAccess {
-        base: TypeId,
-        index: TypeId,
-    },
-    TemplateLiteral(crate::types::TemplateLiteralId),
-    Inner(TypeId),
-    TypeParam {
-        constraint: Option<TypeId>,
-        default: Option<TypeId>,
-    },
-    Terminal,
-}
-
-/// Classify a type for recursive traversal.
-pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeContainsKind {
-    match db.lookup(type_id) {
-        Some(TypeData::Array(elem)) => TypeContainsKind::Array(elem),
-        Some(TypeData::Tuple(list_id)) => TypeContainsKind::Tuple(list_id),
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
-            TypeContainsKind::Members(db.type_list(list_id).to_vec())
-        }
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            TypeContainsKind::Object(shape_id)
-        }
-        Some(TypeData::Function(shape_id)) => TypeContainsKind::Function(shape_id),
-        Some(TypeData::Callable(shape_id)) => TypeContainsKind::Callable(shape_id),
-        Some(TypeData::Application(app_id)) => TypeContainsKind::Application(app_id),
-        Some(TypeData::Conditional(cond_id)) => TypeContainsKind::Conditional(cond_id),
-        Some(TypeData::Mapped(mapped_id)) => TypeContainsKind::Mapped(mapped_id),
-        Some(TypeData::IndexAccess(base, index)) => TypeContainsKind::IndexAccess { base, index },
-        Some(TypeData::TemplateLiteral(template_id)) => {
-            TypeContainsKind::TemplateLiteral(template_id)
-        }
-        Some(TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner)) => {
-            TypeContainsKind::Inner(inner)
-        }
-        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
-            TypeContainsKind::TypeParam {
-                constraint: info.constraint,
-                default: info.default,
-            }
-        }
-        _ => TypeContainsKind::Terminal,
     }
 }
 

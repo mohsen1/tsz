@@ -58,11 +58,11 @@ pub use classifiers::get_lazy_def_id as get_def_id;
 pub use extended::get_application_info;
 pub use extended::{
     ArrayLikeKind, CallSignaturesKind, ContextualLiteralAllowKind, ElementIndexableKind,
-    IndexKeyKind, KeyOfTypeKind, LazyTypeKind, LiteralKeyKind, LiteralTypeKind,
-    MappedConstraintKind, NamespaceMemberKind, PromiseTypeKind, PropertyAccessResolutionKind,
-    StringLiteralKeyKind, TypeArgumentExtractionKind, TypeParameterKind, TypeQueryKind,
-    TypeResolutionKind, classify_array_like, classify_element_indexable,
-    classify_for_call_signatures, classify_for_contextual_literal, classify_for_lazy_resolution,
+    IndexKeyKind, LazyTypeKind, LiteralKeyKind, LiteralTypeKind, MappedConstraintKind,
+    NamespaceMemberKind, PromiseTypeKind, PropertyAccessResolutionKind, StringLiteralKeyKind,
+    TypeArgumentExtractionKind, TypeParameterKind, TypeQueryKind, TypeResolutionKind,
+    classify_array_like, classify_element_indexable, classify_for_call_signatures,
+    classify_for_contextual_literal, classify_for_lazy_resolution,
     classify_for_property_access_resolution, classify_for_string_literal_keys,
     classify_for_type_argument_extraction, classify_for_type_resolution, classify_index_key,
     classify_literal_key, classify_literal_type, classify_mapped_constraint,
@@ -299,13 +299,6 @@ pub fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> V
             .collect(),
         _ => Vec::new(),
     }
-}
-
-/// Check if a type is an intrinsic type (any, unknown, never, void, etc.).
-///
-/// Returns true for `TypeData::Intrinsic`.
-pub fn is_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeData::Intrinsic(_)))
 }
 
 // =============================================================================
@@ -654,87 +647,6 @@ pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 }
 
 // =============================================================================
-// Constraint Type Classification Helpers
-// =============================================================================
-
-/// Classification for constraint types.
-#[derive(Debug, Clone)]
-pub enum ConstraintTypeKind {
-    /// Type parameter or infer with constraint
-    TypeParameter {
-        constraint: Option<TypeId>,
-        default: Option<TypeId>,
-    },
-    /// Union - get constraint from each member
-    Union(Vec<TypeId>),
-    /// Intersection - get constraint from each member
-    Intersection(Vec<TypeId>),
-    /// Symbol reference - resolve first
-    SymbolRef(crate::types::SymbolRef),
-    /// Application - evaluate first
-    Application { app_id: u32 },
-    /// Mapped type - evaluate constraint
-    Mapped { mapped_id: u32 },
-    /// `KeyOf` - special handling
-    KeyOf(TypeId),
-    /// Literal or resolved constraint
-    Resolved(TypeId),
-    /// No constraint
-    NoConstraint,
-}
-
-/// Classify a type for constraint extraction.
-pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> ConstraintTypeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return ConstraintTypeKind::NoConstraint;
-    };
-    match key {
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            ConstraintTypeKind::TypeParameter {
-                constraint: info.constraint,
-                default: info.default,
-            }
-        }
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            ConstraintTypeKind::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            ConstraintTypeKind::Intersection(members.to_vec())
-        }
-        TypeData::Application(app_id) => ConstraintTypeKind::Application { app_id: app_id.0 },
-        TypeData::Mapped(mapped_id) => ConstraintTypeKind::Mapped {
-            mapped_id: mapped_id.0,
-        },
-        TypeData::KeyOf(operand) => ConstraintTypeKind::KeyOf(operand),
-        TypeData::Literal(_) => ConstraintTypeKind::Resolved(type_id),
-        TypeData::BoundParameter(_)
-        | TypeData::Intrinsic(_)
-        | TypeData::Object(_)
-        | TypeData::ObjectWithIndex(_)
-        | TypeData::Array(_)
-        | TypeData::Tuple(_)
-        | TypeData::Function(_)
-        | TypeData::Callable(_)
-        | TypeData::Conditional(_)
-        | TypeData::IndexAccess(_, _)
-        | TypeData::TemplateLiteral(_)
-        | TypeData::UniqueSymbol(_)
-        | TypeData::ThisType
-        | TypeData::ReadonlyType(_)
-        | TypeData::NoInfer(_)
-        | TypeData::TypeQuery(_)
-        | TypeData::StringIntrinsic { .. }
-        | TypeData::ModuleNamespace(_)
-        | TypeData::Enum(_, _)
-        | TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::Error => ConstraintTypeKind::NoConstraint,
-    }
-}
-
-// =============================================================================
 // Signature Classification
 // =============================================================================
 
@@ -828,128 +740,6 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeData::ModuleNamespace(_)
         | TypeData::Enum(_, _)
         | TypeData::Error => SignatureTypeKind::NoSignatures,
-    }
-}
-
-// =============================================================================
-// Property Lookup Type Classification
-// =============================================================================
-
-/// Classification for types when looking up properties.
-///
-/// This enum provides a structured way to handle property lookups on different
-/// type kinds, abstracting away the internal `TypeData` representation.
-///
-/// # Design Principles
-///
-/// - **No Symbol Resolution**: Keeps solver layer pure
-/// - **No Type Evaluation**: Returns classification for caller to handle
-/// - **Complete Coverage**: Handles all common property access patterns
-#[derive(Debug, Clone)]
-pub enum PropertyLookupKind {
-    /// Object type with `shape_id` - has properties
-    Object(crate::types::ObjectShapeId),
-    /// Object with index signature - has properties and index signatures
-    ObjectWithIndex(crate::types::ObjectShapeId),
-    /// Union type - lookup on each member
-    Union(Vec<TypeId>),
-    /// Intersection type - lookup on each member
-    Intersection(Vec<TypeId>),
-    /// Array type - element type for numeric access
-    Array(TypeId),
-    /// Tuple type - element types
-    Tuple(Vec<crate::types::TupleElement>),
-    /// Type that doesn't have direct properties (Intrinsic, Literal, etc.)
-    NoProperties,
-}
-
-/// Classify a type for property lookup operations.
-///
-/// This function examines a type and returns information about how to handle it
-/// when looking up properties. This is used for:
-/// - Merging base type properties
-/// - Checking excess properties in object literals
-/// - Getting binding element types from destructuring patterns
-///
-/// The caller is responsible for:
-/// - Recursing into Union/Intersection members
-/// - Handling Array/Tuple element access appropriately
-/// - Accessing the object shape using the returned `shape_id`
-///
-/// # Example
-///
-/// ```ignore
-/// use crate::type_queries::{classify_for_property_lookup, PropertyLookupKind};
-///
-/// match classify_for_property_lookup(&db, type_id) {
-///     PropertyLookupKind::Object(shape_id) | PropertyLookupKind::ObjectWithIndex(shape_id) => {
-///         let shape = db.object_shape(shape_id);
-///         for prop in shape.properties.iter() {
-///             // Process property
-///         }
-///     }
-///     PropertyLookupKind::Union(members) | PropertyLookupKind::Intersection(members) => {
-///         for member in members {
-///             // Recurse
-///         }
-///     }
-///     PropertyLookupKind::Array(elem_type) => {
-///         // Use element type for numeric index access
-///     }
-///     PropertyLookupKind::Tuple(elements) => {
-///         // Use specific element type by index
-///     }
-///     PropertyLookupKind::NoProperties => {
-///         // Handle types without properties
-///     }
-/// }
-/// ```
-pub fn classify_for_property_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> PropertyLookupKind {
-    let Some(key) = db.lookup(type_id) else {
-        return PropertyLookupKind::NoProperties;
-    };
-
-    match key {
-        TypeData::Object(shape_id) => PropertyLookupKind::Object(shape_id),
-        TypeData::ObjectWithIndex(shape_id) => PropertyLookupKind::ObjectWithIndex(shape_id),
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyLookupKind::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyLookupKind::Intersection(members.to_vec())
-        }
-        TypeData::Array(elem_type) => PropertyLookupKind::Array(elem_type),
-        TypeData::Tuple(tuple_id) => {
-            let elements = db.tuple_list(tuple_id);
-            PropertyLookupKind::Tuple(elements.to_vec())
-        }
-        // All other types don't have direct properties for this use case
-        TypeData::BoundParameter(_)
-        | TypeData::Intrinsic(_)
-        | TypeData::Literal(_)
-        | TypeData::Function(_)
-        | TypeData::Callable(_)
-        | TypeData::TypeParameter(_)
-        | TypeData::Infer(_)
-        | TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::Application(_)
-        | TypeData::Conditional(_)
-        | TypeData::Mapped(_)
-        | TypeData::IndexAccess(_, _)
-        | TypeData::KeyOf(_)
-        | TypeData::TemplateLiteral(_)
-        | TypeData::UniqueSymbol(_)
-        | TypeData::ThisType
-        | TypeData::TypeQuery(_)
-        | TypeData::ReadonlyType(_)
-        | TypeData::NoInfer(_)
-        | TypeData::StringIntrinsic { .. }
-        | TypeData::ModuleNamespace(_)
-        | TypeData::Enum(_, _)
-        | TypeData::Error => PropertyLookupKind::NoProperties,
     }
 }
 

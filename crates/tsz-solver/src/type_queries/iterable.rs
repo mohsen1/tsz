@@ -6,37 +6,6 @@
 use crate::{TypeData, TypeDatabase, TypeId};
 
 // =============================================================================
-// Iterable Type Classification (Spread Handling)
-// =============================================================================
-
-/// Classification for iterable types (used for spread element handling).
-#[derive(Debug, Clone)]
-pub enum IterableTypeKind {
-    /// Tuple type - elements can be expanded
-    Tuple(Vec<crate::types::TupleElement>),
-    /// Array type - element type for variadic handling
-    Array(TypeId),
-    /// Not a directly iterable type (caller should handle as-is)
-    Other,
-}
-
-/// Classify a type for iterable/spread handling.
-pub fn classify_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> IterableTypeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return IterableTypeKind::Other;
-    };
-
-    match key {
-        TypeData::Tuple(tuple_id) => {
-            let elements = db.tuple_list(tuple_id);
-            IterableTypeKind::Tuple(elements.to_vec())
-        }
-        TypeData::Array(elem_type) => IterableTypeKind::Array(elem_type),
-        _ => IterableTypeKind::Other,
-    }
-}
-
-// =============================================================================
 // Full Iterable Type Classification (For is_iterable_type checks)
 // =============================================================================
 

@@ -12,98 +12,6 @@ use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
 use tsz_common::interner::Atom;
 
 // =============================================================================
-// PropertyAccessClassification - Classification for property access resolution
-// =============================================================================
-
-/// Classification for property access resolution.
-#[derive(Debug, Clone)]
-pub enum PropertyAccessClassification {
-    /// Direct object type that can have properties accessed
-    Direct(TypeId),
-    /// Symbol reference - needs resolution first
-    SymbolRef(crate::types::SymbolRef),
-    /// Type query (typeof) - needs symbol resolution
-    TypeQuery(crate::types::SymbolRef),
-    /// Generic application - needs instantiation
-    Application {
-        app_id: crate::types::TypeApplicationId,
-    },
-    /// Union - access on each member
-    Union(Vec<TypeId>),
-    /// Intersection - access on each member
-    Intersection(Vec<TypeId>),
-    /// Index access - needs evaluation
-    IndexAccess { object: TypeId, index: TypeId },
-    /// Readonly wrapper - unwrap and continue
-    Readonly(TypeId),
-    /// Callable type - may need Function interface expansion
-    Callable(TypeId),
-    /// Type parameter with constraint
-    TypeParameter { constraint: Option<TypeId> },
-    /// Needs evaluation (Conditional, Mapped, `KeyOf`)
-    NeedsEvaluation(TypeId),
-    /// Primitive or resolved type
-    Resolved(TypeId),
-}
-
-/// Classify a type for property access resolution.
-pub fn classify_for_property_access(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> PropertyAccessClassification {
-    let Some(key) = db.lookup(type_id) else {
-        return PropertyAccessClassification::Resolved(type_id);
-    };
-
-    match key {
-        TypeData::Object(_) | TypeData::ObjectWithIndex(_) => {
-            PropertyAccessClassification::Direct(type_id)
-        }
-        TypeData::TypeQuery(sym_ref) => PropertyAccessClassification::TypeQuery(sym_ref),
-        TypeData::Application(app_id) => PropertyAccessClassification::Application { app_id },
-        TypeData::Union(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyAccessClassification::Union(members.to_vec())
-        }
-        TypeData::Intersection(list_id) => {
-            let members = db.type_list(list_id);
-            PropertyAccessClassification::Intersection(members.to_vec())
-        }
-        TypeData::IndexAccess(object, index) => {
-            PropertyAccessClassification::IndexAccess { object, index }
-        }
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => PropertyAccessClassification::Readonly(inner),
-        TypeData::Function(_) | TypeData::Callable(_) => {
-            PropertyAccessClassification::Callable(type_id)
-        }
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-            PropertyAccessClassification::TypeParameter {
-                constraint: info.constraint,
-            }
-        }
-        TypeData::Conditional(_) | TypeData::Mapped(_) | TypeData::KeyOf(_) => {
-            PropertyAccessClassification::NeedsEvaluation(type_id)
-        }
-        // BoundParameter is a resolved type (leaf node)
-        TypeData::BoundParameter(_)
-        // Primitives and resolved types (Lazy needs special handling when DefId lookup is implemented)
-        | TypeData::Intrinsic(_)
-        | TypeData::Literal(_)
-        | TypeData::Array(_)
-        | TypeData::Tuple(_)
-        | TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::TemplateLiteral(_)
-        | TypeData::UniqueSymbol(_)
-        | TypeData::ThisType
-        | TypeData::StringIntrinsic { .. }
-        | TypeData::ModuleNamespace(_)
-        | TypeData::Error
-        | TypeData::Enum(_, _) => PropertyAccessClassification::Resolved(type_id),
-    }
-}
-
-// =============================================================================
 // TypeTraversalKind - Classification for type structure traversal
 // =============================================================================
 
@@ -233,16 +141,6 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         | TypeData::ModuleNamespace(_)
         | TypeData::Error
         | TypeData::Enum(_, _) => TypeTraversalKind::Terminal,
-    }
-}
-
-/// Check if a type is a lazy type and return the `DefId`.
-///
-/// This is a helper for checking if the base of an Application is a Lazy type.
-pub fn get_lazy_if_def(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Lazy(def_id)) => Some(def_id),
-        _ => None,
     }
 }
 
