@@ -139,6 +139,10 @@ pub enum CallResult {
         index: usize,
         expected: TypeId,
         actual: TypeId,
+        // Return type to continue checking after a mismatch in type-position checks.
+        // Keeps downstream diagnostics (e.g. TS2339 on call results) available even
+        // when the call itself is invalid with TS2345.
+        fallback_return: TypeId,
     },
 
     /// TS2350: Only a void function can be called with the 'new' keyword.
@@ -716,6 +720,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index: 0,
                     expected: intersected_param,
                     actual: actual_arg_type,
+                    fallback_return: TypeId::ERROR,
                 };
             }
 
@@ -907,6 +912,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index,
                     expected,
                     actual,
+                    fallback_return: TypeId::ERROR,
                 } => {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;
@@ -995,6 +1001,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 index,
                 expected,
                 actual,
+                fallback_return: TypeId::ERROR,
             };
         }
 

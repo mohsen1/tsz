@@ -894,8 +894,33 @@ impl<'a> CheckerState<'a> {
             {
                 // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
                 // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
+                let mut actual_return_node = body;
                 let actual_return = self
-                    .jsdoc_type_annotation_for_node(body)
+                    .jsdoc_type_annotation_for_node_direct(actual_return_node)
+                    .or_else(|| {
+                        // Parenthesized expression wrappers can separate the annotation
+                        // from the final body node in `.js` files (for cast-like syntax).
+                        while let Some(parent_idx) = self
+                            .ctx
+                            .arena
+                            .get_extended(actual_return_node)
+                            .map(|ext| ext.parent)
+                        {
+                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                break;
+                            };
+                            if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                break;
+                            }
+                            actual_return_node = parent_idx;
+                            if let Some(ty) =
+                                self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+                            {
+                                return Some(ty);
+                            }
+                        }
+                        None
+                    })
                     .unwrap_or_else(|| self.get_type_of_node(body));
                 self.check_assignable_or_report(actual_return, jsdoc_expected_return, body);
             }

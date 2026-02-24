@@ -822,27 +822,27 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 for other_binder in all_binders.iter() {
                     if let Some(other_sym_id) =
                         other_binder.file_locals.get(namespace_name.as_str())
-                        && let Some(other_symbol) = other_binder.get_symbol(other_sym_id) {
-                            // Check if this symbol is a non-ambient class or function
-                            let is_class =
-                                (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
-                            let is_function =
-                                (other_symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+                        && let Some(other_symbol) = other_binder.get_symbol(other_sym_id)
+                    {
+                        // Check if this symbol is a non-ambient class or function
+                        let is_class = (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                        let is_function =
+                            (other_symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
 
-                            if (is_class || is_function) && !other_symbol.declarations.is_empty() {
-                                // Found a class or function with the same name in another binder
-                                // Emit TS2433 since namespace and class/function are in different files
-                                if let Some(name_node) = self.ctx.arena.get(module.name) {
-                                    self.ctx.error(
+                        if (is_class || is_function) && !other_symbol.declarations.is_empty() {
+                            // Found a class or function with the same name in another binder
+                            // Emit TS2433 since namespace and class/function are in different files
+                            if let Some(name_node) = self.ctx.arena.get(module.name) {
+                                self.ctx.error(
                                         name_node.pos,
                                         name_node.end - name_node.pos,
                                         diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
                                         diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
                                     );
-                                }
-                                return;
                             }
+                            return;
                         }
+                    }
                 }
             }
             return;

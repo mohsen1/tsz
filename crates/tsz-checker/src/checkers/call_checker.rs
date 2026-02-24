@@ -545,6 +545,7 @@ impl<'a> CheckerState<'a> {
                     index,
                     expected,
                     actual,
+                    ..
                 } => {
                     tracing::debug!("Overload {} failed: arg {} type mismatch", idx, index);
                     tracing::debug!("  Expected TypeId: {:?}", expected);
