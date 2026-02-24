@@ -1,6 +1,54 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10031/13546 = 74.1% JS, ~780/1995 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current ~8360/11477 = 72.8% JS, ~701/1857 = 37.7% DTS)
+
+Note: test count changed from 13546→11477 due to TypeScript submodule update (TS 6.0.0-dev.20260215).
+Pass rate decreased from 74.1%→72.8% — the new baseline files may introduce patterns not yet supported.
+
+### Fixed (2026-02-24, session 15) — Restore Trailing Semicolons on Object Literal Variable Declarations
+
+- **Missing trailing semicolons after `}` on variable declarations with object literal
+  initializers in JS source files** (+19 JS):
+  The auto-accessor commit (118ebd752) re-introduced a
+  `should_omit_variable_statement_trailing_semicolon()` function that skipped the
+  trailing `;` for variable declarations with object-literal initializers when the
+  source was a `.js` file (`is_current_root_js_source`). The intent was to let
+  source-level ASI through, but tsc always emits semicolons regardless of source
+  ASI usage. This produced `}` instead of `};` at the end of declarations like
+  `const x = { grey: {} }`.
+  Fix: removed the `should_omit_variable_statement_trailing_semicolon` function and
+  its call, restoring unconditional semicolons for all variable declarations.
+  Updated the existing unit test (`accessor_object_literal_empty_body_no_trailing_semicolon_in_js_file`
+  → `accessor_object_literal_in_js_file_gets_trailing_semicolon`) to assert the
+  correct tsc-matching behavior. Added two new unit tests for the object-literal
+  semicolon fix (with and without source ASI).
+  JS: 8341→8360, DTS: 701→701, zero regressions (547 emitter unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 15)
+
+- **`}` vs `};` still present in ~174 tests as part of diff**: Although the
+  semicolon fix resolved 19 tests completely, 174 tests have the `}` vs `};`
+  pattern as one of multiple diff components. These tests have additional issues
+  (CJS helpers over-emission, missing module wrappers, etc.) preventing them
+  from passing with this fix alone.
+- **`Object.defineProperty(exports, "__esModule")` over-emission** (~193 tests):
+  We emit the `__esModule` marker for tests where tsc doesn't. Root cause is
+  module detection — files treated as CJS modules when they should be ESM (e.g.,
+  `.mjs` files under `node16`/`nodenext`, package.json `"type": "module"`).
+  Fixing requires file-extension-aware module detection. Not a single-fix.
+- **`"use strict"` over-emission** (~179 tests): Mixed causes — many overlap
+  with the `__esModule` over-emission (CJS mode misdetection). 7 tests have
+  "use strict" as the sole diff (System/bundled module tests).
+- **`__createBinding`/`__importStar` helper over-emission** (~127/120 tests):
+  CJS import helpers emitted for files that should use ESM. Same root cause as
+  `__esModule` over-emission — module kind misdetection.
+- **Missing `__decorate` helper** (~252 tests): Decorator transforms not
+  implemented. Major feature gap.
+- **Missing `static {` block transforms** (~104 tests): Class static blocks
+  for ES2021- targets not lowered. Requires dedicated transform.
+- **Test count regression**: Total tests dropped from 13546 to 11477 after
+  TypeScript submodule update. The new TS 6.0 baseline files may have different
+  test structure or naming conventions.
 
 ### Fixed (2026-02-24, session 14) — Strip Inter-Statement Blank Lines for JS Sources
 

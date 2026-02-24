@@ -537,7 +537,7 @@ fn accessor_object_literal_empty_body() {
 }
 
 #[test]
-fn accessor_object_literal_empty_body_no_trailing_semicolon_in_js_file() {
+fn accessor_object_literal_in_js_file_gets_trailing_semicolon() {
     let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    }\n}\nexport const t2 = {\n    set setter(v) {}\n}\nexport const t3 = {\n    get value() {\n        return 'value';\n    },\n    set value(v) {}\n}\n";
 
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
@@ -552,9 +552,11 @@ fn accessor_object_literal_empty_body_no_trailing_semicolon_in_js_file() {
         output.contains("set setter(v) {}"),
         "JS input should keep compact empty accessor formatting.\nOutput:\n{output}"
     );
+    // tsc always emits trailing semicolons on variable declarations, even when
+    // the source uses ASI. Our emitter must match.
     assert!(
-        !output.contains("};"),
-        "JS input object-literal declarations should not emit trailing semicolons.\nOutput:\n{output}"
+        output.contains("};"),
+        "JS input object-literal declarations must get trailing semicolons (matching tsc).\nOutput:\n{output}"
     );
 }
 
@@ -1096,6 +1098,48 @@ fn using_declaration_has_semicolon_at_esnext() {
     assert!(
         output.contains("using x = getResource();"),
         "using declaration at ESNext should have trailing semicolon.\nOutput:\n{output}"
+    );
+}
+
+/// Variable declarations with object literal initializers must always get a
+/// trailing semicolon — even for `.js` source files (allowJs). Previously a
+/// bug skipped the semicolon for JS sources with object-literal initialisers,
+/// producing `}` instead of `};` at the end of the declaration.
+#[test]
+fn variable_declaration_object_literal_gets_semicolon() {
+    let source = "const x = {\n  grey: {}\n};\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("};"),
+        "Object literal variable declaration must end with `}};`.\nOutput:\n{output}"
+    );
+}
+
+/// Same as above but the source file uses ASI (no explicit semicolon after `}`).
+/// tsc always emits the semicolon regardless of the source's ASI usage.
+#[test]
+fn variable_declaration_object_literal_asi_still_gets_semicolon() {
+    let source = "const x = {\n  grey: {}\n}\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("};"),
+        "Object literal variable declaration (ASI source) must still end with `}};`.\nOutput:\n{output}"
     );
 }
 
