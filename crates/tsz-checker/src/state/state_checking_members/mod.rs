@@ -3,6 +3,7 @@
 mod ambient_signature_checks;
 mod class_type_param_checks;
 mod implicit_any_checks;
+mod index_signature_checks;
 mod member_access;
 mod member_declaration_checks;
 mod overload_compatibility;
