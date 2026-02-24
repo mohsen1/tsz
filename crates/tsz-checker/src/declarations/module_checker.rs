@@ -14,6 +14,61 @@ impl<'a> CheckerState<'a> {
     // Dynamic Import Validation
     // =========================================================================
 
+    /// TS7036: Check that the dynamic import specifier is assignable to `string`.
+    ///
+    /// tsc requires that `import(expr)` specifiers have type `string`.
+    /// If the specifier type is not assignable to `string`, emit TS7036.
+    /// String literals trivially satisfy this; the check matters for
+    /// variable/expression specifiers whose type may be `boolean`, `number`,
+    /// `string | undefined` (under strictNullChecks), arrays, functions, etc.
+    pub(crate) fn check_dynamic_import_specifier_type(
+        &mut self,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_solver::TypeId;
+
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
+
+        if args.is_empty() {
+            return;
+        }
+
+        let arg_idx = args[0];
+        let arg_type = self.get_type_of_node(arg_idx);
+
+        // String and any/error types pass trivially
+        if arg_type == TypeId::STRING
+            || arg_type == TypeId::ANY
+            || arg_type == TypeId::ERROR
+            || arg_type == TypeId::NEVER
+        {
+            return;
+        }
+
+        // Check if the specifier type is assignable to `string`
+        if !self.is_assignable_to(arg_type, TypeId::STRING) {
+            let type_str = self.format_type(arg_type);
+            let message = format_message(
+                diagnostic_messages::DYNAMIC_IMPORTS_SPECIFIER_MUST_BE_OF_TYPE_STRING_BUT_HERE_HAS_TYPE,
+                &[&type_str],
+            );
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
+                let start = arg_node.pos;
+                let length = arg_node.end.saturating_sub(arg_node.pos);
+                self.error_at_position(
+                    start,
+                    length,
+                    &message,
+                    diagnostic_codes::DYNAMIC_IMPORTS_SPECIFIER_MUST_BE_OF_TYPE_STRING_BUT_HERE_HAS_TYPE,
+                );
+            }
+        }
+    }
+
     /// Check dynamic import module specifier for unresolved modules.
     ///
     /// Validates that the module specifier in a dynamic `import()` call

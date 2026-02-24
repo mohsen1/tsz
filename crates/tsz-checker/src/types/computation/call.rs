@@ -157,6 +157,8 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::DYNAMIC_IMPORTS_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_FLAG_IS_SET_TO_ES2020_ES2022,
                 );
             }
+            // TS7036: Check specifier type is assignable to `string`
+            self.check_dynamic_import_specifier_type(call);
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports

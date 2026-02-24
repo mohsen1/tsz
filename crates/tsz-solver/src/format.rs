@@ -479,15 +479,36 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_union(&mut self, members: &[TypeId]) -> String {
-        if members.len() > self.max_union_members {
-            let first: Vec<String> = members
+        // tsc displays union members with null/undefined at the end.
+        // Reorder so non-nullish members come first, then null, then undefined.
+        let mut ordered: Vec<TypeId> = Vec::with_capacity(members.len());
+        let mut has_null = false;
+        let mut has_undefined = false;
+        for &m in members {
+            if m == TypeId::NULL {
+                has_null = true;
+            } else if m == TypeId::UNDEFINED {
+                has_undefined = true;
+            } else {
+                ordered.push(m);
+            }
+        }
+        if has_null {
+            ordered.push(TypeId::NULL);
+        }
+        if has_undefined {
+            ordered.push(TypeId::UNDEFINED);
+        }
+
+        if ordered.len() > self.max_union_members {
+            let first: Vec<String> = ordered
                 .iter()
                 .take(self.max_union_members)
                 .map(|&m| self.format(m))
                 .collect();
             return format!("{} | ...", first.join(" | "));
         }
-        let formatted: Vec<String> = members.iter().map(|&m| self.format(m)).collect();
+        let formatted: Vec<String> = ordered.iter().map(|&m| self.format(m)).collect();
         formatted.join(" | ")
     }
 
@@ -695,5 +716,57 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.atom(def.name).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+
+    #[test]
+    fn union_null_at_end() {
+        let db = TypeInterner::new();
+        // Create union: null | string  (null first in storage order)
+        // union_preserve_members keeps the input order in storage
+        let union_id = db.union_preserve_members(vec![TypeId::NULL, TypeId::STRING]);
+
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(union_id);
+        // null should appear at end, not beginning
+        assert_eq!(result, "string | null");
+    }
+
+    #[test]
+    fn union_undefined_at_end() {
+        let db = TypeInterner::new();
+        let union_id = db.union_preserve_members(vec![TypeId::UNDEFINED, TypeId::NUMBER]);
+
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(union_id);
+        assert_eq!(result, "number | undefined");
+    }
+
+    #[test]
+    fn union_null_and_undefined_at_end() {
+        let db = TypeInterner::new();
+        let union_id =
+            db.union_preserve_members(vec![TypeId::NULL, TypeId::UNDEFINED, TypeId::STRING]);
+
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(union_id);
+        // Non-nullish first, then null, then undefined
+        assert_eq!(result, "string | null | undefined");
+    }
+
+    #[test]
+    fn union_no_nullish_unchanged() {
+        let db = TypeInterner::new();
+        let union_id = db.union_preserve_members(vec![TypeId::NUMBER, TypeId::STRING]);
+
+        let mut fmt = TypeFormatter::new(&db);
+        let result = fmt.format(union_id);
+        // Order should be preserved when no nullish members
+        assert_eq!(result, "number | string");
     }
 }
