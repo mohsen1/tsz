@@ -1,6 +1,39 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~10031/13623 = 73.6% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~10031/13623 = 73.6% JS, ~778/1995 = 39.0% DTS)
+
+### Fixed (2026-02-24, session 8) — DTS Multi-Line Object Type Formatting
+
+- **Object types in DTS emitted as single-line instead of multi-line** (+2 DTS):
+  When the declaration emitter printed inferred object types (from solver `TypeId` via
+  `TypePrinter`, or from object literal fallback via `infer_object_literal_type_text`),
+  it used flat single-line format `{ x: number }` instead of tsc's multi-line format:
+  ```
+  {
+      x: number;
+  }
+  ```
+  This affected ~75 DTS tests as a diff component, though most also have other issues.
+  Fix: added `indent_level: Option<u32>` to `TypePrinter` (`None` = flat inline,
+  `Some(n)` = multi-line at indent depth n). When set, `print_object_type()` formats
+  with newlines, 4-space indentation per level, trailing semicolons on members, and
+  `readonly` prefixes. Nested objects increment depth for correct indentation.
+  Also refactored `infer_object_literal_type_text()` and its helpers to accept an
+  explicit `depth: u32` parameter for recursive nesting.
+  Six unit tests added for TypePrinter (flat, multi-line at 0/1, readonly, nested, empty).
+  One existing test updated to expect multi-line format.
+  JS: 10031/13623, DTS: 776→778/1995, zero regressions (529 unit tests pass).
+
+### Skipped / Investigated (2026-02-24, session 8)
+
+- **DTS object type formatting only fixes 2-3 of ~75 identified tests**: Most of the 75
+  tests with single-line vs multi-line object type diffs also have other missing pieces
+  (missing type annotations, missing exports, wrong type inference) that prevent them from
+  passing even with correct formatting. The formatting fix is correct and necessary but
+  insufficient on its own for the majority of affected tests.
+- **JS emit unchanged**: No JS-side improvements were targeted this session. The major
+  JS gaps remain decorator transforms (~226), CJS export patterns (~134), import helper
+  over-emission (~111), "use strict" over-emission (~110), JSX transforms (~74).
 
 ### Fixed (2026-02-24, session 7) — Block Comment Spacing After `*/`
 

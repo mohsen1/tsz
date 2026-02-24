@@ -32,6 +32,10 @@ pub struct TypePrinter<'a> {
     current_depth: u32,
     /// Maximum recursion depth
     max_depth: u32,
+    /// Indentation level for multi-line type formatting (e.g., object types in .d.ts).
+    /// `Some(n)` enables multi-line formatting at indent level `n`;
+    /// `None` keeps flat single-line format.
+    indent_level: Option<u32>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -42,6 +46,7 @@ impl<'a> TypePrinter<'a> {
             type_cache: None,
             current_depth: 0,
             max_depth: 10,
+            indent_level: None,
         }
     }
 
@@ -60,6 +65,14 @@ impl<'a> TypePrinter<'a> {
     /// Set the maximum recursion depth for type inlining.
     pub const fn with_max_depth(mut self, max_depth: u32) -> Self {
         self.max_depth = max_depth;
+        self
+    }
+
+    /// Enable multi-line type formatting at the given indentation level.
+    /// Object types with members will be formatted across multiple lines
+    /// using 4-space indentation. Without this, object types use flat format.
+    pub const fn with_indent_level(mut self, indent_level: u32) -> Self {
+        self.indent_level = Some(indent_level);
         self
     }
 
@@ -236,26 +249,65 @@ impl<'a> TypePrinter<'a> {
             return "{}".to_string();
         }
 
-        let mut members = Vec::new();
-        for property in &shape.properties {
-            let mut member = String::new();
+        // When indent context is set, format as multi-line (matching tsc's .d.ts output)
+        if let Some(indent) = self.indent_level {
+            let member_indent = "    ".repeat((indent + 1) as usize);
+            let closing_indent = "    ".repeat(indent as usize);
 
-            // Property name
-            member.push_str(&self.resolve_atom(property.name));
+            // Create a nested printer with incremented indent for property types
+            let mut nested = self.clone();
+            nested.indent_level = Some(indent + 1);
 
-            // Optional marker
-            if property.optional {
-                member.push('?');
+            let mut lines = Vec::new();
+            for property in &shape.properties {
+                let mut line = String::new();
+                line.push_str(&member_indent);
+
+                // Readonly marker
+                if property.readonly {
+                    line.push_str("readonly ");
+                }
+
+                // Property name
+                line.push_str(&self.resolve_atom(property.name));
+
+                // Optional marker
+                if property.optional {
+                    line.push('?');
+                }
+
+                // Property type
+                line.push_str(": ");
+                line.push_str(&nested.print_type(property.type_id));
+
+                line.push(';');
+                lines.push(line);
             }
 
-            // Property type
-            member.push_str(": ");
-            member.push_str(&self.print_type(property.type_id));
+            format!("{{\n{}\n{}}}", lines.join("\n"), closing_indent)
+        } else {
+            // Flat format when no indent context (non-DTS usage)
+            let mut members = Vec::new();
+            for property in &shape.properties {
+                let mut member = String::new();
 
-            members.push(member);
+                // Property name
+                member.push_str(&self.resolve_atom(property.name));
+
+                // Optional marker
+                if property.optional {
+                    member.push('?');
+                }
+
+                // Property type
+                member.push_str(": ");
+                member.push_str(&self.print_type(property.type_id));
+
+                members.push(member);
+            }
+
+            format!("{{ {} }}", members.join("; "))
         }
-
-        format!("{{ {} }}", members.join("; "))
     }
 
     fn print_union(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
