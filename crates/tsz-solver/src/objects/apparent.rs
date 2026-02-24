@@ -82,7 +82,7 @@ const OBJECT_METHODS_RETURN_BOOLEAN: &[&str] =
 const OBJECT_METHODS_RETURN_STRING: &[&str] = &["toString"];
 const OBJECT_METHODS_RETURN_ANY: &[&str] = &["valueOf"];
 
-fn is_member(name: &str, list: &[&str]) -> bool {
+pub(crate) fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
 }
 

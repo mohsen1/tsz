@@ -178,11 +178,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 || target_prop.visibility == Visibility::Protected
             {
                 has_private_brands = true;
-                let source_prop = source_shape
-                    .properties
-                    .binary_search_by_key(&target_prop.name, |p| p.name)
-                    .ok()
-                    .map(|idx| &source_shape.properties[idx]);
+                let source_prop = crate::utils::lookup_property(
+                    self.interner,
+                    &source_shape.properties,
+                    Some(crate::types::ObjectShapeId(source_shape_id)),
+                    target_prop.name,
+                );
 
                 match source_prop {
                     Some(sp) => {
@@ -206,12 +207,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 || source_prop.visibility == Visibility::Protected
             {
                 has_private_brands = true;
-                if let Some(target_prop) = target_shape
-                    .properties
-                    .binary_search_by_key(&source_prop.name, |p| p.name)
-                    .ok()
-                    .map(|idx| &target_shape.properties[idx])
-                    && target_prop.visibility == Visibility::Public
+                if let Some(target_prop) = crate::utils::lookup_property(
+                    self.interner,
+                    &target_shape.properties,
+                    Some(crate::types::ObjectShapeId(target_shape_id)),
+                    source_prop.name,
+                ) && target_prop.visibility == Visibility::Public
                 {
                     return Some(false);
                 }

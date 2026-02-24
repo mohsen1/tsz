@@ -792,11 +792,13 @@ impl TypeInterner {
                 .or_else(|| crate::visitor::object_with_index_shape_id(self, member))
                 .and_then(|sid| {
                     let shape = self.object_shape(sid);
-                    shape
-                        .properties
-                        .binary_search_by_key(&discriminant_prop, |p| p.name)
-                        .ok()
-                        .map(|idx| shape.properties[idx].type_id)
+                    crate::utils::lookup_property(
+                        self,
+                        &shape.properties,
+                        Some(sid),
+                        discriminant_prop,
+                    )
+                    .map(|p| p.type_id)
                 });
 
             if let Some(v) = val {

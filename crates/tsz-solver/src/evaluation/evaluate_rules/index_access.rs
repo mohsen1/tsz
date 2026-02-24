@@ -21,10 +21,7 @@ use super::super::evaluate::{
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 use super::apparent::make_apparent_method_type;
-
-fn is_member(name: &str, list: &[&str]) -> bool {
-    list.contains(&name)
-}
+use crate::objects::apparent::is_member;
 
 /// Lazily compute and cache array member types (length + apparent methods).
 /// Shared between `ArrayKeyVisitor` and `TupleKeyVisitor`.
