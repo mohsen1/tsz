@@ -477,6 +477,45 @@ pub(crate) const fn operator_to_str(op: u16) -> &'static str {
     }
 }
 
+/// Scan forward from `start` past whitespace and comments to find the actual
+/// token start. Used because AST node positions include leading trivia.
+///
+/// Handles single-line (`//`) and multi-line (`/* */`) comments.
+/// Returns `start` unchanged if `source_text` is `None`.
+pub(crate) fn skip_trivia_forward(source_text: Option<&str>, start: u32, end: u32) -> u32 {
+    let Some(text) = source_text else {
+        return start;
+    };
+    let bytes = text.as_bytes();
+    let mut pos = start as usize;
+    let end = std::cmp::min(end as usize, bytes.len());
+    while pos < end {
+        match bytes[pos] {
+            b' ' | b'\t' | b'\r' | b'\n' => pos += 1,
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                // Single-line comment: skip to end of line
+                pos += 2;
+                while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                    pos += 1;
+                }
+            }
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                // Multi-line comment: skip to */
+                pos += 2;
+                while pos + 1 < end {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        break;
+                    }
+                    pos += 1;
+                }
+            }
+            _ => break,
+        }
+    }
+    pos as u32
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;
