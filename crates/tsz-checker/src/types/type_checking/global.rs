@@ -5,7 +5,7 @@
 //! - Registering and priming boxed types
 //! - Checking for feature-specific global types
 //!
-//! Duplicate identifier checking lives in `type_checking_duplicate_identifiers`.
+//! Duplicate identifier checking lives in `type_checking/duplicate_identifiers`.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;

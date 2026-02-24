@@ -574,8 +574,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "assignment checker should not manually orchestrate application-symbol preconditions"
     );
 
-    let type_checking_src = fs::read_to_string("src/types/type_checking.rs")
-        .expect("failed to read src/types/type_checking.rs for architecture guard");
+    let type_checking_src = fs::read_to_string("src/types/type_checking/core.rs")
+        .expect("failed to read src/types/type_checking/core.rs for architecture guard");
     assert!(
         type_checking_src.contains("check_assignable_or_report("),
         "binding/default-value assignability should route through check_assignable_or_report"
