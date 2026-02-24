@@ -27,15 +27,15 @@ use super::node::{
     VariableDeclarationData, WrappedTypeData,
 };
 use super::syntax_kind_ext::{
-    ARRAY_BINDING_PATTERN, ARROW_FUNCTION, AS_EXPRESSION, BLOCK, CLASS_DECLARATION,
-    CLASS_EXPRESSION, CONSTRUCTOR, DEBUGGER_STATEMENT, ENUM_DECLARATION, EXPORT_ASSIGNMENT,
-    EXPORT_DECLARATION, EXPORT_SPECIFIER, EXPRESSION_STATEMENT, FUNCTION_DECLARATION,
-    FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_TYPE, INDEX_SIGNATURE,
-    INTERFACE_DECLARATION, METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION,
-    NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN, PARAMETER,
-    PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION, PROPERTY_SIGNATURE, SATISFIES_EXPRESSION,
-    SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION, TYPE_PREDICATE, VARIABLE_DECLARATION,
-    VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
+    ARRAY_BINDING_PATTERN, ARROW_FUNCTION, AS_EXPRESSION, BINARY_EXPRESSION, BLOCK,
+    CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, DEBUGGER_STATEMENT, ENUM_DECLARATION,
+    EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, EXPRESSION_STATEMENT,
+    FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_TYPE,
+    INDEX_SIGNATURE, INTERFACE_DECLARATION, METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK,
+    MODULE_DECLARATION, NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN,
+    PARAMETER, PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
+    SATISFIES_EXPRESSION, SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION, TYPE_PREDICATE,
+    VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
 impl NodeArena {
@@ -200,6 +200,41 @@ impl NodeArena {
                 idx = paren.expression;
                 continue;
             }
+            return idx;
+        }
+        idx
+    }
+
+    /// Skip through parenthesized, non-null assertion, and comma-expression wrappers.
+    ///
+    /// Unwraps `(expr)`, `expr!`, and comma expressions (`(a, b)`).
+    /// Uses a bounded loop (max 100 iterations) to guard against pathological input.
+    #[must_use]
+    pub fn skip_parenthesized_and_assertions_and_comma(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            let Some(node) = self.get(idx) else {
+                return idx;
+            };
+            if node.kind == PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.get_parenthesized(node)
+            {
+                idx = paren.expression;
+                continue;
+            }
+            if node.kind == NON_NULL_EXPRESSION
+                && let Some(unary) = self.get_unary_expr_ex(node)
+            {
+                idx = unary.expression;
+                continue;
+            }
+            if node.kind == BINARY_EXPRESSION
+                && let Some(binary) = self.get_binary_expr(node)
+                && binary.operator_token == tsz_scanner::SyntaxKind::CommaToken as u16
+            {
+                idx = binary.right;
+                continue;
+            }
+
             return idx;
         }
         idx

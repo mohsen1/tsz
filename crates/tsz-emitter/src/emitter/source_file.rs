@@ -113,6 +113,7 @@ impl<'a> Printer<'a> {
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_end: Option<u32> = None;
+            let mut prev_was_erased = false;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     let stmt_token_end =
@@ -130,8 +131,39 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        let range_start = if let Some(pe) = prev_end {
-                            pe
+                        let range_start = if prev_was_erased {
+                            if let Some(pe) = prev_end {
+                                pe
+                            } else {
+                                first_erased_stmt_pos = Some(stmt_node.pos);
+                                stmt_node.pos
+                            }
+                        } else if let Some(pe) = prev_end {
+                            // Previous statement was non-erased. Don't capture its
+                            // trailing same-line comments. Start the erased range at
+                            // the first newline after the previous statement's end,
+                            // so trailing comments on its line are preserved.
+                            if let Some(text) = self.source_text {
+                                let bytes = text.as_bytes();
+                                let mut p = pe as usize;
+                                while p < bytes.len() && bytes[p] != b'\n' && bytes[p] != b'\r' {
+                                    p += 1;
+                                }
+                                // Skip past the newline
+                                if p < bytes.len() {
+                                    if bytes[p] == b'\r'
+                                        && p + 1 < bytes.len()
+                                        && bytes[p + 1] == b'\n'
+                                    {
+                                        p += 2;
+                                    } else {
+                                        p += 1;
+                                    }
+                                }
+                                p as u32
+                            } else {
+                                stmt_node.pos
+                            }
                         } else {
                             // For the first erased statement, preserve file-level
                             // comments by starting the erased range at the statement
@@ -143,6 +175,7 @@ impl<'a> Printer<'a> {
                         erased_ranges.push((range_start, stmt_token_end));
                     }
                     prev_end = Some(stmt_token_end);
+                    prev_was_erased = is_erased;
                 }
             }
             if !erased_ranges.is_empty() {
@@ -512,7 +545,8 @@ impl<'a> Printer<'a> {
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         let mut has_runtime_module_syntax = false;
         let mut has_deferred_empty_export = false;
-        for &stmt_idx in &source.statements.nodes {
+        let stmts_slice = &source.statements.nodes;
+        for (stmt_i, &stmt_idx) in stmts_slice.iter().enumerate() {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // Skip source-level "use strict" prologue when we already emitted it
                 // at the correct position (before __esModule/exports preamble).
@@ -625,6 +659,10 @@ impl<'a> Printer<'a> {
                     // We use the end-of-line of the last token as the boundary:
                     //   - Comments on the same line as the last token → consume (erase)
                     //   - Comments on subsequent lines → keep for the next statement
+                    // However, if the next sibling statement starts on the same line,
+                    // we must NOT consume comments past the next sibling's start position.
+                    // Example: `interface Foo {};  // Error` — the `// Error` belongs
+                    // to the `;` (EmptyStatement), not to the erased interface.
                     let stmt_token_end =
                         self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
                     let line_end = if let Some(text) = self.source_text {
@@ -637,15 +675,32 @@ impl<'a> Printer<'a> {
                     } else {
                         stmt_token_end
                     };
+                    // Cap the boundary: if the next sibling starts before line_end,
+                    // comments after the sibling's start belong to that sibling.
+                    let comment_boundary = if let Some(&next_idx) = stmts_slice.get(stmt_i + 1) {
+                        if let Some(next_node) = self.arena.get(next_idx) {
+                            let next_start =
+                                self.skip_whitespace_forward(next_node.pos, next_node.end);
+                            if next_start < line_end {
+                                next_start
+                            } else {
+                                line_end
+                            }
+                        } else {
+                            line_end
+                        }
+                    } else {
+                        line_end
+                    };
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= line_end {
+                        if c_end <= comment_boundary {
                             self.comment_emit_idx += 1;
                         } else {
                             break;
                         }
                     }
-                    last_erased_stmt_end = Some(line_end);
+                    last_erased_stmt_end = Some(comment_boundary);
                     // Track if this is a shorthand module declaration (no body),
                     // so we can skip the trailing EMPTY_STATEMENT (`;`).
                     last_erased_was_shorthand_module = stmt_node.kind
@@ -690,7 +745,7 @@ impl<'a> Printer<'a> {
                         if c_end <= actual_start {
                             let comment_text =
                                 crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                            self.write(comment_text);
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
                             if c_trailing {
                                 self.write_line();
                             } else if comment_text.starts_with("/*") {
@@ -714,14 +769,10 @@ impl<'a> Printer<'a> {
                 // Use the next statement's pos as upper bound to avoid scanning
                 // into the next statement's trivia (same pattern as emit_block_body).
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let stmts = &source.statements.nodes;
-                    let stmt_i = stmts.iter().position(|&s| s == stmt_idx);
-                    let next_pos = stmt_i.and_then(|i| {
-                        stmts
-                            .get(i + 1)
-                            .and_then(|&next_idx| self.arena.get(next_idx))
-                            .map(|n| n.pos)
-                    });
+                    let next_pos = stmts_slice
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map(|n| n.pos);
                     let upper_bound = next_pos.unwrap_or(stmt_node.end);
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
@@ -769,7 +820,7 @@ impl<'a> Printer<'a> {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                 let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                self.write(comment_text);
+                self.write_comment_with_reindent(comment_text, Some(c_pos));
                 if c_trailing {
                     self.write_line();
                 }

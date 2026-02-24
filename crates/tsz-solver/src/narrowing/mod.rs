@@ -46,9 +46,9 @@ use crate::types::*;
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
 use crate::utils::{TypeIdExt, union_or_single};
 use crate::visitor::{
-    index_access_parts, intersection_list_id, is_function_type_db, is_object_like_type_db,
-    lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
-    type_param_info, union_list_id,
+    index_access_parts, intersection_list_id, is_function_type_through_type_constraints,
+    is_object_like_type_through_type_constraints, lazy_def_id, literal_value, object_shape_id,
+    object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -967,7 +967,7 @@ impl<'a> NarrowingContext<'a> {
     /// Check if a type is a function type.
     /// Uses the visitor pattern from `solver::visitor`.
     fn is_function_type(&self, type_id: TypeId) -> bool {
-        is_function_type_db(self.db, type_id)
+        is_function_type_through_type_constraints(self.db, type_id)
     }
 
     /// Narrow a type to exclude function-like members (typeof !== "function").
@@ -1005,7 +1005,7 @@ impl<'a> NarrowingContext<'a> {
     /// Check if a type has typeof "object".
     /// Uses the visitor pattern from `solver::visitor`.
     fn is_object_typeof(&self, type_id: TypeId) -> bool {
-        is_object_like_type_db(self.db, type_id)
+        is_object_like_type_through_type_constraints(self.db, type_id)
     }
 
     fn narrow_type_param(&self, source: TypeId, target: TypeId) -> Option<TypeId> {

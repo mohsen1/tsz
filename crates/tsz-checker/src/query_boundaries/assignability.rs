@@ -1,7 +1,11 @@
 use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
-pub(crate) use tsz_solver::type_queries::{AssignabilityEvalKind, ExcessPropertiesKind};
+pub(crate) use tsz_solver::type_queries::{
+    AssignabilityEvalKind, ExcessPropertiesKind, get_allowed_keys, get_keyof_type,
+    get_string_literal_value, get_union_members, is_keyof_type, is_type_parameter_like,
+    keyof_object_properties, map_compound_members,
+};
 
 pub(crate) fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,
