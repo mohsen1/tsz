@@ -3,6 +3,11 @@
 //! Handles renaming symbols across the codebase, including validation,
 //! prepare-rename info (tsserver-compatible), shorthand property expansion,
 //! import specifier handling, and workspace edit generation.
+//!
+//! Also includes linked editing (JSX tag sync) and file rename support.
+
+pub mod file_rename;
+pub mod linked_editing;
 
 use crate::navigation::references::FindReferences;
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
@@ -951,5 +956,5 @@ fn is_non_renamable_builtin(name: &str) -> bool {
 // ===========================================================================
 
 #[cfg(test)]
-#[path = "../tests/rename_tests.rs"]
+#[path = "../../tests/rename_tests.rs"]
 mod rename_tests;

@@ -1480,8 +1480,8 @@ impl Project {
         new_path: &Path,
         result: &mut WorkspaceEdit,
     ) {
-        use crate::file_rename::FileRenameProvider;
         use crate::rename::TextEdit;
+        use crate::rename::file_rename::FileRenameProvider;
         use crate::utils::calculate_new_relative_path;
         use std::path::Path;
 
