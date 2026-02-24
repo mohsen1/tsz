@@ -378,11 +378,11 @@ impl ResolvedCompilerOptions {
         }
 
         // Match tsc's computed moduleResolution defaults exactly:
-        // None/AMD/UMD/System → Classic
+        // None/AMD/UMD/System/ES*/Preserve → Classic
         // CommonJS → Node (node10)
         // NodeNext → NodeNext
         // Node16 → Node16
-        // Everything else (ES2015, ES2020, ES2022, ESNext, Preserve) → Bundler
+        // Everything else (currently, preserve-compatible module kinds) → Classic
         match self.printer.module {
             ModuleKind::None | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
                 ModuleResolutionKind::Classic
@@ -390,7 +390,7 @@ impl ResolvedCompilerOptions {
             ModuleKind::CommonJS => ModuleResolutionKind::Node,
             ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
             ModuleKind::Node16 => ModuleResolutionKind::Node16,
-            _ => ModuleResolutionKind::Bundler,
+            _ => ModuleResolutionKind::Classic,
         }
     }
 }
@@ -2857,6 +2857,28 @@ mod tests {
         assert!(!resolved.checker.module_explicitly_set);
         // Module defaults to ES2015 for es2015+ targets
         assert!(resolved.checker.module.is_es_module());
+    }
+
+    #[test]
+    fn test_effective_module_resolution_defaults_to_classic_for_es_modules() {
+        let json = r#"{"compilerOptions":{"module":"es2015","target":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert_eq!(
+            resolved.effective_module_resolution(),
+            ModuleResolutionKind::Classic
+        );
+    }
+
+    #[test]
+    fn test_effective_module_resolution_prefers_explicit_override() {
+        let json = r#"{"compilerOptions":{"module":"es2015","moduleResolution":"bundler","target":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert_eq!(
+            resolved.effective_module_resolution(),
+            ModuleResolutionKind::Bundler
+        );
     }
 
     #[test]

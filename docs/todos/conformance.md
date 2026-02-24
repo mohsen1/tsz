@@ -162,6 +162,9 @@
   - (b) Add separate `tsc_diagnostic_module_resolution()` helper just for TS2792 decision
 - **Difficulty**: MEDIUM-HIGH
 
+#### Run note (2026-02-24)
+- **Deferred**: `tests/conformance/suite/types` slices for `TS2322/TS2345/TS2339` remain out-of-scope for this pass; they still require cross-layer Solver/Checker compatibility-gate refactors (`query_boundaries`, `CompatChecker`, `Lazy(DefId)`-aware relation traversal).
+
 ### TS2451 — False positives (7 tests)
 - Two patterns:
   - (a) Wrong code choice (TS2451 vs TS2300) for var/let redeclaration conflicts
