@@ -24,7 +24,10 @@ mod format;
 mod inference;
 mod instantiation;
 mod intern;
-pub mod judge;
+pub mod judge {
+    //! Re-exports from `relations::judge` for convenience.
+    pub use crate::relations::judge::*;
+}
 mod narrowing;
 pub mod objects;
 pub mod operations;
@@ -37,7 +40,10 @@ pub mod type_resolver;
 pub mod types;
 pub mod unsoundness_audit;
 pub mod utils;
-pub mod visitor;
+pub mod visitor {
+    //! Re-exports from `visitors::visitor` for convenience.
+    pub use crate::visitors::visitor::*;
+}
 mod visitors;
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
