@@ -426,8 +426,12 @@ fn test_binary_overlap_with_any_unknown_never() {
         BinaryOpResult::Success(TypeId::BOOLEAN)
     ));
 
+    // `never` is the bottom type — any operation on `never` produces `never`, not a type error.
     let never_result = evaluator.evaluate(TypeId::NEVER, TypeId::NUMBER, "===");
-    assert!(matches!(never_result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(
+        never_result,
+        BinaryOpResult::Success(TypeId::NEVER)
+    ));
 }
 
 #[test]
