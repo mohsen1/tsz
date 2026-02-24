@@ -10,9 +10,9 @@ This file tracks concrete work needed to close the remaining "current state vs t
 
 ## In-progress purity gaps
 
-- [ ] Move checker-side `+` chain semantic fast path into solver query/evaluator.
-  - Current location: `crates/tsz-checker/src/types/type_computation_binary.rs`
-  - Target: solver-owned binary op query with checker as orchestration only.
+- [x] Move checker-side `+` chain semantic fast path into solver query/evaluator.
+  - Current location: `crates/tsz-checker/src/types/computation/binary.rs`
+  - Target achieved: `tsz-solver` `BinaryOpEvaluator::evaluate_plus_chain` + checker boundary
 
 - [ ] Move remaining checker-owned condition narrowing policy behind solver-owned narrowing entrypoints.
   - Current location: `crates/tsz-checker/src/flow/control_flow_condition_narrowing.rs`

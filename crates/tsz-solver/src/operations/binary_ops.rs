@@ -548,6 +548,45 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
     }
 
+    /// Evaluate a fast-path `+` chain with only type ids.
+    ///
+    /// Returns `Some(type)` when the chain can be resolved by checking all operands
+    /// share the same primitive class (`number`, `bigint`, `string`) or contain any `any`.
+    /// Returns `None` when normal binary evaluation should continue.
+    pub fn evaluate_plus_chain(&self, operand_types: &[TypeId]) -> Option<TypeId> {
+        if operand_types.len() <= 1 {
+            return None;
+        }
+
+        let mut all_number = true;
+        let mut all_bigint = true;
+        let mut all_string = true;
+        let mut has_any = false;
+
+        for &operand in operand_types.iter() {
+            if operand == TypeId::ERROR {
+                return Some(TypeId::ERROR);
+            }
+
+            all_number &= operand == TypeId::NUMBER;
+            all_bigint &= operand == TypeId::BIGINT;
+            all_string &= operand == TypeId::STRING;
+            has_any |= operand == TypeId::ANY;
+        }
+
+        if all_number {
+            Some(TypeId::NUMBER)
+        } else if all_bigint {
+            Some(TypeId::BIGINT)
+        } else if all_string {
+            Some(TypeId::STRING)
+        } else if has_any {
+            Some(TypeId::ANY)
+        } else {
+            None
+        }
+    }
+
     /// Evaluate the + operator (can be string concatenation or addition).
     fn evaluate_plus(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
         // Don't emit errors for unknown types - prevents cascading errors
