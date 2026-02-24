@@ -677,14 +677,6 @@ impl IRNode {
         }
     }
 
-    /// Create an object literal with source range for formatting
-    pub const fn object_with_source(props: Vec<IRProperty>, source_range: (u32, u32)) -> Self {
-        Self::ObjectLiteral {
-            properties: props,
-            source_range: Some(source_range),
-        }
-    }
-
     /// Create an empty object literal
     pub const fn empty_object() -> Self {
         Self::ObjectLiteral {
@@ -723,15 +715,6 @@ impl IRNode {
     pub const fn sequence(nodes: Vec<Self>) -> Self {
         Self::Sequence(nodes)
     }
-
-    /// Create a new expression: `new Constructor(args)`
-    pub fn new_expr(callee: Self, args: Vec<Self>, explicit_args: bool) -> Self {
-        Self::NewExpr {
-            callee: Box::new(callee),
-            arguments: args,
-            explicit_arguments: explicit_args,
-        }
-    }
 }
 
 impl IRParam {
@@ -764,33 +747,6 @@ impl IRProperty {
             key: IRPropertyKey::Identifier(key.into()),
             value,
             kind: IRPropertyKind::Init,
-        }
-    }
-
-    /// Create a property with string literal key: `{ "key": value }`
-    pub fn init_string(key: impl Into<String>, value: IRNode) -> Self {
-        Self {
-            key: IRPropertyKey::StringLiteral(key.into()),
-            value,
-            kind: IRPropertyKind::Init,
-        }
-    }
-
-    /// Create a getter property
-    pub fn getter(key: impl Into<String>, get: IRNode) -> Self {
-        Self {
-            key: IRPropertyKey::Identifier(key.into()),
-            value: get,
-            kind: IRPropertyKind::Get,
-        }
-    }
-
-    /// Create a setter property
-    pub fn setter(key: impl Into<String>, set: IRNode) -> Self {
-        Self {
-            key: IRPropertyKey::Identifier(key.into()),
-            value: set,
-            kind: IRPropertyKind::Set,
         }
     }
 }

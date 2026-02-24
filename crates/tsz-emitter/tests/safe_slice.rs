@@ -28,27 +28,3 @@ fn test_safe_slice_unicode() {
     // Invalid boundary should return empty
     assert_eq!(slice(s, 7, 9), ""); // Mid-emoji
 }
-
-#[test]
-fn test_safe_slice_from_to() {
-    let s = "hello";
-    assert_eq!(slice_from(s, 2), "llo");
-    assert_eq!(slice_to(s, 3), "hel");
-    assert_eq!(slice_from(s, 10), "");
-}
-
-#[test]
-fn test_char_at() {
-    let s = "hello 🦀";
-    assert_eq!(char_at(s, 0), Some('h'));
-    assert_eq!(char_at(s, 6), Some('🦀'));
-    assert_eq!(char_at(s, 100), None);
-}
-
-#[test]
-fn test_byte_at() {
-    let s = "hello";
-    assert_eq!(byte_at(s, 0), Some(b'h'));
-    assert_eq!(byte_at(s, 4), Some(b'o'));
-    assert_eq!(byte_at(s, 10), None);
-}

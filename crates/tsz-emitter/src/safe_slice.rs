@@ -20,50 +20,6 @@ pub fn slice(s: &str, start: usize, end: usize) -> &str {
     &s[start..end]
 }
 
-/// Safely slice a string from a start position to the end.
-pub fn slice_from(s: &str, start: usize) -> &str {
-    if start >= s.len() {
-        return "";
-    }
-
-    if !s.is_char_boundary(start) {
-        return "";
-    }
-
-    &s[start..]
-}
-
-/// Safely slice a string from the beginning to an end position.
-pub fn slice_to(s: &str, end: usize) -> &str {
-    if end > s.len() {
-        return s;
-    }
-
-    if !s.is_char_boundary(end) {
-        return "";
-    }
-
-    &s[..end]
-}
-
-/// Get a character at a byte position, if valid.
-pub fn char_at(s: &str, pos: usize) -> Option<char> {
-    if pos >= s.len() {
-        return None;
-    }
-
-    if !s.is_char_boundary(pos) {
-        return None;
-    }
-
-    s[pos..].chars().next()
-}
-
-/// Get a byte at a position, returning None if out of bounds.
-pub fn byte_at(s: &str, pos: usize) -> Option<u8> {
-    s.as_bytes().get(pos).copied()
-}
-
 #[cfg(test)]
 #[path = "../tests/safe_slice.rs"]
 mod tests;
