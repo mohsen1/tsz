@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9921/13623 = 72.8% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9923/13623 = 72.8% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Optional chaining unnecessary temp vars for simple identifiers + extra `)` fix** (+6 JS):
+  `emit_optional_method_call_expression` in `expressions.rs` was allocating temp variables even
+  when the base expression was a simple identifier (no side effects). For example, `o?.b()` emitted
+  `(_a = o) === null || _a === void 0 ? void 0 : _a.b()` instead of the correct
+  `o === null || o === void 0 ? void 0 : o.b()`. Similarly, `o.b?.()` used two temps
+  `(_a = (_b = o).b)...call(_b)` instead of one `(_a = o.b)...call(o)`. Fix: check
+  `is_simple_nullish_expression(access.expression)` in both the `!has_optional_call_token` and
+  `has_optional_call_token` paths. When simple, use the identifier directly — no temp for the
+  first path, and only one temp (for the method capture) in the second path. Also fixed the
+  pre-existing extra `)` bug: `emit_optional_call_tail_arguments` already writes the closing `)`
+  for `.call(`, so the trailing `self.write(")")` in both simple and complex paths was redundant.
+  Three unit tests added.
+  Tests fixed: `callChain`, `callChain.2`, `callChain.3`, and others.
+  JS: 9917→9923, DTS unchanged, zero regressions.
+
+### Previously Fixed This Session (2026-02-24)
 - **super optional chaining emit used wrong temp-capture pattern** (+tests):
   `super.method?.()` and `super["method"]?.()` in classes were downleveled (ES2016-ES2019)
   as `(_b = (_a = super).method) ... _b.call(_a)` — invalid JS because `super` cannot be
@@ -26,9 +42,15 @@
 - **Comment displacement** (~138 sole-fix tests): Still the largest single category. Each
   sub-pattern (decorator comments, trailing comments on signatures, etc.) needs individual work.
 - **Indentation-only diffs** (~66 tests): Mostly comment displacement causing indent changes.
-- **Extra `)` in non-super optional chaining** (pre-existing): The non-super path in
-  `emit_optional_method_call_expression` has an extra closing paren at line 471. Not fixed
-  this session to keep the change minimal; tracked for future fix.
+- **Extra `)` in non-super optional chaining** — FIXED (see above).
+- **Optional chaining temp variable letter ordering** (~2 tests): `propertyAccessChain` and
+  `elementAccessChain` emit the correct structure but temp variable letters are in a different
+  order than tsc (e.g., `_c, _d` vs `_d, _c`). Caused by inner/outer temp allocation ordering
+  difference. Cosmetic only — semantically correct.
+- **Missing parens around optional chain result in ternary** (~1 test in `propertyAccessChain`):
+  `o1?.b ? 1 : 0` lowered to `o1 === null ... : o1.b ? 1 : 0` — needs parens around the
+  entire nullish check to preserve ternary precedence: `(o1 === null ... : o1.b) ? 1 : 0`.
+  Requires detecting when an optional chain result is used as a ternary condition and wrapping.
 
 ### Fixed Previous Session
 - **CJS-exported namespace IIFE used ES5 emitter at ES2015+ targets, converting let/const to var** (+18 JS):
