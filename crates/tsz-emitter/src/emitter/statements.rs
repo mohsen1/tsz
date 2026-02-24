@@ -424,9 +424,7 @@ impl<'a> Printer<'a> {
         // (targets below ES2025). At ES2025+, `using` passes through as-is and
         // needs a normal trailing semicolon like var/let/const.
         let using_is_lowered = has_using_declaration && !self.ctx.options.target.supports_es2025();
-        if !using_is_lowered
-            && !self.should_omit_variable_statement_trailing_semicolon(&var_stmt.declarations)
-        {
+        if !using_is_lowered {
             self.map_trailing_semicolon(node);
             self.write_semicolon();
         }
@@ -523,43 +521,6 @@ impl<'a> Printer<'a> {
             }
         }
         true
-    }
-
-    fn should_omit_variable_statement_trailing_semicolon(&self, declarations: &NodeList) -> bool {
-        if !self.is_current_root_js_source {
-            return false;
-        }
-
-        let Some(first_list_idx) = declarations.nodes.first() else {
-            return false;
-        };
-        if declarations.nodes.len() != 1 {
-            return false;
-        }
-
-        let Some(first_list_node) = self.arena.get(*first_list_idx) else {
-            return false;
-        };
-        let Some(first_list) = self.arena.get_variable(first_list_node) else {
-            return false;
-        };
-        if first_list.declarations.nodes.len() != 1 {
-            return false;
-        }
-
-        let Some(first_decl_idx) = first_list.declarations.nodes.first() else {
-            return false;
-        };
-        let Some(first_decl_node) = self.arena.get(*first_decl_idx) else {
-            return false;
-        };
-        let Some(first_decl) = self.arena.get_variable_declaration(first_decl_node) else {
-            return false;
-        };
-        let Some(initializer) = self.arena.get(first_decl.initializer) else {
-            return false;
-        };
-        initializer.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
 
     /// Collect variable names from a declaration list for `CommonJS` export
