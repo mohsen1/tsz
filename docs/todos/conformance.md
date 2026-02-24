@@ -924,4 +924,30 @@ Called from method, constructor, and function declaration checking paths.
 - TS2341 message text parity (`class 'D'` vs `class 'D<T>'`) in memberFunctionsWithPublicPrivateOverloads.ts
 - Many analyze-reported "NOT IMPLEMENTED" codes (TS2875, TS2497, etc.) already pass at 100% when run individually — the analyze tool reports against a different slice.
 
-## Current score: 7964/12574 (63.3%) — full suite
+## Session 2026-02-24 — Offset 25% (offset 4800)
+
+**Score**: 7976/12574 (63.4%) — full suite (+12 from baseline 7964)
+
+### Fixed
+
+- **TS2683 (+12 tests)**: "'this' implicitly has type 'any' because it does not have a type annotation."
+  When `this` is used inside a regular (non-arrow) function nested within a class method or
+  constructor, tsc emits TS2683 because the function creates its own `this` binding. We were
+  incorrectly returning the enclosing class's `this` type via both `current_this_type()` and
+  `enclosing_class` context, suppressing the diagnostic.
+  Fix: Added `is_this_in_nested_function_inside_class()` in `scope_finder.rs` — checks if the
+  nearest non-arrow function boundary is a FUNCTION_EXPRESSION or FUNCTION_DECLARATION (not a
+  class member like METHOD_DECLARATION/CONSTRUCTOR/GET_ACCESSOR/SET_ACCESSOR). When detected,
+  the class `this` type is skipped and TS2683 is emitted. Changed `dispatch.rs` to check this
+  before using `current_this_type()` and `enclosing_class` fallback.
+  7 unit tests. First-6000: 4013 (+1). Full suite: 7976 (+12).
+
+### Investigated but deferred
+
+- **TS2661 (4 tests)**: "Cannot export '{0}'. Only local declarations can be exported from a module."
+  Re-export of non-local declarations in multi-file tests. Requires cross-file symbol resolution.
+- **TS2683 remaining**: JS file tests (`thisInFunctionCallJs.ts`) — tsc suppresses TS2683 in JS
+  files due to JSDoc `@this` inference. We already suppress TS2683 in JS files entirely.
+- **TS6196 (3 tests)**: Already implemented; test failures are due to other codes in same test.
+
+## Current score: 7976/12574 (63.4%) — full suite
