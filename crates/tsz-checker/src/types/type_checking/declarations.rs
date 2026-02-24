@@ -1292,6 +1292,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the declaration name as a string text.
+    ///
+    /// Combines `get_declaration_name_node` with identifier/literal text extraction.
+    /// Handles both regular identifiers and string literal module names.
+    pub(crate) fn get_declaration_name_text(&self, decl_idx: NodeIndex) -> Option<String> {
+        let name_idx = self.get_declaration_name_node(decl_idx)?;
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+            return Some(lit.text.clone());
+        }
+        None
+    }
+
     // Interface merge compatibility, name matching, property name utilities,
     // and node containment are in `type_checking/declarations_utils.rs`.
 }
