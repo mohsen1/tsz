@@ -128,10 +128,13 @@ run_with_capture() {
 
   local full_cmd=("$@")
   if [[ -n "$TIMEOUT_BIN" ]]; then
-    full_cmd=("$TIMEOUT_BIN" "$secs" "$@")
+    # --foreground: keep command in the foreground process group so it can
+    # access the TTY.  Without this, timeout creates a new process group and
+    # programs that probe stdin (like claude CLI) receive SIGTTIN and freeze.
+    full_cmd=("$TIMEOUT_BIN" --foreground "$secs" "$@")
   fi
 
-  "${full_cmd[@]}" > >(tee "$outfile") 2>&1
+  "${full_cmd[@]}" < /dev/null > >(tee "$outfile") 2>&1
   local rc=$?
   sleep 0.1  # let tee flush remaining output
   return $rc
