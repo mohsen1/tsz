@@ -56,7 +56,21 @@ pub fn prepare_test_dir(
     let symlink_map = parse_symlink_associations(content);
 
     // Detect if any filename uses absolute (virtual root) paths
-    let has_absolute_filenames = filenames.iter().any(|(name, _)| name.starts_with('/'));
+    // Includes both Unix-style (/foo) and Windows-style (A:/foo) absolute paths
+    let has_absolute_filenames = filenames
+        .iter()
+        .any(|(name, _)| name.starts_with('/') || is_windows_absolute_path(name));
+
+    // Check if ALL filenames are Windows-style absolute paths (e.g., A:/foo/bar.ts).
+    // These represent paths on a separate drive root that cannot exist on Unix.
+    // tsc's virtual filesystem can't find files at these paths via include patterns,
+    // so it emits TS18003 ("No inputs found"). We replicate this by not writing
+    // Windows-path files, leaving the temp dir empty.
+    let all_windows_paths = !filenames.is_empty()
+        && filenames
+            .iter()
+            .filter(|(name, _)| !name.replace('\\', "/").ends_with("tsconfig.json"))
+            .all(|(name, _)| is_windows_absolute_path(name));
 
     // Path to TypeScript test harness lib files (for /.lib/ references)
     let ts_tests_lib_dir = std::path::Path::new("TypeScript/tests/lib");
@@ -72,6 +86,12 @@ pub fn prepare_test_dir(
         std::fs::write(&main_file, stripped_content)?;
     } else {
         for (filename, file_content) in filenames {
+            // Skip Windows-style absolute paths when ALL non-tsconfig files use them.
+            // These paths refer to a different drive root that can't exist on Unix;
+            // tsc doesn't find these files and emits TS18003.
+            if all_windows_paths && is_windows_absolute_path(filename) {
+                continue;
+            }
             let sanitized = filename
                 .replace("..", "_")
                 .trim_start_matches('/')
@@ -1309,6 +1329,20 @@ pub fn parse_batch_output(
         crashed: false,
         options,
     }
+}
+
+/// Check if a filename is a Windows-style absolute path (e.g., `A:/foo/bar.ts`, `C:\dir\file.ts`).
+///
+/// TSC conformance tests use Windows drive-letter paths to test cross-drive scenarios.
+/// On Unix, these paths cannot represent real filesystem locations — tsc's virtual
+/// filesystem also can't find files at these paths via `include` patterns, so it
+/// emits TS18003 ("No inputs found in config file").
+fn is_windows_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
 }
 
 #[cfg(test)]
