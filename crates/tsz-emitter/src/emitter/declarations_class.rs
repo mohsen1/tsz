@@ -610,6 +610,25 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        // Compute the class body's closing `}` position so the last member's
+        // trailing comment scan doesn't overshoot into comments belonging to
+        // the closing brace line (same pattern as namespace IIFE emitter).
+        let class_body_close_pos = self
+            .source_text
+            .map(|text| {
+                let end = std::cmp::min(node.end as usize, text.len());
+                let bytes = text.as_bytes();
+                let mut pos = end;
+                while pos > 0 {
+                    pos -= 1;
+                    if bytes[pos] == b'}' {
+                        return pos as u32;
+                    }
+                }
+                node.end
+            })
+            .unwrap_or(node.end);
+
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip property declarations that were lowered
             if needs_class_field_lowering
@@ -979,6 +998,8 @@ impl<'a> Printer<'a> {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     // Use the next member's pos as upper bound to avoid scanning
                     // past the current member into the next member's trivia.
+                    // For the last member, use the class body's closing `}` position
+                    // so we don't steal comments that belong on the closing brace line.
                     let next_member_pos = class
                         .members
                         .nodes
@@ -987,7 +1008,14 @@ impl<'a> Printer<'a> {
                         .map(|n| n.pos);
                     let upper = next_member_pos.unwrap_or(member_node.end);
                     let token_end = self.find_token_end_before_trivia(member_node.pos, upper);
-                    self.emit_trailing_comments(token_end);
+                    // For the last member, cap trailing comment scan at the class
+                    // body's closing `}` to avoid stealing comments that belong
+                    // on the closing brace line.
+                    if next_member_pos.is_none() {
+                        self.emit_trailing_comments_before(token_end, class_body_close_pos);
+                    } else {
+                        self.emit_trailing_comments(token_end);
+                    }
                 }
                 self.write_line();
                 if emit_standalone_class_semicolon {

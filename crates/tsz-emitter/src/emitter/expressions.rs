@@ -754,26 +754,60 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
 
         if newline_before_question {
-            // Newline between condition and `?` — e.g.:
-            //   var v = a
-            //       ? b
-            //       : c;
-            self.write_line();
-            self.increase_indent();
-            self.write("? ");
-            self.emit(cond.when_true);
-            if newline_before_colon {
+            // Check if `?` is on the condition line (Case A) or the next line (Case B).
+            // Case A: `a ?\n    b` → `?` before newline → emit `a ?` then newline + indent
+            // Case B: `a\n    ? b` → `?` after newline → emit `a` then newline + indent + `?`
+            let question_on_condition_line =
+                self.question_on_condition_line(cond.condition, cond.when_true);
+            if question_on_condition_line {
+                // Case A: `?` trails on condition line — e.g.:
+                //   var v = a ?
+                //       b : c;
+                self.write(" ?");
                 self.write_line();
-                self.write(": ");
+                self.increase_indent();
+                self.emit(cond.when_true);
+                if newline_before_colon {
+                    let colon_on_true_line =
+                        self.colon_on_true_line(cond.condition, cond.when_false);
+                    if colon_on_true_line {
+                        // `:` trails on when_true line: `b :\n    c`
+                        self.write(" :");
+                        self.write_line();
+                        self.emit(cond.when_false);
+                    } else {
+                        // `:` on new line: `b\n    : c`
+                        self.write_line();
+                        self.write(": ");
+                        self.emit(cond.when_false);
+                    }
+                } else {
+                    self.write(" : ");
+                    self.emit(cond.when_false);
+                }
+                self.decrease_indent();
             } else {
-                self.write(" : ");
+                // Case B: `?` starts on new line — e.g.:
+                //   var v = a
+                //       ? b
+                //       : c;
+                self.write_line();
+                self.increase_indent();
+                self.write("? ");
+                self.emit(cond.when_true);
+                if newline_before_colon {
+                    self.write_line();
+                    self.write(": ");
+                } else {
+                    self.write(" : ");
+                }
+                self.emit(cond.when_false);
+                self.decrease_indent();
             }
-            self.emit(cond.when_false);
-            self.decrease_indent();
         } else if newline_before_colon {
             self.write(" ? ");
             self.emit(cond.when_true);
-            let colon_on_new_line = self.colon_starts_new_line(cond.when_true, cond.when_false);
+            let colon_on_new_line = !self.colon_on_true_line(cond.condition, cond.when_false);
             if colon_on_new_line {
                 // Newline before `:` — e.g.:
                 //   var v = a ? b
@@ -805,19 +839,23 @@ impl<'a> Printer<'a> {
 
     /// Detect whether the source text has newlines between the parts of a
     /// conditional expression. Returns (`newline_before_question`, `newline_before_colon`).
+    ///
+    /// The parser's node.end extends past trailing trivia, so we scan the
+    /// source text from condition.end forward, tracking ternary nesting depth,
+    /// to find the OUTER `?` and `:` positions reliably.
     fn detect_conditional_newlines(
         &self,
         condition: NodeIndex,
         when_true: NodeIndex,
-        when_false: NodeIndex,
+        _when_false: NodeIndex,
     ) -> (bool, bool) {
         let Some(text) = self.source_text else {
             return (false, false);
         };
         let cond_node = self.arena.get(condition);
         let true_node = self.arena.get(when_true);
-        let false_node = self.arena.get(when_false);
 
+        // For the `?`: check if there's a newline between condition.end and when_true.pos.
         let newline_before_question = match (cond_node, true_node) {
             (Some(c), Some(t)) => {
                 let start = std::cmp::min(c.end as usize, text.len());
@@ -827,42 +865,179 @@ impl<'a> Printer<'a> {
             _ => false,
         };
 
-        let newline_before_colon = match (true_node, false_node) {
-            (Some(t), Some(f)) => {
-                let start = std::cmp::min(t.end as usize, text.len());
-                let end = std::cmp::min(f.pos as usize, text.len());
-                start < end && text[start..end].contains('\n')
-            }
-            _ => false,
-        };
+        // For the `:`: scan forward from condition.end to find the outer `:` at
+        // ternary depth 0, then check for a newline before OR after it.
+        // "Before" catches `b\n  : c`; "after" catches `b :\n  c`.
+        let newline_before_colon = cond_node.is_some_and(|c| {
+            let (_, colon_info) = find_outer_ternary_operators(text, c.end as usize);
+            colon_info.is_some_and(|(colon_pos, has_newline_before)| {
+                if has_newline_before {
+                    return true;
+                }
+                // Also check for newlines AFTER the colon (e.g., `b :\n  c`)
+                let bytes = text.as_bytes();
+                let mut j = colon_pos + 1;
+                while j < bytes.len() {
+                    match bytes[j] {
+                        b'\n' | b'\r' => return true,
+                        b' ' | b'\t' => j += 1,
+                        _ => return false,
+                    }
+                }
+                false
+            })
+        });
 
         (newline_before_question, newline_before_colon)
     }
 
-    /// Check whether the `:` token in a conditional expression starts on a new
-    /// line (relative to `when_true`'s end). This determines formatting:
-    ///   `a ? b\n    : c`  (colon on new line)  vs  `a ? b :\n    c`  (colon trailing)
-    fn colon_starts_new_line(&self, when_true: NodeIndex, when_false: NodeIndex) -> bool {
+    /// Check whether the `?` token in a conditional expression is on the
+    /// condition's line (before the newline) or on the next line.
+    /// Returns `true` for `a ?\n  b` (Case A), `false` for `a\n  ? b` (Case B).
+    fn question_on_condition_line(&self, condition: NodeIndex, _when_true: NodeIndex) -> bool {
         let Some(text) = self.source_text else {
             return false;
         };
-        let (Some(t), Some(f)) = (self.arena.get(when_true), self.arena.get(when_false)) else {
+        let Some(c) = self.arena.get(condition) else {
             return false;
         };
-        let start = t.end as usize;
-        let end = std::cmp::min(f.pos as usize, text.len());
-        if start >= end {
+        let (q_info, _) = find_outer_ternary_operators(text, c.end as usize);
+        // `?` is on condition line if found AND no newline before it
+        q_info.is_some_and(|(_, has_newline_before)| !has_newline_before)
+    }
+
+    /// Check whether the `:` token in a conditional expression is on the
+    /// `when_true` expression's line (before the newline), as in `b :\n  c`.
+    /// Returns `true` for trailing colon: `b :\n  c`.
+    /// Returns `false` for leading colon: `b\n  : c`.
+    fn colon_on_true_line(&self, condition: NodeIndex, _when_false: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
             return false;
-        }
-        let region = &text[start..end];
-        // Find the newline and colon positions
-        let newline_pos = region.find('\n');
-        let colon_pos = region.find(':');
-        match (newline_pos, colon_pos) {
-            (Some(nl), Some(c)) => nl < c, // newline comes before colon
-            _ => false,
+        };
+        let Some(c) = self.arena.get(condition) else {
+            return false;
+        };
+        let (_, colon_info) = find_outer_ternary_operators(text, c.end as usize);
+        // `:` is on true line if found AND no newline before it
+        colon_info.is_some_and(|(_, has_newline_before)| !has_newline_before)
+    }
+}
+
+/// `(position, has_newline_before)` for each ternary operator found.
+type TernaryOpInfo = Option<(usize, bool)>;
+
+/// Scan forward from `start_pos` in the source text to find the outer `?` and `:`
+/// operators of a ternary expression, tracking nested ternary depth.
+/// Returns `(question_info, colon_info)` where each is `Option<(pos, has_newline_before)>`.
+/// For `?`: `has_newline_before` is true if a newline exists between scan start and `?`.
+/// For `:`: `has_newline_before` is true if a newline exists between the `when_true`
+/// expression's content and `:` — specifically, after the first non-whitespace
+/// character past `?` (to exclude the `?`-to-when_true newline already captured by
+/// `newline_before_question`).
+fn find_outer_ternary_operators(text: &str, start_pos: usize) -> (TernaryOpInfo, TernaryOpInfo) {
+    let bytes = text.as_bytes();
+    let mut i = start_pos;
+    let mut depth: i32 = 0;
+    let mut found_question: Option<(usize, bool)> = None;
+    let mut had_newline = false;
+    // After finding `?`, track whether we've seen the first content char of when_true.
+    // Only count newlines AFTER this point for the colon's `has_newline_before`.
+    let mut seen_content_after_question = false;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' | b'\r' => {
+                if found_question.is_none() || seen_content_after_question {
+                    had_newline = true;
+                }
+                i += 1;
+            }
+            b'?' if depth == 0 && found_question.is_none() => {
+                // Check it's not `?.` (optional chaining)
+                if i + 1 < bytes.len() && bytes[i + 1] == b'.' {
+                    i += 2;
+                    continue;
+                }
+                found_question = Some((i, had_newline));
+                had_newline = false;
+                seen_content_after_question = false;
+                depth = 0;
+                i += 1;
+            }
+            b'?' => {
+                // Nested ternary `?`
+                if found_question.is_some() {
+                    seen_content_after_question = true;
+                }
+                depth += 1;
+                i += 1;
+            }
+            b':' if depth == 0 && found_question.is_some() => {
+                return (found_question, Some((i, had_newline)));
+            }
+            b':' if depth > 0 => {
+                depth -= 1;
+                i += 1;
+            }
+            b'\'' | b'"' | b'`' => {
+                // Skip string literals
+                if found_question.is_some() {
+                    seen_content_after_question = true;
+                }
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            b'(' | b'[' | b'{' => {
+                // Skip balanced brackets (these can contain `:` that isn't ours)
+                if found_question.is_some() {
+                    seen_content_after_question = true;
+                }
+                i += 1;
+                let mut bracket_depth = 1i32;
+                while i < bytes.len() && bracket_depth > 0 {
+                    match bytes[i] {
+                        b'(' | b'[' | b'{' => bracket_depth += 1,
+                        b')' | b']' | b'}' => bracket_depth -= 1,
+                        b'\'' | b'"' | b'`' => {
+                            let q = bytes[i];
+                            i += 1;
+                            while i < bytes.len() {
+                                if bytes[i] == b'\\' {
+                                    i += 2;
+                                } else if bytes[i] == q {
+                                    i += 1;
+                                    break;
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            b';' => break, // end of statement
+            _ => {
+                if found_question.is_some() && !matches!(bytes[i], b' ' | b'\t') {
+                    seen_content_after_question = true;
+                }
+                i += 1;
+            }
         }
     }
+    (found_question, None)
 }
 
 #[cfg(test)]
@@ -1512,6 +1687,149 @@ mod tests {
         assert!(
             output.contains("(o === null || o === void 0 ? void 0 : o.a)++"),
             "Lowered optional chain in postfix ++ must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    // =====================================================================
+    // find_outer_ternary_operators unit tests
+    // =====================================================================
+
+    /// Simple ternary: `? b : c` — `?` has no newline before, `:` has no newline before.
+    #[test]
+    fn find_outer_ternary_simple() {
+        use super::find_outer_ternary_operators;
+        let text = " ? b : c;";
+        let (q, c) = find_outer_ternary_operators(text, 0);
+        let (q_pos, q_nl) = q.unwrap();
+        let (c_pos, c_nl) = c.unwrap();
+        assert_eq!(text.as_bytes()[q_pos], b'?');
+        assert!(!q_nl, "no newline before ?");
+        assert_eq!(text.as_bytes()[c_pos], b':');
+        assert!(!c_nl, "no newline before :");
+    }
+
+    /// Newline before `?`: `\n  ? b : c` — `?` has newline, `:` does not.
+    #[test]
+    fn find_outer_ternary_newline_before_question() {
+        use super::find_outer_ternary_operators;
+        let text = "\n  ? b : c;";
+        let (q, c) = find_outer_ternary_operators(text, 0);
+        assert!(q.unwrap().1, "newline before ?");
+        assert!(!c.unwrap().1, "no newline before :");
+    }
+
+    /// Newline before `:`: ` ? b\n  : c` — `?` no newline, `:` has newline.
+    #[test]
+    fn find_outer_ternary_newline_before_colon() {
+        use super::find_outer_ternary_operators;
+        let text = " ? b\n  : c;";
+        let (q, c) = find_outer_ternary_operators(text, 0);
+        assert!(!q.unwrap().1, "no newline before ?");
+        assert!(c.unwrap().1, "newline before :");
+    }
+
+    /// Nested ternary: ` ? b ? d : e : c` — inner `?` and `:` at depth > 0,
+    /// outer `:` at depth 0 after `e`.
+    #[test]
+    fn find_outer_ternary_nested() {
+        use super::find_outer_ternary_operators;
+        let text = " ? b ? d : e : c;";
+        let (q, c) = find_outer_ternary_operators(text, 0);
+        let (q_pos, _) = q.unwrap();
+        let (c_pos, _) = c.unwrap();
+        assert_eq!(q_pos, 1); // first `?`
+        assert_eq!(text.as_bytes()[c_pos], b':');
+        // The outer `:` is the one before `c`, at position 13
+        assert_eq!(&text[c_pos + 2..c_pos + 3], "c");
+    }
+
+    /// Optional chaining `?.` must not be confused with ternary `?`.
+    #[test]
+    fn find_outer_ternary_skips_optional_chain() {
+        use super::find_outer_ternary_operators;
+        let text = "?.foo ? b : c;";
+        let (q, c) = find_outer_ternary_operators(text, 0);
+        let (q_pos, _) = q.unwrap();
+        // The `?.` at position 0 should be skipped; `?` at position 6 is the ternary
+        assert_eq!(q_pos, 6);
+        assert!(c.is_some());
+    }
+
+    // =====================================================================
+    // Case A ternary formatting tests (question on condition line)
+    // =====================================================================
+
+    /// Case A with trailing colon: `a ?\n  b :\n  c` → `a ?\n    b :\n    c`
+    /// This is the conditionalExpressionNewLine7 pattern.
+    #[test]
+    fn conditional_case_a_trailing_colon() {
+        let source = "var v = a ?\n  b :\n  c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a ?\n"),
+            "Case A: `?` must trail on condition line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    b :\n"),
+            "Case A: `:` must trail on when_true line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    c;"),
+            "Case A: when_false must be indented on new line.\nOutput:\n{output}"
+        );
+    }
+
+    /// Case A with same-line colon: `a ?\n  b : c` → `a ?\n    b : c`
+    #[test]
+    fn conditional_case_a_inline_colon() {
+        let source = "var v = a ?\n  b : c;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("a ?\n"),
+            "Case A: `?` must trail on condition line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    b : c;"),
+            "Case A: `:` and when_false inline.\nOutput:\n{output}"
+        );
+    }
+
+    /// Case B with nested ternaries: `a\n  ? b ? d : e\n  : c ? f : g`
+    #[test]
+    fn conditional_case_b_nested_ternaries() {
+        let source = "var v = a\n  ? b ? d : e\n  : c ? f : g;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("    ? b ? d : e\n"),
+            "Case B: nested when_true must be on indented line.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    : c ? f : g;"),
+            "Case B: nested when_false must be on indented line.\nOutput:\n{output}"
         );
     }
 }

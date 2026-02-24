@@ -1004,3 +1004,29 @@ fn function_body_single_line_stays_single_line() {
         "Function body single-line block should stay single-line.\nOutput:\n{output}"
     );
 }
+
+/// Trailing comment scan for the last statement in a block must not overshoot
+/// into comments belonging to the closing `}` line.
+#[test]
+fn trailing_comment_capped_at_block_close_brace() {
+    let source = "function f() {\n    return 1; // return comment\n} // end of function\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    // The statement's trailing comment should stay with the statement
+    assert!(
+        output.contains("return 1; // return comment"),
+        "Statement's trailing comment should be preserved.\nOutput:\n{output}"
+    );
+    // The closing brace comment must NOT be stolen by the statement
+    assert!(
+        !output.contains("return 1; // return comment // end of function"),
+        "Closing brace comment must not be stolen by last statement.\nOutput:\n{output}"
+    );
+}

@@ -188,6 +188,25 @@ impl<'a> Printer<'a> {
             None
         };
 
+        // Compute the block's closing `}` position so the last statement's
+        // trailing comment scan doesn't overshoot into comments belonging to
+        // the closing brace line (same pattern as namespace IIFE emitter).
+        let block_close_pos = self
+            .source_text
+            .map(|text| {
+                let bytes = text.as_bytes();
+                let end = (node.end as usize).min(bytes.len());
+                let mut pos = end;
+                while pos > 0 {
+                    pos -= 1;
+                    if bytes[pos] == b'}' {
+                        return pos as u32;
+                    }
+                }
+                node.end
+            })
+            .unwrap_or(node.end);
+
         // Pre-collect statement indices so we can look up the next statement's
         // position as an upper bound for trailing comment scanning. Our parser sets
         // stmt_node.end past the statement boundary into the next statement's tokens,
@@ -248,7 +267,15 @@ impl<'a> Printer<'a> {
                 };
                 if upper_bound > 0 {
                     let token_end = self.find_token_end_before_trivia(stmt_pos, upper_bound);
-                    self.emit_trailing_comments(token_end);
+                    // For the last statement, cap trailing comment scan at the block's
+                    // closing `}` to avoid stealing comments that belong on the closing
+                    // brace line (same pattern as namespace IIFE emitter).
+                    let is_last = stmt_i + 1 >= stmts.len();
+                    if is_last {
+                        self.emit_trailing_comments_before(token_end, block_close_pos);
+                    } else {
+                        self.emit_trailing_comments(token_end);
+                    }
                 }
                 self.write_line();
             }
