@@ -7,10 +7,10 @@
 //! - Type parameter compatibility in union/intersection contexts
 
 use crate::TypeDatabase;
+use crate::type_queries::data::get_object_shape_id;
 use crate::types::{ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo};
 use crate::visitor::{
-    is_identity_comparable_type, is_literal_type, object_shape_id, object_with_index_shape_id,
-    type_param_info, union_list_id,
+    is_identity_comparable_type, is_literal_type, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -151,7 +151,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_members: &[TypeId],
     ) -> SubtypeResult {
         // Get source object shape — must be an object type
-        let source_shape_id = match get_object_shape(self.interner, source) {
+        let source_shape_id = match get_object_shape_id(self.interner, source) {
             Some(id) => id,
             None => return SubtypeResult::False,
         };
@@ -239,11 +239,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
 // ── Helper functions for discriminated union checking ──
 
-/// Get the object shape id for a type (handles both Object and `ObjectWithIndex`).
-fn get_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
-    object_shape_id(db, type_id).or_else(|| object_with_index_shape_id(db, type_id))
-}
-
 /// Get the constituents of a type. If it's a union, return all members.
 /// Otherwise return a singleton slice.
 fn get_type_constituents(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
@@ -275,7 +270,7 @@ fn get_property_type_of_object(
     type_id: TypeId,
     prop_name: Atom,
 ) -> Option<TypeId> {
-    let shape_id = get_object_shape(db, type_id)?;
+    let shape_id = get_object_shape_id(db, type_id)?;
     let shape = db.object_shape(shape_id);
     let prop = shape
         .properties
@@ -322,7 +317,7 @@ fn is_discriminant_for_union(
     let mut seen_types: Vec<TypeId> = Vec::new();
 
     for &member in target_members {
-        let shape_id = match get_object_shape(db, member) {
+        let shape_id = match get_object_shape_id(db, member) {
             Some(id) => id,
             None => return false, // All members must be object types
         };
