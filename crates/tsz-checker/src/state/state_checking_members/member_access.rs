@@ -1176,10 +1176,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try non-computed property name first
-        if let Some(name) = crate::types_domain::type_checking_queries::get_literal_property_name(
-            self.ctx.arena,
-            name_idx,
-        ) {
+        if let Some(name) =
+            crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, name_idx)
+        {
             return Some(name);
         }
 

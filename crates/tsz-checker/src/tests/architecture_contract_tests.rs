@@ -286,15 +286,15 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "context should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
-    let queries_src = fs::read_to_string("src/types/type_checking_queries.rs")
-        .expect("failed to read src/types/type_checking_queries.rs for architecture guard");
+    let queries_src = fs::read_to_string("src/types/queries/core.rs")
+        .expect("failed to read src/types/queries/core.rs for architecture guard");
     assert!(
         !queries_src.contains("self.ctx.types.intern(TypeData::Lazy("),
-        "type_checking_queries should use solver lazy constructor API, not direct TypeData::Lazy interning"
+        "queries/core should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
     assert!(
         !queries_src.contains("self.ctx.types.intern(TypeData::TypeParameter("),
-        "type_checking_queries should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
+        "queries/core should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
     let state_checking_members_src = fs::read_to_string("src/state/state_checking_members/mod.rs")

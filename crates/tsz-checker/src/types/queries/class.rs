@@ -2,7 +2,7 @@
 //! checking, and class member analysis.
 //!
 //! Library type resolution (`resolve_lib_type_by_name`, `merge_lib_interface_heritage`)
-//! has been extracted to `type_checking_queries_lib_resolution.rs`.
+//! has been extracted to `queries/lib_resolution.rs`.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
