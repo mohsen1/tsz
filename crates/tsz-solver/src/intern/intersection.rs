@@ -73,7 +73,9 @@ impl TypeInterner {
         // canonicalization.
 
         // 1. Check if we have any callables (fast path optimization)
-        let has_callables = flat.iter().any(|&id| self.is_callable_type(id));
+        let has_callables = flat
+            .iter()
+            .any(|&id| crate::type_queries::is_callable_type(self, id));
 
         if !has_callables {
             // Fast path: No callables, sort everything for canonicalization
@@ -88,7 +90,7 @@ impl TypeInterner {
             // This preserves the order of callables as they are extracted
             let mut i = 0;
             while i < flat.len() {
-                if self.is_callable_type(flat[i]) {
+                if crate::type_queries::is_callable_type(self, flat[i]) {
                     callables.push(flat.remove(i));
                 } else {
                     i += 1;
@@ -545,7 +547,7 @@ impl TypeInterner {
 
         // Separate callables from non-callables
         for &member in members {
-            if self.is_callable_type(member) {
+            if crate::type_queries::is_callable_type(self, member) {
                 callables.push(member);
             } else {
                 remaining.push(member);

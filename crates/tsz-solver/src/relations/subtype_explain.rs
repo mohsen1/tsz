@@ -89,22 +89,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
-        // Resolve ref types (interfaces, type aliases) to their structural forms.
+        // Resolve lazy types (interfaces, type aliases) to their structural forms.
         // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
-        let mut resolved_source = self.resolve_ref_type(source);
-        let mut resolved_target = self.resolve_ref_type(target);
+        let mut resolved_source = self.resolve_lazy_type(source);
+        let mut resolved_target = self.resolve_lazy_type(target);
 
         // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
             && let Some(expanded) = self.try_expand_application(app_id)
         {
-            resolved_source = self.resolve_ref_type(expanded);
+            resolved_source = self.resolve_lazy_type(expanded);
         }
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_target)
             && let Some(expanded) = self.try_expand_application(app_id)
         {
-            resolved_target = self.resolve_ref_type(expanded);
+            resolved_target = self.resolve_lazy_type(expanded);
         }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
@@ -224,7 +224,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let subst = TypeSubstitution::from_args(self.interner, params, &[t_elem]);
                     instantiate_type(self.interner, array_base, &subst)
                 };
-                let resolved_inst = self.resolve_ref_type(instantiated);
+                let resolved_inst = self.resolve_lazy_type(instantiated);
                 // The Array interface may resolve to an object shape or a callable shape
                 // (with properties like length, push, concat, etc.)
                 let s_shape = self.interner.object_shape(s_sid);
@@ -271,7 +271,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let subst = TypeSubstitution::from_args(self.interner, params, &[s_elem]);
                     instantiate_type(self.interner, array_base, &subst)
                 };
-                let resolved_inst = self.resolve_ref_type(instantiated);
+                let resolved_inst = self.resolve_lazy_type(instantiated);
                 // The Array interface may resolve to an object shape or a callable shape
                 let t_shape = self.interner.object_shape(t_sid);
                 if let Some(s_obj_sid) = object_shape_id(self.interner, resolved_inst)

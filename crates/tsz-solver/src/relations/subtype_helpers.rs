@@ -21,7 +21,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         for &member in members {
-            let resolved = self.resolve_ref_type(member);
+            let resolved = self.resolve_lazy_type(member);
 
             // Callable requirements must remain explicit intersection members.
             // Collapsing to a merged object target would drop call signatures.
