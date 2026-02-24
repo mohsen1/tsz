@@ -458,8 +458,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if direct_param_vars.contains(&var)
                     && let Some(constraint_ty) = tp.constraint
                     && let Some(constraints) = constraints.as_ref()
-                    && constraints
-                        .lower_bounds.contains(&constraint_ty)
+                    && constraints.lower_bounds.contains(&constraint_ty)
                 {
                     let mut non_constraint_bounds = Vec::new();
                     for bound in &constraints.lower_bounds {
