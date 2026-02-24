@@ -11,7 +11,7 @@ use tsz_common::interner::Atom;
 ///
 /// This function consolidates the previously duplicated `is_numeric_property_name` implementations
 /// from operations.rs, evaluate.rs, subtype.rs, and infer.rs.
-pub fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) -> bool {
+pub(crate) fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) -> bool {
     let prop_name = interner.resolve_atom_ref(name);
     is_numeric_literal_name(prop_name.as_ref())
 }
@@ -21,7 +21,7 @@ pub fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) -> bool
 /// Returns `true` for:
 /// - "`NaN`", "Infinity", "-Infinity"
 /// - Numeric strings that round-trip correctly through JavaScript's number-to-string conversion
-pub fn is_numeric_literal_name(name: &str) -> bool {
+pub(crate) fn is_numeric_literal_name(name: &str) -> bool {
     if name == "NaN" || name == "Infinity" || name == "-Infinity" {
         return true;
     }
@@ -180,7 +180,7 @@ impl TypeIdExt for TypeId {
 ///
 /// This consolidates the duplicated `lookup_property` implementations from
 /// `subtype_rules/objects.rs` and `infer_bct.rs`.
-pub fn lookup_property<'props>(
+pub(crate) fn lookup_property<'props>(
     db: &dyn TypeDatabase,
     props: &'props [PropertyInfo],
     shape_id: Option<ObjectShapeId>,
@@ -203,7 +203,7 @@ pub fn lookup_property<'props>(
 ///
 /// Returns `Some(base)` if all types share the same base, `None` otherwise.
 /// Used by both expression operations (literal widening) and BCT inference (nominal hierarchy).
-pub fn find_common_base_type(
+pub(crate) fn find_common_base_type(
     types: &[TypeId],
     get_base: impl Fn(TypeId) -> Option<TypeId>,
 ) -> Option<TypeId> {
@@ -224,7 +224,7 @@ pub fn find_common_base_type(
 /// `TypeEvaluator`, `CallEvaluator`, and `InferenceContext`.
 ///
 /// Note: `SubtypeChecker` has its own version that respects `exactOptionalPropertyTypes`.
-pub fn optional_property_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
+pub(crate) fn optional_property_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
     if prop.optional {
         db.union2(prop.type_id, TypeId::UNDEFINED)
     } else {
@@ -235,7 +235,7 @@ pub fn optional_property_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> Typ
 /// Get the effective write type of a property, adding `undefined` if the property is optional.
 ///
 /// Similar to [`optional_property_type`] but uses the property's `write_type` field instead.
-pub fn optional_property_write_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
+pub(crate) fn optional_property_write_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
     if prop.optional {
         db.union2(prop.write_type, TypeId::UNDEFINED)
     } else {
