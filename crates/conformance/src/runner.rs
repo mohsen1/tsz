@@ -53,10 +53,7 @@ fn is_lib_diagnostic(fp: &DiagnosticFingerprint) -> bool {
 fn filter_lib_diagnostics_tsz(
     mut result: tsz_wrapper::CompilationResult,
 ) -> tsz_wrapper::CompilationResult {
-    let had_lib = result
-        .diagnostic_fingerprints
-        .iter()
-        .any(|fp| is_lib_diagnostic(fp));
+    let had_lib = result.diagnostic_fingerprints.iter().any(is_lib_diagnostic);
     if !had_lib {
         return result;
     }
@@ -94,7 +91,7 @@ fn filter_lib_diagnostics_tsc(
     let mut codes = tsc_result.error_codes.clone();
     let mut fps = tsc_result.diagnostic_fingerprints.clone();
 
-    let had_lib = fps.iter().any(|fp| is_lib_diagnostic(fp));
+    let had_lib = fps.iter().any(is_lib_diagnostic);
     if !had_lib {
         return (codes, fps);
     }
@@ -755,7 +752,7 @@ impl Runner {
                     };
                     // Filter .lib/ diagnostics (see filter functions for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     // Compare error codes
                     let tsc_codes: std::collections::HashSet<_> =
@@ -926,7 +923,7 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     let tsc_codes: std::collections::HashSet<_> =
                         tsc_error_codes.iter().cloned().collect();
@@ -1088,7 +1085,7 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(&tsc_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
 
                     let tsc_codes: std::collections::HashSet<_> =
                         tsc_error_codes.iter().cloned().collect();

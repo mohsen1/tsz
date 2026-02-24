@@ -907,7 +907,7 @@ pub(super) fn create_cross_file_lookup_binder(
 /// Grammar checks (e.g., strict mode violations, decorator errors) are emitted
 /// during parsing but don't indicate parse failure — tsc still emits TS2304 for
 /// undeclared names in these files.
-pub(super) fn is_real_syntax_error(code: u32) -> bool {
+pub(super) const fn is_real_syntax_error(code: u32) -> bool {
     matches!(
         code,
         1005  // '{0}' expected
