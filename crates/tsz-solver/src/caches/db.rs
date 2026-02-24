@@ -6,10 +6,10 @@
 use crate::ObjectLiteralBuilder;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
+use crate::intern::type_factory::TypeFactory;
 use crate::narrowing;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::relations::subtype::TypeResolver;
-use crate::type_factory::TypeFactory;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,

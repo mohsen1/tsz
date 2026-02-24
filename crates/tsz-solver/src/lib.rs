@@ -32,7 +32,6 @@ pub mod recursion;
 pub mod relations;
 #[cfg(test)]
 mod sound;
-mod type_factory;
 pub mod type_queries;
 pub mod type_resolver;
 pub mod types;
@@ -86,6 +85,7 @@ pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_type,
     substitute_this_type,
 };
+pub use intern::type_factory::*;
 pub use narrowing::*;
 pub use objects::*;
 pub use operations::compound_assignment;
@@ -104,7 +104,6 @@ pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of,
 };
-pub use type_factory::*;
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
     PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
