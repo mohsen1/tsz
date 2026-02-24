@@ -4,11 +4,11 @@
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use tsz::lsp::editor_decorations::inlay_hints::{InlayHintKind, InlayHintsProvider};
 use tsz::lsp::editor_ranges::folding::FoldingRangeProvider;
 use tsz::lsp::editor_ranges::selection_range::SelectionRangeProvider;
 use tsz::lsp::hierarchy::call_hierarchy::CallHierarchyProvider;
 use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
-use tsz::lsp::inlay_hints::InlayHintsProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
 use tsz_solver::TypeInterner;
 
@@ -608,9 +608,9 @@ impl Server {
                 .iter()
                 .map(|hint| {
                     let kind = match hint.kind {
-                        tsz::lsp::inlay_hints::InlayHintKind::Parameter => "Parameter",
-                        tsz::lsp::inlay_hints::InlayHintKind::Type => "Type",
-                        tsz::lsp::inlay_hints::InlayHintKind::Generic => "Enum",
+                        InlayHintKind::Parameter => "Parameter",
+                        InlayHintKind::Type => "Type",
+                        InlayHintKind::Generic => "Enum",
                     };
                     serde_json::json!({
                         "text": hint.label,

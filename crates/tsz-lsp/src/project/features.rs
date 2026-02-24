@@ -10,9 +10,9 @@ use web_time::Instant;
 
 use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
-use crate::code_lens::CodeLens;
 use crate::completions::CompletionItem;
 use crate::diagnostics::LspDiagnostic;
+use crate::editor_decorations::code_lens::CodeLens;
 use crate::hover::HoverInfo;
 use crate::navigation::definition::GoToDefinition;
 use crate::resolver::ScopeCacheStats;
@@ -320,7 +320,7 @@ impl Project {
     pub fn get_code_lenses(&self, file_name: &str) -> Option<Vec<CodeLens>> {
         let file = self.files.get(file_name)?;
 
-        use crate::code_lens::CodeLensProvider;
+        use crate::editor_decorations::code_lens::CodeLensProvider;
         let provider = CodeLensProvider::new(
             file.arena(),
             file.binder(),
@@ -340,7 +340,7 @@ impl Project {
         let data = lens.data.as_ref()?;
 
         match data.kind {
-            crate::code_lens::CodeLensKind::References => {
+            crate::editor_decorations::code_lens::CodeLensKind::References => {
                 // Use project-wide find_references for accurate counts
                 let position = data.position;
                 let references = self.find_references(file_name, position)?;
@@ -362,7 +362,7 @@ impl Project {
                     format!("{ref_count} references")
                 };
 
-                let command = crate::code_lens::CodeLensCommand {
+                let command = crate::editor_decorations::code_lens::CodeLensCommand {
                     title,
                     command: "editor.action.showReferences".to_string(),
                     arguments: Some(vec![
@@ -389,7 +389,7 @@ impl Project {
                     data: None,
                 })
             }
-            crate::code_lens::CodeLensKind::Implementations => {
+            crate::editor_decorations::code_lens::CodeLensKind::Implementations => {
                 // Use project-wide get_implementations
                 let position = data.position;
                 let implementations = self.get_implementations(file_name, position)?;
@@ -401,7 +401,7 @@ impl Project {
                     format!("{count} implementations")
                 };
 
-                let command = crate::code_lens::CodeLensCommand {
+                let command = crate::editor_decorations::code_lens::CodeLensCommand {
                     title,
                     command: "editor.action.goToImplementation".to_string(),
                     arguments: Some(vec![
