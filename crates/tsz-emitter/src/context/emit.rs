@@ -111,9 +111,6 @@ pub struct ModuleTransformState {
     /// If true, other named exports should be suppressed in `CommonJS` emit.
     pub has_export_assignment: bool,
 
-    /// Counter for generated CommonJS module temporary bindings (`foo_1`, `foo_2`, ...).
-    pub module_temp_counter: u32,
-
     /// Per-base counters for generated CommonJS module bindings.
     /// Keeps numbering stable by module base name (e.g., `foo_1`, `bar_1`, `foo_2`).
     pub module_temp_counters: FxHashMap<String, u32>,
@@ -166,12 +163,6 @@ pub struct EmitContext {
     /// Whether ES2022 features need downleveling (class fields/private fields/static blocks).
     pub needs_es2022_lowering: bool,
 
-    /// Whether ES2024 features need downleveling (decorators, ...).
-    pub needs_es2024_lowering: bool,
-
-    /// Whether ES2025 features need downleveling (using/await using).
-    pub needs_es2025_lowering: bool,
-
     /// Whether async/await needs lowering (target < ES2017)
     /// ES2015/ES2016 use __awaiter + generators (yield)
     /// ES5 additionally lowers generators to state machines (__generator)
@@ -221,8 +212,6 @@ impl EmitContext {
             needs_es2020_lowering: false,
             needs_es2021_lowering: false,
             needs_es2022_lowering: false,
-            needs_es2024_lowering: false,
-            needs_es2025_lowering: false,
             needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
@@ -245,8 +234,6 @@ impl EmitContext {
         self.needs_es2020_lowering = !target.supports_es2020();
         self.needs_es2021_lowering = !target.supports_es2021();
         self.needs_es2022_lowering = !target.supports_es2022();
-        self.needs_es2024_lowering = !target.supports_es2024();
-        self.needs_es2025_lowering = !target.supports_es2025();
         self.needs_async_lowering = !target.supports_es2017();
     }
 
@@ -306,39 +293,6 @@ impl EmitContext {
     /// Check if we're in `CommonJS` mode
     pub const fn is_commonjs(&self) -> bool {
         self.options.module.is_commonjs()
-    }
-
-    // =========================================================================
-    // Scope management helpers
-    // =========================================================================
-
-    /// Enter a new function scope (resets certain state)
-    pub const fn enter_function_scope(&mut self) {
-        self.arrow_state.enter_new_scope();
-    }
-
-    /// Enter a class scope
-    pub const fn enter_class_scope(&mut self) {
-        self.arrow_state.enter_new_scope();
-    }
-
-    // =========================================================================
-    // Temp variable generation
-    // =========================================================================
-
-    /// Get the next temporary variable name for destructuring
-    pub fn next_temp_var(&mut self) -> String {
-        self.destructuring_state.next_temp_var()
-    }
-
-    /// Get the current temp var counter value
-    pub const fn temp_var_counter(&self) -> u32 {
-        self.destructuring_state.temp_var_counter
-    }
-
-    /// Set the temp var counter (for restoring state)
-    pub const fn set_temp_var_counter(&mut self, value: u32) {
-        self.destructuring_state.temp_var_counter = value;
     }
 }
 

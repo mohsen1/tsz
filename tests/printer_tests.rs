@@ -162,37 +162,10 @@ fn test_safe_slice_unicode() {
 
     // Valid boundaries
     assert_eq!(safe_slice::slice(s, 0, crab_start), "hello ");
-    assert_eq!(safe_slice::slice_from(s, crab_end + 1), "world");
+    assert_eq!(safe_slice::slice(s, crab_end + 1, s.len()), "world");
 
     // Invalid boundaries (mid-emoji)
     assert_eq!(safe_slice::slice(s, 7, 9), "");
-}
-
-#[test]
-fn test_safe_slice_from_to() {
-    let s = "hello world";
-    assert_eq!(safe_slice::slice_from(s, 6), "world");
-    assert_eq!(safe_slice::slice_to(s, 5), "hello");
-    assert_eq!(safe_slice::slice_from(s, 100), "");
-}
-
-#[test]
-fn test_safe_char_at() {
-    let s = "hello 🦀";
-    assert_eq!(safe_slice::char_at(s, 0), Some('h'));
-    assert_eq!(safe_slice::char_at(s, 5), Some(' '));
-    assert_eq!(safe_slice::char_at(s, 6), Some('🦀'));
-    assert_eq!(safe_slice::char_at(s, 100), None);
-    // Mid-character position should return None
-    assert_eq!(safe_slice::char_at(s, 7), None);
-}
-
-#[test]
-fn test_safe_byte_at() {
-    let s = "hello";
-    assert_eq!(safe_slice::byte_at(s, 0), Some(b'h'));
-    assert_eq!(safe_slice::byte_at(s, 4), Some(b'o'));
-    assert_eq!(safe_slice::byte_at(s, 5), None);
 }
 
 // =============================================================================
