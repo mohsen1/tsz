@@ -1094,6 +1094,7 @@ mod tests {
         );
     }
 
+
     fn check_source_diagnostics_no_implicit_any(
         source: &str,
     ) -> Vec<crate::diagnostics::Diagnostic> {
@@ -1157,6 +1158,99 @@ mod tests {
         assert!(
             has_7006,
             "Expected TS7006 for bare parameter under noImplicitAny, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    // TS18050 tests: null/undefined suppression for string concatenation and `any`
+
+    #[test]
+    fn ts18050_null_plus_number_emits_error() {
+        // null + 1 should emit TS18050 (arithmetic context)
+        let diags = check_source_diagnostics("var x = null + 1;");
+        assert!(
+            diags.iter().any(|d| d.code == 18050),
+            "Expected TS18050 for null + number, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_undefined_plus_number_emits_error() {
+        let diags = check_source_diagnostics("var x = undefined + 1;");
+        assert!(
+            diags.iter().any(|d| d.code == 18050),
+            "Expected TS18050 for undefined + number, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_string_plus_null_no_error() {
+        // "test" + null is string concatenation — no TS18050
+        let diags = check_source_diagnostics("var d: string;\nvar x = d + null;");
+        let has_18050 = diags.iter().any(|d| d.code == 18050);
+        assert!(
+            !has_18050,
+            "Should NOT emit TS18050 for string + null (concatenation), got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_null_plus_string_no_error() {
+        // null + "test" is string concatenation — no TS18050
+        let diags = check_source_diagnostics("var d: string;\nvar x = null + d;");
+        let has_18050 = diags.iter().any(|d| d.code == 18050);
+        assert!(
+            !has_18050,
+            "Should NOT emit TS18050 for null + string (concatenation), got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_string_literal_plus_null_no_error() {
+        // '' + null is string concatenation — no TS18050
+        let diags = check_source_diagnostics("var x = '' + null;");
+        let has_18050 = diags.iter().any(|d| d.code == 18050);
+        assert!(
+            !has_18050,
+            "Should NOT emit TS18050 for string literal + null, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_any_plus_null_no_error() {
+        // any + null should not emit TS18050 — any suppresses type errors
+        let diags = check_source_diagnostics("declare var a: any;\nvar x = a + null;");
+        let has_18050 = diags.iter().any(|d| d.code == 18050);
+        assert!(
+            !has_18050,
+            "Should NOT emit TS18050 for any + null, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_null_plus_any_no_error() {
+        let diags = check_source_diagnostics("declare var a: any;\nvar x = null + a;");
+        let has_18050 = diags.iter().any(|d| d.code == 18050);
+        assert!(
+            !has_18050,
+            "Should NOT emit TS18050 for null + any, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_null_minus_number_emits_error() {
+        // null - 1 should still emit TS18050 (not a + operator)
+        let diags = check_source_diagnostics("var x = null - 1;");
+        assert!(
+            diags.iter().any(|d| d.code == 18050),
+            "Expected TS18050 for null - number, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
