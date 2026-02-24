@@ -1,6 +1,49 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9994/13623 = 73.4% JS, ~777/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5267/7163 = 73.5% JS, ~415/1039 = 39.9% DTS)
+
+### Fixed (2026-02-24, session 3) — Enum Constant Folding
+
+- **Enum initializer constant folding** (+9 JS): tsc evaluates constant expressions
+  in enum member initializers at compile time and emits the numeric result
+  (e.g., `1 << 1` → `2`, `A | B` → `3`, `Color.Color` → `0`). tsz was preserving
+  the source expression verbatim. Fix: added `member_values` tracking and extended
+  `evaluate_constant_expression` to resolve both bare identifiers and `EnumName.Member`
+  property access references. When evaluation succeeds, emits the folded value;
+  otherwise preserves the source expression (e.g., function calls, external refs).
+  Six unit tests added.
+  Tests fixed: `enumAssignmentCompat5`, `parserEnum1`, `collisionCodeGenEnumWithEnumMemberConflict`,
+  `enumWithUnicodeEscape1` (partial), and others.
+  JS: 5258→5267, DTS unchanged, zero regressions.
+
+### Skipped / Investigated (2026-02-24, session 3)
+
+- **Enum Unicode escaping** (~1 test): `enumWithUnicodeEscape1` — tsc emits `\u2730` for
+  unicode chars in enum member names; tsz emits the literal character `✰`. Requires adding
+  unicode escape logic to the string literal emitter for non-ASCII characters.
+- **Non-constant enum expressions** (~8 tests): Expressions like `'foo'.length`, `+'foo'`
+  that involve method calls or type coercion cannot be constant-folded. tsc evaluates
+  these at compile time using its full type system; tsz would need a more complete
+  evaluator or checker integration to handle them.
+- **Comment displacement** (~226 tests): Still the largest single category. Comments
+  above classes/functions get dropped during ES5 class lowering and other transforms.
+  Each sub-pattern needs individual investigation.
+- **Decorator transforms** (~226 tests): `__decorate`/`__param` helper emission not
+  implemented. Major feature gap requiring dedicated implementation effort.
+- **CJS export patterns** (~134 tests): Various CommonJS export binding issues including
+  `exports.X` reference rewriting and split vs inline export forms.
+- **Import helper over-emission** (~111 tests): `__importStar`/`__createBinding` emitted
+  even when imports should be type-only elided. Requires checker integration.
+- **`"use strict"` over-emission** (~110 tests): Mixed causes — test framework issues
+  with `.js` allowJs baselines and missing module wrapper features.
+- **JSX transform** (~74 tests): `jsx=react` → `createElement` not implemented.
+- **`__esModule` emission** (~61 tests): Under-emission for CTS/MTS file extensions.
+- **Static block transforms** (~50 tests): Class `static { }` lowering for ES2021-.
+- **`export {};` sentinel** (~43 tests): Bidirectional — depends on module resolution
+  and type-only import elision.
+- **Generator state machine** (~29 tests): `__generator` helper for ES5 generator lowering.
+- **Auto-accessor transform** (~12 tests): `accessor` keyword not transformed to
+  private storage + getter/setter pattern. Tests: `autoAccessor1-10`, etc.
 
 ### Investigated (2026-02-24, session 2) — No Safe Single Fix Found
 
