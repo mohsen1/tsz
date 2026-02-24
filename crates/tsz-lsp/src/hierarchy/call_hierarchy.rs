@@ -235,7 +235,7 @@ impl<'a> CallHierarchyProvider<'a> {
             }
 
             // Walk up to find the containing function
-            let range = self.get_range(idx);
+            let range = node_range(self.arena, self.line_map, self.source_text, idx);
             if let Some(containing_func) = self.find_containing_function(idx) {
                 // Don't list the function as calling itself from its own declaration
                 if containing_func == func_idx {
@@ -366,7 +366,7 @@ impl<'a> CallHierarchyProvider<'a> {
             }
 
             // Build the call-site range (the range of the callee expression in the source)
-            let call_range = self.get_range(callee_ident);
+            let call_range = node_range(self.arena, self.line_map, self.source_text, callee_ident);
 
             // Resolve the callee to its declaration using escaped_text and the
             // binder's symbol tables. This avoids depending on
@@ -393,7 +393,8 @@ impl<'a> CallHierarchyProvider<'a> {
                 // Last-resort fallback: no symbol found at all
                 if let Some(ident_data) = self.arena.get_identifier(ident_node) {
                     let name = ident_data.escaped_text.clone();
-                    let ident_range = self.get_range(callee_ident);
+                    let ident_range =
+                        node_range(self.arena, self.line_map, self.source_text, callee_ident);
                     let entry = callees.entry(callee_ident.0).or_insert_with(|| {
                         let item = CallHierarchyItem {
                             name,
@@ -1331,17 +1332,21 @@ impl<'a> CallHierarchyProvider<'a> {
                 self.line_map.offset_to_position(end, self.source_text),
             )
         } else {
-            self.get_range(func_idx)
+            node_range(self.arena, self.line_map, self.source_text, func_idx)
         };
 
         // Selection range is the name identifier range, or the keyword range
         let selection_range =
             if let Some(prop_idx) = self.property_declaration_for_function_initializer(func_idx) {
                 self.property_name_selection_range(prop_idx)
-                    .unwrap_or_else(|| self.get_range(func_idx))
+                    .unwrap_or_else(|| {
+                        node_range(self.arena, self.line_map, self.source_text, func_idx)
+                    })
             } else if let Some(name_idx) = self.get_function_name_idx(func_idx) {
                 self.identifier_selection_range(name_idx)
-                    .unwrap_or_else(|| self.get_range(name_idx))
+                    .unwrap_or_else(|| {
+                        node_range(self.arena, self.line_map, self.source_text, name_idx)
+                    })
             } else if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 let start = self.line_map.offset_to_position(node.pos, self.source_text);
                 let end = self
@@ -1453,17 +1458,20 @@ impl<'a> CallHierarchyProvider<'a> {
         if node.kind == syntax_kind_ext::CLASS_DECLARATION
             || node.kind == syntax_kind_ext::CLASS_EXPRESSION
         {
-            let mut selection_range = self.get_range(decl_idx);
+            let mut selection_range =
+                node_range(self.arena, self.line_map, self.source_text, decl_idx);
             if let Some(class_decl) = self.arena.get_class(node)
                 && class_decl.name.is_some()
             {
                 selection_range = self
                     .identifier_selection_range(class_decl.name)
-                    .unwrap_or_else(|| self.get_range(class_decl.name));
+                    .unwrap_or_else(|| {
+                        node_range(self.arena, self.line_map, self.source_text, class_decl.name)
+                    });
             }
-            let range = self
-                .class_range(decl_idx)
-                .unwrap_or_else(|| self.get_range(decl_idx));
+            let range = self.class_range(decl_idx).unwrap_or_else(|| {
+                node_range(self.arena, self.line_map, self.source_text, decl_idx)
+            });
             return Some(CallHierarchyItem {
                 name: symbol_name.to_string(),
                 kind: SymbolKind::Class,
@@ -1485,8 +1493,8 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Otherwise (e.g. class/variable declaration), build an item from declaration info.
         let kind = SymbolKind::Function;
-        let selection_range = self.get_range(decl_idx);
-        let range = self.get_range(decl_idx);
+        let selection_range = node_range(self.arena, self.line_map, self.source_text, decl_idx);
+        let range = node_range(self.arena, self.line_map, self.source_text, decl_idx);
         Some(CallHierarchyItem {
             name: symbol_name.to_string(),
             kind,
@@ -1624,11 +1632,6 @@ impl<'a> CallHierarchyProvider<'a> {
     /// Get the text of an identifier node.
     fn get_identifier_text(&self, node_idx: NodeIndex) -> Option<String> {
         identifier_text(self.arena, node_idx)
-    }
-
-    /// Convert a node to an LSP Range.
-    fn get_range(&self, node_idx: NodeIndex) -> Range {
-        node_range(self.arena, self.line_map, self.source_text, node_idx)
     }
 
     fn script_call_hierarchy_item(&self) -> CallHierarchyItem {
