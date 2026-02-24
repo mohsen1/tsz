@@ -188,8 +188,14 @@ impl<'a> CheckerState<'a> {
                         2653,
                     );
                 } else {
+                    // tsc points at the class name, not the `class` keyword
+                    let error_node = if class_data.name.is_some() {
+                        class_data.name
+                    } else {
+                        class_idx
+                    };
                     self.error_at_node(
-                        class_idx,
+                        error_node,
                         &format!(
                             "Non-abstract class '{}' does not implement inherited abstract member '{}' from class '{}'.",
                             derived_class_name, missing_members[0], base_class_name
@@ -213,8 +219,14 @@ impl<'a> CheckerState<'a> {
                         2656,
                     );
                 } else {
+                    // tsc points at the class name, not the `class` keyword
+                    let error_node = if class_data.name.is_some() {
+                        class_data.name
+                    } else {
+                        class_idx
+                    };
                     self.error_at_node(
-                        class_idx,
+                        error_node,
                         &format!(
                             "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
                         ),
