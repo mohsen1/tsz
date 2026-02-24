@@ -311,17 +311,16 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "control_flow_narrowing should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
-    let mut state_type_analysis_src = fs::read_to_string("src/state/state_type_analysis.rs")
-        .expect("failed to read src/state/state_type_analysis.rs for architecture guard");
+    let mut state_type_analysis_src = fs::read_to_string("src/state/type_analysis/mod.rs")
+        .expect("failed to read src/state/type_analysis/mod.rs for architecture guard");
     // Include split-off modules that are part of the state_type_analysis logical module
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state/state_type_analysis_computed.rs").expect(
-            "failed to read src/state/state_type_analysis_computed.rs for architecture guard",
-        ),
+        &fs::read_to_string("src/state/type_analysis/computed.rs")
+            .expect("failed to read src/state/type_analysis/computed.rs for architecture guard"),
     );
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state/state_type_analysis_computed_helpers.rs").expect(
-            "failed to read src/state/state_type_analysis_computed_helpers.rs for architecture guard",
+        &fs::read_to_string("src/state/type_analysis/computed_helpers.rs").expect(
+            "failed to read src/state/type_analysis/computed_helpers.rs for architecture guard",
         ),
     );
     assert!(
