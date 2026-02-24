@@ -28,6 +28,10 @@ pub(crate) fn find_property_in_object_by_str(
     tsz_solver::type_queries::find_property_in_object_by_str(db, type_id, property)
 }
 
+pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_unit_type(db, type_id)
+}
+
 pub(crate) fn has_type_query_for_symbol<F>(
     db: &dyn TypeDatabase,
     type_id: TypeId,
