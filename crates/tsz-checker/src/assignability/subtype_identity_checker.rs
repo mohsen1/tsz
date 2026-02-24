@@ -1,15 +1,12 @@
-//! Subtype checking, type identity, and redeclaration compatibility.
+//! Subtype checking and redeclaration compatibility.
 //!
 //! Extracted from `assignability_checker.rs` to keep modules focused.
 //! This module owns:
-//! - `is_subtype_of` / `is_subtype_of_with_env`
-//! - `are_types_identical`
+//! - `is_subtype_of`
 //! - `are_var_decl_types_compatible` (TS2403)
-//! - `is_assignable_to_union`
 
 use crate::query_boundaries::assignability::{
-    is_assignable_with_resolver, is_redeclaration_identical_with_resolver, is_relation_cacheable,
-    is_subtype_with_resolver,
+    is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
 };
 use crate::state::CheckerState;
 use tsz_solver::RelationCacheKey;
@@ -94,59 +91,6 @@ impl<'a> CheckerState<'a> {
         }
 
         result
-    }
-
-    /// Check if source type is a subtype of target type with explicit environment.
-    pub fn is_subtype_of_with_env(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        env: &tsz_solver::TypeEnvironment,
-    ) -> bool {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_binder::symbol_flags;
-
-        // CRITICAL: Before checking subtypes, ensure all Ref types are resolved
-        self.ensure_relation_input_ready(source);
-        self.ensure_relation_input_ready(target);
-
-        // Helper to check if a symbol is a class (for nominal subtyping)
-        let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
-            let sym_id = tsz_binder::SymbolId(sym_ref.0);
-            if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-                (sym.flags & symbol_flags::CLASS) != 0
-            } else {
-                false
-            }
-        };
-
-        let result = is_subtype_with_resolver(
-            self.ctx.types,
-            env,
-            source,
-            target,
-            self.ctx.pack_relation_flags(),
-            &self.ctx.inheritance_graph,
-            Some(&is_class_fn),
-        );
-
-        if result.depth_exceeded {
-            self.error_at_current_node(
-                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-            );
-        }
-
-        result.is_related()
-    }
-
-    // =========================================================================
-    // Type Identity and Compatibility
-    // =========================================================================
-
-    /// Check if two types are identical (same `TypeId`).
-    pub fn are_types_identical(&self, type1: TypeId, type2: TypeId) -> bool {
-        type1 == type2
     }
 
     /// Check if variable declaration types are compatible (used for multiple declarations).
@@ -254,26 +198,5 @@ impl<'a> CheckerState<'a> {
             self.ctx.sound_mode(),
         );
         Some(compatible)
-    }
-
-    /// Check if source type is assignable to ANY member of a target union.
-    pub fn is_assignable_to_union(&self, source: TypeId, targets: &[TypeId]) -> bool {
-        let flags = self.ctx.pack_relation_flags();
-        let env = self.ctx.type_env.borrow();
-
-        for &target in targets {
-            if is_assignable_with_resolver(
-                self.ctx.types,
-                &*env,
-                source,
-                target,
-                flags,
-                &self.ctx.inheritance_graph,
-                self.ctx.sound_mode(),
-            ) {
-                return true;
-            }
-        }
-        false
     }
 }

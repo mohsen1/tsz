@@ -127,35 +127,6 @@ pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
     pub sound_mode: bool,
 }
 
-pub(crate) fn is_assignable_with_resolver<R: tsz_solver::TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
-    sound_mode: bool,
-) -> bool {
-    let policy = tsz_solver::RelationPolicy::from_flags(flags)
-        .with_strict_subtype_checking(sound_mode)
-        .with_strict_any_propagation(sound_mode);
-    let context = tsz_solver::RelationContext {
-        query_db: Some(db),
-        inheritance_graph: Some(inheritance_graph),
-        class_check: None,
-    };
-    tsz_solver::query_relation_with_resolver(
-        db,
-        resolver,
-        source,
-        target,
-        tsz_solver::RelationKind::Assignable,
-        policy,
-        context,
-    )
-    .is_related()
-}
-
 pub(crate) fn is_assignable_bivariant_with_resolver<R: tsz_solver::TypeResolver>(
     db: &dyn QueryDatabase,
     resolver: &R,

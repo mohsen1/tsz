@@ -316,21 +316,8 @@ impl BinderState {
 
     /// Return the current length of the resolved identifier cache.
     ///
-    /// # Panics
-    ///
-    /// Panics if the resolved identifier cache lock is poisoned.
+    /// Test-only introspection method for validating caching behavior.
     pub fn resolved_identifier_cache_len(&self) -> usize {
         self.resolved_identifier_cache.read().unwrap().len()
-    }
-
-    /// Inject lib file symbols into `file_locals` for global symbol resolution.
-    ///
-    /// This method now delegates to `merge_lib_contexts_into_binder` which properly
-    /// remaps `SymbolIds` to avoid collisions across lib binders.
-    ///
-    /// # Arguments
-    /// * `lib_contexts` - Vector of lib file contexts (arena + binder pairs)
-    pub fn inject_lib_symbols(&mut self, lib_contexts: &[LibContext]) {
-        self.merge_lib_contexts_into_binder(lib_contexts);
     }
 }

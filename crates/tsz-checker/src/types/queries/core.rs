@@ -1066,7 +1066,7 @@ impl<'a> CheckerState<'a> {
     /// Matches tsc's `getSyntacticTruthySemantics` — purely syntactic, never type-based.
     /// TS2872: Check if expression is syntactically always truthy.
     /// Used for left side of `||` and `??` operators.
-    pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, _type_id: TypeId) {
+    pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex) {
         if self.get_syntactic_truthy_semantics(node_idx) == SyntacticTruthiness::AlwaysTruthy {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
