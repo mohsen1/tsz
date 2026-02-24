@@ -424,3 +424,4 @@ All items below have been validated against the codebase (implementations + test
 | TS5069/TS5053 | Config checks for declaration-related options | +7 tests |
 | TS5070/TS5071/TS5098 | resolveJsonModule/resolvePackageJson validation | +9 tests |
 | TS2528 | Multiple default exports position fix | +1 test |
+| TS18003 | Windows-style path handling in conformance runner | +10 tests |
