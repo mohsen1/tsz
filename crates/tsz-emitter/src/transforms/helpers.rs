@@ -300,12 +300,7 @@ pub struct HelpersNeeded {
     pub generator: bool,
     pub values: bool,
     pub read: bool,
-    pub spread: bool,
-    pub spread_arrays: bool,
     pub spread_array: bool,
-    pub await_values: bool,
-    pub async_generator: bool,
-    pub async_delegator: bool,
     pub async_values: bool,
     pub export_star: bool,
     pub import_default: bool,
@@ -317,8 +312,6 @@ pub struct HelpersNeeded {
     pub create_binding: bool,
     pub add_disposable_resource: bool,
     pub dispose_resources: bool,
-    pub set_function_name: bool,
-    pub prop_key: bool,
 }
 
 /// Generate helper code for the needed helpers
