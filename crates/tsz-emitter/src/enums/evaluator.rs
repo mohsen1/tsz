@@ -38,32 +38,6 @@ pub enum EnumValue {
 }
 
 impl EnumValue {
-    /// Check if this is a numeric value
-    pub const fn is_number(&self) -> bool {
-        matches!(self, Self::Number(_))
-    }
-
-    /// Check if this is a string value
-    pub const fn is_string(&self) -> bool {
-        matches!(self, Self::String(_))
-    }
-
-    /// Get the numeric value if available
-    pub const fn as_number(&self) -> Option<i64> {
-        match self {
-            Self::Number(n) => Some(*n),
-            _ => None,
-        }
-    }
-
-    /// Get the string value if available
-    pub fn as_string(&self) -> Option<&str> {
-        match self {
-            Self::String(s) => Some(s),
-            _ => None,
-        }
-    }
-
     /// Convert to JavaScript literal representation
     pub fn to_js_literal(&self) -> String {
         match self {

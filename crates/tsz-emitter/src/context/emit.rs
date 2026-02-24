@@ -40,29 +40,6 @@ pub struct EmitFlags {
     pub in_binary_operand: bool,
 }
 
-impl EmitFlags {
-    /// Create default flags
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create flags for an async context
-    pub fn async_context() -> Self {
-        Self {
-            in_async: true,
-            ..Default::default()
-        }
-    }
-
-    /// Create flags for a generator context
-    pub fn generator_context() -> Self {
-        Self {
-            in_generator: true,
-            ..Default::default()
-        }
-    }
-}
-
 /// State for arrow function ES5 transformation
 #[derive(Debug, Default)]
 pub struct ArrowTransformState {
@@ -75,33 +52,6 @@ pub struct ArrowTransformState {
 }
 
 impl ArrowTransformState {
-    /// Enter an arrow function that uses `this`
-    pub const fn enter_arrow_with_this(&mut self) {
-        self.this_capture_depth += 1;
-    }
-
-    /// Exit an arrow function that uses `this`
-    pub const fn exit_arrow_with_this(&mut self) {
-        if self.this_capture_depth > 0 {
-            self.this_capture_depth -= 1;
-        }
-    }
-
-    /// Check if we're currently capturing `this`
-    pub const fn is_capturing_this(&self) -> bool {
-        self.this_capture_depth > 0
-    }
-
-    /// Mark that `var _this = this;` has been emitted
-    pub const fn mark_this_captured(&mut self) {
-        self.this_captured_in_scope = true;
-    }
-
-    /// Check if `_this` capture statement has been emitted
-    pub const fn is_this_captured(&self) -> bool {
-        self.this_captured_in_scope
-    }
-
     /// Reset for a new scope (entering a function/class)
     pub const fn enter_new_scope(&mut self) {
         self.this_captured_in_scope = false;
