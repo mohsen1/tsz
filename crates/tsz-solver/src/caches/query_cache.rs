@@ -167,13 +167,6 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    pub fn probe_assignability_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
-        match self.lookup_assignability_cache(key) {
-            Some(result) => RelationCacheProbe::Hit(result),
-            None => RelationCacheProbe::MissNotCached,
-        }
-    }
-
     /// Helper to check a cache with poisoned lock handling.
     fn check_cache(
         &self,

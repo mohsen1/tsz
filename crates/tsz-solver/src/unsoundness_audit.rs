@@ -688,11 +688,6 @@ impl UnsoundnessAudit {
         self.rules_by_status(ImplementationStatus::NotImplemented)
     }
 
-    /// Get blocked rules
-    pub fn blocked_rules(&self) -> Vec<&RuleImplementation> {
-        self.rules_by_status(ImplementationStatus::Blocked)
-    }
-
     /// Generate a summary report
     pub fn summary_report(&self) -> String {
         let mut report = String::new();

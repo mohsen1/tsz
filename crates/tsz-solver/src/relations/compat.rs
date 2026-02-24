@@ -424,12 +424,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         &self.lawyer
     }
 
-    /// Get a mutable reference to the lawyer layer for `any` propagation rules.
-    pub fn lawyer_mut(&mut self) -> &mut AnyPropagationRules {
-        self.cache.clear();
-        &mut self.lawyer
-    }
-
     /// Apply configuration from `JudgeConfig`.
     ///
     /// This is used to configure the `CompatChecker` with settings from

@@ -203,47 +203,6 @@ impl ConstraintSet {
         self.lower_bounds.is_empty() && self.upper_bounds.is_empty()
     }
 
-    pub fn merge_from(&mut self, other: Self) {
-        for ty in other.lower_bounds {
-            self.add_lower_bound(ty);
-        }
-        for ty in other.upper_bounds {
-            self.add_upper_bound(ty);
-        }
-    }
-
-    /// Perform transitive reduction on upper bounds to remove redundant constraints.
-    ///
-    /// If we have constraints (T <: A) and (T <: B) and we know (A <: B),
-    /// then (T <: B) is redundant and can be removed.
-    ///
-    /// This reduces N² pairwise checks in `detect_conflicts` to O(N * `reduced_N`).
-    pub fn transitive_reduction(&mut self, interner: &dyn TypeDatabase) {
-        if self.upper_bounds.len() < 2 {
-            return;
-        }
-
-        let mut redundant = FxHashSet::default();
-        let bounds = &self.upper_bounds;
-
-        for (i, &u1) in bounds.iter().enumerate() {
-            for (j, &u2) in bounds.iter().enumerate() {
-                if i == j || redundant.contains(&u1) || redundant.contains(&u2) {
-                    continue;
-                }
-
-                // If u1 <: u2, then u2 is redundant (u1 is a stricter constraint)
-                if crate::relations::subtype::is_subtype_of(interner, u1, u2) {
-                    redundant.insert(u2);
-                }
-            }
-        }
-
-        if !redundant.is_empty() {
-            self.upper_bounds.retain(|ty| !redundant.contains(ty));
-        }
-    }
-
     /// Detect early conflicts between collected constraints.
     /// This allows failing fast before full resolution.
     pub fn detect_conflicts(&self, interner: &dyn TypeDatabase) -> Option<ConstraintConflict> {
@@ -981,18 +940,6 @@ impl<'a> InferenceContext<'a> {
         self.add_candidate_with_context(var, ty, priority, false, None, None);
     }
 
-    /// Add an inference candidate for a variable that originates from object property inference.
-    /// Object-property candidates are tracked so the resolver can apply tighter union handling
-    /// for repeated property positions (e.g. `{ bar: T; baz: T }`).
-    pub fn add_property_candidate(
-        &mut self,
-        var: InferenceVar,
-        ty: TypeId,
-        priority: InferencePriority,
-    ) {
-        self.add_candidate_with_context(var, ty, priority, true, None, None);
-    }
-
     /// Add an inference candidate for a variable that originates from an object property.
     /// `object_property_index` captures the source property order and enables deterministic
     /// tie-breaking when repeated property candidates collapse to a union.
@@ -1087,15 +1034,6 @@ impl<'a> InferenceContext<'a> {
             .filter(|c| c.is_fresh_literal)
             .map(|c| c.type_id)
             .collect()
-    }
-
-    /// Collect a constraint from an assignment: source flows into target
-    /// If target is an inference variable, source becomes a lower bound.
-    /// If source is an inference variable, target becomes an upper bound.
-    pub const fn collect_constraint(&mut self, _source: TypeId, _target: TypeId) {
-        // Check if target is an inference variable (via TypeData lookup)
-        // For now, we rely on the caller to call add_lower_bound/add_upper_bound directly
-        // This is a placeholder for more sophisticated constraint collection
     }
 }
 

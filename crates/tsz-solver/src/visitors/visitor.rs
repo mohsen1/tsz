@@ -870,14 +870,6 @@ impl<'a> RecursiveTypeCollector<'a> {
         }
     }
 
-    pub fn with_max_depth(types: &'a dyn TypeDatabase, max_depth: usize) -> Self {
-        Self {
-            types,
-            collected: FxHashSet::default(),
-            guard: crate::recursion::RecursionGuard::new(max_depth as u32, 100_000),
-        }
-    }
-
     /// Collect all types reachable from the given type.
     pub fn collect(&mut self, type_id: TypeId) -> FxHashSet<TypeId> {
         self.visit(type_id);
