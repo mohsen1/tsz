@@ -882,6 +882,69 @@ mod tests {
         );
     }
 
+    /// Preserve spacing and ordering around comments in `yield` expressions.
+    #[test]
+    fn yield_expression_comments_preserve_expected_spacing() {
+        let source = r#"function * foo2() {
+            /*comment1*/ yield 1;
+            yield /*comment2*/ 2;
+            yield 3 /*comment3*/
+            yield */*comment4*/ [4];
+            yield /*comment5*/* [5];
+        }"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("/*comment1*/ yield 1;"),
+            "Leading comment before `yield` should stay before keyword with spacing.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield /*comment2*/ 2"),
+            "Inline comment after `yield` should keep a single separating space.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield 3; /*comment3*/"),
+            "Trailing comment should remain after expression when `yield` has no right operand.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield* /*comment4*/ [4]"),
+            "Comment after `yield*` should stay after `*`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("yield /*comment5*/* [5]"),
+            "Comment before `yield*` operator should stay before `*`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn yield_without_operand_has_no_trailing_space() {
+        let source = "function* foo() {\n    yield;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("yield;"),
+            "Yield without an operand must keep tight `yield;` form.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("yield ;"),
+            "Yield without an operand must not include a separating space.\nOutput:\n{output}"
+        );
+    }
+
     /// Multiline ternary: colon trailing on previous line, alternate on next.
     /// `a ? b :\n    c` must preserve the line break after `:`.
     #[test]

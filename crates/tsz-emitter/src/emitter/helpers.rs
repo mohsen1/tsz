@@ -588,6 +588,15 @@ impl<'a> Printer<'a> {
     /// Returns `true` if the last emitted comment was a line comment (has trailing newline),
     /// meaning a newline was already written — callers should NOT write an additional newline.
     pub(crate) fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) -> bool {
+        self.emit_unemitted_comments_between_impl(from_pos, to_pos, true)
+    }
+
+    fn emit_unemitted_comments_between_impl(
+        &mut self,
+        from_pos: u32,
+        to_pos: u32,
+        emit_trailing_space: bool,
+    ) -> bool {
         if self.ctx.options.remove_comments {
             return false;
         }
@@ -613,7 +622,7 @@ impl<'a> Printer<'a> {
                     self.write(comment_text);
                     if has_trailing_new_line {
                         self.write_line();
-                    } else {
+                    } else if emit_trailing_space {
                         self.write_space();
                     }
                     last_had_trailing_newline = has_trailing_new_line;
