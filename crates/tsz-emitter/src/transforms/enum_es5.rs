@@ -479,15 +479,16 @@ impl<'a> EnumES5Transformer<'a> {
                 let obj_node = self.arena.get(access.expression)?;
                 if obj_node.kind == SyntaxKind::Identifier as u16
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
-                        && obj_id.escaped_text == self.current_enum_name {
-                            let prop_node = self.arena.get(access.name_or_argument)?;
-                            if let Some(prop_id) = self.arena.get_identifier(prop_node) {
-                                return self
-                                    .member_values
-                                    .get(prop_id.escaped_text.as_str())
-                                    .copied();
-                            }
-                        }
+                    && obj_id.escaped_text == self.current_enum_name
+                {
+                    let prop_node = self.arena.get(access.name_or_argument)?;
+                    if let Some(prop_id) = self.arena.get_identifier(prop_node) {
+                        return self
+                            .member_values
+                            .get(prop_id.escaped_text.as_str())
+                            .copied();
+                    }
+                }
                 None
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
