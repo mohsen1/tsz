@@ -3,6 +3,17 @@
 ## Pattern Analysis (JS+DTS mode, current ~9981/13623 = 73.3% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **`override` parameter property + `declare` class field emission** (+2 JS):
+  Two class emission fixes: (1) `override` alone on a constructor parameter now
+  triggers parameter property emission (`this.p1 = p1;`), matching tsc. Previously
+  only `public`/`private`/`protected`/`readonly` were recognized — `OverrideKeyword`
+  was missing from `has_parameter_property_modifier` in `declarations_class_members.rs`,
+  `class_es5_ir.rs`, and `declaration_emitter/mod.rs`. (2) `declare` class fields
+  are now skipped during field init lowering in `declarations_class.rs`, preventing
+  incorrect `this.foo = 1;` for ambient declarations. Three unit tests added.
+  Tests fixed: `overrideParameterProperty`, `illegalModifiersOnClassElements`.
+  JS: 1565→1567, DTS unchanged, zero regressions.
+
 - **Strip sourceMappingURL lines from emit comparison** (+10 JS):
   Our CLI appends `//# sourceMappingURL=<file>.map` when `--sourceMap` is passed,
   while tsc baselines use inline data URLs or different filenames. The old normalizer
@@ -28,6 +39,21 @@
   JS: 9947→9976, DTS: 776→777, zero regressions.
 
 ### Skipped / Investigated This Session (2026-02-24)
+- **CJS export binding pattern** (~14 tests): tsc sometimes emits `const X = expr; exports.X = X;`
+  (split form) and sometimes `exports.X = expr;` (inline form) for exported variable declarations.
+  Attempted blanket switch to split form but it regressed 17 tests that expect inline form.
+  tsc's choice appears to depend on whether the local binding is referenced elsewhere in the
+  module — needs checker integration to determine which form to use. Tests:
+  `declarationEmitScopeConsistency`, `esModuleInteropImportTSLibHasImport`, etc.
+- **CJS `exports.X` reference rewriting** (~17 tests): When a variable is exported via
+  `exports.X = ...` in CommonJS, references to that variable within the same module should
+  also use `exports.X` rather than the bare local name. Requires tracking which variables
+  are exported and rewriting references. Tests: `externalModuleQualification`,
+  `dynamicModuleTypecheckError`, etc.
+- **`useDefineForClassFields` option not respected** (~4+ tests): Tests with
+  `usedefineforclassfields=true` emit `this.X = X` instead of `Object.defineProperty`.
+  The option may not be parsed from test directives correctly. Test:
+  `initializationOrdering1(target=es2021,usedefineforclassfields=true)`.
 - **Unnecessary `__importStar`/`__createBinding` helper emission** (~128 tests): The emitter
   emits import-star helpers even when imports should be type-only elided. Requires checker
   to populate `type_only_nodes` for import elision. Not fixable in emitter alone.
