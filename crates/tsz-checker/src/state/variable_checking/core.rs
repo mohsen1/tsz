@@ -1237,7 +1237,7 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod ts2481_tests {
+mod test_utils {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_solver::TypeInterner;
@@ -1245,7 +1245,7 @@ mod ts2481_tests {
     use crate::context::CheckerOptions;
     use crate::state::CheckerState;
 
-    fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
+    pub fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -1273,6 +1273,11 @@ mod ts2481_tests {
             .map(|d| (d.start, d.message_text.clone()))
             .collect()
     }
+}
+
+#[cfg(test)]
+mod ts2481_tests {
+    use super::test_utils::check_and_collect;
 
     #[test]
     fn var_in_for_of_with_let() {
@@ -1343,41 +1348,7 @@ mod ts2481_tests {
 
 #[cfg(test)]
 mod ts2397_tests {
-    use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
-
-    use crate::context::CheckerOptions;
-    use crate::state::CheckerState;
-
-    fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        let types = TypeInterner::new();
-        let options = CheckerOptions::default();
-
-        let mut checker = CheckerState::new(
-            parser.get_arena(),
-            &binder,
-            &types,
-            "test.ts".to_string(),
-            options,
-        );
-
-        checker.check_source_file(root);
-
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .filter(|d| d.code == error_code)
-            .map(|d| (d.start, d.message_text.clone()))
-            .collect()
-    }
+    use super::test_utils::check_and_collect;
 
     #[test]
     fn var_undefined_emits_ts2397() {
