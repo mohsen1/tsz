@@ -29,7 +29,7 @@
 /// the compiler emits **TS2589**:
 /// *"Type instantiation is excessively deep and possibly infinite."*
 ///
-/// Used by `tsz-checker` (`function_type.rs`, `state_type_environment.rs`)
+/// Used by `tsz-checker` (`function_type.rs`, `type_environment/mod.rs`)
 /// and `tsz-solver` (instantiate.rs).
 ///
 /// # TypeScript example

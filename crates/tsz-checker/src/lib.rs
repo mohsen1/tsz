@@ -64,7 +64,7 @@ pub use flow_domain::{
 
 pub use state_domain::type_analysis as state_type_analysis;
 pub use state_domain::type_resolution::core as state_type_resolution;
-pub use state_domain::{state, state_checking, state_type_environment};
+pub use state_domain::{state, state_checking, type_environment as state_type_environment};
 
 pub use symbols_domain::{scope_finder, symbol_resolver};
 
