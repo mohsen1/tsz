@@ -7,11 +7,11 @@ use crate::config::ResolvedCompilerOptions;
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
+use tsz::checker::diagnostics::diagnostic_codes;
 use tsz::config::ModuleResolutionKind;
 use tsz::emitter::PrinterOptions;
 use tsz_common::common::ModuleKind;
 use tsz_common::diagnostics::Diagnostic;
-use tsz::checker::diagnostics::diagnostic_codes;
 
 #[test]
 fn test_module_resolution_requires_matching_module() {
