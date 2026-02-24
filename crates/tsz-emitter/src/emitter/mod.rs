@@ -259,6 +259,10 @@ pub struct Printer<'a> {
     /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
     pub(super) anonymous_default_export_name: Option<String>,
+
+    /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
+    pub(super) next_disposable_env_id: u32,
+
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(super) pending_cjs_namespace_export_fold: bool,
@@ -441,6 +445,7 @@ impl<'a> Printer<'a> {
             emitting_function_body_block: false,
             current_namespace_name: None,
             anonymous_default_export_name: None,
+            next_disposable_env_id: 1,
             pending_cjs_namespace_export_fold: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),

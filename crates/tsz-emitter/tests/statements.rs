@@ -1053,3 +1053,45 @@ fn trailing_comment_capped_at_block_close_brace() {
         "Closing brace comment must not be stolen by last statement.\nOutput:\n{output}"
     );
 }
+
+/// `using` declarations at `ESNext` target should have a trailing semicolon,
+/// just like var/let/const. The semicolon was previously skipped because the
+/// ES5 lowering path (`__addDisposableResource`) handles its own termination,
+/// but when `using` passes through unchanged at ES2025+ it needs a semicolon.
+#[test]
+fn using_declaration_has_semicolon_at_esnext() {
+    let source = "using x = getResource();\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    // Default target is ESNext, which supports ES2025 `using` natively
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("using x = getResource();"),
+        "using declaration at ESNext should have trailing semicolon.\nOutput:\n{output}"
+    );
+}
+
+/// `await using` declarations at `ESNext` target should also have a trailing semicolon.
+#[test]
+fn await_using_declaration_has_semicolon_at_esnext() {
+    let source = "await using x = getResource();\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("await using x = getResource();"),
+        "await using declaration at ESNext should have trailing semicolon.\nOutput:\n{output}"
+    );
+}

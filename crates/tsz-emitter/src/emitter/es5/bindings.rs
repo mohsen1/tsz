@@ -1,6 +1,7 @@
 use super::super::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -12,6 +13,12 @@ impl<'a> Printer<'a> {
         let Some(decl_list) = self.arena.get_variable(node) else {
             return;
         };
+
+        let flags = node.flags as u32;
+        if (flags & node_flags::USING) != 0 {
+            self.emit_using_variable_declaration_list_es5(decl_list, flags);
+            return;
+        }
 
         // Pre-register all variable names in this declaration list to handle shadowing.
         // For let/const: use register_variable (renames for any scope conflict including current)
@@ -64,6 +71,130 @@ impl<'a> Printer<'a> {
                 first = false;
                 self.emit(decl_idx);
             }
+        }
+    }
+
+    fn emit_using_variable_declaration_list_es5(
+        &mut self,
+        decl_list: &tsz_parser::parser::node::VariableData,
+        flags: u32,
+    ) {
+        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+
+        let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
+            || (flags & tsz_parser::parser::node_flags::CONST != 0);
+        if is_block_scoped {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_binding_name(decl.name);
+                }
+            }
+        } else {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_var_binding_name(decl.name);
+                }
+            }
+        }
+
+        let (env_name, error_name) = self.next_disposable_env_names();
+        self.write("var ");
+        self.write(&env_name);
+        self.write(" = { stack: [], error: void 0, hasError: false };");
+        self.write_line();
+
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        for &decl_idx in &decl_list.declarations.nodes {
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node) {
+                    if decl.initializer.is_none() {
+                        self.write("var ");
+                        self.emit(decl_idx);
+                        self.write(";");
+                        self.write_line();
+                        continue;
+                    }
+
+                    if let Some(name_node) = self.arena.get(decl.name)
+                        && name_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        self.write("var ");
+                        self.emit_decl_name(decl.name);
+                        self.write(" = __addDisposableResource(");
+                        self.write(&env_name);
+                        self.write(", ");
+                        self.emit(decl.initializer);
+                        self.write(", ");
+                        self.write(if using_async { "true" } else { "false" });
+                        self.write(");");
+                    } else {
+                        self.emit(decl_idx);
+                        self.write(";");
+                    }
+
+                    self.write_line();
+                    continue;
+                }
+
+            self.emit(decl_idx);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("catch (");
+        self.write(&error_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        self.write(&env_name);
+        self.write(".error = ");
+        self.write(&error_name);
+        self.write(";");
+        self.write_line();
+        self.write(&env_name);
+        self.write(".hasError = true;");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+        self.write("__disposeResources(");
+        self.write(&env_name);
+        self.write(");");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn next_disposable_env_names(&mut self) -> (String, String) {
+        loop {
+            let env_name = format!("env_{}", self.next_disposable_env_id);
+            let error_name = format!("e_{}", self.next_disposable_env_id);
+            self.next_disposable_env_id += 1;
+
+            if self.file_identifiers.contains(&env_name)
+                || self.file_identifiers.contains(&error_name)
+                || self.generated_temp_names.contains(&env_name)
+                || self.generated_temp_names.contains(&error_name)
+            {
+                continue;
+            }
+
+            self.generated_temp_names.insert(env_name.clone());
+            self.generated_temp_names.insert(error_name.clone());
+            return (env_name, error_name);
         }
     }
 
@@ -1532,6 +1663,36 @@ impl<'a> Printer<'a> {
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
+
+    #[test]
+    fn emit_using_declaration_es5() {
+        let source = "using d = { [Symbol.dispose]() {} };\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es5());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var env_1"),
+            "Expected disposable env temp allocation.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__addDisposableResource"),
+            "Expected __addDisposableResource helper call for using declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__disposeResources"),
+            "Expected __disposeResources helper call for using declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("using d"),
+            "Raw using syntax should be downleveled on ES5.\nOutput:\n{output}"
+        );
+    }
 
     #[test]
     fn destructuring_new_expr_gets_parens_for_property_access() {
