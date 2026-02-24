@@ -438,32 +438,35 @@ impl<'a> Printer<'a> {
 
         // Parameters (without types for JavaScript)
         // Map opening `(` to its source position
-        {
+        let open_paren_pos = {
             let search_start = if func.name.is_some() {
                 self.arena.get(func.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
             };
             self.map_token_after(search_start, node.end, b'(');
-        }
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
         self.write("(");
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        // Map closing `)` — scan backward from body start since parser may
-        // include `)` in the last parameter node's range.
-        {
-            let search_start = func
-                .parameters
-                .nodes
-                .first()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.pos);
-            let search_end = if func.body.is_some() {
-                self.arena.get(func.body).map_or(node.end, |n| n.pos)
-            } else {
-                node.end
-            };
-            self.map_closing_paren_backward(search_start, search_end);
-        }
+        let search_start = func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if func.body.is_some() {
+            self.arena.get(func.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        self.emit_function_parameters_with_trailing_comments(
+            &func.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
         self.write(") ");
 
         // Emit body - tsc never collapses multi-line function expression bodies
@@ -659,6 +662,42 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn emit_function_parameters_with_trailing_comments(
+        &mut self,
+        params: &[NodeIndex],
+        open_paren_pos: u32,
+        search_start: u32,
+        search_end: u32,
+    ) {
+        self.emit_function_parameters_js(params);
+        self.map_closing_paren_backward(search_start, search_end);
+        if !params.is_empty() {
+            return;
+        }
+
+        let close_paren_pos = self
+            .pending_source_pos
+            .map(|source_pos| source_pos.pos)
+            .unwrap_or(search_end);
+
+        let mut comment_start = open_paren_pos.saturating_add(1);
+        if let Some(source_text) = self.source_text {
+            let bytes = source_text.as_bytes();
+            let mut open_paren_pos_usize = open_paren_pos as usize;
+            while open_paren_pos_usize > 0 && bytes.get(open_paren_pos_usize) != Some(&b'(') {
+                open_paren_pos_usize = open_paren_pos_usize.saturating_sub(1);
+            }
+            if bytes.get(open_paren_pos_usize) == Some(&b'(') {
+                comment_start = open_paren_pos_usize
+                    .checked_add(1)
+                    .map_or(comment_start, |start| start as u32);
+            }
+        }
+        if comment_start < close_paren_pos {
+            self.emit_comments_in_range(comment_start, close_paren_pos, true, false);
+        }
+    }
+
     fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
         let Some(name_node) = self.arena.get(name_idx) else {
             return;
@@ -808,6 +847,27 @@ mod tests {
             result.code.contains("__awaiter(this,"),
             "Async arrow inside class method should pass `this` to __awaiter.\nOutput:\n{}",
             result.code
+        );
+    }
+
+    #[test]
+    fn function_with_empty_parameter_comment_preserves_comment() {
+        let source = "function foo(/** nothing */) { return 1; }";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("function foo( /** nothing */) {"),
+            "Comment inside empty parameter list should be emitted inside the parens for JS parity.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("function foo() /** nothing */"),
+            "Comment should not drift after closing paren.\nOutput: {output}"
         );
     }
 }

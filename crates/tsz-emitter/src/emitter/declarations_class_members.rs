@@ -88,32 +88,35 @@ impl<'a> Printer<'a> {
             self.emit(method.name);
         }
         // Map opening `(` to its source position
-        {
+        let open_paren_pos = {
             let search_start = if method.name.is_some() {
                 self.arena.get(method.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
             };
             self.map_token_after(search_start, node.end, b'(');
-        }
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
         self.write("(");
-        self.emit_function_parameters_js(&method.parameters.nodes);
-        // Map closing `)` — scan backward from body start since parser may
-        // include `)` in the last parameter node's range.
-        {
-            let search_start = method
-                .parameters
-                .nodes
-                .first()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.pos);
-            let search_end = if method.body.is_some() {
-                self.arena.get(method.body).map_or(node.end, |n| n.pos)
-            } else {
-                node.end
-            };
-            self.map_closing_paren_backward(search_start, search_end);
-        }
+        let search_start = method
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if method.body.is_some() {
+            self.arena.get(method.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        self.emit_function_parameters_with_trailing_comments(
+            &method.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
         self.write(")");
 
         // Skip return type for JavaScript emit — skip comments inside erased return type
@@ -330,24 +333,31 @@ impl<'a> Printer<'a> {
 
         self.write("constructor");
         // Map opening `(` to its source position
-        self.map_token_after(node.pos, node.end, b'(');
+        let open_paren_pos = {
+            self.map_token_after(node.pos, node.end, b'(');
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(node.pos)
+        };
         self.write("(");
-        self.emit_function_parameters_js(&ctor.parameters.nodes);
+        let search_start = ctor
+            .parameters
+            .nodes
+            .last()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if ctor.body.is_some() {
+            self.arena.get(ctor.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        self.emit_function_parameters_with_trailing_comments(
+            &ctor.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
         // Map closing `)` to its source position
-        {
-            let search_start = ctor
-                .parameters
-                .nodes
-                .last()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.end);
-            let search_end = if ctor.body.is_some() {
-                self.arena.get(ctor.body).map_or(node.end, |n| n.pos)
-            } else {
-                node.end
-            };
-            self.map_token_after(search_start, search_end, b')');
-        }
         self.write(")");
         self.write(" ");
 
@@ -872,16 +882,34 @@ impl<'a> Printer<'a> {
         self.write("set ");
         self.emit(accessor.name);
         self.write("(");
-        self.emit_function_parameters_js(&accessor.parameters.nodes);
-        // Map closing `)` — scan backward from body start
+        let open_paren_pos = {
+            self.map_token_after(
+                self.arena
+                    .get(accessor.name)
+                    .map_or(node.pos, |name| name.end),
+                node.end,
+                b'(',
+            );
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(node.pos)
+        };
+        let search_start = accessor
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
         if let Some(body_node) = self.arena.get(accessor.body) {
-            let search_start = accessor
-                .parameters
-                .nodes
-                .first()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.pos);
-            self.map_closing_paren_backward(search_start, body_node.pos);
+            let search_end = body_node.pos;
+            self.emit_function_parameters_with_trailing_comments(
+                &accessor.parameters.nodes,
+                open_paren_pos,
+                search_start,
+                search_end,
+            );
+        } else {
+            self.emit_function_parameters_js(&accessor.parameters.nodes);
         }
         self.write(")");
 
