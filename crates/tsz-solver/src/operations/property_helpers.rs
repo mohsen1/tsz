@@ -3,10 +3,10 @@
 
 use super::*;
 use crate::apparent_primitive_member_kind;
+use crate::evaluation::evaluate_rules::apparent::make_apparent_method_type;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
-    FunctionShape, MappedType, MappedTypeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement,
-    TypeApplicationId,
+    MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
 };
 
 impl<'a> PropertyAccessEvaluator<'a> {
@@ -316,22 +316,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     fn any_args_function(&self, return_type: TypeId) -> TypeId {
-        let rest_array = self.interner().array(TypeId::ANY);
-        let rest_param = ParamInfo {
-            name: None,
-            type_id: rest_array,
-            optional: false,
-            rest: true,
-        };
-        self.interner().function(FunctionShape {
-            params: vec![rest_param],
-            this_type: None,
-            return_type,
-            type_params: Vec::new(),
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        })
+        make_apparent_method_type(self.interner(), return_type)
     }
 
     fn method_result(&self, return_type: TypeId) -> PropertyAccessResult {
