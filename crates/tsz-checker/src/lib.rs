@@ -78,6 +78,9 @@ pub mod diagnostics {
     };
 }
 
+#[cfg(test)]
+pub mod test_utils;
+
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
 #[path = "../tests/conformance_issues.rs"]
