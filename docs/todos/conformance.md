@@ -416,7 +416,37 @@ before comparison. Applied to all three code paths (variant, no-variant, fallbac
 **Impact**: Most affected tests still fail due to other error code mismatches, hence modest +2.
 Main value: removes TS2430/TS6053 noise from analysis output.
 
-## Current score: 7989/12574 (63.5%) — full suite
+## Current score: 7999/12574 (63.6%) — full suite
+
+### Session progress (2026-02-24, TS7036 + union display ordering):
+- **TS7036 implemented (+3 tests)**: "Dynamic import's specifier must be of type 'string',
+  but here has type '{0}'." Checks the type of the specifier argument in `import()` calls
+  and emits TS7036 when it is not assignable to `string`. Added in `module_checker.rs`
+  (`check_dynamic_import_specifier_type`), called from `call.rs` dynamic import path.
+  Tests passing: `importCallExpressionSpecifierNotStringTypeError.ts`,
+  `importCallExpression5ES2020.ts`, `importCallExpression6ES2020.ts`.
+  8 unit tests in `ts7036_tests.rs`.
+- **Union display ordering fix (+7 fingerprint tests)**: tsc consistently places `null` and
+  `undefined` at the end of displayed union types (`string | null` not `null | string`).
+  Fixed `format_union` in `crates/tsz-solver/src/format.rs` to reorder nullish members
+  to the end before rendering. This fixes fingerprint-level diagnostic mismatches across
+  many error codes where the type string in the message was the only difference.
+  4 unit tests in `format.rs`.
+
+### Deferred from this session
+- **TS2403 false positives (9 single-diff tests)**: Three distinct root causes:
+  (a) Overload resolution incorrectly picks first overload for `any`-typed arguments
+  (anyAssignabilityInInheritance.ts, 16 false TS2403). (b) Getter/setter paired type
+  inference missing — setter param `n` inferred as `any` instead of getter's return type
+  (objectLiteralGettersAndSetters.ts, 11 false TS2403). (c) Mapped types (Pick, Readonly,
+  Partial) not fully evaluated before redeclaration identity check
+  (mappedTypeModifiers.ts, 8 false TS2403). Each requires deep solver/checker work. HARD.
+- **TS2304 false positives in parser tests (11 tests)**: Computed property names in parse
+  error contexts (e.g., `{ [e] }`) emit false TS2304 because the `is_in_computed_property`
+  guard prevents TS2304 suppression. tsc's `ThisNodeHasError` propagation handles this
+  but our parser doesn't support per-node error flags. MEDIUM difficulty.
+- **TS2304 false positives in UMD tests (4 tests)**: UMD global identifiers not resolved.
+  Module resolution gap. MEDIUM difficulty.
 
 ### Session progress (2026-02-24, TS2683 explicit this parameter):
 - **TS2683 false positive fix (+2 tests)**: Functions with an explicit `this` parameter

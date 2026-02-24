@@ -179,6 +179,9 @@ mod ts2839_tests;
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
+#[path = "../tests/ts7036_tests.rs"]
+mod ts7036_tests;
+#[cfg(test)]
 #[path = "../tests/ts7041_tests.rs"]
 mod ts7041_tests;
 #[cfg(test)]
