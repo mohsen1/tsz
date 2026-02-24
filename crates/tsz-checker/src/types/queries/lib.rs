@@ -526,6 +526,80 @@ impl<'a> CheckerState<'a> {
     // Section 46: Namespace Type Utilities
     // -------------------------------------
 
+    /// Propagate cross-file symbol tracking from a parent symbol to a member.
+    ///
+    /// When resolving members of cross-file namespace/module symbols, the member
+    /// SymbolId must also be recorded as cross-file so `get_type_of_symbol`
+    /// delegates to the correct file's binder.
+    fn propagate_cross_file_target(&self, parent_sym_id: SymbolId, member_id: SymbolId) {
+        let cross_file_idx = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&parent_sym_id)
+            .copied();
+        if let Some(file_idx) = cross_file_idx {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(member_id, file_idx);
+        }
+    }
+
+    /// Resolve a namespace member symbol through alias chains, validate it is a
+    /// runtime-value member, and return its type.
+    ///
+    /// Shared pipeline for namespace member resolution:
+    /// 1. Propagate cross-file target tracking from parent to member
+    /// 2. Follow alias chains to the actual symbol
+    /// 3. Filter out type-only members
+    /// 4. Filter out non-value symbols (types, interfaces, etc.)
+    /// 5. Return the member's type
+    fn resolve_validated_namespace_member(
+        &mut self,
+        parent_sym_id: SymbolId,
+        member_id: SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        self.propagate_cross_file_target(parent_sym_id, member_id);
+
+        let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
+            && member_symbol.flags & symbol_flags::ALIAS != 0
+        {
+            let mut visited_aliases = Vec::new();
+            self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                .unwrap_or(member_id)
+        } else {
+            member_id
+        };
+
+        self.get_validated_member_type(resolved_member_id, property_name)
+    }
+
+    /// Check if a resolved member symbol is a runtime value and return its type.
+    ///
+    /// For already-resolved symbols (e.g., re-exported members that have already
+    /// been followed through alias chains).
+    fn get_validated_member_type(
+        &mut self,
+        resolved_member_id: SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+            return None;
+        }
+        // Namespace export tables may point at EXPORT_VALUE wrapper symbols
+        // (e.g. `export { x }`). Treat them as runtime-value members.
+        if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
+            && member_symbol.flags & symbol_flags::VALUE == 0
+            && member_symbol.flags & symbol_flags::ALIAS == 0
+            && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
+        {
+            return None;
+        }
+        Some(self.get_type_of_symbol(resolved_member_id))
+    }
+
     /// Resolve a namespace value member by name.
     ///
     /// This function resolves value members of namespace/enum types.
@@ -601,46 +675,11 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(member_id) = direct_member_id {
-                    // Record member as cross-file so get_type_of_symbol delegates correctly
-                    let cross_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
-                    if let Some(file_idx) = cross_file_idx {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(member_id, file_idx);
-                    }
-
-                    // Follow re-export chains to get the actual symbol
-                    let resolved_member_id = if let Some(member_symbol) =
-                        self.get_cross_file_symbol(member_id)
-                        && member_symbol.flags & symbol_flags::ALIAS != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                            .unwrap_or(member_id)
-                    } else {
-                        member_id
-                    };
-
-                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
-                        return None;
-                    }
-
-                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
-                        // Namespace export tables may point at EXPORT_VALUE wrapper symbols
-                        // (e.g. `export { x }`). Treat them as runtime-value members.
-                        && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
-                    {
-                        return None;
-                    }
-                    return Some(self.get_type_of_symbol(resolved_member_id));
+                    return self.resolve_validated_namespace_member(
+                        sym_id,
+                        member_id,
+                        property_name,
+                    );
                 }
 
                 // Fallback: some ambient/module symbols keep exported members in
@@ -659,44 +698,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if let Some(member_id) = module_export_member_id {
-                    // Record member as cross-file so get_type_of_symbol delegates correctly
-                    let cross_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
-                    if let Some(file_idx) = cross_file_idx {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(member_id, file_idx);
-                    }
-
-                    let resolved_member_id = if let Some(member_symbol) =
-                        self.get_cross_file_symbol(member_id)
-                        && member_symbol.flags & symbol_flags::ALIAS != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                            .unwrap_or(member_id)
-                    } else {
-                        member_id
-                    };
-
-                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
-                        return None;
-                    }
-
-                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
-                        && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
-                    {
-                        return None;
-                    }
-
-                    return Some(self.get_type_of_symbol(resolved_member_id));
+                    return self.resolve_validated_namespace_member(
+                        sym_id,
+                        member_id,
+                        property_name,
+                    );
                 }
 
                 // Check for re-exports from other modules
@@ -708,18 +714,7 @@ impl<'a> CheckerState<'a> {
                         property_name,
                         &mut visited_aliases,
                     ) {
-                        if self.symbol_member_is_type_only(reexported_sym, Some(property_name)) {
-                            return None;
-                        }
-
-                        if let Some(member_symbol) = self.get_cross_file_symbol(reexported_sym)
-                            && member_symbol.flags & symbol_flags::VALUE == 0
-                            && member_symbol.flags & symbol_flags::ALIAS == 0
-                            && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
-                        {
-                            return None;
-                        }
-                        return Some(self.get_type_of_symbol(reexported_sym));
+                        return self.get_validated_member_type(reexported_sym, property_name);
                     }
                 }
 
@@ -752,42 +747,11 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(member_id) = direct_member_id {
-                    let cross_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
-                    if let Some(file_idx) = cross_file_idx {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(member_id, file_idx);
-                    }
-
-                    let resolved_member_id = if let Some(member_symbol) =
-                        self.get_cross_file_symbol(member_id)
-                        && member_symbol.flags & symbol_flags::ALIAS != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                            .unwrap_or(member_id)
-                    } else {
-                        member_id
-                    };
-
-                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
-                        return None;
-                    }
-
-                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
-                        && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
-                    {
-                        return None;
-                    }
-                    return Some(self.get_type_of_symbol(resolved_member_id));
+                    return self.resolve_validated_namespace_member(
+                        sym_id,
+                        member_id,
+                        property_name,
+                    );
                 }
 
                 // Fallback for namespace symbols whose export table is stored by module name.
@@ -805,43 +769,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if let Some(member_id) = module_export_member_id {
-                    let cross_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
-                    if let Some(file_idx) = cross_file_idx {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(member_id, file_idx);
-                    }
-
-                    let resolved_member_id = if let Some(member_symbol) =
-                        self.get_cross_file_symbol(member_id)
-                        && member_symbol.flags & symbol_flags::ALIAS != 0
-                    {
-                        let mut visited_aliases = Vec::new();
-                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                            .unwrap_or(member_id)
-                    } else {
-                        member_id
-                    };
-
-                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
-                        return None;
-                    }
-
-                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
-                        && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
-                    {
-                        return None;
-                    }
-
-                    return Some(self.get_type_of_symbol(resolved_member_id));
+                    return self.resolve_validated_namespace_member(
+                        sym_id,
+                        member_id,
+                        property_name,
+                    );
                 }
 
                 None
@@ -878,19 +810,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(exports) = symbol.exports.as_ref()
                     && let Some(member_id) = exports.get(property_name)
                 {
-                    // Record member as cross-file so get_type_of_symbol delegates correctly
-                    let cross_file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied();
-                    if let Some(file_idx) = cross_file_idx {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(member_id, file_idx);
-                    }
+                    self.propagate_cross_file_target(sym_id, member_id);
                     return Some(self.get_type_of_symbol(member_id));
                 }
 
