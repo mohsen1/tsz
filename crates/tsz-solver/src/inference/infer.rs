@@ -13,9 +13,7 @@
 use crate::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
-use crate::types::{
-    InferencePriority, IntrinsicKind, LiteralValue, TemplateSpan, TypeData, TypeId,
-};
+use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
 use crate::visitor::is_literal_type;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -201,104 +199,6 @@ impl ConstraintSet {
     /// Check if there are any constraints
     pub const fn is_empty(&self) -> bool {
         self.lower_bounds.is_empty() && self.upper_bounds.is_empty()
-    }
-
-    /// Detect early conflicts between collected constraints.
-    /// This allows failing fast before full resolution.
-    pub fn detect_conflicts(&self, interner: &dyn TypeDatabase) -> Option<ConstraintConflict> {
-        // PERF: Transitive reduction of upper bounds to minimize N² checks.
-        let mut reduced_upper = self.upper_bounds.clone();
-        if reduced_upper.len() >= 2 {
-            let mut redundant = FxHashSet::default();
-            for (i, &u1) in reduced_upper.iter().enumerate() {
-                for (j, &u2) in reduced_upper.iter().enumerate() {
-                    if i == j || redundant.contains(&u1) || redundant.contains(&u2) {
-                        continue;
-                    }
-                    if crate::relations::subtype::is_subtype_of(interner, u1, u2) {
-                        redundant.insert(u2);
-                    }
-                }
-            }
-            if !redundant.is_empty() {
-                reduced_upper.retain(|ty| !redundant.contains(ty));
-            }
-        }
-
-        // 1. Check for mutually exclusive upper bounds
-        for (i, &u1) in reduced_upper.iter().enumerate() {
-            for &u2 in &reduced_upper[i + 1..] {
-                if are_disjoint(interner, u1, u2) {
-                    return Some(ConstraintConflict::DisjointUpperBounds(u1, u2));
-                }
-            }
-        }
-
-        // 2. Check if any lower bound is incompatible with any upper bound
-        for &lower in &self.lower_bounds {
-            for &upper in &reduced_upper {
-                // Ignore ERROR and ANY for conflict detection
-                if lower == TypeId::ERROR
-                    || upper == TypeId::ERROR
-                    || lower == TypeId::ANY
-                    || upper == TypeId::ANY
-                {
-                    continue;
-                }
-                if !crate::relations::subtype::is_subtype_of(interner, lower, upper) {
-                    return Some(ConstraintConflict::LowerExceedsUpper(lower, upper));
-                }
-            }
-        }
-
-        None
-    }
-}
-
-/// Conflict detected between constraints on an inference variable.
-#[derive(Clone, Debug)]
-pub enum ConstraintConflict {
-    /// Mutually exclusive upper bounds (e.g., string AND number)
-    DisjointUpperBounds(TypeId, TypeId),
-    /// A lower bound is not a subtype of an upper bound
-    LowerExceedsUpper(TypeId, TypeId),
-}
-
-/// Helper to determine if two types are definitely disjoint (no common inhabitants).
-fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
-    if a == b {
-        return false;
-    }
-    if a.is_any_or_unknown() || b.is_any_or_unknown() {
-        return false;
-    }
-
-    let key_a = interner.lookup(a);
-    let key_b = interner.lookup(b);
-
-    match (key_a, key_b) {
-        (Some(TypeData::Intrinsic(k1)), Some(TypeData::Intrinsic(k2))) => {
-            use IntrinsicKind::*;
-            // Basic primitives are disjoint (ignoring object/Function which are more complex)
-            k1 != k2 && !matches!((k1, k2), (Object | Function, _) | (_, Object | Function))
-        }
-        (Some(TypeData::Literal(l1)), Some(TypeData::Literal(l2))) => l1 != l2,
-        (Some(TypeData::Literal(l1)), Some(TypeData::Intrinsic(k2))) => {
-            !is_literal_compatible_with_intrinsic(&l1, k2)
-        }
-        (Some(TypeData::Intrinsic(k1)), Some(TypeData::Literal(l2))) => {
-            !is_literal_compatible_with_intrinsic(&l2, k1)
-        }
-        _ => false,
-    }
-}
-
-fn is_literal_compatible_with_intrinsic(lit: &LiteralValue, kind: IntrinsicKind) -> bool {
-    match lit {
-        LiteralValue::String(_) => kind == IntrinsicKind::String,
-        LiteralValue::Number(_) => kind == IntrinsicKind::Number,
-        LiteralValue::BigInt(_) => kind == IntrinsicKind::Bigint,
-        LiteralValue::Boolean(_) => kind == IntrinsicKind::Boolean,
     }
 }
 
