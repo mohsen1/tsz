@@ -888,9 +888,10 @@ impl<'a> CheckerState<'a> {
                 use tsz_parser::parser::syntax_kind_ext;
                 if parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                     && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
-                        && access.name_or_argument.is_none() {
-                            return TypeId::ERROR;
-                        }
+                    && access.name_or_argument.is_none()
+                {
+                    return TypeId::ERROR;
+                }
             }
             self.error_type_only_value_at(name, idx);
             return TypeId::ERROR;
