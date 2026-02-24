@@ -148,44 +148,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Skip whitespace and comments forward from `pos` to find the actual token start.
     /// Returns the position of the first non-trivia character.
     fn skip_trivia_forward(&self, pos: u32, end: u32) -> u32 {
-        let source_text = match self.source_text {
-            Some(t) => t,
-            None => return pos,
-        };
-        let bytes = source_text.as_bytes();
-        let mut i = pos as usize;
-        let end = end as usize;
-        while i < end && i < bytes.len() {
-            match bytes[i] {
-                b' ' | b'\t' | b'\n' | b'\r' => i += 1,
-                b'/' if i + 1 < end => {
-                    if bytes[i + 1] == b'/' {
-                        // Line comment: skip to end of line
-                        i += 2;
-                        while i < end && i < bytes.len() && bytes[i] != b'\n' {
-                            i += 1;
-                        }
-                        if i < end && i < bytes.len() && bytes[i] == b'\n' {
-                            i += 1;
-                        }
-                    } else if bytes[i + 1] == b'*' {
-                        // Block comment: skip to */
-                        i += 2;
-                        while i + 1 < end && i + 1 < bytes.len() {
-                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                                i += 2;
-                                break;
-                            }
-                            i += 1;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-                _ => break,
-            }
-        }
-        i as u32
+        super::emit_utils::skip_trivia_forward(self.source_text, pos, end)
     }
 
     /// Find the position after the code content of an erased statement (interface/type alias).
