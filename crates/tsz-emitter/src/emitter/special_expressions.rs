@@ -22,37 +22,106 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Emit comments that occur before the `yield` keyword itself.
+        // This preserves cases like `/*comment*/ yield 1`.
+        let keyword_pos = self.skip_trivia_forward(node.pos, node.end);
+        let (had_leading_comment, _, leading_comment_had_newline) =
+            self.emit_comments_in_range(node.pos, keyword_pos, true, false);
+        if (!had_leading_comment && self.comment_just_before_pos(keyword_pos))
+            || (had_leading_comment && !leading_comment_had_newline)
+        {
+            self.write(" ");
+        }
+
         self.write("yield");
+        let after_yield_pos = keyword_pos.saturating_add(5);
 
         if unary.asterisk_token {
-            if let Some(expr) = self.arena.get(unary.expression) {
-                self.emit_unemitted_comments_between(node.pos, expr.pos);
-            } else {
-                self.emit_unemitted_comments_between(node.pos, node.end);
-            }
+            let Some(expr_node) = self.arena.get(unary.expression) else {
+                // TypeScript emits `yield* ;` (with space) when yield* has no expression
+                if self.ctx.flags.in_generator {
+                    self.write("*");
+                } else {
+                    self.write(" *");
+                }
+                self.write(" ");
+                return;
+            };
 
-            if self.ctx.flags.in_generator {
+            let star_pos = self.source_text.map_or(after_yield_pos, |text| {
+                let text_end = std::cmp::min(expr_node.end, text.len() as u32);
+                self.skip_trivia_forward(after_yield_pos, text_end)
+            });
+
+            let (has_star_comment, _, _) =
+                self.emit_comments_in_range(after_yield_pos, star_pos, true, false);
+            if self.ctx.flags.in_generator || has_star_comment {
                 self.write("*");
             } else {
                 self.write(" *");
             }
-        }
-        if unary.expression.is_some() {
-            let Some(expr_node) = self.arena.get(unary.expression) else {
-                self.write(" ");
-                return;
-            };
-            if !unary.asterisk_token {
-                self.emit_unemitted_comments_between(node.pos, expr_node.pos);
-            }
-            if !self.is_expression_parenthesized(expr_node) || self.ctx.flags.in_generator {
+
+            let expr_start = star_pos.saturating_add(1);
+            let expr_pos = expr_node.pos;
+            let (has_expression_comment, _, expression_comment_had_newline) =
+                self.emit_comments_in_range(expr_start, expr_pos, true, false);
+            if has_expression_comment {
+                if !expression_comment_had_newline {
+                    self.write(" ");
+                }
+            } else if !self.is_expression_parenthesized(expr_node) || self.ctx.flags.in_generator {
                 self.write(" ");
             }
             self.emit_expression(unary.expression);
-        } else if unary.asterisk_token {
-            // TypeScript emits `yield* ;` (with space) when yield* has no expression
-            self.write(" ");
+        } else {
+            let Some(expr_node) = self.arena.get(unary.expression) else {
+                return;
+            };
+
+            let (has_expression_comment, _, expression_comment_had_newline) =
+                self.emit_comments_in_range(after_yield_pos, expr_node.pos, true, false);
+            if has_expression_comment {
+                if !expression_comment_had_newline {
+                    self.write(" ");
+                }
+            } else if !self.is_expression_parenthesized(expr_node) || self.ctx.flags.in_generator {
+                self.write(" ");
+            }
+            self.emit_expression(unary.expression);
         }
+    }
+
+    fn comment_just_before_pos(&self, pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let Some(prev_idx) = self.comment_emit_idx.checked_sub(1) else {
+            return false;
+        };
+        let Some(prev_comment) = self.all_comments.get(prev_idx) else {
+            return false;
+        };
+
+        if prev_comment.end > pos || prev_comment.has_trailing_new_line {
+            return false;
+        }
+
+        let bytes = text.as_bytes();
+        let mut cursor = prev_comment.end as usize;
+        let end = std::cmp::min(pos as usize, bytes.len());
+        while cursor < end {
+            match bytes[cursor] {
+                b' ' | b'\t' => {
+                    cursor += 1;
+                }
+                _ => {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     const fn is_expression_parenthesized(&self, node: &Node) -> bool {
