@@ -682,6 +682,9 @@ impl<'a> CheckerState<'a> {
         target_idx: NodeIndex,
         _expr_idx: NodeIndex,
     ) -> bool {
+        // Skip parenthesized expressions to find the underlying property access.
+        // E.g., `++((M.x))` should detect that `M.x` is readonly.
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
             return false;
         };

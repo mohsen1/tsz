@@ -293,3 +293,70 @@ c.x++;
         "Should emit TS2540 for increment on readonly class property"
     );
 }
+
+// =========================================================================
+// Parenthesized expression tests
+// =========================================================================
+
+#[test]
+fn test_readonly_parenthesized_increment() {
+    // ++((M.x)) should detect readonly through parentheses
+    let source = r"
+namespace M {
+    export const x = 0;
+}
+++((M.x));
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for parenthesized increment on namespace const"
+    );
+}
+
+#[test]
+fn test_readonly_parenthesized_assignment() {
+    // (obj.x) = 1 should detect readonly through parentheses
+    let source = r"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+(obj.x) = 10;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for parenthesized assignment to readonly property"
+    );
+}
+
+#[test]
+fn test_readonly_double_parenthesized_increment() {
+    // ++((obj.x)) with double parens
+    let source = r"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+++((c.x));
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for double-parenthesized increment on readonly"
+    );
+}
+
+#[test]
+fn test_non_readonly_parenthesized_ok() {
+    // Parenthesized assignment to non-readonly should be fine
+    let source = r"
+class C {
+    x: number = 1;
+}
+const c = new C();
+(c.x) = 10;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for parenthesized assignment to mutable property"
+    );
+}
