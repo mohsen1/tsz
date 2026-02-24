@@ -904,9 +904,24 @@ Called from method, constructor, and function declaration checking paths.
 6 unit tests added.
 
 ### Remaining TS2385-adjacent issues
-- **overloadModifiersMustAgree.ts**: Also needs TS2383 (exported/non-exported), TS2384
-  (ambient/non-ambient), TS2386 (optional/required). Separate overload consistency checks.
+- **overloadModifiersMustAgree.ts**: TS2383/TS2385/TS2386 now implemented. TS2384 already existed.
 - **memberFunctionsWithPublicPrivateOverloads.ts**: TS2385 matches perfectly. Remaining
   failure is TS2341 message text (`class 'D'` vs `class 'D<T>'`).
 
-## Current score: 4010/5997 (66.9%) — first 6000; 7957/12574 (63.3%) — full suite
+## Session: TS2383/TS2385/TS2386 overload modifier agreement (2026-02-23)
+
+**Result**: +3 conformance tests (7961→7964), 0 regressions, 8 unit tests added.
+
+### What was done
+- Implemented TS2383 (exported vs non-exported), TS2385 (access modifier agreement),
+  TS2386 (optional vs required) for overload signatures.
+- Covers file-level functions (`type_checking_global.rs`), class methods
+  (`overload_compatibility.rs`), and interface method signatures (`member_access.rs`).
+- Key insight: tsc uses the **implementation's** modifiers as the canonical reference,
+  not the first declaration. The implementation itself is skipped from error emission.
+
+### Deferred
+- TS2341 message text parity (`class 'D'` vs `class 'D<T>'`) in memberFunctionsWithPublicPrivateOverloads.ts
+- Many analyze-reported "NOT IMPLEMENTED" codes (TS2875, TS2497, etc.) already pass at 100% when run individually — the analyze tool reports against a different slice.
+
+## Current score: 7964/12574 (63.3%) — full suite
