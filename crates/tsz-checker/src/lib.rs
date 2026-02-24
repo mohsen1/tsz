@@ -62,9 +62,8 @@ pub use flow_domain::{
     control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_checker,
 };
 
-pub use state_domain::{
-    state, state_checking, state_type_analysis, state_type_environment, state_type_resolution,
-};
+pub use state_domain::type_resolution::core as state_type_resolution;
+pub use state_domain::{state, state_checking, state_type_analysis, state_type_environment};
 
 pub use symbols_domain::{scope_finder, symbol_resolver};
 

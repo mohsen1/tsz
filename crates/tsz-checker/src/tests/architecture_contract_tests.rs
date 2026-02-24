@@ -232,12 +232,12 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_literal_checker should use solver readonly constructor APIs, not TypeData::ReadonlyType"
     );
 
-    let mut type_resolution_src = fs::read_to_string("src/state/state_type_resolution.rs")
-        .expect("failed to read src/state/state_type_resolution.rs for architecture guard");
-    // Include split-off module that is part of the state_type_resolution logical module
+    let mut type_resolution_src = fs::read_to_string("src/state/type_resolution/core.rs")
+        .expect("failed to read src/state/type_resolution/core.rs for architecture guard");
+    // Include split-off modules that are part of the type_resolution logical module
     type_resolution_src.push_str(
-        &fs::read_to_string("src/state/state_type_resolution_module.rs")
-            .expect("failed to read src/state/state_type_resolution_module.rs"),
+        &fs::read_to_string("src/state/type_resolution/module.rs")
+            .expect("failed to read src/state/type_resolution/module.rs"),
     );
     assert!(
         !type_resolution_src.contains("TypeData::ReadonlyType"),
@@ -653,16 +653,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "flow_analysis_definite should not call solver type_queries directly; use definite_assignment/flow_analysis query boundaries"
     );
 
-    let mut state_type_resolution_src = fs::read_to_string("src/state/state_type_resolution.rs")
-        .expect("failed to read src/state/state_type_resolution.rs for architecture guard");
-    // Include split-off modules that are part of the state_type_resolution logical module
+    let mut state_type_resolution_src = fs::read_to_string("src/state/type_resolution/core.rs")
+        .expect("failed to read src/state/type_resolution/core.rs for architecture guard");
+    // Include split-off modules that are part of the type_resolution logical module
     state_type_resolution_src.push_str(
-        &fs::read_to_string("src/state/state_type_resolution_module.rs")
-            .expect("failed to read src/state/state_type_resolution_module.rs"),
+        &fs::read_to_string("src/state/type_resolution/module.rs")
+            .expect("failed to read src/state/type_resolution/module.rs"),
     );
     state_type_resolution_src.push_str(
-        &fs::read_to_string("src/state/state_type_resolution_constructors.rs")
-            .expect("failed to read src/state/state_type_resolution_constructors.rs"),
+        &fs::read_to_string("src/state/type_resolution/constructors.rs")
+            .expect("failed to read src/state/type_resolution/constructors.rs"),
     );
     assert!(
         state_type_resolution_src.contains("ensure_relation_input_ready("),
