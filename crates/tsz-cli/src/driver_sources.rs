@@ -317,6 +317,7 @@ pub(super) fn build_discovery_options(
         return Ok(FileDiscoveryOptions {
             base_dir: base_dir.to_path_buf(),
             files: args.files.clone(),
+            files_explicitly_set: true,
             include: None,
             exclude: None,
             out_dir: out_dir.map(Path::to_path_buf),

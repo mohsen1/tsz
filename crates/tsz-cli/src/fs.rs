@@ -13,6 +13,10 @@ pub(crate) const DEFAULT_EXCLUDES: [&str; 3] =
 pub struct FileDiscoveryOptions {
     pub base_dir: PathBuf,
     pub files: Vec<PathBuf>,
+    /// True when the tsconfig explicitly set `"files"` (even to `[]`).
+    /// Distinguishes `"files": []` (no files, no default glob) from a
+    /// missing `files` key (default `**/*` glob applies).
+    pub files_explicitly_set: bool,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
     pub out_dir: Option<PathBuf>,
@@ -26,6 +30,7 @@ impl FileDiscoveryOptions {
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
+        let files_explicitly_set = config.files.is_some();
         let files = config
             .files
             .as_ref()
@@ -35,6 +40,7 @@ impl FileDiscoveryOptions {
         Self {
             base_dir,
             files,
+            files_explicitly_set,
             include: config.include.clone(),
             exclude: config.exclude.clone(),
             out_dir: out_dir.map(Path::to_path_buf),
@@ -119,7 +125,10 @@ fn build_include_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
         Some(patterns) if patterns.is_empty() => Vec::new(),
         Some(patterns) => expand_include_patterns(&normalize_patterns(patterns)),
         None => {
-            if options.files.is_empty() {
+            // Only default to **/* when the tsconfig did not explicitly set
+            // `"files"`. A solution-style config like `{ "files": [], "references": [...] }`
+            // must not trigger a full directory walk — tsc treats it as zero input files.
+            if options.files.is_empty() && !options.files_explicitly_set {
                 vec!["**/*".to_string()]
             } else {
                 Vec::new()
@@ -337,6 +346,7 @@ mod tests {
         let options = FileDiscoveryOptions {
             base_dir: dir.clone(),
             files: vec![PathBuf::from("app.ts"), PathBuf::from("lib.js")],
+            files_explicitly_set: true,
             include: None,
             exclude: None,
             out_dir: None,
@@ -371,6 +381,7 @@ mod tests {
         let options = FileDiscoveryOptions {
             base_dir: dir.clone(),
             files: vec![],
+            files_explicitly_set: false,
             include: Some(vec!["src".to_string()]),
             exclude: None,
             out_dir: None,
@@ -392,6 +403,7 @@ mod tests {
         let options_with_js = FileDiscoveryOptions {
             base_dir: dir.clone(),
             files: vec![],
+            files_explicitly_set: false,
             include: Some(vec!["src".to_string()]),
             exclude: None,
             out_dir: None,

@@ -56,6 +56,7 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     let discovery_options = FileDiscoveryOptions {
         base_dir: root_dir.clone(),
         files: Vec::new(),
+        files_explicitly_set: false,
         include: None,
         exclude: None,
         out_dir: project.out_dir.clone(),

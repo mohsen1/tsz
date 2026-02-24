@@ -57,6 +57,7 @@ fn discover_files_defaults_exclude_common_dirs() {
     let options = FileDiscoveryOptions {
         base_dir: base.to_path_buf(),
         files: Vec::new(),
+        files_explicitly_set: false,
         include: None,
         exclude: None,
         out_dir: Some(PathBuf::from("dist")),
@@ -83,6 +84,7 @@ fn discover_files_with_include_exclude() {
     let options = FileDiscoveryOptions {
         base_dir: base.to_path_buf(),
         files: Vec::new(),
+        files_explicitly_set: false,
         include: Some(vec!["src/**/*.ts".to_string()]),
         exclude: Some(vec!["**/*.spec.ts".to_string(), "src/nested".to_string()]),
         out_dir: None,
@@ -107,6 +109,7 @@ fn discover_files_includes_explicit_files() {
     let options = FileDiscoveryOptions {
         base_dir: base.to_path_buf(),
         files: vec![PathBuf::from("src/explicit.ts")],
+        files_explicitly_set: true,
         include: Some(vec!["src/**/*.ts".to_string()]),
         exclude: Some(vec!["src/**".to_string()]),
         out_dir: None,
@@ -127,6 +130,7 @@ fn discover_files_missing_explicit_file_errors() {
     let options = FileDiscoveryOptions {
         base_dir: temp.path.clone(),
         files: vec![PathBuf::from("missing.ts")],
+        files_explicitly_set: true,
         include: None,
         exclude: None,
         out_dir: None,
@@ -154,6 +158,7 @@ fn discover_files_follow_links_when_enabled() {
     let mut options = FileDiscoveryOptions {
         base_dir: base.path.clone(),
         files: Vec::new(),
+        files_explicitly_set: false,
         include: Some(vec!["linked/**/*.ts".to_string()]),
         exclude: None,
         out_dir: None,
