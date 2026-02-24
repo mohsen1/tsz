@@ -161,6 +161,13 @@
 #### Run note (2026-02-24)
 - **Deferred**: `tests/conformance/suite/types` slices for `TS2322/TS2345/TS2339` remain out-of-scope for this pass; they still require cross-layer Solver/Checker compatibility-gate refactors (`query_boundaries`, `CompatChecker`, `Lazy(DefId)`-aware relation traversal).
 
+#### Run note (2026-02-25)
+- **Fixed**: TS5103 — removed erroneous "6.0" from valid ignoreDeprecations values. tsc 6.0 only accepts "5.0"; "6.0" is NOT yet valid per tsc's conservative deprecation strategy (+48 tests).
+- **Fixed**: TS1131 — parser now emits "Property or signature expected" instead of silent skip or generic TS1012 for invalid tokens in interface/type literal member positions (+tests via fingerprint improvement).
+- **Investigated**: TS7017 — "Element implicitly has 'any' because type has no index signature." Diagnostic defined but not emitted. Implementation needs ~20-30 lines in `property_access_type.rs` to distinguish dot-notation (TS7017) from bracket-notation (TS7053) under `noImplicitAny`. 6-8 tests. Deferred for next session.
+- **Investigated**: TS2657 — "JSX expressions must have one parent element." JSX parser needs sibling-element detection after first JSX element parse. MEDIUM difficulty, ~50-100 lines. 5-8 tests.
+- **Investigated**: TS1389 — "'{0}' is not allowed as a variable declaration name." Partially implemented (strict mode only). Needs expanded reserved keyword list. LOW-MEDIUM, ~80-150 lines. 5-7 tests.
+
 #### Run note (2026-02-24, session 2)
 - **Fixed**: TS5103 — removed bogus "5.5" from valid ignoreDeprecations list (+1 test).
 - **Fixed**: TS2435/TS1035 — module augmentations inside ambient external modules no longer false-positive TS2435 or TS1035 (+4 tests).
@@ -413,3 +420,5 @@ All items below have been validated against the codebase (implementations + test
 | TS2528 | Multiple default exports position fix | +1 test |
 | TS18003 | Windows-style path handling in conformance runner | +10 tests |
 | TS2435/TS1035 | Module augmentation in ambient modules: skip TS2435 for string-named parents, skip TS1035 in ambient context | +4 tests |
+| TS5103 | Reject ignoreDeprecations "6.0" (not yet valid in tsc 6.0) | +48 tests |
+| TS1131 | Emit "Property or signature expected" in parser for invalid interface/type literal members | +tests |
