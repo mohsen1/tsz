@@ -204,9 +204,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<anonymous>".to_string());
 
-                    let range = self.get_range(node_idx);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = if name_node.is_some() {
-                        self.get_range(name_node)
+                        node_range(self.arena, self.line_map, self.source_text, name_node)
                     } else {
                         self.get_range_keyword(node_idx, 8) // "function".len()
                     };
@@ -246,9 +246,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<class>".to_string());
 
-                    let range = self.get_range(node_idx);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = if name_node.is_some() {
-                        self.get_range(name_node)
+                        node_range(self.arena, self.line_map, self.source_text, name_node)
                     } else {
                         self.get_range_keyword(node_idx, 5) // "class".len()
                     };
@@ -283,9 +283,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<interface>".to_string());
 
-                    let range = self.get_range(node_idx);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = if name_node.is_some() {
-                        self.get_range(name_node)
+                        node_range(self.arena, self.line_map, self.source_text, name_node)
                     } else {
                         self.get_range_keyword(node_idx, 9) // "interface".len()
                     };
@@ -320,9 +320,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<type>".to_string());
 
-                    let range = self.get_range(node_idx);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = if name_node.is_some() {
-                        self.get_range(name_node)
+                        node_range(self.arena, self.line_map, self.source_text, name_node)
                     } else {
                         self.get_range_keyword(node_idx, 4) // "type".len()
                     };
@@ -371,8 +371,18 @@ impl<'a> DocumentSymbolProvider<'a> {
                                             self.arena.get_variable_declaration(decl_node)
                                         && let Some(name) = self.get_name(decl.name)
                                     {
-                                        let range = self.get_range(decl_idx);
-                                        let selection_range = self.get_range(decl.name);
+                                        let range = node_range(
+                                            self.arena,
+                                            self.line_map,
+                                            self.source_text,
+                                            decl_idx,
+                                        );
+                                        let selection_range = node_range(
+                                            self.arena,
+                                            self.line_map,
+                                            self.source_text,
+                                            decl.name,
+                                        );
 
                                         symbols.push(DocumentSymbol {
                                             name,
@@ -402,8 +412,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<enum>".to_string());
 
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(name_node);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, name_node);
 
                     let modifiers = self.get_kind_modifiers_from_list(&enum_decl.modifiers);
 
@@ -435,8 +446,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .get_name(name_node)
                         .unwrap_or_else(|| "<member>".to_string());
 
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(name_node);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, name_node);
 
                     vec![DocumentSymbol {
                         name,
@@ -459,8 +471,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(method.name)
                         .unwrap_or_else(|| "<method>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(method.name);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, method.name);
                     let modifiers = self.get_kind_modifiers_from_list(&method.modifiers);
 
                     vec![DocumentSymbol {
@@ -484,8 +497,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(prop.name)
                         .unwrap_or_else(|| "<property>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(prop.name);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, prop.name);
                     let modifiers = self.get_kind_modifiers_from_list(&prop.modifiers);
 
                     vec![DocumentSymbol {
@@ -509,8 +523,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(sig.name)
                         .unwrap_or_else(|| "<property>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(sig.name);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, sig.name);
                     let modifiers = self.get_kind_modifiers_from_list(&sig.modifiers);
 
                     vec![DocumentSymbol {
@@ -534,8 +549,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(sig.name)
                         .unwrap_or_else(|| "<method>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(sig.name);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, sig.name);
                     let modifiers = self.get_kind_modifiers_from_list(&sig.modifiers);
 
                     vec![DocumentSymbol {
@@ -568,7 +584,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     detail: None,
                     kind: SymbolKind::Constructor,
                     kind_modifiers: modifiers,
-                    range: self.get_range(node_idx),
+                    range: node_range(self.arena, self.line_map, self.source_text, node_idx),
                     selection_range: self.get_range_keyword(node_idx, 11), // "constructor".len()
                     container_name: container_name.map(std::string::ToString::to_string),
                     children,
@@ -582,8 +598,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(name_node)
                         .unwrap_or_else(|| "<accessor>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(name_node);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, name_node);
                     let mut modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
                     append_modifier(&mut modifiers, "getter");
 
@@ -609,8 +626,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(name_node)
                         .unwrap_or_else(|| "<accessor>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(name_node);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, name_node);
                     let mut modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
                     append_modifier(&mut modifiers, "setter");
 
@@ -635,8 +653,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name = self
                         .get_name(module.name)
                         .unwrap_or_else(|| "<module>".to_string());
-                    let range = self.get_range(node_idx);
-                    let selection_range = self.get_range(module.name);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
+                    let selection_range =
+                        node_range(self.arena, self.line_map, self.source_text, module.name);
 
                     let modifiers = self.get_kind_modifiers_from_list(&module.modifiers);
 
@@ -704,7 +723,8 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     // export default <expression> (non-declaration)
                     if is_default {
-                        let range = self.get_range(node_idx);
+                        let range =
+                            node_range(self.arena, self.line_map, self.source_text, node_idx);
                         let selection_range = self.get_range_keyword(node_idx, 6); // "export".len()
                         return vec![DocumentSymbol {
                             name: "default".to_string(),
@@ -730,7 +750,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         "default".to_string()
                     };
 
-                    let range = self.get_range(node_idx);
+                    let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
                     let selection_range = self.get_range_keyword(node_idx, 6); // "export".len()
                     let modifiers = self.get_kind_modifiers_from_list(&export_assign.modifiers);
 
@@ -791,11 +811,6 @@ impl<'a> DocumentSymbolProvider<'a> {
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
             || kind == syntax_kind_ext::ENUM_DECLARATION
-    }
-
-    /// Convert node range to LSP Range.
-    fn get_range(&self, node_idx: NodeIndex) -> Range {
-        node_range(self.arena, self.line_map, self.source_text, node_idx)
     }
 
     /// Get range for a keyword (when no identifier exists, e.g. "constructor").
