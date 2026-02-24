@@ -1,8 +1,26 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~9995/13623 = 73.4% JS, ~776/1995 = 38.9% DTS)
+## Pattern Analysis (JS+DTS mode, current ~9993/13623 = 73.3% JS, ~776/1995 = 38.9% DTS)
 
 ### Fixed This Session (2026-02-24)
+- **Revert d8eefb7 regressions (blank lines, semicolons, accessor format)** (recovery: 6069→9993 JS):
+  Commit d8eefb701 introduced three regressions: (1) `emit_trailing_source_blank_lines` added
+  spurious blank lines between top-level statements — tsc strips inter-statement blank lines in
+  JS output, not preserves them; (2) `should_omit_variable_statement_trailing_semicolon` incorrectly
+  suppressed semicolons after variable statements with object literal initializers (`};` → `}`);
+  (3) accessor empty-body format changed from `{ }` to `{}` when tsc uses `{ }`. Reverted all three.
+  JS: 6069→9993, DTS unchanged, zero regressions.
+
+### Skipped / Investigated This Session (2026-02-24)
+- **Accessor object literal format in JS passthrough** (~2 tests): `accessorDeclarationEmitJs` is a
+  `.js` input file where tsc passes through the source formatting verbatim (no semicolons, preserved
+  blank lines between statements). The emitter always adds semicolons and strips blank lines. Fixing
+  this requires detecting JS passthrough mode. Low impact (2 tests).
+- **Source blank line preservation**: tsc does NOT preserve inter-statement blank lines in JS emit
+  from `.ts` files. Any future attempt to add blank line preservation must be scoped to JS passthrough
+  mode only.
+
+
 - **Ternary/conditional expression line-breaking** (+6 JS):
   tsc preserves source formatting for conditional expressions: `?` and `:` operators
   stay on the same lines as in source. Two ternary styles exist:
