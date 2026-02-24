@@ -368,20 +368,32 @@ impl<'a> Printer<'a> {
         };
 
         if !has_optional_call_token {
-            let this_temp = self.make_unique_name_hoisted();
-            self.write("(");
-            self.write(&this_temp);
-            self.write(" = ");
-            self.emit(access.expression);
-            self.write(")");
-            if access.question_dot_token {
-                self.write(" === null || ");
+            let is_simple = self.is_simple_nullish_expression(access.expression);
+            if is_simple {
+                // Simple identifier — no temp needed.
+                // e.g., `o2?.b()` → `o2 === null || o2 === void 0 ? void 0 : o2.b()`
+                if access.question_dot_token {
+                    self.emit(access.expression);
+                    self.write(" === null || ");
+                    self.emit(access.expression);
+                    self.write(" === void 0 ? void 0 : ");
+                }
+                self.emit(access.expression);
+            } else {
+                let this_temp = self.make_unique_name_hoisted();
+                self.write("(");
                 self.write(&this_temp);
-                self.write(" === void 0 ? void 0 : ");
-            }
-
-            if access.question_dot_token {
-                self.write(&this_temp);
+                self.write(" = ");
+                self.emit(access.expression);
+                self.write(")");
+                if access.question_dot_token {
+                    self.write(" === null || ");
+                    self.write(&this_temp);
+                    self.write(" === void 0 ? void 0 : ");
+                }
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
             }
             if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 self.write(".");
@@ -430,44 +442,77 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let this_temp = self.make_unique_name_hoisted();
-        let func_temp = self.make_unique_name_hoisted();
+        let is_simple = self.is_simple_nullish_expression(access.expression);
 
-        self.write("(");
-        self.write(&func_temp);
-        self.write(" = ");
-        self.write("(");
-        self.write(&this_temp);
-        self.write(" = ");
-        self.emit(access.expression);
-        self.write(")");
-        if access.question_dot_token {
-            self.write(" === null || ");
-            self.write(&this_temp);
+        if is_simple {
+            // Simple identifier — only need one temp for the method capture.
+            // e.g., `o3.b?.()` → `(_a = o3.b) === null || _a === void 0 ? void 0 : _a.call(o3)`
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            if access.question_dot_token {
+                self.emit(access.expression);
+                self.write(" === null || ");
+                self.emit(access.expression);
+                self.write(" === void 0 ? void 0 : ");
+                self.emit(access.expression);
+            } else {
+                self.emit(access.expression);
+            }
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
             self.write(" === void 0 ? void 0 : ");
-        }
-        if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if access.question_dot_token {
-                self.write(&this_temp);
-            }
-            self.write(".");
-            self.emit(access.name_or_argument);
+            self.write(&func_temp);
+            self.write(".call(");
+            self.emit(access.expression);
+            self.emit_optional_call_tail_arguments(args.as_ref());
         } else {
+            let this_temp = self.make_unique_name_hoisted();
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            self.write("(");
+            self.write(&this_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")");
             if access.question_dot_token {
+                self.write(" === null || ");
                 self.write(&this_temp);
+                self.write(" === void 0 ? void 0 : ");
             }
-            self.write("[");
-            self.emit(access.name_or_argument);
-            self.write("]");
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&func_temp);
+            self.write(".call(");
+            self.write(&this_temp);
+            self.emit_optional_call_tail_arguments(args.as_ref());
         }
-        self.write(") === null || ");
-        self.write(&func_temp);
-        self.write(" === void 0 ? void 0 : ");
-        self.write(&func_temp);
-        self.write(".call(");
-        self.write(&this_temp);
-        self.emit_optional_call_tail_arguments(args.as_ref());
-        self.write(")");
     }
 
     fn emit_optional_call_tail_arguments(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
@@ -1696,6 +1741,92 @@ mod tests {
         assert!(
             output.contains("+ ++x"),
             "Unary `+` before `++x` must have space.\nOutput:\n{output}"
+        );
+    }
+
+    /// Optional method call on a simple identifier should NOT use a temp variable.
+    /// `o?.b()` → `o === null || o === void 0 ? void 0 : o.b()` (no `_a`).
+    #[test]
+    fn optional_method_call_simple_identifier_no_temp() {
+        let source = "declare const o: any;\no?.b();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("o === null || o === void 0 ? void 0 : o.b()"),
+            "Simple identifier should be used directly, no temp var.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a"),
+            "No temp variable should be allocated for simple identifier.\nOutput:\n{output}"
+        );
+    }
+
+    /// Optional method call with `.call()` on a simple identifier should use the
+    /// identifier directly as the `.call()` receiver.
+    /// `o.b?.()` → `(_a = o.b) === null || _a === void 0 ? void 0 : _a.call(o)`
+    #[test]
+    fn optional_call_simple_receiver_uses_identifier_in_call() {
+        let source = "declare const o: any;\no.b?.();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(".call(o)"),
+            "Simple identifier should be used directly as .call() receiver.\nOutput:\n{output}"
+        );
+        // Should only have one temp (_a for the method), not two
+        assert!(
+            !output.contains("_b"),
+            "Only one temp var should be allocated.\nOutput:\n{output}"
+        );
+    }
+
+    /// Complex (non-identifier) expression in optional method call MUST use a temp.
+    /// `f()?.b()` needs a temp to avoid calling `f()` twice.
+    #[test]
+    fn optional_method_call_complex_expr_uses_temp() {
+        let source = "declare function f(): any;\nf()?.b();\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("_a = f()"),
+            "Complex expression must be captured in temp var.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("=== null"),
+            "Must have null check.\nOutput:\n{output}"
         );
     }
 }
