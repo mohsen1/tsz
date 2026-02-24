@@ -1255,4 +1255,53 @@ null+any (no emit), null-number (emit). Full conformance: 8012/12574 (63.7%).
   class members, type parameters, destructuring spread, function expressions, and
   underscore-prefixed variables. Too diverse for a single fix.
 
-## Current score: ~8012/12574 (63.7%) — full suite
+---
+
+## Session: TS2353 discriminated union excess check + type alias name display
+
+**Date:** 2026-02-24
+**Focus:** Second half of test suite (offset 6000).
+**Analysis:** `./scripts/conformance.sh run --offset 6000` → 4023/6577 (61.2%).
+Quick-win targets: TS2353 (9 single-code tests), TS2300 (10), TS2304 (14), TS2307 (14).
+
+### Fix 1: Type alias name display in diagnostics (+76 tests)
+**Problem:** Type alias names (e.g., `Square`) were displayed as their structural type
+(`{ size: number; kind: "sq" }`) in error messages. Interfaces already worked correctly.
+**Root cause:** `computed.rs` never called `set_instance_shape(def_id, shape)` for type aliases
+(only interfaces had this call). The `DefinitionStore` couldn't map shapes back to alias names.
+**Fix:** Added `set_instance_shape` call in type alias evaluation path (`computed.rs` ~line 734),
+mirroring the existing interface registration.
+**Impact:** +76 tests across full suite (8075/12574 → 64.2%). Affects all diagnostics that
+format type alias names.
+
+### Fix 2: TS2353 discriminated union excess property check (+1 test, offset 6000)
+**Problem:** When a fresh object literal with a discriminant property (e.g., `kind: "sq"`) was
+assigned to a discriminated union, tsc reports TS2353 against the narrowed member. tsz reported
+a generic TS2322 instead.
+**Fix:** Added `try_discriminated_union_excess_check` in `state_property_checking.rs`. Called
+before `check_assignable_or_report_at` in the variable declaration path (`core.rs`). Logic:
+1. Check source is fresh object literal
+2. Find discriminant property (unit-type value matching a single union member)
+3. Narrow to matching member
+4. Collect excess properties sorted by AST position
+5. Report earliest excess as TS2353
+
+### Deferred TS2353 investigations
+- **Spread freshness (objectLiteralFreshnessWithSpread.ts):** Objects created via spread (`{...a}`)
+  should be non-fresh and skip excess property checks. Requires freshness tracking through spread.
+- **Recursive array types (nestedRecursiveArraysOrObjectsError01.ts):** `interface Foo extends Array<Foo>`
+  patterns need recursive interface-extends-array recognition in the solver.
+- **Union excess check for valid assignments:** When `{ kind: "sq", size: 10 }` is assigned to
+  `Shape = Square | Rectangle`, the existing `check_object_literal_excess_properties` fires a
+  false positive TS2353 because it checks all union members without discriminant narrowing.
+  The `try_discriminated_union_excess_check` only handles the failing-assignability path.
+  Fixing this requires discriminant narrowing in the success path as well.
+
+### Validation
+- Unit tests: 7 tests in `ts2353_tests.rs` (discriminant narrowing, source order, alias name display,
+  non-discriminated fallback, interface regression guard).
+- Full suite: 8075/12574 (64.2%) — +76 from baseline 7999.
+- Second half: 4024/6577 — +1 from baseline 4023.
+- No regressions (1 pre-existing failure: `test_contextual_signature_instantiation_chain_no_false_ts2345`).
+
+## Current score: ~8075/12574 (64.2%) — full suite

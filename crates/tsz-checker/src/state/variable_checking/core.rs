@@ -511,6 +511,14 @@ impl<'a> CheckerState<'a> {
                                 var_decl.initializer,
                                 decl_idx,
                             );
+                        } else if checker.try_discriminated_union_excess_check(
+                            init_type,
+                            declared_type,
+                            var_decl.initializer,
+                        ) {
+                            // Discriminated union excess property check handled the error.
+                            // tsc reports TS2353 against the narrowed member instead of
+                            // a generic TS2322 for these cases.
                         } else if checker.check_assignable_or_report_at(
                             init_type,
                             declared_type,

@@ -728,6 +728,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx.insert_def_type_params(def_id, params.clone());
                 }
 
+                // Register the object shape so diagnostics can display the type alias
+                // name (e.g., "Square") instead of the structural type (e.g.,
+                // "{ size: number; kind: \"sq\" }"). Mirrors the interface path above.
+                if let Some(shape) =
+                    state_type_environment::object_shape(self.ctx.types, alias_type)
+                {
+                    self.ctx.definition_store.set_instance_shape(def_id, shape);
+                }
+
                 // Return the params that were used during lowering - this ensures
                 // type_env gets the same TypeIds as the type body
                 return (alias_type, params);

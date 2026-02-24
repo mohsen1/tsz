@@ -78,7 +78,40 @@ impl<'a> CheckerState<'a> {
             }
 
             let effective_shapes = if matched_shapes.is_empty() {
-                target_shapes
+                // No union member fully matches the source. Try discriminant-based
+                // narrowing: if a source property has a unit type (string/number literal)
+                // that matches exactly one union member's property type, narrow to that
+                // member. This matches tsc's behavior for discriminated unions.
+                // Example: { kind: "sq", x: 12 } vs Square | Rectangle | Circle
+                //   -> kind: "sq" matches Square -> check excess against Square only
+                let mut discriminant_shapes = Vec::new();
+                for source_prop in source_props {
+                    if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
+                        continue;
+                    }
+                    let mut matching_indices = Vec::new();
+                    for (i, shape) in target_shapes.iter().enumerate() {
+                        if let Some(target_prop) =
+                            shape.properties.iter().find(|p| p.name == source_prop.name)
+                            && self.is_subtype_of(source_prop.type_id, target_prop.type_id) {
+                                matching_indices.push(i);
+                            }
+                    }
+                    // If this property narrows to a strict subset of members, use it
+                    if !matching_indices.is_empty() && matching_indices.len() < target_shapes.len()
+                    {
+                        discriminant_shapes = matching_indices
+                            .iter()
+                            .map(|&i| target_shapes[i].clone())
+                            .collect();
+                        break;
+                    }
+                }
+                if discriminant_shapes.is_empty() {
+                    target_shapes
+                } else {
+                    discriminant_shapes
+                }
             } else {
                 matched_shapes
             };
@@ -224,6 +257,122 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Note: Missing property checks are handled by solver's explain_failure
+    }
+
+    /// For fresh object literals assigned to discriminated union targets, detect
+    /// the discriminant member and emit TS2353 for excess properties against that
+    /// specific member. Returns `true` if excess properties were found and
+    /// reported, meaning the caller should skip the regular assignability error.
+    ///
+    /// This matches tsc behavior: `{ kind: "sq", x: 12 }` assigned to
+    /// `Square | Rectangle` where Square = { kind: "sq", size: number }
+    /// reports "'x' does not exist in type 'Square'" (not a generic TS2322).
+    pub(crate) fn try_discriminated_union_excess_check(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        obj_literal_idx: NodeIndex,
+    ) -> bool {
+        use tsz_solver::relations::freshness;
+
+        if !freshness::is_fresh_object_type(self.ctx.types, source) {
+            return false;
+        }
+
+        let Some(source_shape) = query::object_shape(self.ctx.types, source) else {
+            return false;
+        };
+
+        let resolved_target = self.resolve_type_for_property_access(target);
+        let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
+            return false;
+        };
+
+        // Try to get the original (possibly Lazy) union members for type name display.
+        // If the target resolves through a type alias, the original members preserve
+        // their Lazy wrappers and format as named types (e.g., "Square" instead of
+        // "{ size: number; kind: \"sq\" }").
+        let original_members = query::union_members(self.ctx.types, target);
+
+        // Collect resolved shapes for each union member, along with the original
+        // TypeId (for error message formatting) which preserves type alias names.
+        let mut member_shapes: Vec<(TypeId, std::sync::Arc<tsz_solver::ObjectShape>)> = Vec::new();
+        for (i, &member) in members.iter().enumerate() {
+            let resolved = self.resolve_type_for_property_access(member);
+            if let Some(shape) = query::object_shape(self.ctx.types, resolved) {
+                // Prefer the original (Lazy) member for display, fall back to resolved
+                let display_id = original_members
+                    .as_ref()
+                    .and_then(|orig| orig.get(i).copied())
+                    .unwrap_or(member);
+                member_shapes.push((display_id, shape));
+            }
+        }
+
+        if member_shapes.is_empty() {
+            return false;
+        }
+
+        // Find a source property with a unit type that matches exactly one member
+        let source_props = source_shape.properties.as_slice();
+        let mut best_member: Option<(TypeId, &std::sync::Arc<tsz_solver::ObjectShape>)> = None;
+
+        for source_prop in source_props {
+            if !query::is_unit_type(self.ctx.types, source_prop.type_id) {
+                continue;
+            }
+            let mut matching: Vec<usize> = Vec::new();
+            for (i, (_, shape)) in member_shapes.iter().enumerate() {
+                if let Some(target_prop) =
+                    shape.properties.iter().find(|p| p.name == source_prop.name)
+                    && self.is_subtype_of(source_prop.type_id, target_prop.type_id) {
+                        matching.push(i);
+                    }
+            }
+            // Narrowed to a strict subset — pick the best match
+            if !matching.is_empty() && matching.len() < member_shapes.len() {
+                // Use the first matching member (tsc picks the best discriminant match)
+                let idx = matching[0];
+                best_member = Some((member_shapes[idx].0, &member_shapes[idx].1));
+                break;
+            }
+        }
+
+        let Some((narrowed_member_type, narrowed_shape)) = best_member else {
+            return false;
+        };
+
+        // Collect excess properties (not in narrowed member) with their AST positions.
+        // tsc reports only the first excess property in source order.
+        let mut excess_candidates: Vec<(tsz_common::interner::Atom, NodeIndex, u32)> = Vec::new();
+        for source_prop in source_props {
+            let exists_in_narrowed = narrowed_shape
+                .properties
+                .iter()
+                .any(|p| p.name == source_prop.name);
+
+            if !exists_in_narrowed {
+                let report_idx = self
+                    .find_object_literal_property_element(obj_literal_idx, source_prop.name)
+                    .unwrap_or(obj_literal_idx);
+                let pos = self
+                    .ctx
+                    .arena
+                    .get(report_idx)
+                    .map(|n| n.pos)
+                    .unwrap_or(u32::MAX);
+                excess_candidates.push((source_prop.name, report_idx, pos));
+            }
+        }
+
+        // Report the first excess property by source position (earliest in file)
+        if let Some(earliest) = excess_candidates.iter().min_by_key(|c| c.2) {
+            let prop_name = self.ctx.types.resolve_atom(earliest.0);
+            self.error_excess_property_at(&prop_name, narrowed_member_type, earliest.1);
+            true
+        } else {
+            false
+        }
     }
 
     /// Check nested object literal properties for excess properties.
