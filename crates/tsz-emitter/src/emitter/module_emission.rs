@@ -1034,10 +1034,11 @@ impl<'a> Printer<'a> {
             };
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && let Some(access) = self.arena.get_access_expr(node)
-                    && let Some(expr_node) = self.arena.get(access.expression)
-                        && expr_node.kind == SyntaxKind::ImportKeyword as u16 {
-                            return true;
-                        }
+                && let Some(expr_node) = self.arena.get(access.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+            {
+                return true;
+            }
             for child in self.arena.get_children(idx) {
                 stack.push(child);
             }

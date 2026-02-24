@@ -847,10 +847,16 @@ impl<'a> CheckerState<'a> {
         let mut emitted_dts_import_error = false;
         if module_name.ends_with(".d.ts") && !is_type_only_import {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let suggested = module_name.trim_end_matches(".d.ts");
+            let base = module_name.trim_end_matches(".d.ts");
+            let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                ".ts"
+            } else {
+                ".js"
+            };
+            let suggested = format!("{base}{ext}");
             let message = format_message(
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                &[suggested],
+                &[&suggested],
             );
             self.error_at_position(
                 spec_start,
@@ -1032,14 +1038,20 @@ impl<'a> CheckerState<'a> {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
-                    let suggested = if module_name.ends_with(".d.ts") {
+                    let base = if module_name.ends_with(".d.ts") {
                         module_name.trim_end_matches(".d.ts")
                     } else {
                         module_name.as_str()
                     };
+                    let ext = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                        ".ts"
+                    } else {
+                        ".js"
+                    };
+                    let suggested = format!("{base}{ext}");
                     let message = format_message(
                             diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                            &[suggested],
+                            &[&suggested],
                         );
                     self.error_at_position(
                             spec_start,
