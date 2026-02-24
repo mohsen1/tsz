@@ -176,15 +176,11 @@
 
 ## Parser Issues
 
-### TS1191 — Import modifier diagnostic position (8 tests)
-- Parser emits TS1191 at `import` keyword (column 8) instead of `export` keyword (column 1)
-- The diagnostic span should start at the beginning of the statement
-- **Difficulty**: EASY
+### ~~TS1191 — Import modifier diagnostic position~~ RESOLVED
+- Fixed: parser now emits TS1191 at `export` keyword (column 1)
 
-### TS1206 — Remaining: `decoratorOnUsing.ts`
-- `@dec using` still emits TS1206 from parser `parse_decorated_declaration` (UsingKeyword branch)
-- TSC produces TS1134 instead
-- **Difficulty**: EASY
+### ~~TS1206 — `decoratorOnUsing.ts`~~ RESOLVED
+- Fixed: parser no longer emits TS1206 for `@dec using`; lets TS1134 through instead
 
 ### TS1128 — Runner line number shift (17 tests)
 - Parser emits TS1128 ("Declaration or statement expected") correctly, but conformance tests
