@@ -71,6 +71,13 @@ pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_unit_type(db, type_id)
 }
 
+pub(crate) fn instance_type_from_constructor(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
+}
+
 pub(crate) fn are_types_mutually_subtype_with_env(
     db: &dyn TypeDatabase,
     env: &tsz_solver::TypeEnvironment,

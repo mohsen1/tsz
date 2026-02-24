@@ -492,7 +492,10 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(node_types) = self.node_types
             && let Some(&type_id) = node_types.get(&expr.0)
             && let Some(instance_type) =
-                tsz_solver::type_queries::instance_type_from_constructor(self.interner, type_id)
+                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                    self.interner,
+                    type_id,
+                )
         {
             return Some(instance_type);
         }
