@@ -866,27 +866,14 @@ impl<'a> Printer<'a> {
             self.push_temp_scope();
             self.prepare_logical_assignment_value_temps(accessor.body);
             self.write(" ");
-            let body_is_compact_empty = if let Some(body_node) = self.arena.get(accessor.body) {
-                if let Some(body_block) = self.arena.get_block(body_node) {
-                    body_block.statements.nodes.is_empty() && self.is_single_line(body_node)
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if body_is_compact_empty {
-                self.write("{}");
-            } else {
-                self.emit(accessor.body);
-            }
+            self.emit(accessor.body);
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
-            self.write(" {}");
+            self.write(" { }");
         }
     }
 
@@ -922,27 +909,14 @@ impl<'a> Printer<'a> {
             self.push_temp_scope();
             self.prepare_logical_assignment_value_temps(accessor.body);
             self.write(" ");
-            let body_is_compact_empty = if let Some(body_node) = self.arena.get(accessor.body) {
-                if let Some(body_block) = self.arena.get_block(body_node) {
-                    body_block.statements.nodes.is_empty() && self.is_single_line(body_node)
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-            if body_is_compact_empty {
-                self.write("{}");
-            } else {
-                self.emit(accessor.body);
-            }
+            self.emit(accessor.body);
             self.pop_temp_scope();
             self.ctx.block_scope_state.exit_scope();
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
-            self.write(" {}");
+            self.write(" { }");
         }
     }
 }
