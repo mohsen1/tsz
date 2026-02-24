@@ -104,6 +104,8 @@ pub struct PrinterOptions {
     pub es_module_interop: bool,
     /// When true, treat all non-declaration files as modules (moduleDetection=force)
     pub module_detection_force: bool,
+    /// When true, preserve const enum declarations instead of erasing them
+    pub preserve_const_enums: bool,
 }
 
 impl Default for PrinterOptions {
@@ -123,6 +125,7 @@ impl Default for PrinterOptions {
             legacy_decorators: false,
             es_module_interop: false,
             module_detection_force: false,
+            preserve_const_enums: false,
         }
     }
 }

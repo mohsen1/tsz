@@ -1413,3 +1413,43 @@
     The parser fix requires modifying `parse_ambient_declaration_with_modifiers` (state_declarations.rs:1102)
     to handle ImportKeyword/ExportKeyword/AwaitKeyword/UsingKeyword after `declare`, and threading the
     declare modifier through `parse_import_equals_declaration` and `parse_import_declaration`.
+
+---
+
+## Session 2026-02-24: Catch Binding Naming + preserveConstEnums
+
+**Baseline**: JS 9929/13623 (72.9%) → **9937/13623 (72.9%)** (+8 tests)
+**Cargo nextest**: 9056/9056 passed, 0 regressions.
+
+### Fixed This Session
+
+1. **Catch binding naming: `_unused` → `_a`/`_b`/`_c` (5 tests)**
+   - `statements.rs`: Changed hardcoded `_unused` in ES2019 optional catch binding lowering
+     to use `make_unique_name()` which generates `_a`, `_b`, `_c` etc., matching tsc behavior.
+   - Updated existing unit test, added multi-catch test verifying `_a`, `_b`, `_c` naming.
+
+2. **`preserveConstEnums` support (3+ tests, many more need checker value-substitution)**
+   - `mod.rs`: Added `preserve_const_enums: bool` to `PrinterOptions`.
+   - `declarations.rs`: Split const/declare enum check; const enums now only erased when
+     `!preserve_const_enums`.
+   - `enum_es5.rs`: Added `preserve_const_enums` field + setter; respects it in transform.
+   - `driver.rs`: Forward `args.preserve_const_enums` to `options.printer`.
+   - `runner.ts` + `cli-transpiler.ts`: Parse and pass `preserveConstEnums` directive.
+   - Note: 32/49 constEnum tests timeout because they need **const enum value substitution**
+     (replacing member references with literal values), which requires checker integration.
+
+### Investigated But Punted
+
+3. **"use strict" over-emission (~255 tests)**: Deep investigation revealed most are **runner-side
+   issues**, not emitter bugs:
+   - outFile tests: baseline parser picks source section instead of output section.
+   - emitDeclarationOnly tests: runner compares against source (which has no "use strict")
+     instead of the actual `.js` output.
+   - True emitter "use strict" bugs may exist but are masked by runner issues.
+
+4. **`{}` vs `{ }` formatting (6 tests)**: Also mostly runner issues (comparing against source
+   or wrong output section).
+
+5. **Const enum value substitution (~32 tests timeout)**: Tests like `constEnum1`, `constEnum2`
+   etc. need the checker to resolve const enum member values and inline them at usage sites.
+   This is a checker/emitter integration task, not a pure emitter fix.

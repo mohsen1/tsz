@@ -200,6 +200,7 @@ export class CliTranspiler {
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
       moduleDetection?: string;
+      preserveConstEnums?: boolean;
       outFile?: string;
       sourceFiles?: SourceInputFile[];
       expectedJsFileName?: string;
@@ -225,6 +226,7 @@ export class CliTranspiler {
       jsxFragmentFactory,
       jsxImportSource,
       moduleDetection,
+      preserveConstEnums = false,
       outFile,
       sourceFiles,
       expectedJsFileName,
@@ -306,6 +308,7 @@ export class CliTranspiler {
       if (jsxFragmentFactory) args.push('--jsxFragmentFactory', jsxFragmentFactory);
       if (jsxImportSource) args.push('--jsxImportSource', jsxImportSource);
       if (moduleDetection) args.push('--moduleDetection', moduleDetection);
+      if (preserveConstEnums) args.push('--preserveConstEnums');
       if (outFile) args.push('--outFile', outFile);
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
@@ -370,6 +373,7 @@ export class CliTranspiler {
           if (jsxFragmentFactory) retryArgs.push('--jsxFragmentFactory', jsxFragmentFactory);
           if (jsxImportSource) retryArgs.push('--jsxImportSource', jsxImportSource);
           if (moduleDetection) retryArgs.push('--moduleDetection', moduleDetection);
+          if (preserveConstEnums) retryArgs.push('--preserveConstEnums');
           if (outFile) retryArgs.push('--outFile', outFile);
           retryArgs.push(...trailingArgs);
           await runWithArgs(retryArgs);

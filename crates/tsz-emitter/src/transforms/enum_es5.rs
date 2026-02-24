@@ -57,6 +57,8 @@ pub struct EnumES5Transformer<'a> {
     string_members: HashSet<String>,
     /// The enum parameter name used inside the IIFE (for qualifying self-references)
     current_enum_name: String,
+    /// When true, emit const enums instead of erasing them
+    preserve_const_enums: bool,
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -68,7 +70,12 @@ impl<'a> EnumES5Transformer<'a> {
             member_names: HashSet::new(),
             string_members: HashSet::new(),
             current_enum_name: String::new(),
+            preserve_const_enums: false,
         }
+    }
+
+    pub const fn set_preserve_const_enums(&mut self, value: bool) {
+        self.preserve_const_enums = value;
     }
 
     /// Set source text for raw expression extraction
@@ -85,10 +92,11 @@ impl<'a> EnumES5Transformer<'a> {
 
         let enum_data = self.arena.get_enum(enum_node)?;
 
-        // Check for const enum - erase by default (preserveConstEnums not yet supported)
+        // Const enums are erased unless preserveConstEnums is set
         if self
             .arena
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+            && !self.preserve_const_enums
         {
             return None;
         }
