@@ -2081,3 +2081,37 @@ output since tsc emits no JS for them. The runner was creating ~77 false JS fail
    - Some tests need `__esModule` but don't have `import.meta` — they use other ESM
      indicators not yet detected (e.g., top-level `await`, re-export patterns).
    - Needs broader module detection logic.
+
+---
+
+## Session 13 — 2026-02-24
+
+**Baseline**: JS 10035/13623 (73.7%), DTS 780/1995 (39.1%)
+
+### Fixed
+
+1. **Suppress redundant `export {}` when real exports exist (+7 JS)**:
+   - Root cause: When a source file has both `export {};` (type-only marker) and real
+     runtime exports like `export { C };`, the deferred `export {};` was emitted
+     unconditionally. tsc omits it when other exports exist.
+   - Fix: Added `has_non_empty_runtime_export` flag in `source_file.rs`. Set when
+     non-erased import/export/export-assignment/import-equals statements are found.
+     Gated deferred `export {}` emission on `!has_non_empty_runtime_export`.
+   - Also removed the `!has_runtime_module_syntax` early-out guard on the tracking
+     condition so the flag is set even after the first module statement.
+   - Added 2 unit tests: `esm_suppresses_redundant_export_empty_when_real_exports_exist`,
+     `esm_emits_export_empty_when_only_type_exports`.
+
+### Investigated But Punted
+
+2. **`__decorate` missing (~106 tests)**:
+   - Legacy decorator lowering requires emitting decorators inside class IIFE wrappers.
+   - Major refactor of `ClassES5Emitter` needed — not a small targeted fix.
+
+3. **`{ }` vs `{}` empty object formatting (~4 sole-diff tests)**:
+   - JS pass-through cosmetic difference. Low impact.
+
+4. **`var` instead of `let` (~70 tests)**:
+   - Mostly large-diff tests involving ES5 downlevel transform. Not a small fix.
+
+**Final**: JS 10042/13623 (73.7%), DTS 780/1995 (39.1%)
