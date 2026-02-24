@@ -1,7 +1,7 @@
 //! Reference matching, literal parsing, and symbol resolution utilities
 //! for control flow analysis.
 //!
-//! Extracted from `control_flow_narrowing.rs` to keep modules focused.
+//! Extracted from `narrowing.rs` to keep modules focused.
 //! Contains:
 //! - Reference matching (`is_matching_reference`, `property_reference`)
 //! - Literal value extraction from AST nodes (`literal_number_from_node`, `literal_atom_from`_*)
@@ -15,7 +15,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries::{LiteralValueKind, classify_for_literal_value};
 
-use super::control_flow::{FlowAnalyzer, PropertyKey};
+use super::{FlowAnalyzer, PropertyKey};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn strip_numeric_separators<'b>(&self, text: &'b str) -> Cow<'b, str> {

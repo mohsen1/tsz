@@ -304,8 +304,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_checking_members should use solver type_param constructor API, not TypeData::TypeParameter"
     );
 
-    let control_flow_narrowing_src = fs::read_to_string("src/flow/control_flow_narrowing.rs")
-        .expect("failed to read src/flow/control_flow_narrowing.rs for architecture guard");
+    let control_flow_narrowing_src = fs::read_to_string("src/flow/control_flow/narrowing.rs")
+        .expect("failed to read src/flow/control_flow/narrowing.rs for architecture guard");
     assert!(
         !control_flow_narrowing_src.contains("intern(TypeData::Lazy("),
         "control_flow_narrowing should use solver lazy constructor API, not direct TypeData::Lazy interning"
@@ -586,8 +586,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "parameter initializer assignability should route through check_assignable_or_report"
     );
 
-    let control_flow_assignment_src = fs::read_to_string("src/flow/control_flow_assignment.rs")
-        .expect("failed to read src/flow/control_flow_assignment.rs for architecture guard");
+    let control_flow_assignment_src = fs::read_to_string("src/flow/control_flow/assignment.rs")
+        .expect("failed to read src/flow/control_flow/assignment.rs for architecture guard");
     assert!(
         control_flow_assignment_src.contains("is_assignable_to_strict_null("),
         "control-flow assignment nullish compatibility checks should route through checker assignability gateway helpers"
@@ -620,8 +620,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !control_flow_assignment_src.contains("tsz_solver::type_queries::"),
         "control-flow assignment should not call solver type_queries directly; use flow_analysis boundary helpers"
     );
-    let control_flow_src = fs::read_to_string("src/flow/control_flow.rs")
-        .expect("failed to read src/flow/control_flow.rs for architecture guard");
+    let control_flow_src = fs::read_to_string("src/flow/control_flow/mod.rs")
+        .expect("failed to read src/flow/control_flow/mod.rs for architecture guard");
     assert!(
         control_flow_src.contains("query::is_assignable_with_env("),
         "FlowAnalyzer assignability should route through flow_analysis boundary helpers"

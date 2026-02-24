@@ -3,7 +3,7 @@
 //! Handles switch clause narrowing, binary/logical expression narrowing,
 //! typeof/instanceof/in guards, and boolean comparison narrowing.
 
-use crate::control_flow::FlowAnalyzer;
+use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::is_unit_type;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;

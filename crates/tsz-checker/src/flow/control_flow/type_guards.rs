@@ -8,7 +8,7 @@ use tsz_solver::{SymbolRef, TypeGuard, TypeId, TypeResolver, TypeofKind};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
-use super::control_flow::FlowAnalyzer;
+use super::FlowAnalyzer;
 
 impl<'a> FlowAnalyzer<'a> {
     /// Check if a reference node is a mutable variable (let/var) as opposed to const.
