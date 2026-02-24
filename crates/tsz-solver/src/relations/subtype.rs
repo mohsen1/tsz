@@ -270,13 +270,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
-    /// Set the tracer for collecting subtype failure diagnostics.
-    /// When set, enables detailed failure reason collection for error messages.
-    pub fn with_tracer(mut self, tracer: &'a mut dyn DynSubtypeTracer) -> Self {
-        self.tracer = Some(tracer);
-        self
-    }
-
     /// Set the query database for Salsa-backed memoization.
     /// When set, routes `evaluate_type` and `is_subtype_of` through Salsa.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {

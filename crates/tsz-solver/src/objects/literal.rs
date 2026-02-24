@@ -8,7 +8,7 @@
 
 use crate::TypeDatabase;
 use crate::contextual::ContextualTypeContext;
-use crate::types::{ObjectFlags, PropertyInfo, TypeData, TypeId};
+use crate::types::{PropertyInfo, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -36,24 +36,6 @@ impl<'a> ObjectLiteralBuilder<'a> {
 
     /// Build object type with index signature.
     ///
-    /// Creates an object type with both properties and optional
-    /// string/number index signatures.
-    pub fn build_object_with_index(
-        &self,
-        properties: Vec<PropertyInfo>,
-        string_index: Option<crate::types::IndexSignature>,
-        number_index: Option<crate::types::IndexSignature>,
-    ) -> TypeId {
-        use crate::types::ObjectShape;
-        self.db.object_with_index(ObjectShape {
-            flags: ObjectFlags::FRESH_LITERAL,
-            properties,
-            string_index,
-            number_index,
-            symbol: None,
-        })
-    }
-
     /// Merge spread properties into base properties.
     ///
     /// Given a base set of properties and a spread type, extracts all properties

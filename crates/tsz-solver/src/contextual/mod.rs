@@ -704,14 +704,6 @@ impl<'a> ContextualTypeContext<'a> {
         let mut extractor = ApplicationArgExtractor::new(self.interner, 2);
         extractor.extract(expected)
     }
-
-    /// Create a child context for a yield expression in a generator.
-    pub fn for_yield(&self) -> Self {
-        match self.get_generator_yield_type() {
-            Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
-            None => ContextualTypeContext::new(self.interner),
-        }
-    }
 }
 
 /// Apply contextual type to infer a more specific type.
