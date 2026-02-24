@@ -44,6 +44,11 @@ pub struct EmitFlags {
     /// emitters so that `o?.b ? 1 : 0` lowers to `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`
     /// and `o?.a++` lowers to `(o === null || o === void 0 ? void 0 : o.a)++`.
     pub optional_chain_needs_parens: bool,
+
+    /// Whether a downlevel nullish coalescing expression should wrap its lowered
+    /// ternary in parentheses. Set in the same contexts as `optional_chain_needs_parens`.
+    /// e.g., `a ?? b || c` → `(a !== null && a !== void 0 ? a : b) || c`
+    pub nullish_coalescing_needs_parens: bool,
 }
 
 /// State for arrow function ES5 transformation
