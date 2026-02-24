@@ -23,7 +23,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████████░░░░░░░] 63.7% (8,008/12,574 tests)
+Progress: [█████████████░░░░░░░] 63.9% (8,038/12,574 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -37,7 +37,7 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [███████████████░░░░░] 73.4% (9,994 / 13,623 tests)
+JavaScript:  [███████████████░░░░░] 73.6% (10,031 / 13,623 tests)
 Declaration: [████████░░░░░░░░░░░░] 38.9% (776 / 1,995 tests)
 ```
 <!-- EMIT_END -->
