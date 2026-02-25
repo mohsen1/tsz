@@ -2,9 +2,7 @@
 //!
 //! Extracted from `mod.rs` to follow the thin-mod.rs pattern.
 
-use super::{
-    BinderState, BinderStateScopeInputs, LibContext,
-};
+use super::{BinderState, BinderStateScopeInputs, LibContext};
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::{

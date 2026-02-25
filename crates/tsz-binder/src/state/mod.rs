@@ -9,9 +9,7 @@ mod lib_merge;
 mod resolution;
 
 use crate::module_resolution_debug::ModuleResolutionDebugger;
-use crate::{
-    FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
-};
+use crate::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::sync::Arc;
