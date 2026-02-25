@@ -373,6 +373,31 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // Skip underscore-prefixed variables in for-in/for-of loops.
+                        // TSC treats these as intentionally unused iteration variables
+                        // (e.g., `for (const _ of items) {}`).
+                        if is_variable
+                            && name.starts_with('_')
+                            && self.is_for_in_or_of_variable(decl_idx)
+                        {
+                            continue;
+                        }
+
+                        // Skip underscore-prefixed namespace imports and named import specifiers.
+                        // TSC suppresses TS6133 for `import * as _foo from "mod"` and
+                        // `import { _foo } from "mod"` when noUnusedLocals is enabled.
+                        if is_import && name.starts_with('_') {
+                            continue;
+                        }
+
+                        // Skip non-rest elements in object destructuring patterns that include
+                        // a rest element. TSC considers these variables as "used" because they
+                        // structurally exclude properties from the rest binding
+                        // (e.g., `const {a, ...rest} = obj` — `a` is needed to exclude it from `rest`).
+                        if is_variable && self.is_binding_element_alongside_rest(decl_idx) {
+                            continue;
+                        }
+
                         // Check if the symbol is referenced in JSDoc tags (e.g. `@link`, `@import`, `@type`).
                         // If so, consider it used and suppress the unused warning.
                         if self.is_symbol_used_in_jsdoc(&name) {
@@ -692,6 +717,64 @@ impl<'a> CheckerState<'a> {
             if (flags & node_flags::USING) != 0 {
                 return true;
             }
+        }
+        false
+    }
+
+    /// Check if a variable declaration is in a for-in or for-of statement.
+    /// TSC suppresses TS6133 for `_`-prefixed iteration variables.
+    fn is_for_in_or_of_variable(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        // Walk up: BindingElement? → VariableDeclaration → VariableDeclarationList → ForInStatement/ForOfStatement
+        let var_decl_idx = self.find_parent_variable_decl_node(idx);
+        let var_decl_list_idx = var_decl_idx.and_then(|v| self.find_parent_variable_declaration(v));
+        let Some(vdl_idx) = var_decl_list_idx else {
+            return false;
+        };
+        let grandparent_idx = self
+            .ctx
+            .arena
+            .get_extended(vdl_idx)
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
+        if grandparent_idx.is_none() {
+            return false;
+        }
+        if let Some(gp_node) = self.ctx.arena.get(grandparent_idx) {
+            return gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT;
+        }
+        false
+    }
+
+    /// Check if a binding element is in an object destructuring alongside a rest element.
+    /// TSC considers such elements as "used" because they structurally exclude properties
+    /// from the rest binding (e.g., `const {a, ...rest} = obj`).
+    fn is_binding_element_alongside_rest(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        // Find the parent object binding pattern
+        let Some(pattern_idx) = self.find_parent_binding_pattern(idx) else {
+            return false;
+        };
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return false;
+        };
+        // Only applies to object binding patterns, not array binding patterns
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        // Get the binding pattern's elements and check if any has a dotDotDotToken (rest)
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        for &elem_idx in &pattern_data.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(be) = self.ctx.arena.get_binding_element(elem_node)
+                    && be.dot_dot_dot_token {
+                        return true;
+                    }
         }
         false
     }
