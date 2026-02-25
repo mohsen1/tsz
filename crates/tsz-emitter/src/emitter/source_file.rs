@@ -295,8 +295,7 @@ impl<'a> Printer<'a> {
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
             && self.ctx.original_module_kind.is_none()
-            && !(is_es_module_output && is_file_module)
-            && !self.is_current_root_js_source;
+            && !(is_es_module_output && is_file_module);
 
         let should_emit_use_strict = !source_has_use_strict
             && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
@@ -1109,9 +1108,9 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
-    fn js_passthrough_no_use_strict_from_always_strict() {
-        // tsc does NOT add "use strict" to .js passthrough files even with alwaysStrict.
-        // The alwaysStrict option only applies to TypeScript source files.
+    fn js_passthrough_gets_use_strict_from_always_strict() {
+        // tsc adds "use strict" to .js passthrough files when alwaysStrict is enabled,
+        // just like for .ts files. The alwaysStrict option is not TS-only.
         let source = "const x = 0;\n";
         let mut parser = ParserState::new("sub.js".to_string(), source.to_string());
         let root = parser.parse_source_file();
@@ -1127,8 +1126,32 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         let output = printer.get_output().to_string();
 
         assert!(
+            output.starts_with("\"use strict\";"),
+            "JS passthrough files should get \"use strict\" from alwaysStrict.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn js_passthrough_esm_no_use_strict_from_always_strict() {
+        // ESM JS files should NOT get "use strict" because ESM is implicitly strict.
+        // The !(is_es_module_output && is_file_module) guard handles this.
+        let source = "export const x = 0;\n";
+        let mut parser = ParserState::new("sub.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrinterOptions {
+            module: ModuleKind::ESNext,
+            always_strict: true,
+            ..Default::default()
+        };
+        let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+        printer.set_current_root_js_source(true);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
             !output.contains("\"use strict\""),
-            "JS passthrough files should NOT get \"use strict\" from alwaysStrict.\nOutput:\n{output}"
+            "ESM JS files should NOT get \"use strict\" (ESM is implicitly strict).\nOutput:\n{output}"
         );
     }
 

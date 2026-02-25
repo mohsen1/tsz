@@ -1,9 +1,31 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current ~5308/7124 = 74.5% JS, ~416/1039 = 40.0% DTS)
+## Pattern Analysis (JS+DTS mode, current ~5310/7124 = 74.5% JS, ~417/1034 = 40.3% DTS)
 
 Note: test count changed from 13546→11477→7163 due to TypeScript submodule updates.
-Pass rate stable at ~74.5% JS.
+Pass rate improved to ~74.5% JS.
+
+### Fixed (2026-02-25, session 20) — Remove Overbroad JS "use strict" Suppression (+56 JS, +1 DTS)
+
+- **Missing "use strict" in JS passthrough files** (source_file.rs):
+  Session 19 added `!self.is_current_root_js_source` to `needs_use_strict_always` to
+  suppress `"use strict"` for JS files. However, this was too aggressive — tsc DOES emit
+  `"use strict"` for JS files when `alwaysStrict` is true, just like for TS files. The
+  ESM case (where "use strict" is redundant) is already handled by the existing
+  `!(is_es_module_output && is_file_module)` guard. The session 19 fix was actually
+  compensating for module detection issues where ESM JS files weren't properly detected.
+  Fix: removed `!self.is_current_root_js_source` from `needs_use_strict_always`.
+  Net effect: +56 JS (58 gained, ~2 lost from ESM misdetection), +1 DTS, zero regressions.
+- Unit tests: updated `js_passthrough_gets_use_strict_from_always_strict` (was incorrectly
+  asserting no "use strict"), added `js_passthrough_esm_no_use_strict_from_always_strict`.
+
+### Skipped / Investigated (2026-02-25, session 20)
+
+- **~2 JS files lost from session 19 fix revert**: A small number of tests that were
+  passing with the `is_current_root_js_source` guard now show extra "use strict" again.
+  These are likely ESM JS files not properly detected as ESM (`is_es_module_output` or
+  `is_file_module` false when they should be true). Root cause is module detection, not
+  the "use strict" logic itself.
 
 ### Fixed (2026-02-25, session 19) — Suppress Extra "use strict" in System Bundles and JS Passthrough (+43 JS)
 
