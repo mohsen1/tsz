@@ -17,6 +17,7 @@
 //! - `statements.rs` - Statement emission helpers
 //! - `declarations/` - Declaration emission (classes, class members, namespaces)
 //! - `functions.rs` - Function emission helpers
+//! - `literals/` - Literal emission (identifiers, strings, numbers, regex, templates)
 //! - `types.rs` - Type emission helpers
 //! - `jsx.rs` - JSX emission helpers
 //! - `comments/` - Comment data types, parsing, and emission helpers
@@ -41,7 +42,6 @@ mod module_wrapper;
 mod source_file;
 mod special_expressions;
 mod statements;
-mod template_literals;
 mod transform_dispatch;
 pub mod type_printer;
 mod types;
