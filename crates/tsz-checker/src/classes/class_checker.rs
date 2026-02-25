@@ -824,6 +824,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             } else if no_implicit_override && base_info.is_some() {
+                // tsc does not require `override` for `declare` property re-declarations.
+                // A `declare property: T` in a derived class is a type-only ambient annotation
+                // (no runtime effect) and is not considered a true override.
+                let is_declare_property = !is_method
+                    && !is_accessor
+                    && self
+                        .ctx
+                        .arena
+                        .get(member_idx)
+                        .and_then(|n| self.ctx.arena.get_property_decl(n))
+                        .is_some_and(|prop| self.has_declare_modifier(&prop.modifiers));
+                if is_declare_property {
+                    continue;
+                }
                 if base_info
                     .as_ref()
                     .is_some_and(|base| base.is_abstract && base.is_method)
