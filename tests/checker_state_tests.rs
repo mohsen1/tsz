@@ -141,7 +141,9 @@ async function foo() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: false,
             strict_property_initialization: false,
             ..crate::checker::context::CheckerOptions::default()
@@ -203,7 +205,9 @@ async enum E { Value }
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: false,
             strict_function_types: false,
             strict_bind_call_apply: false,
@@ -254,7 +258,9 @@ const bad: Foo = { x: 1, y: 2 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: false,
             strict_function_types: false,
             strict_bind_call_apply: false,
@@ -1134,7 +1140,9 @@ fn test_checker_subtype_intrinsics() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -1175,7 +1183,9 @@ fn test_checker_assignability_relation_cache_hit() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -1198,7 +1208,9 @@ fn test_checker_assignability_bivariant_cache_key_is_distinct() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -1231,7 +1243,9 @@ fn test_checker_subtype_literals() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -1265,7 +1279,9 @@ fn test_checker_subtype_unions() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -1298,7 +1314,9 @@ fn test_checker_assignability_direct_union_member_fast_path() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict_function_types: true,
             ..Default::default()
         },
@@ -6892,7 +6910,9 @@ const value = obj.value;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -7336,7 +7356,9 @@ type Alias = Outer.Inner;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10387,7 +10409,9 @@ type Alias = Foo.Bar;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10449,7 +10473,9 @@ type Alias = Foo.Bar;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10669,7 +10695,9 @@ const value: Merge.B = { y: 1 };
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10786,7 +10814,9 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10846,7 +10876,9 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -10908,7 +10940,9 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -11026,7 +11060,9 @@ const direct = Merge.extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -11080,7 +11116,9 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -11144,7 +11182,9 @@ type Alias = Merge.Extra;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             no_lib: true,
             ..Default::default()
         },
@@ -19621,7 +19661,9 @@ const str: string = null;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_null_checks: true,
             ..Default::default()
@@ -19669,7 +19711,9 @@ const num: number = undefined;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_null_checks: true,
             ..Default::default()
@@ -20912,7 +20956,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_property_initialization: true,
             ..Default::default()
@@ -21246,7 +21292,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_property_initialization: true,
             ..Default::default()
@@ -21310,7 +21358,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21362,7 +21412,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21414,7 +21466,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21467,7 +21521,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21525,7 +21581,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21578,7 +21636,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21632,7 +21692,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -21689,7 +21751,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -27532,7 +27596,9 @@ const MyClass = class {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -27583,7 +27649,9 @@ const MyClass = class {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -27630,7 +27698,9 @@ const MyClass = class NamedClass {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -27681,7 +27751,9 @@ const Derived = class extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -27974,7 +28046,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28030,7 +28104,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28081,7 +28157,9 @@ class Container<T> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28137,7 +28215,9 @@ class Container<T> {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28190,7 +28270,9 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28253,7 +28335,9 @@ class Derived extends Base {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28306,7 +28390,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28357,7 +28443,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28413,7 +28501,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28464,7 +28554,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28523,7 +28615,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28579,7 +28673,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28626,7 +28722,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28674,7 +28772,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28730,7 +28830,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28781,7 +28883,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28837,7 +28941,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28888,7 +28994,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -28943,7 +29051,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -29003,7 +29113,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             ..Default::default()
         },
@@ -29052,7 +29164,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_null_checks: true,
             strict_property_initialization: false,
@@ -29103,7 +29217,9 @@ class Foo {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             strict_null_checks: false,
             strict_property_initialization: true,
@@ -29147,7 +29263,9 @@ fn test_tier_2_type_checker_accuracy_fixes() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions {
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             strict: true,
             no_implicit_any: true,
             no_implicit_returns: false,

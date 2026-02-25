@@ -203,6 +203,7 @@ impl<'a> CheckerState<'a> {
     /// Rule #36: Fragments resolve to JSX.Element type.
     pub(crate) fn get_jsx_element_type(&mut self, node_idx: NodeIndex) -> TypeId {
         self.check_jsx_factory_in_scope(node_idx);
+        self.check_jsx_fragment_factory(node_idx);
 
         // Try to resolve JSX.Element from the JSX namespace
         if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
@@ -217,16 +218,9 @@ impl<'a> CheckerState<'a> {
                 return self.type_reference_symbol_type(element_sym_id);
             }
         }
-        // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.Element' exists.
-        // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
-        if self.ctx.no_implicit_any() {
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                node_idx,
-                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
-                &["Element"],
-            );
-        }
+        // Note: tsc 6.0 never emits TS7026 about "JSX.Element" (0 occurrences).
+        // TS7026 is only emitted about "JSX.IntrinsicElements" for intrinsic elements.
+        // For fragments, tsc emits TS17016 (missing jsxFragmentFactory) instead.
         TypeId::ANY
     }
 
@@ -488,16 +482,24 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Check that the JSX factory is in scope.
-    /// Emits TS2874 if the factory cannot be found.
+    /// Emits TS2874 if the factory root identifier cannot be found.
     ///
-    /// Only emits for "react" (classic) JSX mode where the factory function
-    /// (e.g. `React.createElement`) must be in scope. Other modes (preserve,
-    /// react-jsx, react-jsxdev, react-native) don't require the factory.
+    /// tsc 6.0 behavior:
+    /// - Only classic "react" mode requires the factory in scope.
+    /// - When `jsxFactory` compiler option is explicitly set, tsc skips scope
+    ///   checking (the option is a name hint, not a scope requirement).
+    /// - When using default (`React.createElement`) or `reactNamespace`, tsc
+    ///   checks the full scope chain (local, imports, namespace, global).
     pub(crate) fn check_jsx_factory_in_scope(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
 
         // Only classic "react" mode requires the factory in scope
         if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+            return;
+        }
+
+        // tsc 6.0 skips scope checking when jsxFactory is explicitly set
+        if self.ctx.compiler_options.jsx_factory_from_config {
             return;
         }
 
@@ -508,6 +510,23 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check full scope chain at the JSX element location.
+        // tsc's resolveName for factory checks includes ALL symbols (class members,
+        // parameters, locals, imports, globals) — so we use an accept-all filter
+        // rather than the checker's default filter that excludes class members.
+        let lib_binders = self.get_lib_binders();
+        let found = self.ctx.binder.resolve_name_with_filter(
+            root_ident,
+            self.ctx.arena,
+            node_idx,
+            &lib_binders,
+            |_| true, // Accept any symbol, including class members
+        );
+        if found.is_some() {
+            return;
+        }
+
+        // Also check global scope as fallback (for lib-loaded symbols)
         if self.resolve_global_value_symbol(root_ident).is_some() {
             return;
         }
@@ -525,6 +544,39 @@ impl<'a> CheckerState<'a> {
             error_node,
             diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
             &[root_ident],
+        );
+    }
+
+    // =========================================================================
+    // JSX Fragment Factory Check
+    // =========================================================================
+
+    /// Check that JSX fragments have a valid fragment factory when jsxFactory is set.
+    /// Emits TS17016 if jsxFactory is explicitly set but jsxFragmentFactory is not.
+    ///
+    /// tsc 6.0 emits this at each fragment opening location (`<>` or `<React.Fragment>`).
+    fn check_jsx_fragment_factory(&mut self, node_idx: NodeIndex) {
+        use tsz_common::checker_options::JsxMode;
+
+        // Only relevant in classic "react" mode with explicitly set jsxFactory
+        if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+            return;
+        }
+
+        if !self.ctx.compiler_options.jsx_factory_from_config {
+            return;
+        }
+
+        // If jsxFragmentFactory was explicitly set, no error needed
+        if self.ctx.compiler_options.jsx_fragment_factory_from_config {
+            return;
+        }
+
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node(
+            node_idx,
+            "The 'jsxFragmentFactory' compiler option must be provided to use JSX fragments with the 'jsxFactory' compiler option.",
+            diagnostic_codes::THE_JSXFRAGMENTFACTORY_COMPILER_OPTION_MUST_BE_PROVIDED_TO_USE_JSX_FRAGMENTS_WIT,
         );
     }
 }
