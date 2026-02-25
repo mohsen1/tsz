@@ -1347,7 +1347,7 @@ impl ParserState {
             self.parse_error_at(
                 start,
                 end - start,
-                "Expression expected",
+                "Expression expected.",
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
             NodeIndex::NONE
