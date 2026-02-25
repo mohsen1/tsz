@@ -1,0 +1,1114 @@
+use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
+use tracing::{Level, debug, span};
+use tsz_binder::{FlowNodeArena, FlowNodeId, flow_flags};
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
+
+/// A control flow graph side-table.
+///
+/// This struct encapsulates the flow graph data structures, providing
+/// a clean abstraction for querying flow information without holding
+/// a reference to the entire binder state.
+#[derive(Clone, Debug)]
+pub struct FlowGraph {
+    /// Arena storing all flow nodes
+    pub nodes: FlowNodeArena,
+    /// Mapping from AST node index to the flow node active at that point
+    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Unreachable flow node (for never-returning code paths)
+    pub unreachable_flow: FlowNodeId,
+    /// Set of AST node indices that are unreachable
+    pub unreachable_nodes: FxHashSet<u32>,
+}
+
+impl FlowGraph {
+    /// Create a new empty flow graph.
+    pub fn new() -> Self {
+        let mut nodes = FlowNodeArena::new();
+        let unreachable_flow = nodes.alloc(flow_flags::UNREACHABLE);
+
+        Self {
+            nodes,
+            node_flow: FxHashMap::default(),
+            unreachable_flow,
+            unreachable_nodes: FxHashSet::default(),
+        }
+    }
+
+    /// Get the flow node at a given AST node position.
+    pub fn get_flow_at_node(&self, node: NodeIndex) -> Option<FlowNodeId> {
+        self.node_flow.get(&node.0).copied()
+    }
+
+    /// Check if a flow node exists.
+    pub fn has_flow_at_node(&self, node: NodeIndex) -> bool {
+        self.node_flow.contains_key(&node.0)
+    }
+
+    /// Check if an AST node is unreachable.
+    pub fn is_unreachable(&self, node: NodeIndex) -> bool {
+        self.unreachable_nodes.contains(&node.0)
+    }
+
+    /// Mark an AST node as unreachable.
+    pub fn mark_unreachable(&mut self, node: NodeIndex) {
+        self.unreachable_nodes.insert(node.0);
+    }
+}
+
+impl Default for FlowGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Builder for constructing a `FlowGraph` from Node AST.
+///
+/// The `FlowGraphBuilder` traverses the AST post-binding and constructs
+/// the control flow graph without mutating the AST nodes.
+pub struct FlowGraphBuilder<'a> {
+    /// Reference to the `NodeArena`
+    pub(crate) arena: &'a NodeArena,
+    /// The flow graph being constructed
+    pub(crate) graph: FlowGraph,
+    /// Current flow node during construction
+    pub(crate) current_flow: FlowNodeId,
+    /// Stack of flow contexts for nested constructs
+    flow_stack: Vec<FlowContext>,
+    /// Depth of async function nesting (0 if not in async function)
+    pub(crate) async_depth: u32,
+    /// Depth of generator function nesting (0 if not in generator function)
+    pub(crate) generator_depth: u32,
+}
+
+/// Context for nested flow constructs (loops, switches, async functions, etc.)
+#[derive(Clone, Copy)]
+struct FlowContext {
+    /// Label for breaking out of this construct
+    break_label: FlowNodeId,
+    /// Label for continuing this construct (loops only)
+    continue_label: Option<FlowNodeId>,
+    /// Type of flow construct
+    context_type: FlowContextType,
+    /// Finally block to execute on exit (for try statements)
+    finally_block: NodeIndex,
+    /// Label identifier for this context (for labeled statements)
+    label: NodeIndex,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum FlowContextType {
+    Loop,
+    Switch,
+    Try,
+}
+
+impl<'a> FlowGraphBuilder<'a> {
+    /// Create a new `FlowGraphBuilder`.
+    pub fn new(arena: &'a NodeArena) -> Self {
+        let mut graph = FlowGraph::new();
+        let start_flow = graph.nodes.alloc(flow_flags::START);
+
+        FlowGraphBuilder {
+            arena,
+            graph,
+            current_flow: start_flow,
+            flow_stack: Vec::new(),
+            async_depth: 0,
+            generator_depth: 0,
+        }
+    }
+
+    /// Build the flow graph for a source file.
+    pub fn build_source_file(&mut self, statements: &NodeList) -> &FlowGraph {
+        let _span = span!(
+            Level::DEBUG,
+            "build_flow_graph",
+            num_statements = statements.nodes.len()
+        )
+        .entered();
+        debug!(
+            "Building flow graph for source file with {} statements",
+            statements.nodes.len()
+        );
+
+        for &stmt_idx in &statements.nodes {
+            if stmt_idx.is_some() {
+                self.build_statement(stmt_idx);
+            }
+        }
+        &self.graph
+    }
+
+    /// Build the flow graph for a list of statements.
+    ///
+    /// This is a general entry point that can be used for:
+    /// - Source files
+    /// - Function bodies
+    /// - Block statements
+    /// - Any list of statements
+    ///
+    /// Build the flow graph for a function body.
+    ///
+    /// Entry point for building flow graphs for function bodies.
+    /// Resets the builder state and creates a new START node for the function.
+    ///
+    /// # Arguments
+    /// * `body` - The block statement representing the function body
+    ///
+    /// # Returns
+    /// Reference to the built flow graph
+    pub fn build_function_body(
+        &mut self,
+        body: &tsz_parser::parser::node::BlockData,
+    ) -> &FlowGraph {
+        let _span = span!(
+            Level::DEBUG,
+            "build_function_body",
+            num_statements = body.statements.nodes.len()
+        )
+        .entered();
+        debug!(
+            "Building flow graph for function body with {} statements",
+            body.statements.nodes.len()
+        );
+
+        // Reset the builder state for a new function
+        self.graph = FlowGraph::new();
+        self.current_flow = self.graph.nodes.alloc(flow_flags::START);
+        self.flow_stack.clear();
+        self.async_depth = 0;
+        self.generator_depth = 0;
+
+        // Build the function body
+        self.build_block(body);
+        &self.graph
+    }
+
+    /// Build the flow graph for a single statement.
+    fn build_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            // Block statement
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    self.build_block(block);
+                }
+            }
+
+            // If statement
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.build_if_statement(if_stmt);
+                }
+            }
+
+            // While statement
+            syntax_kind_ext::WHILE_STATEMENT => {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.build_while_statement(loop_data);
+                }
+            }
+
+            // Do-while statement
+            syntax_kind_ext::DO_STATEMENT => {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.build_do_while_statement(loop_data);
+                }
+            }
+
+            // For statement
+            syntax_kind_ext::FOR_STATEMENT => {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.build_for_statement(loop_data);
+                }
+            }
+
+            // For-in / for-of statements (identical flow graph structure)
+            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    self.build_for_in_of_statement(for_in_of);
+                }
+            }
+
+            // Switch statement
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.arena.get_switch(node) {
+                    self.build_switch_statement(switch_data);
+                }
+            }
+
+            // Try statement
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.arena.get_try(node) {
+                    self.build_try_statement(try_data);
+                }
+            }
+
+            // Labeled statement
+            syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled_data) = self.arena.get_labeled_statement(node) {
+                    self.build_labeled_statement(labeled_data);
+                }
+            }
+
+            // Variable declaration
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(var_decl) = self.arena.get_variable_declaration(node) {
+                    self.build_variable_declaration(var_decl, stmt_idx);
+                }
+            }
+
+            // Variable declaration - both direct statement and declaration list
+            syntax_kind_ext::VARIABLE_STATEMENT | syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
+                if let Some(var_data) = self.arena.get_variable(node) {
+                    for &decl_idx in &var_data.declarations.nodes {
+                        if decl_idx.is_some() {
+                            self.build_statement(decl_idx);
+                        }
+                    }
+                }
+                self.record_node_flow(stmt_idx);
+            }
+
+            // Function declaration - check if async/generator
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    // Track async and generator context
+                    let was_async = func.is_async;
+                    let was_generator = func.asterisk_token;
+
+                    if was_async {
+                        self.async_depth += 1;
+                    }
+                    if was_generator {
+                        self.generator_depth += 1;
+                    }
+
+                    self.record_node_flow(stmt_idx);
+                    // Note: We don't descend into function bodies in this flow graph builder
+                    // as each function has its own flow graph
+
+                    if was_async {
+                        self.async_depth -= 1;
+                    }
+                    if was_generator {
+                        self.generator_depth -= 1;
+                    }
+                }
+            }
+
+            // Expression statement - check for await/yield expressions
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                // Get the expression from the expression statement
+                if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+                    self.handle_expression_for_suspension_points(expr_stmt.expression);
+                    self.handle_expression_for_assignments(expr_stmt.expression);
+                }
+                self.record_node_flow(stmt_idx);
+            }
+
+            // Await expression (as a standalone expression)
+            syntax_kind_ext::AWAIT_EXPRESSION => {
+                self.handle_await_expression(stmt_idx);
+                self.record_node_flow(stmt_idx);
+            }
+
+            // Yield expression (as a standalone expression)
+            syntax_kind_ext::YIELD_EXPRESSION => {
+                self.handle_yield_expression(stmt_idx);
+                self.record_node_flow(stmt_idx);
+            }
+
+            // Class declaration - track heritage clause expressions, static blocks, and computed properties
+            syntax_kind_ext::CLASS_DECLARATION | syntax_kind_ext::CLASS_EXPRESSION => {
+                self.build_class_declaration(stmt_idx);
+            }
+
+            // Return/throw/break/continue
+            syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => {
+                self.record_node_flow(stmt_idx);
+
+                // Collect and execute any finally blocks on the stack
+                let mut finally_flows: Vec<NodeIndex> = Vec::new();
+                for ctx in self.flow_stack.iter().rev() {
+                    if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
+                        finally_flows.push(ctx.finally_block);
+                    }
+                }
+
+                // Build finally blocks in reverse order (innermost first)
+                for finally_block in finally_flows.iter().rev() {
+                    self.build_statement(*finally_block);
+                }
+
+                // After all finally blocks, set to unreachable
+                self.current_flow = self.graph.unreachable_flow;
+            }
+
+            syntax_kind_ext::BREAK_STATEMENT => {
+                self.record_node_flow(stmt_idx);
+                self.handle_break(stmt_idx);
+            }
+
+            syntax_kind_ext::CONTINUE_STATEMENT => {
+                self.record_node_flow(stmt_idx);
+                self.handle_continue(stmt_idx);
+            }
+
+            _ => {
+                // Default: just record flow position
+                self.record_node_flow(stmt_idx);
+            }
+        }
+    }
+
+    /// Build flow graph for a block.
+    ///
+    /// Entry point for building flow graphs for block statements.
+    /// Processes all statements in the block sequentially.
+    ///
+    /// # Arguments
+    /// * `block` - The block statement to build flow graph for
+    pub fn build_block(&mut self, block: &tsz_parser::parser::node::BlockData) {
+        for &stmt_idx in &block.statements.nodes {
+            if stmt_idx.is_some() {
+                self.build_statement(stmt_idx);
+            }
+        }
+    }
+
+    /// Build flow graph for an if statement.
+    fn build_if_statement(&mut self, if_stmt: &tsz_parser::parser::node::IfStatementData) {
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(if_stmt.expression);
+
+        // Save flow before the condition
+        let pre_condition_flow = self.current_flow;
+
+        // If already unreachable, stay unreachable (Bug #3.1 fix)
+        if pre_condition_flow == self.graph.unreachable_flow {
+            // Build branches for error checking but don't resurrect flow
+            self.build_statement(if_stmt.then_statement);
+            if if_stmt.else_statement.is_some() {
+                self.build_statement(if_stmt.else_statement);
+            }
+            // Stay unreachable - don't resurrect with merge label
+            return;
+        }
+
+        // Create flow node for the true branch
+        let true_flow = self.create_flow_node(
+            flow_flags::TRUE_CONDITION,
+            pre_condition_flow,
+            if_stmt.expression,
+        );
+
+        // Bind the then statement with true flow
+        self.current_flow = true_flow;
+        self.build_statement(if_stmt.then_statement);
+        let post_then_flow = self.current_flow;
+
+        // Create merge label
+        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Handle else branch if present
+        if if_stmt.else_statement.is_some() {
+            // Create flow node for the false branch
+            let false_flow = self.create_flow_node(
+                flow_flags::FALSE_CONDITION,
+                pre_condition_flow,
+                if_stmt.expression,
+            );
+
+            // Bind the else statement
+            self.current_flow = false_flow;
+            self.build_statement(if_stmt.else_statement);
+            let post_else_flow = self.current_flow;
+
+            // Add both branches to merge label
+            self.add_antecedent(merge_label, post_then_flow);
+            self.add_antecedent(merge_label, post_else_flow);
+        } else {
+            // No else branch: false path goes directly to merge
+            let false_flow = self.create_flow_node(
+                flow_flags::FALSE_CONDITION,
+                pre_condition_flow,
+                if_stmt.expression,
+            );
+
+            self.add_antecedent(merge_label, post_then_flow);
+            self.add_antecedent(merge_label, false_flow);
+        }
+
+        self.current_flow = merge_label;
+    }
+
+    /// Build flow graph for a while statement.
+    fn build_while_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
+        // Create loop label
+        let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
+        if self.current_flow.is_some()
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
+
+        // Create merge label for after the loop
+        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push loop context
+        self.flow_stack.push(FlowContext {
+            break_label: merge_label,
+            continue_label: Some(loop_label),
+            context_type: FlowContextType::Loop,
+            finally_block: NodeIndex::NONE,
+            label: NodeIndex::NONE,
+        });
+
+        self.current_flow = loop_label;
+
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(loop_data.condition);
+
+        // Create flow for entering loop body
+        let true_flow =
+            self.create_flow_node(flow_flags::TRUE_CONDITION, loop_label, loop_data.condition);
+
+        // Bind loop body
+        self.current_flow = true_flow;
+        self.build_statement(loop_data.statement);
+
+        // Loop back to loop label
+        self.add_antecedent(loop_label, self.current_flow);
+
+        // Create flow for exiting loop
+        let false_flow =
+            self.create_flow_node(flow_flags::FALSE_CONDITION, loop_label, loop_data.condition);
+
+        // Add to merge label
+        self.add_antecedent(merge_label, false_flow);
+
+        self.flow_stack.pop();
+        self.current_flow = merge_label;
+    }
+
+    /// Build flow graph for a do-while statement.
+    fn build_do_while_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
+        // Create loop label
+        let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
+        if self.current_flow.is_some()
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
+
+        // Create merge label for after the loop
+        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push loop context
+        self.flow_stack.push(FlowContext {
+            break_label: merge_label,
+            continue_label: Some(loop_label),
+            context_type: FlowContextType::Loop,
+            finally_block: NodeIndex::NONE,
+            label: NodeIndex::NONE,
+        });
+
+        self.current_flow = loop_label;
+
+        // Bind loop body
+        self.build_statement(loop_data.statement);
+
+        // Loop back to loop label (body always executes once)
+        self.add_antecedent(loop_label, self.current_flow);
+
+        // Bug #2.1: Track assignments in condition expression
+        self.handle_expression_for_assignments(loop_data.condition);
+
+        // Create flow for condition
+        let pre_condition_flow = self.current_flow;
+
+        // True flow: back to loop label
+        let true_flow = self.create_flow_node(
+            flow_flags::TRUE_CONDITION,
+            pre_condition_flow,
+            loop_data.condition,
+        );
+        self.add_antecedent(loop_label, true_flow);
+
+        // False flow: exit loop
+        let false_flow = self.create_flow_node(
+            flow_flags::FALSE_CONDITION,
+            pre_condition_flow,
+            loop_data.condition,
+        );
+        self.add_antecedent(merge_label, false_flow);
+
+        self.flow_stack.pop();
+        self.current_flow = merge_label;
+    }
+
+    /// Build flow graph for a for statement.
+    fn build_for_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
+        // Create loop label
+        let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
+        if self.current_flow.is_some()
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
+
+        // Create merge label for after the loop
+        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push loop context
+        self.flow_stack.push(FlowContext {
+            break_label: merge_label,
+            continue_label: Some(loop_label),
+            context_type: FlowContextType::Loop,
+            finally_block: NodeIndex::NONE,
+            label: NodeIndex::NONE,
+        });
+
+        // Track initializer (variable declaration or expression)
+        if loop_data.initializer.is_some() {
+            self.build_statement(loop_data.initializer);
+            self.add_antecedent(loop_label, self.current_flow);
+        }
+
+        self.current_flow = loop_label;
+
+        // Handle condition if present
+        if loop_data.condition.is_some() {
+            // Bug #2.1: Track assignments in condition expression
+            self.handle_expression_for_assignments(loop_data.condition);
+
+            let true_flow =
+                self.create_flow_node(flow_flags::TRUE_CONDITION, loop_label, loop_data.condition);
+            self.current_flow = true_flow;
+
+            // Bind loop body
+            self.build_statement(loop_data.statement);
+
+            // Continue point: after body, before incrementor
+            self.add_antecedent(loop_label, self.current_flow);
+
+            // False flow: exit loop
+            let false_flow =
+                self.create_flow_node(flow_flags::FALSE_CONDITION, loop_label, loop_data.condition);
+            self.add_antecedent(merge_label, false_flow);
+        } else {
+            // No condition: infinite loop
+            self.build_statement(loop_data.statement);
+            self.add_antecedent(loop_label, self.current_flow);
+        }
+
+        // Handle incrementor
+        if loop_data.incrementor.is_some() {
+            let flow = self.create_flow_node(
+                flow_flags::ASSIGNMENT,
+                self.current_flow,
+                loop_data.incrementor,
+            );
+            self.current_flow = flow;
+            self.add_antecedent(loop_label, self.current_flow);
+        }
+
+        self.flow_stack.pop();
+        self.current_flow = merge_label;
+    }
+
+    /// Build flow graph for a for-in or for-of statement.
+    /// Both produce identical control flow structure: loop label, merge label,
+    /// initializer, body, and back-edge wiring.
+    fn build_for_in_of_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
+        // Create loop label
+        let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
+        if self.current_flow.is_some()
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
+
+        // Create merge label
+        let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push loop context
+        self.flow_stack.push(FlowContext {
+            break_label: merge_label,
+            continue_label: Some(loop_label),
+            context_type: FlowContextType::Loop,
+            finally_block: NodeIndex::NONE,
+            label: NodeIndex::NONE,
+        });
+
+        // Track initializer (variable declaration)
+        if for_in_of.initializer.is_some() {
+            self.build_statement(for_in_of.initializer);
+        }
+
+        self.current_flow = loop_label;
+
+        // Bind loop body
+        self.build_statement(for_in_of.statement);
+
+        // Loop back
+        self.add_antecedent(loop_label, self.current_flow);
+        self.add_antecedent(merge_label, self.current_flow);
+
+        self.flow_stack.pop();
+        self.current_flow = merge_label;
+    }
+
+    /// Build flow graph for a switch statement.
+    fn build_switch_statement(&mut self, switch_data: &tsz_parser::parser::node::SwitchData) {
+        // Bug #2.1: Track assignments in switch expression
+        self.handle_expression_for_assignments(switch_data.expression);
+
+        let pre_switch_flow = self.current_flow;
+
+        // Create branch label for end of switch
+        let end_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push switch context
+        self.flow_stack.push(FlowContext {
+            break_label: end_label,
+            continue_label: None,
+            context_type: FlowContextType::Switch,
+            finally_block: NodeIndex::NONE,
+            label: NodeIndex::NONE,
+        });
+
+        // Track whether a default clause exists for exhaustiveness checking
+        let mut has_default_clause = false;
+
+        // Bind case block
+        if let Some(case_block_node) = self.arena.get(switch_data.case_block) {
+            let Some(case_block) = self.arena.get_block(case_block_node) else {
+                self.flow_stack.pop();
+                self.current_flow = end_label;
+                return;
+            };
+            let mut fallthrough_flow = FlowNodeId::NONE;
+
+            for &clause_idx in &case_block.statements.nodes {
+                if clause_idx.is_none() {
+                    continue;
+                }
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+
+                match clause_node.kind {
+                    syntax_kind_ext::CASE_CLAUSE => {
+                        if let Some(clause) = self.arena.get_case_clause(clause_node) {
+                            // Create switch clause flow node
+                            let clause_flow = self.create_switch_clause_flow(
+                                pre_switch_flow,
+                                fallthrough_flow,
+                                clause.expression,
+                            );
+                            self.current_flow = clause_flow;
+
+                            // Bind statements in clause
+                            for &stmt_idx in &clause.statements.nodes {
+                                if stmt_idx.is_some() {
+                                    self.build_statement(stmt_idx);
+                                }
+                            }
+
+                            // Track fallthrough
+                            if self.current_flow != self.graph.unreachable_flow {
+                                fallthrough_flow = self.current_flow;
+                            } else {
+                                fallthrough_flow = FlowNodeId::NONE;
+                            }
+                        }
+                    }
+
+                    syntax_kind_ext::DEFAULT_CLAUSE => {
+                        has_default_clause = true;
+                        if let Some(clause) = self.arena.get_case_clause(clause_node) {
+                            let clause_flow = self.create_switch_clause_flow(
+                                pre_switch_flow,
+                                fallthrough_flow,
+                                NodeIndex::NONE, // No expression for default
+                            );
+                            self.current_flow = clause_flow;
+
+                            for &stmt_idx in &clause.statements.nodes {
+                                if stmt_idx.is_some() {
+                                    self.build_statement(stmt_idx);
+                                }
+                            }
+
+                            self.add_antecedent(end_label, self.current_flow);
+                            fallthrough_flow = FlowNodeId::NONE;
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+
+            // Exhaustiveness checking: if no default clause, create implicit default path
+            // This path represents "no case matched" and should narrow the discriminant type
+            // by excluding all case values. If all cases are covered, this becomes `never`.
+            // IMPORTANT: Do NOT use fallthrough_flow here - implicit default is separate
+            // from the case clauses and represents the "no match" path only.
+            if !has_default_clause {
+                let implicit_default_flow = self.create_switch_clause_flow(
+                    pre_switch_flow,
+                    FlowNodeId::NONE, // No fallthrough - implicit default is separate path
+                    switch_data.case_block, // Use case_block as marker for implicit default
+                );
+                // Connect implicit default to end label (fallthrough from switch)
+                self.add_antecedent(end_label, implicit_default_flow);
+            }
+        }
+
+        self.flow_stack.pop();
+        self.current_flow = end_label;
+    }
+
+    /// Build flow graph for a try statement.
+    fn build_try_statement(&mut self, try_data: &tsz_parser::parser::node::TryData) {
+        let pre_try_flow = self.current_flow;
+        let has_finally = try_data.finally_block.is_some();
+
+        // Create merge label for after try/catch (before finally)
+        let pre_finally_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push try context to track finally block for exit statements
+        let finally_ctx = has_finally.then_some(FlowContext {
+            break_label: FlowNodeId::NONE, // Not used for try
+            continue_label: None,
+            context_type: FlowContextType::Try,
+            finally_block: try_data.finally_block,
+            label: NodeIndex::NONE,
+        });
+
+        if let Some(ctx) = finally_ctx {
+            self.flow_stack.push(ctx);
+        }
+
+        // Bind try block
+        self.build_statement(try_data.try_block);
+        let post_try_flow = self.current_flow;
+
+        // Bind catch clause if present
+        let post_catch_flow = if try_data.catch_clause.is_some() {
+            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                if let Some(catch) = self.arena.get_catch_clause(catch_node) {
+                    // Reset flow - catch can be entered from any point in try
+                    self.current_flow = pre_try_flow;
+
+                    // Bind catch variable if present
+                    if catch.variable_declaration.is_some() {
+                        self.build_statement(catch.variable_declaration);
+                    }
+
+                    // Bind catch block
+                    self.build_statement(catch.block);
+                    Some(self.current_flow)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Pop try context
+        if has_finally {
+            self.flow_stack.pop();
+        }
+
+        // Add post-try flow to pre-finally label
+        self.add_antecedent(pre_finally_label, post_try_flow);
+
+        // Add post-catch flow to pre-finally label if present
+        if let Some(catch_flow) = post_catch_flow {
+            self.add_antecedent(pre_finally_label, catch_flow);
+        }
+
+        // Bind finally block if present
+        if has_finally {
+            // Build the finally block starting from the pre-finally label
+            self.current_flow = pre_finally_label;
+            self.build_statement(try_data.finally_block);
+            // After finally, current_flow is the post-finally flow
+        } else {
+            // No finally block, use pre-finally label directly
+            self.current_flow = pre_finally_label;
+        }
+    }
+
+    /// Build flow graph for a labeled statement.
+    ///
+    /// Labeled statements create a break target that can be referenced by
+    /// break/continue statements with a matching label.
+    fn build_labeled_statement(&mut self, labeled_data: &tsz_parser::parser::node::LabeledData) {
+        // Create a break label for the labeled statement
+        let break_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
+
+        // Push flow context with the label
+        self.flow_stack.push(FlowContext {
+            break_label,
+            continue_label: None, // Labeled statements don't have continue targets unless they're loops
+            context_type: FlowContextType::Loop, // Use Loop type to enable breaks
+            finally_block: NodeIndex::NONE,
+            label: labeled_data.label,
+        });
+
+        // Build the inner statement
+        self.build_statement(labeled_data.statement);
+
+        // Pop the labeled statement context
+        self.flow_stack.pop();
+
+        // Set current flow to the break label (for code after the labeled statement)
+        self.current_flow = break_label;
+    }
+
+    /// Build flow graph for a variable declaration.
+    fn build_variable_declaration(
+        &mut self,
+        var_decl: &tsz_parser::parser::node::VariableDeclarationData,
+        idx: NodeIndex,
+    ) {
+        // Track the variable declaration
+        self.track_variable_declaration(var_decl, idx);
+
+        // Check for await/yield expressions in initializer
+        if var_decl.initializer.is_some() {
+            self.handle_expression_for_suspension_points(var_decl.initializer);
+        }
+    }
+
+    /// Handle a break statement.
+    fn handle_break(&mut self, stmt_idx: NodeIndex) {
+        // Check if this break has a label
+        let break_label = if let Some(stmt_node) = self.arena.get(stmt_idx) {
+            self.arena
+                .get_jump_data(stmt_node)
+                .map(|jump_data| jump_data.label)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
+
+        // First pass: collect finally blocks and find target
+        let mut finally_blocks: Vec<NodeIndex> = Vec::new();
+        let mut target_label = FlowNodeId::NONE;
+
+        // Get the label text if this is a labeled break
+        let label_text = if break_label.is_some() {
+            self.arena
+                .get(break_label)
+                .and_then(|node| self.arena.get_identifier(node))
+                .map(|id| id.escaped_text.as_str())
+        } else {
+            None
+        };
+
+        for ctx in self.flow_stack.iter().rev() {
+            if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
+                finally_blocks.push(ctx.finally_block);
+            }
+
+            // If this break has a label, find the matching labeled statement
+            if let Some(label) = label_text {
+                if ctx.label.is_some()
+                    && let Some(ctx_label_node) = self.arena.get(ctx.label)
+                    && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
+                    && ctx_label_data.escaped_text == label
+                {
+                    target_label = ctx.break_label;
+                    break;
+                }
+            } else {
+                // No label, use the nearest loop/switch
+                if ctx.break_label != FlowNodeId::NONE {
+                    target_label = ctx.break_label;
+                    break;
+                }
+            }
+        }
+
+        // Second pass: build finally blocks (if any)
+        for finally_block in finally_blocks.iter().rev() {
+            self.build_statement(*finally_block);
+        }
+
+        // Add break target antecedent
+        if target_label.is_some() {
+            self.add_antecedent(target_label, self.current_flow);
+        }
+        self.current_flow = self.graph.unreachable_flow;
+    }
+
+    /// Handle a continue statement.
+    fn handle_continue(&mut self, stmt_idx: NodeIndex) {
+        // Check if this continue has a label
+        let continue_label_idx = if let Some(stmt_node) = self.arena.get(stmt_idx) {
+            self.arena
+                .get_jump_data(stmt_node)
+                .map(|jump_data| jump_data.label)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
+
+        // First pass: collect finally blocks and find target
+        let mut finally_blocks: Vec<NodeIndex> = Vec::new();
+        let mut target_label = FlowNodeId::NONE;
+
+        // Get the label text if this is a labeled continue
+        let label_text = if continue_label_idx.is_some() {
+            self.arena
+                .get(continue_label_idx)
+                .and_then(|node| self.arena.get_identifier(node))
+                .map(|id| id.escaped_text.as_str())
+        } else {
+            None
+        };
+
+        for ctx in self.flow_stack.iter().rev() {
+            if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
+                finally_blocks.push(ctx.finally_block);
+            }
+
+            // If this continue has a label, find the matching labeled statement
+            if let Some(label) = label_text {
+                if ctx.label.is_some()
+                    && let Some(ctx_label_node) = self.arena.get(ctx.label)
+                    && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
+                    && ctx_label_data.escaped_text == label
+                    && let Some(continue_label) = ctx.continue_label
+                {
+                    target_label = continue_label;
+                    break;
+                }
+            } else {
+                // No label, use the nearest loop
+                if let Some(continue_label) = ctx.continue_label {
+                    target_label = continue_label;
+                    break;
+                }
+            }
+        }
+
+        // Second pass: build finally blocks (if any)
+        for finally_block in finally_blocks.iter().rev() {
+            self.build_statement(*finally_block);
+        }
+
+        // Add continue target antecedent
+        if target_label.is_some() {
+            self.add_antecedent(target_label, self.current_flow);
+        }
+        self.current_flow = self.graph.unreachable_flow;
+    }
+
+    /// Create a new flow node and link it to an antecedent.
+    pub(crate) fn create_flow_node(
+        &mut self,
+        flags: u32,
+        antecedent: FlowNodeId,
+        node: NodeIndex,
+    ) -> FlowNodeId {
+        // If the antecedent is unreachable, this flow node is also unreachable.
+        // Preserve the unreachable sentinel so later statements remain marked unreachable.
+        if antecedent == self.graph.unreachable_flow {
+            return self.graph.unreachable_flow;
+        }
+
+        let id = self.graph.nodes.alloc(flags);
+        if let Some(flow) = self.graph.nodes.get_mut(id) {
+            if antecedent.is_some() && antecedent != self.graph.unreachable_flow {
+                flow.antecedent.push(antecedent);
+            }
+            flow.node = node;
+        }
+        id
+    }
+
+    /// Create a flow node for a switch clause with optional fallthrough.
+    fn create_switch_clause_flow(
+        &mut self,
+        pre_switch: FlowNodeId,
+        fallthrough: FlowNodeId,
+        expression: NodeIndex,
+    ) -> FlowNodeId {
+        let id = self.graph.nodes.alloc(flow_flags::SWITCH_CLAUSE);
+        if let Some(node) = self.graph.nodes.get_mut(id) {
+            node.node = expression;
+            if pre_switch.is_some() && pre_switch != self.graph.unreachable_flow {
+                node.antecedent.push(pre_switch);
+            }
+            if fallthrough.is_some() && fallthrough != self.graph.unreachable_flow {
+                node.antecedent.push(fallthrough);
+            }
+        }
+        id
+    }
+
+    /// Add an antecedent to a flow node.
+    pub(crate) fn add_antecedent(&mut self, label: FlowNodeId, antecedent: FlowNodeId) {
+        if antecedent.is_none() || antecedent == self.graph.unreachable_flow {
+            return;
+        }
+
+        if let Some(node) = self.graph.nodes.get_mut(label)
+            && !node.antecedent.contains(&antecedent)
+        {
+            node.antecedent.push(antecedent);
+        }
+    }
+
+    /// Record the current flow node for an AST node.
+    pub(crate) fn record_node_flow(&mut self, node: NodeIndex) {
+        if self.current_flow.is_some() {
+            self.graph.node_flow.insert(node.0, self.current_flow);
+
+            // Mark node as unreachable if current flow is unreachable
+            if self.current_flow == self.graph.unreachable_flow {
+                self.graph.mark_unreachable(node);
+            }
+        }
+    }
+
+    /// Check if currently inside an async function.
+    pub(crate) const fn in_async_function(&self) -> bool {
+        self.async_depth > 0
+    }
+
+    /// Check if currently inside a generator function.
+    pub(crate) const fn in_generator_function(&self) -> bool {
+        self.generator_depth > 0
+    }
+
+    /// Get the flow graph being constructed.
+    pub const fn graph(&self) -> &FlowGraph {
+        &self.graph
+    }
+
+    /// Consume the builder and return the flow graph.
+    pub fn into_graph(self) -> FlowGraph {
+        self.graph
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/flow_graph_builder.rs"]
+mod tests;

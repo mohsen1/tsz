@@ -620,8 +620,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !control_flow_assignment_src.contains("tsz_solver::type_queries::"),
         "control-flow assignment should not call solver type_queries directly; use flow_analysis boundary helpers"
     );
-    let control_flow_src = fs::read_to_string("src/flow/control_flow/mod.rs")
-        .expect("failed to read src/flow/control_flow/mod.rs for architecture guard");
+    let control_flow_src = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read src/flow/control_flow/core.rs for architecture guard");
     assert!(
         control_flow_src.contains("query::is_assignable_with_env("),
         "FlowAnalyzer assignability should route through flow_analysis boundary helpers"
