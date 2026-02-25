@@ -721,8 +721,9 @@ impl ModuleResolver {
         result
     }
 
-    /// Determine the module kind of the importing file based on extension and package.json type
-    fn get_importing_module_kind(&mut self, file_path: &Path) -> ImportingModuleKind {
+    /// Determine the module kind of the importing file based on extension and package.json type.
+    /// Public so the driver can pre-compute per-file ESM/CJS status for the checker.
+    pub fn get_importing_module_kind(&mut self, file_path: &Path) -> ImportingModuleKind {
         let extension = ModuleExtension::from_path(file_path);
 
         // .mts, .mjs force ESM mode

@@ -91,6 +91,12 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
 
+        // In JS files, `import x = require(...)` is TS-only syntax (TS8002).
+        // tsc skips semantic analysis for such statements, so we should too.
+        if self.ctx.is_js_file() {
+            return;
+        }
+
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };

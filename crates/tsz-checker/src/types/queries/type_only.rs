@@ -350,6 +350,20 @@ impl<'a> CheckerState<'a> {
         if symbol.is_type_only {
             return true;
         }
+        if let Some(module_specifier) = symbol.import_module.as_deref() {
+            let export_name = symbol
+                .import_name
+                .as_deref()
+                .unwrap_or(&symbol.escaped_name);
+            if let Some((_, is_type_only)) = self
+                .ctx
+                .binder
+                .resolve_import_with_reexports_type_only(module_specifier, export_name)
+                && is_type_only
+            {
+                return true;
+            }
+        }
 
         let mut visited = Vec::new();
         let target = match self.resolve_alias_symbol(sym_id, &mut visited) {

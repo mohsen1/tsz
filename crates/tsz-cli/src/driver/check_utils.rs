@@ -820,6 +820,7 @@ pub(super) fn create_binder_from_bound_file(
             module_exports: program.module_exports.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: program.symbol_arenas.clone(),
             declaration_arenas: program.declaration_arenas.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
@@ -894,6 +895,11 @@ pub(super) fn create_cross_file_lookup_binder(
         binder
             .wildcard_reexports
             .insert(file.file_name.clone(), wildcards.clone());
+    }
+    if let Some(type_only_flags) = program.wildcard_reexports_type_only.get(&file.file_name) {
+        binder
+            .wildcard_reexports_type_only
+            .insert(file.file_name.clone(), type_only_flags.clone());
     }
     if let Some(reexports) = program.reexports.get(&file.file_name) {
         binder

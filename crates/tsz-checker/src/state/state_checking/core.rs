@@ -402,7 +402,20 @@ impl<'a> CheckerState<'a> {
                 if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx)
                     && export_decl.export_clause.is_some()
                 {
-                    self.check_js_grammar_statement(export_decl.export_clause);
+                    let inner = export_decl.export_clause;
+                    let inner_kind = self.ctx.arena.get(inner).map(|n| n.kind);
+                    // For `export import X = require(...)`, emit TS8002 at the
+                    // outer EXPORT_DECLARATION node so the span starts at `export`
+                    // (matching tsc column offset).
+                    if inner_kind == Some(syntax_kind_ext::IMPORT_EQUALS_DECLARATION) {
+                        self.error_at_node(
+                            stmt_idx,
+                            diagnostic_messages::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    } else {
+                        self.check_js_grammar_statement(inner);
+                    }
                 }
             }
 

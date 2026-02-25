@@ -454,8 +454,14 @@ impl BinderState {
         }
 
         let mut visited = rustc_hash::FxHashSet::default();
-        let result =
-            self.resolve_import_with_reexports_inner(module_specifier, export_name, &mut visited);
+        let result = self
+            .resolve_import_with_reexports_inner_type_only(
+                module_specifier,
+                export_name,
+                false,
+                &mut visited,
+            )
+            .map(|(sym_id, _is_type_only)| sym_id);
 
         // Cache the result (including None for not found)
         self.resolved_export_cache
@@ -465,13 +471,49 @@ impl BinderState {
         result
     }
 
+    /// Resolve an import by name from a module while preserving type-only wildcard provenance.
+    ///
+    /// Returns the resolved symbol and whether the path to it passed through a
+    /// `export type * from ...` wildcard re-export.
+    pub fn resolve_import_with_reexports_type_only(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<(SymbolId, bool)> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_import_with_reexports_inner_type_only(
+            module_specifier,
+            export_name,
+            false,
+            &mut visited,
+        )
+    }
+
     /// Inner implementation with cycle detection for module re-exports.
+    #[allow(dead_code)]
     pub(crate) fn resolve_import_with_reexports_inner(
         &self,
         module_specifier: &str,
         export_name: &str,
         visited: &mut rustc_hash::FxHashSet<(String, String)>,
     ) -> Option<SymbolId> {
+        self.resolve_import_with_reexports_inner_type_only(
+            module_specifier,
+            export_name,
+            false,
+            visited,
+        )
+        .map(|(sym_id, _is_type_only)| sym_id)
+    }
+
+    /// Inner implementation with cycle detection for module re-exports.
+    fn resolve_import_with_reexports_inner_type_only(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        is_type_only: bool,
+        visited: &mut rustc_hash::FxHashSet<(String, String)>,
+    ) -> Option<(SymbolId, bool)> {
         let _span =
             span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name)
                 .entered();
@@ -491,7 +533,7 @@ impl BinderState {
                 "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
                 export_name, module_specifier, sym_id.0
             );
-            return Some(sym_id);
+            return Some((sym_id, is_type_only));
         }
 
         // Not found in direct exports, check for named re-exports
@@ -503,9 +545,10 @@ impl BinderState {
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
                     export_name, module_specifier, source_module, name_to_lookup
                 );
-                return self.resolve_import_with_reexports_inner(
+                return self.resolve_import_with_reexports_inner_type_only(
                     source_module,
                     name_to_lookup,
+                    is_type_only,
                     visited,
                 );
             }
@@ -514,14 +557,27 @@ impl BinderState {
         // Check for wildcard re-exports: `export * from 'bar'`
         // A module can have multiple wildcard re-exports, check all of them
         if let Some(source_modules) = self.wildcard_reexports.get(module_specifier) {
+            let source_type_only_flags = self.wildcard_reexports_type_only.get(module_specifier);
             for source_module in source_modules {
+                let source_is_type_only = source_type_only_flags
+                    .and_then(|entries| {
+                        entries
+                            .iter()
+                            .find(|(module, _)| module == source_module)
+                            .map(|(_, is_type_only)| *is_type_only)
+                    })
+                    .unwrap_or(false);
+
                 debug!(
                     "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
                     export_name, module_specifier, source_module
                 );
-                if let Some(result) =
-                    self.resolve_import_with_reexports_inner(source_module, export_name, visited)
-                {
+                if let Some(result) = self.resolve_import_with_reexports_inner_type_only(
+                    source_module,
+                    export_name,
+                    is_type_only || source_is_type_only,
+                    visited,
+                ) {
                     return Some(result);
                 }
             }

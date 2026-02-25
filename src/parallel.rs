@@ -230,6 +230,8 @@ pub struct BindResult {
     pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
+    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Vec<Arc<BinderState>>,
@@ -296,6 +298,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     module_augmentations: binder.module_augmentations,
                     reexports: binder.reexports,
                     wildcard_reexports: binder.wildcard_reexports,
+                    wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
                     lib_binders: Vec::new(),
                     lib_symbol_ids: binder.lib_symbol_ids,
                     lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -337,6 +340,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 module_augmentations: binder.module_augmentations,
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
+                wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
                 lib_binders: Vec::new(), // No libs in this path
                 lib_symbol_ids: binder.lib_symbol_ids,
                 lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -380,6 +384,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         module_augmentations: binder.module_augmentations,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
+        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders: Vec::new(), // No libs in this path
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -619,6 +624,7 @@ fn bind_file_with_libs(
             module_augmentations: binder.module_augmentations,
             reexports: binder.reexports,
             wildcard_reexports: binder.wildcard_reexports,
+            wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
             lib_binders,
             lib_symbol_ids: binder.lib_symbol_ids,
             lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -670,6 +676,7 @@ fn bind_file_with_libs(
         module_augmentations: binder.module_augmentations,
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
+        wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
         lib_binders,
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -748,6 +755,8 @@ pub struct MergedProgram {
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// Wildcard re-export type-only provenance per entry.
+    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
     pub lib_binders: Vec<Arc<BinderState>>,
@@ -933,6 +942,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
     let mut reexports: Reexports = FxHashMap::default();
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
+    let mut wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>> =
+        FxHashMap::default();
     let mut global_lib_symbol_ids: FxHashSet<SymbolId> = FxHashSet::default();
 
     // Track which symbols have been merged to avoid duplicate processing.
@@ -1154,17 +1165,42 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Merge wildcard reexports from this file
         for (file_name, source_modules) in &result.wildcard_reexports {
             let entry = wildcard_reexports.entry(file_name.clone()).or_default();
+            let type_only_entry = wildcard_reexports_type_only
+                .entry(file_name.clone())
+                .or_default();
+            let source_type_only = result.wildcard_reexports_type_only.get(file_name);
+
             if entry.len() + source_modules.len() <= 16 {
                 for source_module in source_modules {
+                    let source_is_type_only = source_type_only
+                        .and_then(|entries| {
+                            entries
+                                .iter()
+                                .find(|(module, _)| module == source_module)
+                                .map(|(_, is_type_only)| *is_type_only)
+                        })
+                        .unwrap_or(false);
+
                     if !entry.contains(source_module) {
                         entry.push(source_module.clone());
+                        type_only_entry.push((source_module.clone(), source_is_type_only));
                     }
                 }
             } else {
                 let mut seen: FxHashSet<String> = entry.iter().cloned().collect();
                 for source_module in source_modules {
+                    let source_is_type_only = source_type_only
+                        .and_then(|entries| {
+                            entries
+                                .iter()
+                                .find(|(module, _)| module == source_module)
+                                .map(|(_, is_type_only)| *is_type_only)
+                        })
+                        .unwrap_or(false);
+
                     if seen.insert(source_module.clone()) {
                         entry.push(source_module.clone());
+                        type_only_entry.push((source_module.clone(), source_is_type_only));
                     }
                 }
             }
@@ -1657,6 +1693,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         module_exports,
         reexports,
         wildcard_reexports,
+        wildcard_reexports_type_only,
         lib_binders,
         lib_symbol_ids: global_lib_symbol_ids,
         type_interner: TypeInterner::new(),
@@ -2051,6 +2088,7 @@ pub fn create_binder_from_bound_file(
             module_exports: program.module_exports.clone(),
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
+            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas: program.symbol_arenas.clone(),
             declaration_arenas: program.declaration_arenas.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),

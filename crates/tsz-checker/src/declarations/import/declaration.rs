@@ -365,10 +365,20 @@ impl<'a> CheckerState<'a> {
                         // .cts files are always CommonJS
                         let is_commonjs_file = current_file.ends_with(".cts");
                         // .mts files are always ESM
-                        let is_esm_file = current_file.ends_with(".mts");
-                        // For other files, check if module system will emit require() calls
-                        is_commonjs_file
-                            || (!is_esm_file && !self.ctx.compiler_options.module.is_es_module())
+                        let is_esm_file =
+                            current_file.ends_with(".mts") || current_file.ends_with(".mjs");
+                        if is_commonjs_file {
+                            true
+                        } else if is_esm_file {
+                            false
+                        } else if let Some(is_esm) = self.ctx.file_is_esm {
+                            // Driver-provided per-file module kind from package.json
+                            // "type" field (Node16/NodeNext resolution)
+                            !is_esm
+                        } else {
+                            // Fallback: global module kind heuristic
+                            !self.ctx.compiler_options.module.is_es_module()
+                        }
                     };
 
                     if current_is_commonjs && target_is_esm && !is_type_only_import {

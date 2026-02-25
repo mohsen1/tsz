@@ -188,6 +188,12 @@ pub struct CheckerContext<'a> {
     /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
+    /// Whether the current file is an ESM module (per-file determination).
+    /// In Node16/NodeNext, `.js`/`.ts` files may be ESM based on the nearest
+    /// `package.json` `"type": "module"` field. Set by the driver from module resolver.
+    /// When `None`, the checker falls back to extension + global module kind heuristic.
+    pub file_is_esm: Option<bool>,
+
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 

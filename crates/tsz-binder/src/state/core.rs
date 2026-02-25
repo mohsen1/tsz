@@ -81,6 +81,7 @@ impl BinderState {
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
+            wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
@@ -136,6 +137,7 @@ impl BinderState {
         self.module_exports.clear();
         self.reexports.clear();
         self.wildcard_reexports.clear();
+        self.wildcard_reexports_type_only.clear();
         self.resolved_export_cache.write().unwrap().clear();
         self.resolved_identifier_cache.write().unwrap().clear();
         self.shorthand_ambient_modules.clear();
@@ -260,6 +262,7 @@ impl BinderState {
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
+            wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
@@ -314,6 +317,7 @@ impl BinderState {
             module_exports,
             reexports,
             wildcard_reexports,
+            wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
             shorthand_ambient_modules,
@@ -368,6 +372,7 @@ impl BinderState {
             module_exports,
             reexports,
             wildcard_reexports,
+            wildcard_reexports_type_only,
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,

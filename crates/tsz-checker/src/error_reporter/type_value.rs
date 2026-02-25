@@ -241,6 +241,24 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
+            // If this alias resolves through an import chain that came from a type-only
+            // re-export (`export type * from ...` or `export { ... } from ...` with type-only),
+            // classify it as a type-only export usage (TS1362).
+            if let Some(module_specifier) = symbol.import_module.as_deref() {
+                let export_name = symbol
+                    .import_name
+                    .as_deref()
+                    .unwrap_or(&symbol.escaped_name);
+                if self
+                    .ctx
+                    .binder
+                    .resolve_import_with_reexports_type_only(module_specifier, export_name)
+                    .is_some_and(|(_, is_type_only)| is_type_only)
+                {
+                    return Some(TypeOnlyKind::Export);
+                }
+            }
+
             // Only applies to alias symbols explicitly marked type-only
             if (symbol.flags & symbol_flags::ALIAS) == 0 || !symbol.is_type_only {
                 continue;

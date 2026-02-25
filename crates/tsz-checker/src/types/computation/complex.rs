@@ -775,6 +775,11 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
+        if self.alias_resolves_to_type_only(sym_id) {
+            self.error_type_only_value_at(class_name, expr_idx);
+            return Some(TypeId::ERROR);
+        }
+
         let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
         let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
         let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;

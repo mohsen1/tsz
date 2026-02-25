@@ -1,9 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7710/12577 (61.3%) — full suite, fingerprint level (new framework)
-> Previously ~7701/12570 (61.3%), improved by fixing wildcard reexport resolution ordering (+5 tests).
-> Previously ~6992/12565 (55.6%), score recovered after fixing .lib/ path rewriting, TS5107 suppression, strict defaults, and many other fixes.
+**Current score**: ~7716/12570 (61.4%) — full suite, fingerprint level (new framework)
+> Previously ~7710/12577 (61.3%), improved by fixing wildcard reexport resolution ordering (+5 tests).
 
 ---
 
@@ -272,6 +271,34 @@
 - **Fixed**: ModuleKind::Node18/Node20 — Added `Node18 = 101` and `Node20 = 102` variants to `ModuleKind` enum with `is_node_module()` helper. Updated all exhaustive matches across 12+ files (args, config, checker, emitter, resolver, wasm).
 - **Fixed**: TS5110 range-based check — Changed from exact-match to range-based logic for "Option 'module' must be set to '{0}'" diagnostic. tsc accepts any module in [Node16, NodeNext] range with node-style resolution; we were checking for exact match only. Added 4 unit tests for Node18/Node20 acceptance, ES2015 rejection, and Classic resolution passthrough.
 - **Fixed**: Variant filter removal — `filter_incompatible_module_resolution_variants` was filtering out variants that should produce TS5110 errors. Now passes all variants through since the corrected cache contains proper expected errors for each combination.
+
+#### Run note (2026-02-25, session 15) — externalModules/typeOnly area
+- **Area**: externalModules/typeOnly (locked assignment area, originally selected by index 6 at session start)
+- **Focus test**: `TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace6.ts`
+- **Expected fingerprint (before fix)**: TS1362 for `A` and `B` at `e.ts:2:16` and `c.ts:4:1`
+- **Observed before fix**: TS18046 for both symbols (type/value namespace confusion through transitive wildcard re-exports)
+- **Root cause layer**: CHECKER/BINDER orchestration boundary (connector bug between module-resolution cache and import/export map seeding)
+- **Specific gap**: `export type * from "./a"` metadata was stored on module file `/a.ts`, but when imported via `/c.ts -> /b.ts -> /a.ts` the intermediate `/b.ts` bridge was not propagated into `/c.ts`'s binder, so `resolve_import_with_reexports_type_only` missed the type-only edge.
+- **Fix location**:
+  - `crates/tsz-cli/src/driver/check.rs`: `collect_diagnostics`, `check_file_for_parallel`, `CheckFileForParallelContext` setup
+  - Added `propagate_module_export_maps(...)` to recursively copy `module_exports`, `wildcard_reexports`, `wildcard_reexports_type_only`, and `reexports` across wildcard chains from `resolved_module_paths`.
+  - `crates/tsz-cli/src/driver/check.rs` test: `test_transitive_module_export_bridge_infers_type_only_flags`
+- **Estimated scope**: ~70 lines in `check.rs` (+1 unit test)
+- **Other tests affected**: `externalModules/typeOnly` set; direct win on `exportNamespace6` and likely adjacent transitive wildcard/type-only files (`exportNamespace3/5`, `exportNamespace8/9/11/12`) as map propagation is now transitive.
+
+#### Run note (2026-02-25, session 16) — classes area (TS2729 static blocks)
+- **Area**: classes (37.5% → improved), specifically classStaticBlock sub-area (48.5% → 57.6%, +3 tests)
+- **Fixed**: TS2729 ("Property used before initialization") for static blocks — Static blocks (`static { ... }`) were type-checked but missing the TS2729 use-before-init check that already existed for static property initializers. Added `check_static_block_initialization_order()` in `types/type_checking/property_init.rs` (~280 lines) which:
+  - Finds the static block's position in the class member list
+  - Collects `this.X` and `ClassName.X` property accesses via recursive traversal
+  - Correctly stops at function/arrow/class boundaries (deferred execution = no error)
+  - Compares access positions against static property declaration positions
+  - Emits TS2729 for any access that precedes its declaration
+- **Call site**: Added 3-line hook in `member_declaration_checks.rs` for `CLASS_STATIC_BLOCK_DECLARATION` (kind 176)
+- **Tests added**: 3 unit tests in `tests/checker_state_tests.rs` — basic use-before-init, this-access variant, arrow-function-no-error
+- **Dead code discovery**: `state/state_checking_members/property_init.rs` exists as an untracked file but is NOT in `mod.rs` — dead code. The real compiled implementation is `types/type_checking/property_init.rs`.
+- **Conformance gain**: +3 tests (classStaticBlock3, classStaticBlock4, classStaticBlock9). Net: 7698→7706 after rebase (61.2%→61.3%)
+- **Remaining TS2729 gaps**: Instance property tests (initializationOrdering1, redefinedPararameterProperty, assignParameterPropertyToPropertyDeclarationESNext/ES2022, privateNameCircularReference) need the same pattern extended to instance contexts.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks

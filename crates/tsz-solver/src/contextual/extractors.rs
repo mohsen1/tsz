@@ -128,6 +128,31 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
         collect_single_or_union(self.db, return_types)
     }
 
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        let base_result = self.visit_type(self.db, app.base);
+        if base_result.is_some() {
+            return base_result;
+        }
+
+        app.args
+            .iter()
+            .find_map(|&arg| self.visit_type(self.db, arg))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersections, try members in order and return the first
+        // callable-compatible return type.
+        let members = self.db.type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let mut extractor = ReturnTypeExtractor::new(self.db);
+            if let Some(ty) = extractor.extract(member) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         // For unions of callable types, extract return type from each member
         // and create a union of the results.

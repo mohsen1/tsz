@@ -6363,3 +6363,102 @@ fn ts2307_emitted_for_commonjs_module() {
             .collect::<Vec<_>>()
     );
 }
+
+/// TS8002: `export import x = require(...)` in a JS file should report at the
+/// `export` keyword (position 0), not the inner `import` keyword.
+#[test]
+fn ts8002_export_import_equals_reports_at_export_keyword_in_js() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "module": "nodenext", "allowJs": true, "checkJs": true }, "files": ["index.js"] }"#,
+    );
+    // `export import` starts at position 0; the inner `import` starts at position 7
+    write_file(
+        &base.join("index.js"),
+        "export import fs2 = require(\"fs\");\n",
+    );
+    write_file(&base.join("package.json"), r#"{ "type": "module" }"#);
+
+    let args = default_args();
+    let result = with_types_versions_env(Some("5.9"), || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    let ts8002_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES)
+        .collect();
+
+    assert!(
+        !ts8002_diags.is_empty(),
+        "Expected TS8002 for `export import` in JS file, got codes: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+
+    // The error should start at position 0 (the `export` keyword), not position 7 (`import`)
+    for d in &ts8002_diags {
+        assert_eq!(
+            d.start, 0,
+            "TS8002 should report at `export` keyword (pos 0), not inner `import` (pos 7). Got start={}",
+            d.start
+        );
+    }
+}
+
+/// TS2303: `import x = require(...)` in a JS file should NOT produce a
+/// "Circular definition of import alias" error — tsc skips semantic analysis
+/// for TS-only syntax in JS files.
+#[test]
+fn ts2303_not_emitted_for_import_equals_in_js_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "module": "nodenext", "allowJs": true, "checkJs": true }, "files": ["index.js"] }"#,
+    );
+    // Self-referencing import = require: would normally trigger TS2303 circular check
+    write_file(
+        &base.join("index.js"),
+        "import mod = require(\"./index.js\");\nmod;\n",
+    );
+    write_file(&base.join("package.json"), r#"{ "type": "module" }"#);
+
+    let args = default_args();
+    let result = with_types_versions_env(Some("5.9"), || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    let ts2303_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS)
+        .collect();
+
+    assert!(
+        ts2303_diags.is_empty(),
+        "TS2303 should not be emitted for `import = require()` in JS files (TS-only syntax). Got: {:?}",
+        ts2303_diags
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+
+    // TS8002 SHOULD still be emitted though
+    let has_ts8002 = result
+        .diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES);
+    assert!(
+        has_ts8002,
+        "TS8002 should still be emitted for `import = require()` in JS file"
+    );
+}
