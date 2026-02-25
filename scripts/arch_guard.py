@@ -237,6 +237,7 @@ LINE_LIMIT_CHECKS = [
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
+    "crates/tsz-solver/src/intern/core.rs",
     "crates/tsz-solver/src/intern/intersection.rs",
     "crates/tsz-solver/src/intern/normalize.rs",
     "crates/tsz-solver/src/intern/template.rs",
