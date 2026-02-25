@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~6911/12565 (55.0%) — full suite, fingerprint level (new framework)
+**Current score**: ~7525/12565 (59.9%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -221,6 +221,13 @@
 - **Fixed**: Remove dead TS1100/TS1210/TS2496/TS2522 diagnostics — tsc 6.0 never emits these. They were false positives across function expressions, declarations, parameters, variables, assignments, and unary operators. Removed all emission sites (7 files).
 - **Fixed**: `arguments` resolution in arrow functions — Arrow functions are transparent for `arguments` (they capture from the enclosing scope). Previously `arguments` in arrow functions fell through to normal resolution and emitted false TS2304 ("Cannot find name"). Now resolves to IArguments regardless of scope, matching tsc behavior.
 - **Remaining failures**: arrowFunctionErrorSpan (TS1200 line terminator + TS2345), arrowFunctionsMissingTokens (TS1109), arrowFunctionInConstructorArgument1 (TS2304), disallowLineTerminatorBeforeArrow (TS1200), arrowFunctionContexts (TS1101/TS2331/TS2410). All unrelated to the fixed diagnostics.
+
+#### Run note (2026-02-25, session 9) — interfaces/declarationMerging area
+- **Area**: interfaces/declarationMerging (19.2% → 60.7%, 5/26 → 17/28)
+- **Net gain**: +613 tests across full suite (6912 → 7525, 55.0% → 59.9%)
+- **Fixed**: tsc 6.0 strict-family defaults — `src/config.rs` had a block (lines 670-681) that overrode `CheckerOptions::default()` (all `true`) to `false` when `strict` was not explicitly set in tsconfig. This matched tsc 5.x behavior but NOT tsc 6.0, where all strict-family options (`strictNullChecks`, `strictPropertyInitialization`, `noImplicitAny`, `strictFunctionTypes`, `strictBindCallApply`, `noImplicitThis`, `useUnknownInCatchVariables`, `alwaysStrict`) default to `true` even without explicit `strict: true`. Removed the override block. The tsc-6.0-correct defaults from `CheckerOptions::default()` now propagate correctly. Tests with explicit `strict: false` still work via the existing branch.
+- **Side effect**: Extra TS2322/TS2339/TS2345 emissions increased (~138/68/87 more false positives). These are pre-existing type checker imprecisions that were previously masked by non-strict mode. Not regressions from this change — they represent type relation bugs that become visible under strict checks.
+- **Also fixed**: `conformance.sh` freshness check now includes root `src/` directory. Previously, changes to `src/config.rs` (tsz-core root crate) were not detected by the binary freshness check, causing stale binaries to be used.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
@@ -492,3 +499,4 @@ All items below have been validated against the codebase (implementations + test
 | arguments | Fix arguments resolution in arrow functions (transparent scope capture) | included above |
 | mapped types | Homomorphic mapped type assignability (T <: Partial<T>, flatten_mapped_chain eval, transitive deferral) | +1 test |
 | TS18050 | Remove incorrect strictNullChecks gate on TS18050 emission for null/undefined binary operands (3 locations) | +20 tests |
+| strict defaults | Match tsc 6.0 strict-family defaults (all true when `strict` not set in tsconfig) | +613 tests |
