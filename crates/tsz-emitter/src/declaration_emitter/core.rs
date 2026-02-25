@@ -1441,7 +1441,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 // Return with expression → non-void
                 if let Some(ret) = self.arena.get_return_statement(stmt_node) {
-                    return !ret.expression.is_some();
+                    return ret.expression.is_none();
                 }
                 true
             }
@@ -1454,8 +1454,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_data) = self.arena.get_if_statement(stmt_node) {
+                    // Must check both branches; an if without else can still
+                    // contain `return expr;` in the then-branch
                     self.stmt_returns_void(if_data.then_statement)
-                        && (!if_data.else_statement.is_some()
+                        && (if_data.else_statement.is_none()
                             || self.stmt_returns_void(if_data.else_statement))
                 } else {
                     true
@@ -1464,10 +1466,17 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.arena.get_try(stmt_node) {
                     self.stmt_returns_void(try_data.try_block)
-                        && (!try_data.catch_clause.is_some()
+                        && (try_data.catch_clause.is_none()
                             || self.stmt_returns_void(try_data.catch_clause))
-                        && (!try_data.finally_block.is_some()
+                        && (try_data.finally_block.is_none()
                             || self.stmt_returns_void(try_data.finally_block))
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.arena.get_catch_clause(stmt_node) {
+                    self.stmt_returns_void(catch_data.block)
                 } else {
                     true
                 }
@@ -1479,8 +1488,56 @@ impl<'a> DeclarationEmitter<'a> {
                     true
                 }
             }
-            // For other compound statements (loops, switch, catch, etc.),
-            // conservatively assume they don't contain return-with-value.
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                // Check all case clauses inside the switch's case block
+                if let Some(switch_data) = self.arena.get_switch(stmt_node) {
+                    if let Some(case_block_node) = self.arena.get(switch_data.case_block)
+                        && let Some(block) = self.arena.get_block(case_block_node)
+                    {
+                        self.block_returns_void(&block.statements)
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(stmt_node) {
+                    self.stmt_returns_void(loop_data.statement)
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                if let Some(for_data) = self.arena.get_for_in_of(stmt_node) {
+                    self.stmt_returns_void(for_data.statement)
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(stmt_node) {
+                    self.stmt_returns_void(labeled.statement)
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_data) = self.arena.get_with_statement(stmt_node) {
+                    // with_statement stores its body in then_statement
+                    self.stmt_returns_void(with_data.then_statement)
+                } else {
+                    true
+                }
+            }
+            // Non-compound statements (expression statements, variable declarations, etc.)
+            // cannot contain return statements, so they're void-safe.
             _ => true,
         }
     }
