@@ -515,7 +515,7 @@ impl<'a> CheckerState<'a> {
                                     (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
                                 if is_class_member_private {
                                     self.error_at_node(
-                                        class_idx,
+                                        class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
@@ -523,7 +523,7 @@ impl<'a> CheckerState<'a> {
                                 }
                                 if is_class_member_protected {
                                     self.error_at_node(
-                                        class_idx,
+                                        class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
