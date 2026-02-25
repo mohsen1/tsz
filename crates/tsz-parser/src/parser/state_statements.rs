@@ -6,8 +6,8 @@ use super::state::{
 use crate::parser::{
     NodeIndex, NodeList,
     node::{
-        BlockData, FunctionData, ImportDeclData, LabeledData, QualifiedNameData, SourceFileData,
-        VariableData, VariableDeclarationData,
+        BlockData, FunctionData, IdentifierData, ImportDeclData, LabeledData, QualifiedNameData,
+        SourceFileData, VariableData, VariableDeclarationData,
     },
     parse_rules::{
         is_identifier_or_keyword, look_ahead_is, look_ahead_is_abstract_declaration,
@@ -18,6 +18,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -1296,6 +1297,24 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
+        } else if self.is_reserved_word() {
+            // TS1389: '{0}' is not allowed as a variable declaration name.
+            // tsc emits this specific error instead of the generic TS1359 when a reserved
+            // word appears as a variable declaration binding name (var/let/const/using).
+            self.error_reserved_word_in_variable_declaration();
+            let start_pos = self.token_pos();
+            let end_pos = self.token_end();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                end_pos,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else {
             self.parse_identifier()
         }

@@ -4075,6 +4075,9 @@ fn test_ts1038_declare_inside_regular_namespace() {
 
 #[test]
 fn test_reserved_word_emits_ts1359() {
+    // In a variable declaration context, reserved words should now emit TS1389
+    // (the specific "not allowed as variable declaration name" error) instead of
+    // the generic TS1359. TS1359 is still used in non-variable-declaration contexts.
     let source = "var break = 5;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _source_file = parser.parse_source_file();
@@ -4087,14 +4090,14 @@ fn test_reserved_word_emits_ts1359() {
         "Expected at least one diagnostic for 'break' reserved word"
     );
 
-    // Should have TS1359
-    let ts1359_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1359).collect();
+    // Should have TS1389 (not TS1359) for variable declaration context
+    let ts1389_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1389).collect();
     assert!(
-        !ts1359_errors.is_empty(),
-        "Expected TS1359 error for 'break' reserved word, got {diagnostics:?}"
+        !ts1389_errors.is_empty(),
+        "Expected TS1389 error for 'break' in var declaration, got {diagnostics:?}"
     );
 
-    println!("TS1359 errors: {ts1359_errors:?}");
+    println!("TS1389 errors: {ts1389_errors:?}");
 }
 
 #[test]
