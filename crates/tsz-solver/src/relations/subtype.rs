@@ -103,8 +103,8 @@ impl AnyPropagationMode {
     }
 }
 
-// TypeResolver, NoopResolver, and TypeEnvironment are defined in type_resolver.rs
-pub use crate::type_resolver::{NoopResolver, TypeEnvironment, TypeResolver};
+// TypeResolver, NoopResolver, and TypeEnvironment are defined in def/resolver.rs
+pub use crate::def::resolver::{NoopResolver, TypeEnvironment, TypeResolver};
 
 // SubtypeVisitor is defined in subtype_visitor.rs
 pub use crate::relations::subtype_visitor::SubtypeVisitor;

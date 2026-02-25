@@ -5,9 +5,9 @@
 //! source type structure.
 
 use crate::def::DefId;
+use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult};
-use crate::type_resolver::TypeResolver;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectFlags, ObjectShape, ObjectShapeId, StringIntrinsicKind, SymbolRef, TupleListId,

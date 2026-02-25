@@ -4,10 +4,10 @@
 //! public entry points, and special-case subtype checks
 //! (Object contract, generic index access).
 
+use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
-use crate::type_resolver::TypeResolver;
 use crate::types::{ObjectFlags, ObjectShape, RelationCacheKey, TypeId, Visibility};
 use crate::visitor::{
     callable_shape_id, function_shape_id, index_access_parts, literal_string, object_shape_id,

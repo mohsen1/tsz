@@ -11,8 +11,8 @@
 
 use crate::TypeDatabase;
 use crate::def::DefId;
+use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
-use crate::type_resolver::TypeResolver;
 use crate::types::{IntrinsicKind, TypeId};
 use crate::visitor::{application_id, enum_components, lazy_def_id};
 
