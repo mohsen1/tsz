@@ -695,6 +695,7 @@ impl ParserState {
             SyntaxKind::EqualsToken => "=",
             SyntaxKind::GreaterThanToken => ">",
             SyntaxKind::LessThanToken => "<",
+            SyntaxKind::LessThanSlashToken => "</",
             SyntaxKind::QuestionToken => "?",
             SyntaxKind::ExclamationToken => "!",
             SyntaxKind::AtToken => "@",

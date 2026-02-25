@@ -110,7 +110,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Check JSX attributes against the resolved props type
-                self.check_jsx_attributes_against_props(jsx_opening.attributes, evaluated_props);
+                self.check_jsx_attributes_against_props(
+                    jsx_opening.attributes,
+                    evaluated_props,
+                    jsx_opening.tag_name,
+                );
 
                 let factory = self.ctx.types.factory();
                 let tag_literal = factory.literal_string(tag);
@@ -255,6 +259,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
+        tag_name_idx: NodeIndex,
     ) {
         // Skip if evaluation resulted in any or error
         if props_type == TypeId::ANY || props_type == TypeId::ERROR {
@@ -322,9 +327,30 @@ impl<'a> CheckerState<'a> {
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
+                            // Compute the attribute value type for the error message
+                            let attr_type_name = if attr_data.initializer.is_none() {
+                                "boolean".to_string()
+                            } else if let Some(init_node) =
+                                self.ctx.arena.get(attr_data.initializer)
+                            {
+                                let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION
+                                {
+                                    self.ctx
+                                        .arena
+                                        .get_jsx_expression(init_node)
+                                        .map(|e| e.expression)
+                                        .unwrap_or(attr_data.initializer)
+                                } else {
+                                    attr_data.initializer
+                                };
+                                let value_type = self.compute_type_of_node(value_idx);
+                                self.format_type(value_type)
+                            } else {
+                                "any".to_string()
+                            };
                             let props_name = self.format_type(props_type);
                             let message = format!(
-                                "Type '{{{attr_name}}}' is not assignable to type '{props_name}'.\n  \
+                                "Type '{{ {attr_name}: {attr_type_name}; }}' is not assignable to type '{props_name}'.\n  \
                                      Object literal may only specify known properties, \
                                      and '{attr_name}' does not exist in type '{props_name}'."
                             );
@@ -344,7 +370,14 @@ impl<'a> CheckerState<'a> {
                 // Get actual type of the attribute value
                 if attr_data.initializer.is_none() {
                     // Boolean attribute without value (e.g., <input disabled />)
-                    // TypeScript treats this as true, check against boolean
+                    // TypeScript treats this as type 'boolean' and checks assignability
+                    let bool_type = TypeId::BOOLEAN;
+                    self.check_assignable_or_report_at(
+                        bool_type,
+                        expected_type,
+                        attr_data.name,
+                        attr_data.name,
+                    );
                     continue;
                 }
 
@@ -368,9 +401,15 @@ impl<'a> CheckerState<'a> {
 
                 let actual_type = self.compute_type_of_node(value_node_idx);
 
-                // Check assignability
+                // Check assignability — tsc anchors JSX attribute errors at the
+                // attribute NAME (not the value expression)
                 if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
-                    self.check_assignable_or_report(actual_type, expected_type, value_node_idx);
+                    self.check_assignable_or_report_at(
+                        actual_type,
+                        expected_type,
+                        value_node_idx,
+                        attr_data.name,
+                    );
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 has_spread = true;
@@ -382,10 +421,12 @@ impl<'a> CheckerState<'a> {
                 let spread_type = self.compute_type_of_node(spread_data.expression);
 
                 if spread_type != TypeId::ANY && spread_type != TypeId::ERROR {
-                    self.check_assignable_or_report(
+                    // tsc anchors spread attribute errors at the tag name
+                    self.check_assignable_or_report_at(
                         spread_type,
                         props_type,
                         spread_data.expression,
+                        tag_name_idx,
                     );
                 }
             }
@@ -395,7 +436,8 @@ impl<'a> CheckerState<'a> {
         // Skip if there's a spread attribute (spread may provide the missing props)
         // Skip if we already reported excess property errors (tsc doesn't pile on with TS2741)
         if !has_spread && !has_excess_property_error {
-            self.check_missing_required_jsx_props(props_type, &provided_attrs, attributes_idx);
+            // tsc anchors TS2741 (missing required property) at the tag name
+            self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
     }
 
