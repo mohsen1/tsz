@@ -2,7 +2,7 @@
 //! cycle detection, and import resolution helpers.
 //!
 //! Import-equals validation (`import X = require("y")` / `import X = Namespace`)
-//! lives in the sibling `import_equals_checker` module.
+//! lives in the sibling `equals` module.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -12,7 +12,7 @@ use tsz_parser::parser::NodeIndex;
 /// ends with a TS-specific extension that requires `allowImportingTsExtensions`.
 /// Returns `None` for `.d.ts`/`.d.mts`/`.d.cts` (handled separately by TS2846) and
 /// non-TS extensions.
-pub(super) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
+pub(crate) fn ts_extension_suffix(module_name: &str) -> Option<&'static str> {
     // .d.ts/.d.mts/.d.cts are declaration files — handled by TS2846, not TS5097
     if module_name.ends_with(".d.ts")
         || module_name.ends_with(".d.mts")

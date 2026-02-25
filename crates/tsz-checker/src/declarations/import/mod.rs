@@ -1,5 +1,8 @@
 //! Import/export declaration validation (TS2307, TS2305, TS2309, TS1202).
 
+pub(crate) mod declaration;
+pub(crate) mod equals;
+
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
