@@ -1426,6 +1426,7 @@ fn build_program_with_cache(
                     module_augmentations: Default::default(),
                     reexports: Default::default(),
                     wildcard_reexports: Default::default(),
+                    wildcard_reexports_type_only: Default::default(),
                     lib_binders: Vec::new(),
                     lib_symbol_ids: Default::default(),
                     lib_symbol_reverse_remap: Default::default(),

@@ -9,6 +9,8 @@
 use crate::context::CheckerContext;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
@@ -417,10 +419,74 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .error(inode.pos, inode.end - inode.pos, message, 2538);
             }
 
+            if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
+                && let Some(index_value) = self
+                    .get_number_value_from_type_node(indexed_access.index_type)
+                    .or_else(|| {
+                        tsz_solver::type_queries::get_number_literal_value(
+                            self.ctx.types,
+                            index_type,
+                        )
+                    })
+                && index_value.is_finite()
+                && index_value.fract() == 0.0
+                && index_value < 0.0
+            {
+                let object_for_tuple_check =
+                    crate::query_boundaries::common::unwrap_readonly(self.ctx.types, object_type);
+                if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
+                    let message = crate::diagnostics::diagnostic_messages::
+                        A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE
+                        .to_string();
+                    self.ctx.error(
+                        inode.pos,
+                        inode.end - inode.pos,
+                        message,
+                        crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                    );
+                    return TypeId::ERROR;
+                }
+            }
+
             factory.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
         }
+    }
+
+    fn get_number_value_from_type_node(&self, idx: NodeIndex) -> Option<f64> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::LITERAL_TYPE {
+            let data = self.ctx.arena.get_literal_type(node)?;
+            return self.get_number_value_from_type_node(data.literal);
+        }
+
+        if node.kind == SyntaxKind::NumericLiteral as u16 {
+            return self
+                .ctx
+                .arena
+                .get_literal(node)
+                .and_then(|literal| literal.value);
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_number_value_from_type_node(paren.expression);
+        }
+
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            let data = self.ctx.arena.get_unary_expr(node)?;
+            let operand = self.get_number_value_from_type_node(data.operand)?;
+            return match data.operator {
+                k if k == SyntaxKind::MinusToken as u16 => Some(-operand),
+                k if k == SyntaxKind::PlusToken as u16 => Some(operand),
+                _ => None,
+            };
+        }
+
+        None
     }
 
     /// Get the specific type that makes this type invalid as an index type (TS2538).

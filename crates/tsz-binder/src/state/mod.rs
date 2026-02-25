@@ -290,6 +290,10 @@ pub struct BinderState {
     /// Maps `current_file` -> Vec of `source_modules`
     /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// Tracks whether wildcard re-export entries are type-only.
+    /// Maps `current_file` -> Vec of (`source_module`, `is_type_only`).
+    /// This captures `export type * from './module'` chains during import resolution.
+    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
 
     /// Cache for resolved exports to avoid repeated lookups through re-export chains.
     /// Key: (`module_specifier`, `export_name`) -> resolved `SymbolId` (or None if not found)
@@ -363,6 +367,7 @@ pub struct BinderStateScopeInputs {
     pub module_exports: FxHashMap<String, SymbolTable>,
     pub reexports: FileReexportsMap,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: DeclarationArenaMap,
     pub shorthand_ambient_modules: FxHashSet<String>,

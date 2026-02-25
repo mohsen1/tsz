@@ -136,6 +136,16 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub last_instantiated_predicate: Option<(TypePredicate, Vec<ParamInfo>)>,
 }
 
+#[derive(Clone, Copy)]
+enum UnionCallSignatureCompatibility {
+    Compatible {
+        min_required: usize,
+        max_allowed: Option<usize>,
+    },
+    Incompatible,
+    Unknown,
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub fn new(interner: &'a dyn QueryDatabase, checker: &'a mut C) -> Self {
         CallEvaluator {
@@ -572,49 +582,137 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// When all union members are callable with compatible signatures, this returns
     /// a union of their return types.
-    fn resolve_union_call(
-        &mut self,
-        union_type: TypeId,
-        list_id: TypeListId,
-        arg_types: &[TypeId],
-    ) -> CallResult {
-        let members = self.interner.type_list(list_id);
-
-        // Check each member of the union
-        let mut return_types = Vec::new();
-        let mut failures = Vec::new();
+    fn union_call_signature_bounds(&self, members: &[TypeId]) -> UnionCallSignatureCompatibility {
+        let mut has_rest = false;
+        let mut has_non_rest = false;
+        let mut min_required = 0usize;
+        let mut max_allowed: Option<usize> = Some(0);
+        let mut found_callable = false;
+        let mut signatures: Vec<Vec<ParamInfo>> = Vec::new();
 
         for &member in members.iter() {
-            let result = self.resolve_call(member, arg_types);
-            match result {
-                CallResult::Success(return_type) => {
-                    return_types.push(return_type);
+            let Some(signature) = self.extract_union_call_signature(member) else {
+                return UnionCallSignatureCompatibility::Unknown;
+            };
+            found_callable = true;
+            signatures.push(signature);
+        }
+
+        if !found_callable || signatures.is_empty() {
+            return UnionCallSignatureCompatibility::Unknown;
+        }
+
+        let max_params = signatures.iter().map(Vec::len).max().unwrap_or_default();
+
+        for index in 0..max_params {
+            let mut saw_required = false;
+            let mut saw_optional = false;
+            let mut saw_rest = false;
+            let mut saw_absent = false;
+            let mut saw_non_rest = false;
+
+            for signature in &signatures {
+                if index >= signature.len() {
+                    saw_absent = true;
+                    continue;
                 }
-                CallResult::NotCallable { .. } => {
-                    // At least one member is not callable
-                    // This means the union as a whole is not callable
-                    // (we can't call a union without knowing which branch is active)
-                    return CallResult::NotCallable {
-                        type_id: union_type,
-                    };
+
+                let param = &signature[index];
+                if param.rest {
+                    saw_rest = true;
+                    if index != signature.len() - 1 {
+                        return UnionCallSignatureCompatibility::Unknown;
+                    }
+                    saw_non_rest = false;
+                } else {
+                    saw_non_rest = true;
+                    if param.is_required() {
+                        saw_required = true;
+                    } else {
+                        saw_optional = true;
+                    }
                 }
-                other => {
-                    // Track failures for potential overload reporting
-                    failures.push(other);
-                }
+            }
+
+            if saw_rest && saw_non_rest {
+                return UnionCallSignatureCompatibility::Incompatible;
+            }
+
+            if saw_required && saw_absent {
+                return UnionCallSignatureCompatibility::Incompatible;
+            }
+
+            if saw_required && saw_optional && index > 0 {
+                return UnionCallSignatureCompatibility::Incompatible;
+            }
+
+            if saw_required {
+                min_required += 1;
+                max_allowed = max_allowed.map(|max| max + 1);
+            } else if saw_optional || saw_rest || saw_absent {
+                max_allowed = max_allowed.and_then(|max| max.checked_add(1));
+            }
+
+            if saw_rest {
+                has_rest = true;
+            }
+            if saw_non_rest {
+                has_non_rest = true;
             }
         }
 
-        // If any members succeeded, return a union of their return types
-        // TypeScript allows calling a union of functions if at least one member accepts the arguments
-        if !return_types.is_empty() {
-            if return_types.len() == 1 {
-                return CallResult::Success(return_types[0]);
+        let max_allowed = if has_rest && has_non_rest {
+            return UnionCallSignatureCompatibility::Incompatible;
+        } else if has_rest {
+            None
+        } else {
+            max_allowed
+        };
+
+        UnionCallSignatureCompatibility::Compatible {
+            min_required,
+            max_allowed,
+        }
+    }
+
+    fn extract_union_call_signature(&self, member: TypeId) -> Option<Vec<ParamInfo>> {
+        let member = self.normalize_union_member(member);
+        match self.interner.lookup(member) {
+            Some(TypeData::Function(func_id)) => {
+                let function = self.interner.function_shape(func_id);
+                if !function.type_params.is_empty() {
+                    return None;
+                }
+                Some(function.params.clone())
             }
-            // Return a union of all return types
-            let union_result = self.interner.union(return_types);
-            CallResult::Success(union_result)
-        } else if !failures.is_empty() {
+            Some(TypeData::Callable(callable_id)) => {
+                let callable = self.interner.callable_shape(callable_id);
+                if callable.call_signatures.len() != 1 {
+                    return None;
+                }
+                let signature = &callable.call_signatures[0];
+                if !signature.type_params.is_empty() {
+                    return None;
+                }
+                Some(signature.params.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn build_union_call_result(
+        &self,
+        union_type: TypeId,
+        failures: &mut Vec<CallResult>,
+        return_types: Vec<TypeId>,
+    ) -> CallResult {
+        if return_types.is_empty() {
+            if failures.is_empty() {
+                return CallResult::NotCallable {
+                    type_id: union_type,
+                };
+            }
+
             // At least one member failed with a non-NotCallable error
             // Check if all failures are ArgumentTypeMismatch - if so, compute the intersection
             // of all parameter types to get the expected type (e.g., for union of functions
@@ -626,7 +724,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if all_arg_mismatches && !failures.is_empty() {
                 // Extract all parameter types from the failures
                 let mut param_types = Vec::new();
-                for failure in &failures {
+                for failure in failures.iter() {
                     if let CallResult::ArgumentTypeMismatch { expected, .. } = failure {
                         param_types.push(*expected);
                     }
@@ -665,12 +763,109 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
 
             // Not all argument type mismatches, return the first failure
-            failures
-                .into_iter()
+            return failures
+                .drain(..)
                 .next()
                 .unwrap_or(CallResult::NotCallable {
                     type_id: union_type,
-                })
+                });
+        }
+
+        if return_types.len() == 1 {
+            return CallResult::Success(return_types[0]);
+        }
+
+        // Return a union of all return types
+        let union_result = self.interner.union(return_types);
+        CallResult::Success(union_result)
+    }
+    fn resolve_union_call(
+        &mut self,
+        union_type: TypeId,
+        list_id: TypeListId,
+        arg_types: &[TypeId],
+    ) -> CallResult {
+        let members = self.interner.type_list(list_id);
+        let compatibility = self.union_call_signature_bounds(&members);
+
+        if matches!(compatibility, UnionCallSignatureCompatibility::Incompatible) {
+            return CallResult::NotCallable {
+                type_id: union_type,
+            };
+        }
+
+        // Check each member of the union
+        let mut return_types = Vec::new();
+        let mut failures = Vec::new();
+
+        for &member in members.iter() {
+            let result = self.resolve_call(member, arg_types);
+            match result {
+                CallResult::Success(return_type) => {
+                    return_types.push(return_type);
+                }
+                CallResult::NotCallable { .. } => {
+                    // At least one member is not callable
+                    // This means the union as a whole is not callable
+                    // (we can't call a union without knowing which branch is active)
+                    return CallResult::NotCallable {
+                        type_id: union_type,
+                    };
+                }
+                other => {
+                    // Track failures for potential overload reporting
+                    failures.push(other);
+                }
+            }
+        }
+
+        // If any members succeeded, return a union of their return types
+        // TypeScript allows calling a union of functions if at least one member accepts the arguments
+        if !return_types.is_empty() {
+            match compatibility {
+                UnionCallSignatureCompatibility::Compatible {
+                    min_required,
+                    max_allowed,
+                } => {
+                    if arg_types.len() < min_required {
+                        return CallResult::ArgumentCountMismatch {
+                            expected_min: min_required,
+                            expected_max: max_allowed,
+                            actual: arg_types.len(),
+                        };
+                    }
+                    if let Some(max_allowed) = max_allowed
+                        && arg_types.len() > max_allowed
+                    {
+                        return CallResult::ArgumentCountMismatch {
+                            expected_min: min_required,
+                            expected_max: Some(max_allowed),
+                            actual: arg_types.len(),
+                        };
+                    }
+                    if failures
+                        .iter()
+                        .all(|f| matches!(f, CallResult::ArgumentCountMismatch { .. }))
+                    {
+                        return self.build_union_call_result(
+                            union_type,
+                            &mut failures,
+                            return_types,
+                        );
+                    }
+                }
+                UnionCallSignatureCompatibility::Unknown => {}
+                UnionCallSignatureCompatibility::Incompatible => unreachable!(),
+            }
+
+            if return_types.len() == 1 {
+                return CallResult::Success(return_types[0]);
+            }
+            // Return a union of all return types
+            let union_result = self.interner.union(return_types);
+            CallResult::Success(union_result)
+        } else if !failures.is_empty() {
+            self.build_union_call_result(union_type, &mut failures, return_types)
         } else {
             // Should not reach here, but handle gracefully
             CallResult::NotCallable {

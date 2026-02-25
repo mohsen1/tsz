@@ -384,7 +384,12 @@ impl<'a> CheckerState<'a> {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                let result = match evaluator.evaluate(left_type, right_type, "&&") {
+                let result = match evaluator.evaluate_with_context(
+                    left_type,
+                    right_type,
+                    "&&",
+                    self.ctx.contextual_type,
+                ) {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
                 };

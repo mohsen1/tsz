@@ -230,6 +230,29 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if let Some(index_value) = self
+            .get_number_value_from_element_index(access.name_or_argument)
+            .or_else(|| {
+                tsz_solver::type_queries::get_number_literal_value(self.ctx.types, index_type)
+            })
+            && index_value.is_finite()
+            && index_value.fract() == 0.0
+            && index_value < 0.0
+        {
+            let object_for_tuple_check = crate::query_boundaries::common::unwrap_readonly(
+                self.ctx.types,
+                object_type_for_access,
+            );
+            if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
+                self.error_at_node(
+                    access.name_or_argument,
+                    crate::diagnostics::diagnostic_messages::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                    crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                );
+                return TypeId::ERROR;
+            }
+        }
+
         let literal_string_is_none = literal_string.is_none();
 
         let mut result_type = None;
@@ -590,6 +613,42 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
+    fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::NumericLiteral as u16 {
+            return self
+                .ctx
+                .arena
+                .get_literal(node)
+                .and_then(|literal| literal.value);
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_number_value_from_element_index(paren.expression);
+        }
+
+        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            let data = self.ctx.arena.get_unary_expr(node)?;
+            let operand = self.get_number_value_from_element_index(data.operand)?;
+            return match data.operator {
+                k if k == SyntaxKind::MinusToken as u16 => Some(-operand),
+                k if k == SyntaxKind::PlusToken as u16 => Some(operand),
+                _ => None,
+            };
+        }
+
+        if node.kind == syntax_kind_ext::LITERAL_TYPE
+            && let Some(literal_type) = self.ctx.arena.get_literal_type(node)
+        {
+            return self.get_number_value_from_element_index(literal_type.literal);
+        }
+
+        None
+    }
+
     /// Get the element access type for array/tuple/object with index signatures.
     ///
     /// Computes the type when accessing an element using an index.
@@ -868,5 +927,55 @@ impl<'a> CheckerState<'a> {
         // Fallback: If PromiseLike is not available, return the base type
         // This allows await to work even without full lib files
         type_arg
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::diagnostics::Diagnostic;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    fn check_source_with_default_libs(source: &str) -> Vec<Diagnostic> {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.check_source_file(source_file);
+
+        checker.ctx.diagnostics.clone()
+    }
+
+    fn has_code(diags: &[Diagnostic], code: u32) -> bool {
+        diags.iter().any(|d| d.code == code)
+    }
+
+    #[test]
+    fn tuple_expression_negative_index_emits_t2514() {
+        let diags = check_source_with_default_libs(
+            r#"
+const tuple = ["a", 1];
+const bad = tuple[-1];
+"#,
+        );
+
+        assert!(
+            has_code(&diags, 2514),
+            "Expected TS2514 for tuple expression negative index, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
     }
 }

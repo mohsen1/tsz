@@ -837,11 +837,30 @@ impl<'a> CheckerState<'a> {
 
         let mut reported_cycle_symbols = rustc_hash::FxHashSet::default();
 
+        let is_js_file = self.ctx.is_js_file();
+
         for (id_idx, sym) in self.ctx.binder.symbols.iter().enumerate() {
             if sym.flags & symbol_flags::ALIAS != 0 {
                 let sym_id = tsz_binder::SymbolId(id_idx as u32);
                 if reported_cycle_symbols.contains(&sym_id) {
                     continue;
+                }
+
+                // In JS files, `import x = require(...)` is TS-only syntax (TS8002).
+                // tsc skips semantic analysis for such statements — skip circular check.
+                if is_js_file {
+                    let decl_idx = if sym.value_declaration.is_some() {
+                        sym.value_declaration
+                    } else if let Some(&first) = sym.declarations.first() {
+                        first
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    {
+                        continue;
+                    }
                 }
 
                 let mut current_binder = self.ctx.binder;

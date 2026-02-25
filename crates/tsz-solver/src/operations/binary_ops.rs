@@ -525,6 +525,21 @@ impl<'a> BinaryOpEvaluator<'a> {
 
     /// Evaluate a binary operation on two types.
     pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        self.evaluate_with_context(left, right, op, None)
+    }
+
+    /// Evaluate a binary operation with optional contextual type for contextual typing.
+    ///
+    /// This is used for logical operators where contextual target types can alter
+    /// result semantics (for example, contextual function typing with `&&` can
+    /// suppress false-branch unioning in assignment-compatible positions).
+    pub fn evaluate_with_context(
+        &self,
+        left: TypeId,
+        right: TypeId,
+        op: &'static str,
+        contextual_type: Option<TypeId>,
+    ) -> BinaryOpResult {
         // `never` is the bottom type — any non-logical operation on `never` produces `never`.
         // Logical operators (&&, ||, ??) have their own `never` handling in evaluate_logical.
         if !matches!(op, "&&" | "||" | "??") && (left == TypeId::NEVER || right == TypeId::NEVER) {
@@ -543,7 +558,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 }
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right, op),
-            "&&" | "||" | "??" => self.evaluate_logical(left, right, op),
+            "&&" | "||" | "??" => self.evaluate_logical(left, right, op, contextual_type),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
     }
@@ -764,9 +779,37 @@ impl<'a> BinaryOpEvaluator<'a> {
         BinaryOpResult::TypeError { left, right, op }
     }
 
-    /// Evaluate logical operators (&&, ||).
-    fn evaluate_logical(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+    /// Evaluate logical operators (&&, ||, ??).
+    fn evaluate_logical(
+        &self,
+        left: TypeId,
+        right: TypeId,
+        op: &'static str,
+        contextual_type: Option<TypeId>,
+    ) -> BinaryOpResult {
         let ctx = crate::narrowing::NarrowingContext::new(self.interner);
+
+        // In contextual callable positions (e.g. `x = y && fn` where `x` is
+        // function-typed), TypeScript suppresses the false-branch union when
+        // the left side is boolean-like.
+        if op == "&&"
+            && let Some(contextual) = contextual_type
+            && crate::type_queries::is_callable_type(self.interner.as_type_database(), contextual)
+            && crate::type_queries::is_callable_type(self.interner.as_type_database(), right)
+            && crate::relations::subtype::is_subtype_of(
+                self.interner.as_type_database(),
+                left,
+                TypeId::BOOLEAN,
+            )
+        {
+            let truthy_left = ctx.narrow_by_truthiness(left);
+            let narrowed_result = if truthy_left == TypeId::NEVER {
+                ctx.narrow_to_falsy(left)
+            } else {
+                right
+            };
+            return BinaryOpResult::Success(narrowed_result);
+        }
 
         let result = if op == "&&" {
             // left && right

@@ -1,4 +1,5 @@
 use super::BinderState;
+use crate::{SymbolTable, symbol_flags};
 use tsz_parser::parser::ParserState;
 
 #[test]
@@ -76,4 +77,68 @@ export type { D as E } from './b';
     assert_eq!(e_symbol.import_module.as_deref(), Some("./b"));
     assert_eq!(e_symbol.import_name.as_deref(), Some("D"));
     assert!(e_symbol.is_type_only);
+}
+
+#[test]
+fn resolves_wildcard_type_only_reexports_with_provenance() {
+    let mut binder = BinderState::new();
+
+    let a_sym = binder.symbols.alloc(symbol_flags::CLASS, "A".to_string());
+    let b_sym = binder.symbols.alloc(symbol_flags::CLASS, "B".to_string());
+
+    let mut a_exports = SymbolTable::new();
+    a_exports.set("A".to_string(), a_sym);
+    a_exports.set("B".to_string(), b_sym);
+    binder.module_exports.insert("./a".to_string(), a_exports);
+
+    binder
+        .wildcard_reexports
+        .entry("./b".to_string())
+        .or_default()
+        .push("./a".to_string());
+    binder
+        .wildcard_reexports_type_only
+        .entry("./b".to_string())
+        .or_default()
+        .push(("./a".to_string(), true));
+
+    binder
+        .wildcard_reexports
+        .entry("./c".to_string())
+        .or_default()
+        .push("./b".to_string());
+    binder
+        .wildcard_reexports_type_only
+        .entry("./c".to_string())
+        .or_default()
+        .push(("./b".to_string(), false));
+
+    binder
+        .wildcard_reexports
+        .entry("./d".to_string())
+        .or_default()
+        .push("./a".to_string());
+    binder
+        .wildcard_reexports_type_only
+        .entry("./d".to_string())
+        .or_default()
+        .push(("./a".to_string(), false));
+
+    let (resolved_a, is_type_only_a) = binder
+        .resolve_import_with_reexports_type_only("./c", "A")
+        .expect("expected type-only wildcard chain from './c' -> './b' -> './a'");
+    assert_eq!(resolved_a, a_sym);
+    assert!(is_type_only_a);
+
+    let (resolved_b, is_type_only_b) = binder
+        .resolve_import_with_reexports_type_only("./c", "B")
+        .expect("expected type-only wildcard chain from './c' -> './b' -> './a'");
+    assert_eq!(resolved_b, b_sym);
+    assert!(is_type_only_b);
+
+    let (resolved_a_value, is_type_only_value) = binder
+        .resolve_import_with_reexports_type_only("./d", "A")
+        .expect("expected value wildcard chain from './d' -> './a'");
+    assert_eq!(resolved_a_value, a_sym);
+    assert!(!is_type_only_value);
 }

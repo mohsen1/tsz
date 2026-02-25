@@ -547,6 +547,70 @@ fn test_binary_overlap_union_constraint_overlap() {
 }
 
 #[test]
+fn test_binary_logical_and_contextual_callable_result() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    let contextual_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let right_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let left_true = interner.literal_boolean(true);
+
+    let result = evaluator.evaluate_with_context(left_true, right_fn, "&&", Some(contextual_fn));
+    match result {
+        BinaryOpResult::Success(result_type) => assert_eq!(result_type, right_fn),
+        _ => panic!("Expected callable result, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_binary_logical_and_contextual_callable_false_left_preserves_false() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    let contextual_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let right_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let left_false = interner.literal_boolean(false);
+
+    let result = evaluator.evaluate_with_context(left_false, right_fn, "&&", Some(contextual_fn));
+    match result {
+        BinaryOpResult::Success(result_type) => assert_eq!(result_type, left_false),
+        _ => panic!("Expected false result, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_call_rest_parameter_type_match() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

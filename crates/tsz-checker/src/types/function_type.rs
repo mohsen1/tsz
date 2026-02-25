@@ -474,6 +474,7 @@ impl<'a> CheckerState<'a> {
         // Save/restore the arguments tracking flag for nested function handling
         let saved_uses_arguments = self.ctx.js_body_uses_arguments;
         self.ctx.js_body_uses_arguments = false;
+        let mut has_contextual_return = false;
 
         // Push this_type BEFORE parameter initializer checks so that default
         // values like `a = this.getNumber()` see the correct `this` type and
@@ -573,12 +574,16 @@ impl<'a> CheckerState<'a> {
                 self.ctx.push_yield_type(early_yield_type);
             }
 
-            let mut has_contextual_return = false;
             if !has_type_annotation {
                 let return_context = jsdoc_return_context.or_else(|| {
                     ctx_helper
                         .as_ref()
                         .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                        .or_else(|| {
+                            self.ctx.contextual_type.and_then(|ty| {
+                                tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                            })
+                        })
                 });
                 // Async function bodies return the awaited inner type; the function
                 // type itself is Promise<inner>. Contextual return typing must
@@ -968,7 +973,12 @@ impl<'a> CheckerState<'a> {
                 {
                     let body_return_context = ctx_helper
                         .as_ref()
-                        .and_then(tsz_solver::ContextualTypeContext::get_return_type);
+                        .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                        .or_else(|| {
+                            self.ctx.contextual_type.and_then(|ty| {
+                                tsz_solver::type_queries::get_return_type(self.ctx.types, ty)
+                            })
+                        });
                     if body_return_context.is_some() {
                         self.ctx.contextual_type = body_return_context;
                     }

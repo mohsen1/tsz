@@ -329,6 +329,34 @@ pub(super) fn collect_diagnostics(
     let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
     let resolved_module_errors = Arc::new(resolved_module_errors);
 
+    // Pre-compute per-file ESM/CJS module kind for Node16/NodeNext resolution.
+    // In these modes, .js/.ts files may be ESM based on package.json "type" field.
+    // The checker needs this to correctly emit TS1479 (CJS importing ESM).
+    let file_is_esm_map: Arc<FxHashMap<String, bool>> = Arc::new({
+        let resolution_kind = options.effective_module_resolution();
+        let is_node_resolution = matches!(
+            resolution_kind,
+            crate::config::ModuleResolutionKind::Node16
+                | crate::config::ModuleResolutionKind::NodeNext
+        );
+        if is_node_resolution {
+            program
+                .files
+                .iter()
+                .map(|file| {
+                    let file_path = Path::new(&file.file_name);
+                    let kind = module_resolver.get_importing_module_kind(file_path);
+                    (
+                        file.file_name.clone(),
+                        kind == tsz::module_resolver::ImportingModuleKind::Esm,
+                    )
+                })
+                .collect()
+        } else {
+            FxHashMap::default()
+        }
+    });
+
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
 
@@ -404,41 +432,13 @@ pub(super) fn collect_diagnostics(
                         if let Some(&target_idx) =
                             resolved_module_paths.get(&(file_idx, specifier.clone()))
                         {
-                            let target_file_name = &program.files[target_idx].file_name;
-                            if let Some(exports) =
-                                binder.module_exports.get(target_file_name).cloned()
-                            {
-                                binder.module_exports.insert(specifier.clone(), exports);
-                            }
-                            if let Some(wildcards) =
-                                binder.wildcard_reexports.get(target_file_name).cloned()
-                            {
-                                binder
-                                    .wildcard_reexports
-                                    .insert(specifier.clone(), wildcards);
-                            }
-                            if let Some(reexports) = binder.reexports.get(target_file_name).cloned()
-                            {
-                                binder.reexports.insert(specifier.clone(), reexports);
-                            }
-                            if let Some(source_modules) =
-                                binder.wildcard_reexports.get(target_file_name).cloned()
-                            {
-                                for source_module in source_modules {
-                                    if let Some(&source_idx) = resolved_module_paths
-                                        .get(&(target_idx, source_module.clone()))
-                                    {
-                                        let source_file_name = &program.files[source_idx].file_name;
-                                        if let Some(exports) =
-                                            binder.module_exports.get(source_file_name).cloned()
-                                        {
-                                            binder
-                                                .module_exports
-                                                .insert(source_module.clone(), exports);
-                                        }
-                                    }
-                                }
-                            }
+                            propagate_module_export_maps(
+                                &mut binder,
+                                specifier,
+                                target_idx,
+                                program,
+                                &resolved_module_paths,
+                            );
                         }
                     }
                     binder
@@ -479,6 +479,7 @@ pub(super) fn collect_diagnostics(
                             resolved_module_specifiers: &resolved_module_specifiers,
                             resolved_module_errors: &resolved_module_errors,
                             is_external_module_by_file: &is_external_module_by_file,
+                            file_is_esm_map: &file_is_esm_map,
                             no_check,
                             check_js,
                             skip_lib_check,
@@ -505,6 +506,7 @@ pub(super) fn collect_diagnostics(
                             resolved_module_specifiers: &resolved_module_specifiers,
                             resolved_module_errors: &resolved_module_errors,
                             is_external_module_by_file: &is_external_module_by_file,
+                            file_is_esm_map: &file_is_esm_map,
                             no_check,
                             check_js,
                             skip_lib_check,
@@ -566,39 +568,14 @@ pub(super) fn collect_diagnostics(
                     &program_paths,
                 ) {
                     let canonical = canonicalize_or_owned(&resolved);
-                    if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
-                        && let Some(exports) = binder.module_exports.get(target_file_name).cloned()
-                    {
-                        binder.module_exports.insert(specifier.clone(), exports);
-                        if let Some(wildcards) =
-                            binder.wildcard_reexports.get(target_file_name).cloned()
-                        {
-                            binder
-                                .wildcard_reexports
-                                .insert(specifier.clone(), wildcards);
-                        }
-                        if let Some(reexports) = binder.reexports.get(target_file_name).cloned() {
-                            binder.reexports.insert(specifier.clone(), reexports);
-                        }
-                        if let Some(&target_idx) = canonical_to_file_idx.get(&canonical)
-                            && let Some(source_modules) =
-                                binder.wildcard_reexports.get(target_file_name).cloned()
-                        {
-                            for source_module in source_modules {
-                                if let Some(&source_idx) =
-                                    resolved_module_paths.get(&(target_idx, source_module.clone()))
-                                {
-                                    let source_file_name = &program.files[source_idx].file_name;
-                                    if let Some(exports) =
-                                        binder.module_exports.get(source_file_name).cloned()
-                                    {
-                                        binder
-                                            .module_exports
-                                            .insert(source_module.clone(), exports);
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        propagate_module_export_maps(
+                            &mut binder,
+                            specifier,
+                            target_idx,
+                            program,
+                            &resolved_module_paths,
+                        );
                     }
                 }
             }
@@ -639,6 +616,7 @@ pub(super) fn collect_diagnostics(
                 .set_resolved_module_errors(Arc::clone(&resolved_module_errors));
             checker.ctx.set_current_file_idx(file_idx);
             checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
+            checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
 
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
@@ -785,6 +763,60 @@ pub(super) fn collect_diagnostics(
     diagnostics
 }
 
+fn propagate_module_export_maps(
+    binder: &mut BinderState,
+    specifier: &str,
+    target_idx: usize,
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+) {
+    let mut worklist: Vec<(String, usize)> = vec![(specifier.to_owned(), target_idx)];
+    let mut seen: rustc_hash::FxHashSet<(String, usize)> = rustc_hash::FxHashSet::default();
+
+    while let Some((current_specifier, current_target_idx)) = worklist.pop() {
+        if !seen.insert((current_specifier.clone(), current_target_idx)) {
+            continue;
+        }
+
+        let target_file_name = &program.files[current_target_idx].file_name;
+
+        if let Some(exports) = program.module_exports.get(target_file_name).cloned() {
+            binder
+                .module_exports
+                .insert(current_specifier.clone(), exports);
+        }
+        if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
+            binder
+                .wildcard_reexports
+                .insert(current_specifier.clone(), wildcards.clone());
+        }
+        if let Some(type_only_flags) = program
+            .wildcard_reexports_type_only
+            .get(target_file_name)
+            .cloned()
+        {
+            binder
+                .wildcard_reexports_type_only
+                .insert(current_specifier.clone(), type_only_flags);
+        }
+        if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
+            binder
+                .reexports
+                .insert(current_specifier.clone(), reexports);
+        }
+
+        if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {
+            for source_module in source_modules {
+                if let Some(&source_target_idx) =
+                    resolved_module_paths.get(&(current_target_idx, source_module.clone()))
+                {
+                    worklist.push((source_module, source_target_idx));
+                }
+            }
+        }
+    }
+}
+
 pub(super) struct CheckFileForParallelContext<'a> {
     file_idx: usize,
     binder: BinderState,
@@ -799,6 +831,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     resolved_module_errors:
         &'a Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
     is_external_module_by_file: &'a Arc<FxHashMap<String, bool>>,
+    file_is_esm_map: &'a Arc<FxHashMap<String, bool>>,
     no_check: bool,
     check_js: bool,
     skip_lib_check: bool,
@@ -825,6 +858,7 @@ pub(super) fn check_file_for_parallel<'a>(
         resolved_module_specifiers,
         resolved_module_errors,
         is_external_module_by_file,
+        file_is_esm_map,
         no_check,
         check_js,
         skip_lib_check,
@@ -877,6 +911,7 @@ pub(super) fn check_file_for_parallel<'a>(
         .set_resolved_module_errors(Arc::clone(resolved_module_errors));
     checker.ctx.set_current_file_idx(file_idx);
     checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
+    checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
     // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
@@ -974,5 +1009,79 @@ mod tests {
         assert!(!is_node_modules_declaration_file(
             "/project/node_modules/pkg/index.js"
         ));
+    }
+
+    #[test]
+    fn test_transitive_module_export_bridge_infers_type_only_flags() {
+        let a_file = parallel::parse_and_bind_single(
+            "/a.ts".to_string(),
+            "export class A {}\nexport class B {}".to_string(),
+        );
+        let b_file = parallel::parse_and_bind_single(
+            "/b.ts".to_string(),
+            "export type * from \"./a\";".to_string(),
+        );
+        let c_file = parallel::parse_and_bind_single(
+            "/c.ts".to_string(),
+            "export * from \"./b\";".to_string(),
+        );
+        let d_file = parallel::parse_and_bind_single(
+            "/d.ts".to_string(),
+            r#"import { A, B } from "./c";
+let _: A = new A();
+let __: B = new B();"#
+                .to_string(),
+        );
+
+        let program = parallel::merge_bind_results(vec![a_file, b_file, c_file, d_file]);
+        let d_idx = 3;
+        let d_bound = &program.files[d_idx];
+        let mut binder = create_binder_from_bound_file(d_bound, &program, d_idx);
+
+        let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+        resolved_module_paths.insert((d_idx, "./c".to_string()), 2);
+        resolved_module_paths.insert((2, "./b".to_string()), 1);
+        resolved_module_paths.insert((1, "./a".to_string()), 0);
+
+        let module_specifiers = collect_module_specifiers(&d_bound.arena, d_bound.source_file);
+        for (specifier, _, _) in &module_specifiers {
+            if let Some(&target_idx) = resolved_module_paths.get(&(d_idx, specifier.clone())) {
+                propagate_module_export_maps(
+                    &mut binder,
+                    specifier,
+                    target_idx,
+                    &program,
+                    &resolved_module_paths,
+                );
+            }
+        }
+
+        assert!(binder.wildcard_reexports.get("./c").is_some());
+        let c_wildcards = binder
+            .wildcard_reexports
+            .get("./c")
+            .expect("expected wildcard re-exports for ./c");
+        assert_eq!(c_wildcards, &vec!["./b".to_string()]);
+
+        let b_wildcards = binder
+            .wildcard_reexports
+            .get("./b")
+            .expect("expected wildcard re-exports for ./b");
+        assert_eq!(b_wildcards, &vec!["./a".to_string()]);
+
+        let b_type_only = binder
+            .wildcard_reexports_type_only
+            .get("./b")
+            .expect("expected type-only metadata for ./b");
+        assert!(
+            b_type_only
+                .iter()
+                .any(|(source, is_type_only)| source == "./a" && *is_type_only)
+        );
+
+        let exports_via_c = binder
+            .resolve_import_with_reexports_type_only("./c", "A")
+            .expect("expected A to resolve via wildcard chain");
+        assert!(exports_via_c.1, "A should be considered type-only via ./b");
     }
 }

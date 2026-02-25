@@ -22,6 +22,8 @@ interface Boolean {}
 interface Number {}
 interface Object {}
 interface Function {}
+interface CallableFunction extends Function {}
+interface NewableFunction extends Function {}
 interface RegExp {}
 interface IArguments {}
 interface Promise<T> {}

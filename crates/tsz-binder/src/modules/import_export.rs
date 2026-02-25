@@ -558,9 +558,13 @@ impl BinderState {
                     let current_file = self.debugger.current_file.clone();
                     // Add to wildcard_reexports list - a file can have multiple export * from
                     self.wildcard_reexports
+                        .entry(current_file.clone())
+                        .or_default()
+                        .push(source_module.clone());
+                    self.wildcard_reexports_type_only
                         .entry(current_file)
                         .or_default()
-                        .push(source_module);
+                        .push((source_module, export_type_only));
                 }
             }
         }
