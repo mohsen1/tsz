@@ -129,7 +129,18 @@ impl Server {
                     parts.push(serde_json::json!({"text": detail, "kind": "keyword"}));
                 }
             }
-            CompletionItemKind::Variable | CompletionItemKind::Parameter => {
+            CompletionItemKind::Alias => {
+                // For import aliases, show as "import <name>"
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": "alias", "kind": "text"}));
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+                parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                parts.push(serde_json::json!({"text": name, "kind": "aliasName"}));
+            }
+            CompletionItemKind::Variable
+            | CompletionItemKind::Const
+            | CompletionItemKind::Let
+            | CompletionItemKind::Parameter => {
                 if item.kind == CompletionItemKind::Parameter {
                     parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
                     parts.push(serde_json::json!({"text": "parameter", "kind": "text"}));
@@ -137,8 +148,10 @@ impl Server {
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     parts.push(serde_json::json!({"text": name, "kind": "parameterName"}));
                 } else {
-                    let keyword =
-                        Self::get_var_keyword_from_source(name, binder, arena, source_text)
+                    let keyword = match item.kind {
+                        CompletionItemKind::Const => "const",
+                        CompletionItemKind::Let => "let",
+                        _ => Self::get_var_keyword_from_source(name, binder, arena, source_text)
                             .unwrap_or({
                                 if let Some(ref detail) = item.detail {
                                     match detail.as_str() {
@@ -148,7 +161,8 @@ impl Server {
                                 } else {
                                     "var"
                                 }
-                            });
+                            }),
+                    };
                     parts.push(serde_json::json!({"text": keyword, "kind": "keyword"}));
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     parts.push(serde_json::json!({"text": name, "kind": "localName"}));

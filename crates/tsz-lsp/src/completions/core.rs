@@ -372,13 +372,15 @@ impl<'a> Completions<'a> {
     }
 
     /// Determine the completion kind from a symbol.
-    pub(super) const fn determine_completion_kind(
+    pub(super) fn determine_completion_kind(
         &self,
         symbol: &tsz_binder::Symbol,
     ) -> CompletionItemKind {
         use tsz_binder::symbol_flags;
 
-        if symbol.flags & symbol_flags::CONSTRUCTOR != 0 {
+        if symbol.flags & symbol_flags::ALIAS != 0 {
+            CompletionItemKind::Alias
+        } else if symbol.flags & symbol_flags::CONSTRUCTOR != 0 {
             CompletionItemKind::Constructor
         } else if symbol.flags & symbol_flags::FUNCTION != 0 {
             CompletionItemKind::Function
@@ -402,10 +404,46 @@ impl<'a> Completions<'a> {
             || symbol.flags & symbol_flags::NAMESPACE_MODULE != 0
         {
             CompletionItemKind::Module
+        } else if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            // Distinguish const from let by checking the declaration node flags
+            if self.is_const_declaration(symbol) {
+                CompletionItemKind::Const
+            } else {
+                CompletionItemKind::Let
+            }
         } else {
-            // Default to variable for const, let, var, and parameters
+            // Default to variable for var and parameters
             CompletionItemKind::Variable
         }
+    }
+
+    /// Check if a block-scoped variable symbol was declared with `const`.
+    fn is_const_declaration(&self, symbol: &tsz_binder::Symbol) -> bool {
+        use tsz_parser::parser::flags::node_flags;
+
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first) = symbol.declarations.first() {
+            first
+        } else {
+            return false;
+        };
+
+        // Walk up to find the VariableDeclarationList parent
+        let mut current = decl;
+        for _ in 0..3 {
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+                if let Some(node) = self.arena.get(current) {
+                    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        return (node.flags as u32) & node_flags::CONST != 0;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     fn symbol_is_parameter(&self, symbol: &tsz_binder::Symbol) -> bool {

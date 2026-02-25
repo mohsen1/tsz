@@ -24,8 +24,12 @@ use tsz_solver::{
 /// The kind of completion item, matching tsserver's `ScriptElementKind` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompletionItemKind {
-    /// A variable or constant
+    /// A variable declared with `var`
     Variable,
+    /// A constant declared with `const`
+    Const,
+    /// A variable declared with `let`
+    Let,
     /// A function
     Function,
     /// A class
@@ -50,6 +54,8 @@ pub enum CompletionItemKind {
     TypeParameter,
     /// A constructor
     Constructor,
+    /// An imported alias (import binding)
+    Alias,
 }
 
 /// Sort priority categories matching tsserver's sort text conventions.
@@ -274,9 +280,12 @@ pub const fn default_sort_text(kind: CompletionItemKind) -> &'static str {
         // TypeScript uses LocationPriority ("11") for most items in scope.
         // LocalDeclarationPriority ("10") is only for immediate block-scope locals.
         CompletionItemKind::Variable
+        | CompletionItemKind::Const
+        | CompletionItemKind::Let
         | CompletionItemKind::Function
         | CompletionItemKind::Parameter
-        | CompletionItemKind::Constructor => sort_priority::LOCATION_PRIORITY,
+        | CompletionItemKind::Constructor
+        | CompletionItemKind::Alias => sort_priority::LOCATION_PRIORITY,
         // Member completions: properties and methods
         CompletionItemKind::Property | CompletionItemKind::Method => sort_priority::MEMBER,
         // Type declarations: classes, interfaces, enums, type aliases, modules, type params
