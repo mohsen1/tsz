@@ -201,6 +201,11 @@
 - **Investigated but reverted**: TS2497 — "Module can only be referenced with ECMAScript imports/exports." Implementation detected `export=` in module exports table for namespace imports, but was too aggressive (8 false positives). Needs deeper solver integration to check if exported value is namespace-like before emitting. Deferred.
 - **Remaining TS2354 false positives (4 tests)**: Multi-target test configurations (es5+es2015), inline tslib file detection, and decorator helper awareness at es2022+ target.
 
+#### Run note (2026-02-25, session 6)
+- **Fixed**: TS1436 — "Decorators must precede the name and all keywords of property declarations." Parser now emits TS1436 for two patterns: (a) decorator after keyword modifiers (`public @dec prop`), and (b) decorator after property name (`private prop @decorator`). Both patterns consume the misplaced decorator for recovery, preventing cascading TS1146/TS1005 errors (+9 conformance tests at error-code level, +3 at fingerprint level).
+- **Investigated**: TS18033 — "Type is not assignable as required for computed enum member values." Diagnostic defined but not emitted. Needs type evaluation of enum member initializers via solver and assignability check to `number`. ~4-9 tests. MEDIUM difficulty, deferred — requires solver boundary integration.
+- **Investigated**: TS2497 (13 tests), TS2433 (10 tests), TS2550 (9 tests), TS1382 (8 tests), TS17019 (7 tests), TS7017 (6 tests) — all defined in diagnostic data but not emitted. Each requires different checker/solver integration. See previous session notes for TS2497 investigation.
+
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
 - Also missing unary (+, -, ~) and compound (+=) symbol checks entirely
@@ -462,3 +467,4 @@ All items below have been validated against the codebase (implementations + test
 | TS6133 | ES private names (`#foo`): recognize `#`-prefix as private + reference tracking in private property access and `#name in expr` | +22 tests |
 | TS1382/TS1381 | Scanner emits bare `>` / `}` diagnostics in JSX text content | prerequisite |
 | TS2354 | Target-aware tslib helper detection (skip __extends at ES2015+) | +2 tests |
+| TS1436 | Misplaced decorator in class members: after modifiers (`public @dec prop`) and after property name (`prop @dec`) | +9 tests |
