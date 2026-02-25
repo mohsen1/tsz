@@ -13,7 +13,7 @@ use tsz_solver::{
     TypePredicate, TypeSubstitution, Visibility, instantiate_type, types::ParamInfo,
 };
 
-use super::class_type::can_skip_base_instantiation;
+use super::can_skip_base_instantiation;
 
 // =============================================================================
 // Class Constructor Type Resolution
