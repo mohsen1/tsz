@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~6589/12574 (52.4%) — full suite, fingerprint level (new framework)
+**Current score**: ~6590/12574 (52.4%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -490,3 +490,4 @@ All items below have been validated against the codebase (implementations + test
 | TS1100/TS1210 | Remove dead strict-mode eval/arguments diagnostics (tsc 6.0 no longer emits) | +59 tests |
 | TS2496/TS2522 | Remove dead arrow/async function arguments diagnostics | included above |
 | arguments | Fix arguments resolution in arrow functions (transparent scope capture) | included above |
+| mapped types | Homomorphic mapped type assignability (T <: Partial<T>, flatten_mapped_chain eval, transitive deferral) | +1 test |
