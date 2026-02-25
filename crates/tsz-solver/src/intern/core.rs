@@ -1,0 +1,1385 @@
+//! Core implementation of the type interning engine.
+//!
+//! This module contains all data structures and methods for the `TypeInterner`,
+//! including sharded storage, concurrent slice/value interners, and type
+//! construction convenience methods.
+
+use crate::def::DefId;
+use crate::types::{
+    CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
+    FunctionShapeId, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags,
+    ObjectShape, ObjectShapeId, OrderedFloat, PropertyInfo, PropertyLookup, SymbolRef,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
+    TypeData, TypeId, TypeListId, TypeParamInfo,
+};
+use crate::visitor::is_identity_comparable_type;
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
+use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicU32, Ordering},
+};
+use tsz_common::interner::{Atom, ShardedInterner};
+
+pub(super) const SHARD_BITS: u32 = 6;
+pub(super) const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
+pub(super) const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
+pub(crate) const PROPERTY_MAP_THRESHOLD: usize = 24;
+const TYPE_LIST_INLINE: usize = 8;
+
+/// Maximum template literal expansion limit.
+/// WASM environments have limited linear memory, so we use a much lower limit
+/// to prevent OOM. Native CLI can handle more.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
+
+/// Maximum number of interned types before aborting.
+/// WASM linear memory cannot grow indefinitely, so we cap at 500k types.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const MAX_INTERNED_TYPES: usize = 5_000_000;
+
+pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
+type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
+type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
+
+/// Inner data for a `TypeShard`, lazily initialized.
+struct TypeShardInner {
+    /// Map from `TypeData` to local index within this shard
+    key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
+    /// Map from local index to `TypeData` (using Arc for shared access)
+    index_to_key: DashMap<u32, Arc<TypeData>, FxBuildHasher>,
+}
+
+/// A single shard of the type interned storage.
+///
+/// Uses `OnceLock` for lazy initialization - `DashMaps` are only allocated
+/// when the shard is first accessed, reducing startup overhead.
+struct TypeShard {
+    /// Lazily initialized inner maps
+    inner: OnceLock<TypeShardInner>,
+    /// Atomic counter for allocating new indices in this shard
+    /// Kept outside `OnceLock` for fast checks without initialization
+    next_index: AtomicU32,
+}
+
+impl TypeShard {
+    const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_index: AtomicU32::new(0),
+        }
+    }
+
+    /// Get the inner maps, initializing on first access
+    #[inline]
+    fn get_inner(&self) -> &TypeShardInner {
+        self.inner.get_or_init(|| TypeShardInner {
+            key_to_index: DashMap::with_hasher(FxBuildHasher),
+            index_to_key: DashMap::with_hasher(FxBuildHasher),
+        })
+    }
+
+    /// Check if a key exists without initializing the shard
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.next_index.load(Ordering::Relaxed) == 0
+    }
+}
+
+/// Inner data for `ConcurrentSliceInterner`, lazily initialized.
+struct SliceInternerInner<T> {
+    items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
+    map: DashMap<Arc<[T]>, u32, FxBuildHasher>,
+}
+
+/// Lock-free slice interner using `DashMap` for concurrent access.
+/// Uses lazy initialization to defer `DashMap` allocation until first use.
+struct ConcurrentSliceInterner<T> {
+    inner: OnceLock<SliceInternerInner<T>>,
+    next_id: AtomicU32,
+}
+
+impl<T> ConcurrentSliceInterner<T>
+where
+    T: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_id: AtomicU32::new(1), // Reserve 0 for empty
+        }
+    }
+
+    #[inline]
+    fn get_inner(&self) -> &SliceInternerInner<T> {
+        self.inner.get_or_init(|| {
+            let items = DashMap::with_hasher(FxBuildHasher);
+            let map = DashMap::with_hasher(FxBuildHasher);
+            let empty: Arc<[T]> = Arc::from(Vec::new());
+            items.insert(0, std::sync::Arc::clone(&empty));
+            map.insert(empty, 0);
+            SliceInternerInner { items, map }
+        })
+    }
+
+    fn intern(&self, items_slice: &[T]) -> u32 {
+        if items_slice.is_empty() {
+            return 0;
+        }
+
+        let inner = self.get_inner();
+        let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
+
+        // Try to get existing ID via reverse map — O(1)
+        if let Some(ref_entry) = inner.map.get(&temp_arc) {
+            return *ref_entry.value();
+        }
+
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.map.entry(std::sync::Arc::clone(&temp_arc)) {
+            dashmap::mapref::entry::Entry::Vacant(e) => {
+                e.insert(id);
+                inner.items.insert(id, temp_arc);
+                id
+            }
+            dashmap::mapref::entry::Entry::Occupied(e) => *e.get(),
+        }
+    }
+
+    fn get(&self, id: u32) -> Option<Arc<[T]>> {
+        // For id 0 (empty), we can return without initializing
+        if id == 0 {
+            return Some(Arc::from(Vec::new()));
+        }
+        self.inner
+            .get()?
+            .items
+            .get(&id)
+            .map(|e| std::sync::Arc::clone(e.value()))
+    }
+
+    fn empty(&self) -> Arc<[T]> {
+        Arc::from(Vec::new())
+    }
+}
+
+/// Inner data for `ConcurrentValueInterner`, lazily initialized.
+struct ValueInternerInner<T> {
+    items: DashMap<u32, Arc<T>, FxBuildHasher>,
+    map: DashMap<Arc<T>, u32, FxBuildHasher>,
+}
+
+/// Lock-free value interner using `DashMap` for concurrent access.
+/// Uses lazy initialization to defer `DashMap` allocation until first use.
+struct ConcurrentValueInterner<T> {
+    inner: OnceLock<ValueInternerInner<T>>,
+    next_id: AtomicU32,
+}
+
+impl<T> ConcurrentValueInterner<T>
+where
+    T: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    const fn new() -> Self {
+        Self {
+            inner: OnceLock::new(),
+            next_id: AtomicU32::new(0),
+        }
+    }
+
+    #[inline]
+    fn get_inner(&self) -> &ValueInternerInner<T> {
+        self.inner.get_or_init(|| ValueInternerInner {
+            items: DashMap::with_hasher(FxBuildHasher),
+            map: DashMap::with_hasher(FxBuildHasher),
+        })
+    }
+
+    fn intern(&self, value: T) -> u32 {
+        let inner = self.get_inner();
+        let value_arc = Arc::new(value);
+
+        // Try to get existing ID
+        if let Some(ref_entry) = inner.map.get(&value_arc) {
+            return *ref_entry.value();
+        }
+
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.map.entry(std::sync::Arc::clone(&value_arc)) {
+            Entry::Vacant(e) => {
+                e.insert(id);
+                inner.items.insert(id, value_arc);
+                id
+            }
+            Entry::Occupied(e) => *e.get(),
+        }
+    }
+
+    fn get(&self, id: u32) -> Option<Arc<T>> {
+        self.inner
+            .get()?
+            .items
+            .get(&id)
+            .map(|e| std::sync::Arc::clone(e.value()))
+    }
+}
+
+/// Type interning table with lock-free concurrent access.
+///
+/// Uses sharded `DashMap` structures for all internal storage, enabling
+/// true parallel type checking without lock contention.
+///
+/// All internal structures use lazy initialization via `OnceLock` to minimize
+/// startup overhead - `DashMaps` are only allocated when first accessed.
+pub struct TypeInterner {
+    /// Sharded storage for user-defined types (lazily initialized)
+    shards: Vec<TypeShard>,
+    /// String interner for property names and string literals (already lock-free)
+    pub string_interner: ShardedInterner,
+    /// Concurrent interners for type components (lazily initialized)
+    type_lists: ConcurrentSliceInterner<TypeId>,
+    tuple_lists: ConcurrentSliceInterner<TupleElement>,
+    template_lists: ConcurrentSliceInterner<TemplateSpan>,
+    object_shapes: ConcurrentValueInterner<ObjectShape>,
+    /// Object property maps: lazily initialized `DashMap`
+    object_property_maps: ObjectPropertyMap,
+    function_shapes: ConcurrentValueInterner<FunctionShape>,
+    callable_shapes: ConcurrentValueInterner<CallableShape>,
+    conditional_types: ConcurrentValueInterner<ConditionalType>,
+    mapped_types: ConcurrentValueInterner<MappedType>,
+    applications: ConcurrentValueInterner<TypeApplication>,
+    /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
+    identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// The global Array base type (e.g., Array<T> from lib.d.ts)
+    array_base_type: OnceLock<TypeId>,
+    /// Type parameters for the Array base type
+    array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
+    /// Boxed interface types for primitives (e.g., String interface for `string`).
+    /// Registered from lib.d.ts during primordial type setup.
+    boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
+}
+
+impl std::fmt::Debug for TypeInterner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TypeInterner")
+            .field("shards", &self.shards.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TypeInterner {
+    /// Create a new type interner with pre-registered intrinsics.
+    ///
+    /// Uses lazy initialization for all `DashMap` structures to minimize
+    /// startup overhead. `DashMaps` are only allocated when first accessed.
+    pub fn new() -> Self {
+        let shards: Vec<TypeShard> = (0..SHARD_COUNT).map(|_| TypeShard::new()).collect();
+
+        Self {
+            shards,
+            // String interner - common strings are interned on-demand for faster startup
+            string_interner: ShardedInterner::new(),
+            type_lists: ConcurrentSliceInterner::new(),
+            tuple_lists: ConcurrentSliceInterner::new(),
+            template_lists: ConcurrentSliceInterner::new(),
+            object_shapes: ConcurrentValueInterner::new(),
+            object_property_maps: OnceLock::new(),
+            function_shapes: ConcurrentValueInterner::new(),
+            callable_shapes: ConcurrentValueInterner::new(),
+            conditional_types: ConcurrentValueInterner::new(),
+            mapped_types: ConcurrentValueInterner::new(),
+            applications: ConcurrentValueInterner::new(),
+            identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
+            array_base_type: OnceLock::new(),
+            array_base_type_params: OnceLock::new(),
+            boxed_types: DashMap::with_hasher(FxBuildHasher),
+        }
+    }
+
+    /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
+    ///
+    /// This should be called once during primordial type setup when lib.d.ts is processed.
+    /// Once set, the value cannot be changed (`OnceLock` enforces this).
+    pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
+        let _ = self.array_base_type.set(type_id);
+        let _ = self.array_base_type_params.set(params);
+    }
+
+    /// Get the global Array base type, if it has been set.
+    #[inline]
+    pub fn get_array_base_type(&self) -> Option<TypeId> {
+        self.array_base_type.get().copied()
+    }
+
+    /// Get the type parameters for the global Array base type, if it has been set.
+    #[inline]
+    pub fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.array_base_type_params
+            .get()
+            .map_or(&[], |v| v.as_slice())
+    }
+
+    /// Set a boxed interface type for a primitive intrinsic kind.
+    ///
+    /// Called during primordial type setup when lib.d.ts is processed.
+    /// For example, `set_boxed_type(IntrinsicKind::String, type_id_of_String_interface)`
+    /// enables property access on `string` values to resolve through the String interface.
+    pub fn set_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
+        self.boxed_types.insert(kind, type_id);
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic kind.
+    #[inline]
+    pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.boxed_types.get(&kind).map(|r| *r)
+    }
+
+    /// Get the object property maps, initializing on first access
+    #[inline]
+    fn get_object_property_maps(&self) -> &ObjectPropertyIndex {
+        self.object_property_maps
+            .get_or_init(|| DashMap::with_hasher(FxBuildHasher))
+    }
+
+    /// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
+    /// Results are cached for O(1) lookup after first computation.
+    /// This is used for optimization in BCT and subtype checking.
+    #[inline]
+    pub fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
+        // Fast path: check cache first
+        if let Some(cached) = self.identity_comparable_cache.get(&type_id) {
+            return *cached;
+        }
+        // Compute and cache
+        let result = is_identity_comparable_type(self, type_id);
+        self.identity_comparable_cache.insert(type_id, result);
+        result
+    }
+
+    /// Intern a string into an Atom.
+    /// This is used when constructing types with property names or string literals.
+    pub fn intern_string(&self, s: &str) -> Atom {
+        self.string_interner.intern(s)
+    }
+
+    /// Resolve an Atom back to its string value.
+    /// This is used when formatting types for error messages.
+    pub fn resolve_atom(&self, atom: Atom) -> String {
+        self.string_interner.resolve(atom).to_string()
+    }
+
+    /// Resolve an Atom without allocating a new String.
+    pub fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
+        self.string_interner.resolve(atom)
+    }
+
+    pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        self.type_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.type_lists.empty())
+    }
+
+    pub fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
+        self.tuple_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.tuple_lists.empty())
+    }
+
+    pub fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
+        self.template_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.template_lists.empty())
+    }
+
+    pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
+        self.object_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+            })
+        })
+    }
+
+    pub fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
+        let shape = self.object_shape(shape_id);
+        if shape.properties.len() < PROPERTY_MAP_THRESHOLD {
+            return PropertyLookup::Uncached;
+        }
+
+        match self.object_property_map(shape_id, &shape) {
+            Some(map) => match map.get(&name) {
+                Some(&idx) => PropertyLookup::Found(idx),
+                None => PropertyLookup::NotFound,
+            },
+            None => PropertyLookup::Uncached,
+        }
+    }
+
+    /// Get or create a property map for an object shape.
+    ///
+    /// This uses a lock-free pattern with `DashMap` to avoid the read-then-write
+    /// deadlock that existed in the previous `RwLock`<Vec> implementation.
+    fn object_property_map(
+        &self,
+        shape_id: ObjectShapeId,
+        shape: &ObjectShape,
+    ) -> Option<Arc<FxHashMap<Atom, usize>>> {
+        if shape.properties.len() < PROPERTY_MAP_THRESHOLD {
+            return None;
+        }
+
+        let maps = self.get_object_property_maps();
+
+        // Try to get existing map (lock-free read)
+        if let Some(map) = maps.get(&shape_id) {
+            return Some(std::sync::Arc::clone(&map));
+        }
+
+        // Build the property map
+        let mut map = FxHashMap::default();
+        for (idx, prop) in shape.properties.iter().enumerate() {
+            map.insert(prop.name, idx);
+        }
+        let map = Arc::new(map);
+
+        // Try to insert - if another thread inserted first, use theirs
+        match maps.entry(shape_id) {
+            Entry::Vacant(e) => {
+                e.insert(std::sync::Arc::clone(&map));
+                Some(map)
+            }
+            Entry::Occupied(e) => Some(std::sync::Arc::clone(e.get())),
+        }
+    }
+
+    pub fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
+        self.function_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(FunctionShape {
+                type_params: Vec::new(),
+                params: Vec::new(),
+                this_type: None,
+                return_type: TypeId::ERROR,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
+            })
+        })
+    }
+
+    pub fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
+        self.callable_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(CallableShape {
+                call_signatures: Vec::new(),
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                ..Default::default()
+            })
+        })
+    }
+
+    pub fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
+        self.conditional_types.get(id.0).unwrap_or_else(|| {
+            Arc::new(ConditionalType {
+                check_type: TypeId::ERROR,
+                extends_type: TypeId::ERROR,
+                true_type: TypeId::ERROR,
+                false_type: TypeId::ERROR,
+                is_distributive: false,
+            })
+        })
+    }
+
+    pub fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
+        self.mapped_types.get(id.0).unwrap_or_else(|| {
+            Arc::new(MappedType {
+                type_param: TypeParamInfo {
+                    is_const: false,
+                    name: self.intern_string("_"),
+                    constraint: None,
+                    default: None,
+                },
+                constraint: TypeId::ERROR,
+                name_type: None,
+                template: TypeId::ERROR,
+                readonly_modifier: None,
+                optional_modifier: None,
+            })
+        })
+    }
+
+    pub fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
+        self.applications.get(id.0).unwrap_or_else(|| {
+            Arc::new(TypeApplication {
+                base: TypeId::ERROR,
+                args: Vec::new(),
+            })
+        })
+    }
+
+    /// Intern a type key and return its `TypeId`.
+    /// If the key already exists, returns the existing `TypeId`.
+    /// Otherwise, creates a new `TypeId` and stores the key.
+    ///
+    /// This uses a lock-free pattern with `DashMap` for concurrent access.
+    pub fn intern(&self, key: TypeData) -> TypeId {
+        if let Some(id) = self.get_intrinsic_id(&key) {
+            return id;
+        }
+
+        // Circuit breaker: prevent OOM by limiting total interned types
+        // This is especially important for WASM where linear memory is limited.
+        // We do a cheap approximate check (summing shard indices) to avoid
+        // iterating all shards on every intern call.
+        if self.approximate_count() > MAX_INTERNED_TYPES {
+            return TypeId::ERROR;
+        }
+
+        let mut hasher = FxHasher::default();
+        key.hash(&mut hasher);
+        let shard_idx = (hasher.finish() as usize) & (SHARD_COUNT - 1);
+        let shard = &self.shards[shard_idx];
+        let inner = shard.get_inner();
+
+        // Try to get existing ID (lock-free read)
+        if let Some(entry) = inner.key_to_index.get(&key) {
+            let local_index = *entry.value();
+            return self.make_id(local_index, shard_idx as u32);
+        }
+
+        // Allocate new index
+        let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            // Return error type instead of panicking
+            return TypeId::ERROR;
+        }
+
+        // Double-check: another thread might have inserted while we allocated
+        match inner.key_to_index.entry(key.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(local_index);
+                let key_arc = Arc::new(key);
+                inner.index_to_key.insert(local_index, key_arc);
+                self.make_id(local_index, shard_idx as u32)
+            }
+            Entry::Occupied(e) => {
+                // Another thread inserted first, use their ID
+                let existing_index = *e.get();
+                self.make_id(existing_index, shard_idx as u32)
+            }
+        }
+    }
+
+    /// Look up the `TypeData` for a given `TypeId`.
+    ///
+    /// This uses lock-free `DashMap` access with lazy shard initialization.
+    pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        if id.is_intrinsic() || id.is_error() {
+            return self.get_intrinsic_key(id);
+        }
+
+        let raw_val = id.0.checked_sub(TypeId::FIRST_USER)?;
+        let shard_idx = (raw_val & SHARD_MASK) as usize;
+        let local_index = raw_val >> SHARD_BITS;
+
+        let shard = self.shards.get(shard_idx)?;
+        // If shard is empty, no types have been interned there yet
+        if shard.is_empty() {
+            return None;
+        }
+        shard
+            .get_inner()
+            .index_to_key
+            .get(&{ local_index })
+            .map(|r| r.value().as_ref().clone())
+    }
+
+    pub(super) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
+        TypeListId(self.type_lists.intern(&members))
+    }
+
+    fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
+        TupleListId(self.tuple_lists.intern(&elements))
+    }
+
+    pub(crate) fn intern_template_list(&self, spans: Vec<TemplateSpan>) -> TemplateLiteralId {
+        TemplateLiteralId(self.template_lists.intern(&spans))
+    }
+
+    pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+        ObjectShapeId(self.object_shapes.intern(shape))
+    }
+
+    fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
+        FunctionShapeId(self.function_shapes.intern(shape))
+    }
+
+    pub(super) fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {
+        CallableShapeId(self.callable_shapes.intern(shape))
+    }
+
+    fn intern_conditional_type(&self, conditional: ConditionalType) -> ConditionalTypeId {
+        ConditionalTypeId(self.conditional_types.intern(conditional))
+    }
+
+    fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
+        MappedTypeId(self.mapped_types.intern(mapped))
+    }
+
+    fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
+        TypeApplicationId(self.applications.intern(application))
+    }
+
+    /// Get the number of interned types (lock-free read)
+    pub fn len(&self) -> usize {
+        let mut total = TypeId::FIRST_USER as usize;
+        for shard in &self.shards {
+            total += shard.next_index.load(Ordering::Relaxed) as usize;
+        }
+        total
+    }
+
+    /// Check if the interner is empty (only has intrinsics)
+    pub fn is_empty(&self) -> bool {
+        self.len() <= TypeId::FIRST_USER as usize
+    }
+
+    /// Get an approximate count of interned types.
+    /// This is cheaper than `len()` as it samples only a few shards.
+    /// Used for the circuit breaker to avoid OOM.
+    #[inline]
+    fn approximate_count(&self) -> usize {
+        // Sample first 4 shards and extrapolate (assumes uniform distribution)
+        let mut sample_total: usize = 0;
+        for shard in self.shards.iter().take(4) {
+            sample_total += shard.next_index.load(Ordering::Relaxed) as usize;
+        }
+        // Extrapolate to all 64 shards
+        (sample_total * SHARD_COUNT / 4) + TypeId::FIRST_USER as usize
+    }
+
+    #[inline]
+    fn make_id(&self, local_index: u32, shard_idx: u32) -> TypeId {
+        let raw_val = (local_index << SHARD_BITS) | (shard_idx & SHARD_MASK);
+        let id = TypeId(TypeId::FIRST_USER + raw_val);
+
+        // SAFETY: Assert that we're not overflowing into the local ID space (MSB=1).
+        // Global TypeIds must have MSB=0 (0x7FFFFFFF-) to allow ScopedTypeInterner
+        // to use the upper half (0x80000000+) for ephemeral types.
+        debug_assert!(
+            id.is_global(),
+            "Global TypeId overflow: {id:?} - would conflict with local ID space"
+        );
+
+        id
+    }
+
+    const fn get_intrinsic_id(&self, key: &TypeData) -> Option<TypeId> {
+        match key {
+            TypeData::Intrinsic(kind) => Some(kind.to_type_id()),
+            TypeData::Error => Some(TypeId::ERROR),
+            // Map boolean literals to their intrinsic IDs to avoid duplicates
+            TypeData::Literal(LiteralValue::Boolean(true)) => Some(TypeId::BOOLEAN_TRUE),
+            TypeData::Literal(LiteralValue::Boolean(false)) => Some(TypeId::BOOLEAN_FALSE),
+            _ => None,
+        }
+    }
+
+    const fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeData> {
+        match id {
+            TypeId::NONE | TypeId::ERROR => Some(TypeData::Error),
+            TypeId::NEVER => Some(TypeData::Intrinsic(IntrinsicKind::Never)),
+            TypeId::UNKNOWN => Some(TypeData::Intrinsic(IntrinsicKind::Unknown)),
+            TypeId::ANY => Some(TypeData::Intrinsic(IntrinsicKind::Any)),
+            TypeId::VOID => Some(TypeData::Intrinsic(IntrinsicKind::Void)),
+            TypeId::UNDEFINED => Some(TypeData::Intrinsic(IntrinsicKind::Undefined)),
+            TypeId::NULL => Some(TypeData::Intrinsic(IntrinsicKind::Null)),
+            TypeId::BOOLEAN => Some(TypeData::Intrinsic(IntrinsicKind::Boolean)),
+            TypeId::NUMBER => Some(TypeData::Intrinsic(IntrinsicKind::Number)),
+            TypeId::STRING => Some(TypeData::Intrinsic(IntrinsicKind::String)),
+            TypeId::BIGINT => Some(TypeData::Intrinsic(IntrinsicKind::Bigint)),
+            TypeId::SYMBOL => Some(TypeData::Intrinsic(IntrinsicKind::Symbol)),
+            TypeId::OBJECT | TypeId::PROMISE_BASE => {
+                Some(TypeData::Intrinsic(IntrinsicKind::Object))
+            }
+            TypeId::BOOLEAN_TRUE => Some(TypeData::Literal(LiteralValue::Boolean(true))),
+            TypeId::BOOLEAN_FALSE => Some(TypeData::Literal(LiteralValue::Boolean(false))),
+            TypeId::FUNCTION => Some(TypeData::Intrinsic(IntrinsicKind::Function)),
+            _ => None,
+        }
+    }
+
+    // =========================================================================
+    // Convenience methods for common type constructions
+    // =========================================================================
+
+    /// Intern an intrinsic type
+    pub const fn intrinsic(&self, kind: IntrinsicKind) -> TypeId {
+        kind.to_type_id()
+    }
+
+    /// Intern a literal string type
+    pub fn literal_string(&self, value: &str) -> TypeId {
+        let atom = self.intern_string(value);
+        self.intern(TypeData::Literal(LiteralValue::String(atom)))
+    }
+
+    /// Intern a literal string type from an already-interned Atom
+    pub fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        self.intern(TypeData::Literal(LiteralValue::String(atom)))
+    }
+
+    /// Intern a literal number type
+    pub fn literal_number(&self, value: f64) -> TypeId {
+        self.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(value))))
+    }
+
+    /// Intern a literal boolean type
+    pub fn literal_boolean(&self, value: bool) -> TypeId {
+        self.intern(TypeData::Literal(LiteralValue::Boolean(value)))
+    }
+
+    /// Intern a literal bigint type
+    pub fn literal_bigint(&self, value: &str) -> TypeId {
+        let atom = self.intern_string(&self.normalize_bigint_literal(value));
+        self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
+    }
+
+    /// Intern a literal bigint type, allowing a sign prefix without extra clones.
+    pub fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
+        let normalized = self.normalize_bigint_literal(digits);
+        if normalized == "0" {
+            return self.literal_bigint(&normalized);
+        }
+        if !negative {
+            return self.literal_bigint(&normalized);
+        }
+
+        let mut value = String::with_capacity(normalized.len() + 1);
+        value.push('-');
+        value.push_str(&normalized);
+        let atom = self.string_interner.intern_owned(value);
+        self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
+    }
+
+    fn normalize_bigint_literal(&self, value: &str) -> String {
+        let stripped = value.replace('_', "");
+        if stripped.is_empty() {
+            return "0".to_string();
+        }
+
+        let (base, digits) = if stripped.starts_with("0x") || stripped.starts_with("0X") {
+            (16, &stripped[2..])
+        } else if stripped.starts_with("0o") || stripped.starts_with("0O") {
+            (8, &stripped[2..])
+        } else if stripped.starts_with("0b") || stripped.starts_with("0B") {
+            (2, &stripped[2..])
+        } else {
+            (10, stripped.as_str())
+        };
+
+        if digits.is_empty() {
+            return "0".to_string();
+        }
+
+        if base == 10 {
+            let normalized = digits.trim_start_matches('0');
+            return if normalized.is_empty() {
+                "0".to_string()
+            } else {
+                normalized.to_string()
+            };
+        }
+
+        let mut decimal: Vec<u8> = vec![0];
+        for ch in digits.chars() {
+            let Some(digit) = ch.to_digit(base) else {
+                return "0".to_string();
+            };
+            let digit = digit as u16;
+            let mut carry = digit;
+            let base = base as u16;
+            for dec in decimal.iter_mut() {
+                let value = u16::from(*dec) * base + carry;
+                *dec = (value % 10) as u8;
+                carry = value / 10;
+            }
+            while carry > 0 {
+                decimal.push((carry % 10) as u8);
+                carry /= 10;
+            }
+        }
+
+        while decimal.len() > 1 && *decimal.last().unwrap_or(&0) == 0 {
+            decimal.pop();
+        }
+
+        let mut out = String::with_capacity(decimal.len());
+        for digit in decimal.iter().rev() {
+            out.push(char::from(b'0' + *digit));
+        }
+        out
+    }
+
+    /// Intern a union type, normalizing and deduplicating members
+    pub fn union(&self, members: Vec<TypeId>) -> TypeId {
+        self.union_from_iter(members)
+    }
+
+    /// Intern a union type from a vector that is already sorted and deduped.
+    /// This is an O(N) operation that avoids redundant sorting.
+    pub fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        let list_id = self.intern_type_list(flat);
+        self.intern(TypeData::Union(list_id))
+    }
+
+    /// Intern a union type while preserving member structure.
+    ///
+    /// This keeps unknown/literal members intact for property access checks.
+    pub fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        if members.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        let mut flat: TypeListBuffer = SmallVec::new();
+        for member in members {
+            if let Some(TypeData::Union(inner)) = self.lookup(member) {
+                let members = self.type_list(inner);
+                flat.extend(members.iter().copied());
+            } else {
+                flat.push(member);
+            }
+        }
+
+        flat.sort_by_key(|id| id.0);
+        flat.dedup();
+        flat.retain(|id| *id != TypeId::NEVER);
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeData::Union(list_id))
+    }
+
+    /// Fast path for unions that already fit in registers.
+    pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        // Fast paths to avoid expensive normalize_union for trivial cases
+        if left == right {
+            return left;
+        }
+        if left == TypeId::NEVER {
+            return right;
+        }
+        if right == TypeId::NEVER {
+            return left;
+        }
+        self.union_from_iter([left, right])
+    }
+
+    /// Fast path for three-member unions without heap allocations.
+    pub fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
+        self.union_from_iter([first, second, third])
+    }
+
+    pub(super) fn union_from_iter<I>(&self, members: I) -> TypeId
+    where
+        I: IntoIterator<Item = TypeId>,
+    {
+        let mut iter = members.into_iter();
+        let Some(first) = iter.next() else {
+            return TypeId::NEVER;
+        };
+        let Some(second) = iter.next() else {
+            return first;
+        };
+
+        let mut flat: TypeListBuffer = SmallVec::new();
+        self.push_union_member(&mut flat, first);
+        self.push_union_member(&mut flat, second);
+        for member in iter {
+            self.push_union_member(&mut flat, member);
+        }
+
+        self.normalize_union(flat)
+    }
+
+    pub(super) fn push_union_member(&self, flat: &mut TypeListBuffer, member: TypeId) {
+        if let Some(TypeData::Union(inner)) = self.lookup(member) {
+            let members = self.type_list(inner);
+            flat.extend(members.iter().copied());
+        } else {
+            flat.push(member);
+        }
+    }
+
+    pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
+        // Deduplicate and sort for consistent hashing
+        flat.sort_by_key(|id| id.0);
+        flat.dedup();
+
+        // Handle special cases
+        if flat.contains(&TypeId::ERROR) {
+            return TypeId::ERROR;
+        }
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+        // If any member is `any`, the union is `any`
+        if flat.contains(&TypeId::ANY) {
+            return TypeId::ANY;
+        }
+        // If any member is `unknown`, the union is `unknown`
+        if flat.contains(&TypeId::UNKNOWN) {
+            return TypeId::UNKNOWN;
+        }
+        // Remove `never` from unions
+        flat.retain(|id| *id != TypeId::NEVER);
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // Absorb literal types into their corresponding primitive types
+        // e.g., "a" | string | number => string | number
+        // e.g., 1 | 2 | number => number
+        // e.g., true | boolean => boolean
+        self.absorb_literals_into_primitives(&mut flat);
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // Reduce union using subtype checks (e.g., {a: 1} | {a: 1 | number} => {a: 1 | number})
+        // Skip reduction if union contains complex types (TypeParameters, Lazy, etc.)
+        let has_complex = flat.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
+            )
+        });
+        if !has_complex {
+            self.reduce_union_subtypes(&mut flat);
+        }
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeData::Union(list_id))
+    }
+
+    /// Intern an intersection type, normalizing and deduplicating members
+    pub fn intersection(&self, members: Vec<TypeId>) -> TypeId {
+        self.intersection_from_iter(members)
+    }
+
+    /// Fast path for two-member intersections.
+    pub fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.intersection_from_iter([left, right])
+    }
+
+    /// Create an intersection type WITHOUT triggering `normalize_intersection`
+    ///
+    /// This is a low-level operation used by the `SubtypeChecker` to merge
+    /// properties from intersection members without causing infinite recursion.
+    ///
+    /// # Safety
+    /// Only use this when you need to synthesize a type for intermediate checking.
+    /// Do NOT use for final compiler output (like .d.ts generation) as the
+    /// resulting type will be "unsimplified".
+    pub fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        // Use SmallVec to keep stack allocation benefits
+        let mut flat: TypeListBuffer = SmallVec::new();
+
+        for member in members {
+            // Structural flattening is safe and cheap
+            if let Some(TypeData::Intersection(inner)) = self.lookup(member) {
+                let inner_members = self.type_list(inner);
+                flat.extend(inner_members.iter().copied());
+            } else {
+                flat.push(member);
+            }
+        }
+
+        // Abort reduction if any member is a Lazy type.
+        // The interner (Judge) cannot resolve symbols, so if we have unresolved types,
+        // we must preserve the intersection as-is without attempting to merge or reduce.
+        let has_unresolved = flat
+            .iter()
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))));
+        if has_unresolved {
+            // Basic dedup without any simplification
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+            let list_id = self.intern_type_list(flat.into_vec());
+            return self.intern(TypeData::Intersection(list_id));
+        }
+
+        // =========================================================
+        // Canonicalization: Handle callable order preservation
+        // =========================================================
+        // In TypeScript, intersections of functions represent overloads, and
+        // order matters. We need to separate callables from non-callables.
+
+        let has_callables = flat
+            .iter()
+            .any(|&id| crate::type_queries::is_callable_type(self, id));
+
+        if !has_callables {
+            // Fast path: No callables, sort everything for canonicalization
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+        } else {
+            // Slow path: Separate callables and others to preserve order
+            let mut callables = SmallVec::<[TypeId; 4]>::new();
+
+            // Retain only non-callables in 'flat', move callables to 'callables'
+            // This preserves the order of callables as they are extracted
+            let mut i = 0;
+            while i < flat.len() {
+                if crate::type_queries::is_callable_type(self, flat[i]) {
+                    callables.push(flat.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+
+            // Sort and dedup non-callables
+            flat.sort_by_key(|id| id.0);
+            flat.dedup();
+
+            // Deduplicate callables (preserving order)
+            let mut seen = FxHashSet::default();
+            callables.retain(|id| seen.insert(*id));
+
+            // Merge: Put non-callables first (canonical), then callables (ordered)
+            flat.extend(callables);
+        }
+
+        // =========================================================
+        // O(1) Fast Paths (Safe to do without recursion)
+        // =========================================================
+
+        // 1. If any member is Never, the result is Never
+        if flat.contains(&TypeId::NEVER) {
+            return TypeId::NEVER;
+        }
+
+        // 2. If any member is Any, the result is Any (unless Never is present)
+        if flat.contains(&TypeId::ANY) {
+            return TypeId::ANY;
+        }
+
+        // 3. Remove Unknown (Identity element for intersection)
+        flat.retain(|id| *id != TypeId::UNKNOWN);
+
+        // 4. Check for disjoint primitives (e.g., string & number = never)
+        // If we have multiple intrinsic primitive types that are disjoint, return never
+        if self.has_disjoint_primitives(&flat) {
+            return TypeId::NEVER;
+        }
+
+        // =========================================================
+        // Final Construction
+        // =========================================================
+
+        if flat.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // Create the intersection directly without calling normalize_intersection
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeData::Intersection(list_id))
+    }
+
+    /// Convenience wrapper for raw intersection of two types
+    pub fn intersect_types_raw2(&self, a: TypeId, b: TypeId) -> TypeId {
+        self.intersect_types_raw(vec![a, b])
+    }
+
+    pub(super) fn intersection_from_iter<I>(&self, members: I) -> TypeId
+    where
+        I: IntoIterator<Item = TypeId>,
+    {
+        let mut iter = members.into_iter();
+        let Some(first) = iter.next() else {
+            return TypeId::UNKNOWN;
+        };
+        let Some(second) = iter.next() else {
+            return first;
+        };
+
+        let mut flat: TypeListBuffer = SmallVec::new();
+        self.push_intersection_member(&mut flat, first);
+        self.push_intersection_member(&mut flat, second);
+        for member in iter {
+            self.push_intersection_member(&mut flat, member);
+        }
+
+        self.normalize_intersection(flat)
+    }
+
+    pub(super) fn push_intersection_member(&self, flat: &mut TypeListBuffer, member: TypeId) {
+        if let Some(TypeData::Intersection(inner)) = self.lookup(member) {
+            let members = self.type_list(inner);
+            flat.extend(members.iter().copied());
+        } else {
+            flat.push(member);
+        }
+    }
+
+    // Intersection normalization, empty object elimination, callable/object
+    // merging, and distribution are in `intersection.rs`.
+
+    /// Intern an array type
+    pub fn array(&self, element: TypeId) -> TypeId {
+        self.intern(TypeData::Array(element))
+    }
+
+    /// Canonical `this` type.
+    pub fn this_type(&self) -> TypeId {
+        self.intern(TypeData::ThisType)
+    }
+
+    /// Intern a readonly array type
+    /// Returns a distinct type from mutable arrays to enforce readonly semantics
+    pub fn readonly_array(&self, element: TypeId) -> TypeId {
+        let array_type = self.array(element);
+        self.intern(TypeData::ReadonlyType(array_type))
+    }
+
+    /// Intern a tuple type
+    pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        let list_id = self.intern_tuple_list(elements);
+        self.intern(TypeData::Tuple(list_id))
+    }
+
+    /// Intern a readonly tuple type
+    /// Returns a distinct type from mutable tuples to enforce readonly semantics
+    pub fn readonly_tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        let tuple_type = self.tuple(elements);
+        self.intern(TypeData::ReadonlyType(tuple_type))
+    }
+
+    /// Wrap any type in a `ReadonlyType` marker
+    /// This is used for the `readonly` type operator
+    pub fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeData::ReadonlyType(inner))
+    }
+
+    /// Wrap a type in a `NoInfer` marker.
+    pub fn no_infer(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeData::NoInfer(inner))
+    }
+
+    /// Create a `unique symbol` type for a symbol declaration.
+    pub fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        self.intern(TypeData::UniqueSymbol(symbol))
+    }
+
+    /// Create an `infer` binder with the provided info.
+    pub fn infer(&self, info: TypeParamInfo) -> TypeId {
+        self.intern(TypeData::Infer(info))
+    }
+
+    pub fn bound_parameter(&self, index: u32) -> TypeId {
+        self.intern(TypeData::BoundParameter(index))
+    }
+
+    pub fn recursive(&self, depth: u32) -> TypeId {
+        self.intern(TypeData::Recursive(depth))
+    }
+
+    /// Wrap a type in a `KeyOf` marker.
+    pub fn keyof(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeData::KeyOf(inner))
+    }
+
+    /// Build an indexed access type (`T[K]`).
+    pub fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.intern(TypeData::IndexAccess(object_type, index_type))
+    }
+
+    /// Build a nominal enum type that preserves `DefId` identity and carries
+    /// structural member information for compatibility with primitive relations.
+    pub fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        self.intern(TypeData::Enum(def_id, structural_type))
+    }
+
+    /// Intern an object type with properties.
+    pub fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::empty())
+    }
+
+    /// Intern a fresh object type with properties.
+    pub fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
+    }
+
+    /// Intern an object type with properties and custom flags.
+    pub fn object_with_flags(
+        &self,
+        mut properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+    ) -> TypeId {
+        // Sort by property name for consistent hashing
+        properties.sort_by_key(|a| a.name);
+        let shape_id = self.intern_object_shape(ObjectShape {
+            flags,
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol: None,
+        });
+        self.intern(TypeData::Object(shape_id))
+    }
+
+    /// Intern an object type with properties, custom flags, and optional symbol.
+    /// This is used for interfaces that need symbol tracking but no index signatures.
+    pub fn object_with_flags_and_symbol(
+        &self,
+        mut properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<tsz_binder::SymbolId>,
+    ) -> TypeId {
+        // Sort by property name for consistent hashing
+        properties.sort_by_key(|a| a.name);
+        let shape_id = self.intern_object_shape(ObjectShape {
+            flags,
+            properties,
+            string_index: None,
+            number_index: None,
+            symbol,
+        });
+        self.intern(TypeData::Object(shape_id))
+    }
+
+    /// Intern an object type with index signatures.
+    pub fn object_with_index(&self, mut shape: ObjectShape) -> TypeId {
+        // Sort properties by name for consistent hashing
+        shape.properties.sort_by_key(|a| a.name);
+        let shape_id = self.intern_object_shape(shape);
+        self.intern(TypeData::ObjectWithIndex(shape_id))
+    }
+
+    /// Intern a function type
+    pub fn function(&self, shape: FunctionShape) -> TypeId {
+        let shape_id = self.intern_function_shape(shape);
+        self.intern(TypeData::Function(shape_id))
+    }
+
+    /// Intern a callable type with overloaded signatures
+    pub fn callable(&self, shape: CallableShape) -> TypeId {
+        let shape_id = self.intern_callable_shape(shape);
+        self.intern(TypeData::Callable(shape_id))
+    }
+
+    /// Intern a conditional type
+    pub fn conditional(&self, conditional: ConditionalType) -> TypeId {
+        let conditional_id = self.intern_conditional_type(conditional);
+        self.intern(TypeData::Conditional(conditional_id))
+    }
+
+    /// Intern a mapped type
+    pub fn mapped(&self, mapped: MappedType) -> TypeId {
+        let mapped_id = self.intern_mapped_type(mapped);
+        self.intern(TypeData::Mapped(mapped_id))
+    }
+
+    /// Build a string intrinsic (`Uppercase`, `Lowercase`, etc.) marker.
+    pub fn string_intrinsic(
+        &self,
+        kind: crate::types::StringIntrinsicKind,
+        type_arg: TypeId,
+    ) -> TypeId {
+        self.intern(TypeData::StringIntrinsic { kind, type_arg })
+    }
+
+    /// Intern a type reference (deprecated - use `lazy()` with `DefId` instead).
+    ///
+    /// This method is kept for backward compatibility with tests and legacy code.
+    /// It converts `SymbolRef` to `DefId` and creates `TypeData::Lazy`.
+    ///
+    /// Deprecated: new code should use `lazy(def_id)` instead.
+    pub fn reference(&self, symbol: SymbolRef) -> TypeId {
+        // Convert SymbolRef to DefId by wrapping the raw u32 value
+        // This maintains the same identity while using the new TypeData::Lazy variant
+        let def_id = DefId(symbol.0);
+        self.intern(TypeData::Lazy(def_id))
+    }
+
+    /// Intern a lazy type reference (DefId-based).
+    ///
+    /// This is the replacement for `reference()` that uses Solver-owned
+    /// `DefIds` instead of Binder-owned `SymbolRefs`.
+    ///
+    /// Use this method for all new type references
+    /// to enable O(1) type equality across Binder and Solver boundaries.
+    pub fn lazy(&self, def_id: DefId) -> TypeId {
+        self.intern(TypeData::Lazy(def_id))
+    }
+
+    /// Intern a type parameter.
+    pub fn type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.intern(TypeData::TypeParameter(info))
+    }
+
+    /// Intern a type query (`typeof value`) marker.
+    pub fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        self.intern(TypeData::TypeQuery(symbol))
+    }
+
+    /// Intern a generic type application
+    pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
+        let app_id = self.intern_application(TypeApplication { base, args });
+        self.intern(TypeData::Application(app_id))
+    }
+}
+
+impl Default for TypeInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
