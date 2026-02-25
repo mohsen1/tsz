@@ -1006,6 +1006,13 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&import_eq.modifiers, SyntaxKind::ExportKeyword);
         let is_public_exported = is_exported && !already_exported;
 
+        // Elide non-exported import equals declarations that are not used by the public API
+        if !is_exported && !already_exported {
+            if !self.should_emit_public_api_dependency(import_eq.import_clause) {
+                return;
+            }
+        }
+
         // Only write indent if not already exported (caller handles indent for exported case)
         if !already_exported {
             self.write_indent();
