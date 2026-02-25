@@ -2,6 +2,7 @@
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: ~7710/12577 (61.3%) — full suite, fingerprint level (new framework)
+> Previously ~7701/12570 (61.3%), improved by fixing wildcard reexport resolution ordering (+5 tests).
 > Previously ~6992/12565 (55.6%), score recovered after fixing .lib/ path rewriting, TS5107 suppression, strict defaults, and many other fixes.
 
 ---
@@ -586,3 +587,4 @@ All items below have been validated against the codebase (implementations + test
 | .lib/ path fix | Fix /.lib/ reference path rewriting: format string kept leading /, rewrite func skipped .lib/ paths. Regenerated tsc cache for 138 affected entries | +28 tests (JSX 30%→42%) |
 | TS5107 suppression | Suppress TS5107 deprecation diagnostics when source files have parse errors (1000-1999), matching tsc behavior | +52 tests |
 | JSX factory/fragment | TS2874 false positive fix (jsxFactory config skip + full scope chain), TS7026 Element removal, TS17016 fragment factory diagnostic | +14 tests (JSX 30.5%→31.0%) |
+| wildcard reexport ordering | Fix `resolve_cross_file_export` and `resolve_export_in_file`: check reexport chains (wildcard/named) BEFORE file_locals fallback, and collect reexported symbols for namespace imports when target has no direct exports | +5 tests |
