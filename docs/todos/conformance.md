@@ -229,6 +229,14 @@
 - **Side effect**: Extra TS2322/TS2339/TS2345 emissions increased (~138/68/87 more false positives). These are pre-existing type checker imprecisions that were previously masked by non-strict mode. Not regressions from this change — they represent type relation bugs that become visible under strict checks.
 - **Also fixed**: `conformance.sh` freshness check now includes root `src/` directory. Previously, changes to `src/config.rs` (tsz-core root crate) were not detected by the binary freshness check, causing stale binaries to be used.
 
+#### Run note (2026-02-25, session 10) — types/mapped area
+- **Area**: types/mapped (26.9%, 7/26 → still 7/26 in this specific area, but +3 net across suite)
+- **Net gain**: +3 tests across full suite (rebased on 7525 baseline, exact count TBD after rebase)
+- **Fixed**: Remove dead TS2862 diagnostic — tsc 6.0 completely removed "Type is generic and can only be indexed for reading." Removed `check_generic_indexed_write_restriction` and `index_expression_constrained_to_object_keys` from assignment_checker.rs, and `is_uninstantiated_type_parameter` from solver type_queries.
+- **Fixed**: Reverse homomorphic mapped type assignability — Added `check_homomorphic_mapped_source_to_type_param` in core.rs and `check_homomorphic_mapped_to_target` in generics.rs. Detects identity-shaped mapped types (`{ [K in keyof S]: S[K] }`) and allows them to be assigned to their source type parameter (Readonly<T> <: T, Partial<T> <: T).
+- **Fixed**: Forward homomorphic mapped type with -? modifier — Removed MappedModifier::Remove restriction from both unions.rs (`is_assignable_to_homomorphic_mapped`) and generics.rs (`check_source_to_homomorphic_mapped`). T <: Required<T> now works at generic level.
+- **Remaining types/mapped failures**: 19/26 still fail. Dominant causes: TS2322 false positives from missing generic mapped type instantiation/evaluation (mappedTypes5/6, mappedTypeRelationships), TS7053 noImplicitAny gaps (isomorphicMappedTypeInference), TS2403/TS2536 property modifier enforcement gaps (mappedTypeModifiers, mappedTypeErrors2), parser issues in mappedTypeProperties (TS1005/TS1128).
+
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
 - Also missing unary (+, -, ~) and compound (+=) symbol checks entirely
@@ -500,3 +508,5 @@ All items below have been validated against the codebase (implementations + test
 | mapped types | Homomorphic mapped type assignability (T <: Partial<T>, flatten_mapped_chain eval, transitive deferral) | +1 test |
 | TS18050 | Remove incorrect strictNullChecks gate on TS18050 emission for null/undefined binary operands (3 locations) | +20 tests |
 | strict defaults | Match tsc 6.0 strict-family defaults (all true when `strict` not set in tsconfig) | +613 tests |
+| TS2862 | Remove dead TS2862 diagnostic (tsc 6.0 never emits "generic indexed write restriction") | +1 test |
+| mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Partial<T> <: T, T <: Required<T>) | +1 test |
