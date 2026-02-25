@@ -18,7 +18,7 @@
 //! - `declarations/` - Declaration emission (classes, class members, namespaces)
 //! - `functions.rs` - Function emission helpers
 //! - `literals/` - Literal emission (identifiers, strings, numbers, regex, templates)
-//! - `types.rs` - Type emission helpers
+//! - `types/` - Type emission (AST type nodes, TypeId printer for .d.ts)
 //! - `jsx.rs` - JSX emission helpers
 //! - `comments/` - Comment data types, parsing, and emission helpers
 //! - `module_emission/` - Module emission (imports, exports, CommonJS/ES6)
@@ -43,8 +43,8 @@ mod source_file;
 mod special_expressions;
 mod statements;
 mod transform_dispatch;
-pub mod type_printer;
 mod types;
+pub use types::printer as type_printer;
 
 pub(crate) use self::core::get_operator_text;
 pub(crate) use self::core::is_valid_identifier_name;
