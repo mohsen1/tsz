@@ -2990,9 +2990,9 @@ mod tests {
 
     #[test]
     fn test_ts5102_fires_with_ignore_deprecations_6_0() {
-        // In tsc 6.0, ignoreDeprecations: "6.0" is valid but cannot suppress TS5102
-        // because these options are past their removal version (deprecated 5.0, removed 5.5).
-        // mustBeRemoved = !(5.5 > 6.0) = true → TS5102 fires unconditionally.
+        // "6.0" is NOT a valid ignoreDeprecations value in tsc 6.0 — tsc's conservative
+        // deprecation strategy means "N.0" only becomes valid in tsc (N+1).0.
+        // So both TS5102 (removed option) and TS5103 (invalid ignoreDeprecations) fire.
         let source =
             r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();

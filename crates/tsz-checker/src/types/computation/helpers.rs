@@ -432,8 +432,9 @@ impl<'a> CheckerState<'a> {
                 TypeId::STRING
             }
             // Unary + and - return number unless contextual typing expects a numeric literal.
-            // Note: tsc does NOT validate operand types for unary +/-. Unary + is a
-            // common idiom for number conversion (+someString), and tsc allows it freely.
+            // Note: tsc does NOT validate operand types for unary +/- in general.
+            // Unary + is a common idiom for number conversion (+someString).
+            // However, tsc DOES emit TS2469 when the operand is a symbol type.
             k if k == SyntaxKind::PlusToken as u16 || k == SyntaxKind::MinusToken as u16 => {
                 // Evaluate operand for side effects / flow analysis
                 let operand_type = self.get_type_of_node(unary.operand);
@@ -442,6 +443,31 @@ impl<'a> CheckerState<'a> {
                 if operand_type == TypeId::UNKNOWN {
                     self.error_is_of_type_unknown(unary.operand);
                     return TypeId::ERROR;
+                }
+
+                // TS2469: unary +/- on symbol types
+                {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    if evaluator.is_symbol_like(operand_type) {
+                        let op_str = if k == SyntaxKind::PlusToken as u16 {
+                            "+"
+                        } else {
+                            "-"
+                        };
+                        if let Some(operand_node) = self.ctx.arena.get(unary.operand) {
+                            let message = format_message(
+                                diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                                &[op_str],
+                            );
+                            self.ctx.error(
+                                operand_node.pos,
+                                operand_node.end.saturating_sub(operand_node.pos),
+                                message,
+                                diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            );
+                        }
+                        return TypeId::NUMBER;
+                    }
                 }
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
@@ -478,10 +504,31 @@ impl<'a> CheckerState<'a> {
                 TypeId::NUMBER
             }
             // ~ (bitwise NOT) returns number
-            // Note: tsc does NOT validate operand types for ~, same as unary +/-
+            // Note: tsc does NOT validate operand types for ~ in general,
+            // but DOES emit TS2469 when the operand is a symbol type.
             k if k == SyntaxKind::TildeToken as u16 => {
-                // Evaluate operand for side effects / flow analysis but don't type-check it
-                self.get_type_of_node(unary.operand);
+                // Evaluate operand for side effects / flow analysis
+                let operand_type = self.get_type_of_node(unary.operand);
+
+                // TS2469: unary ~ on symbol types
+                {
+                    let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                    if evaluator.is_symbol_like(operand_type)
+                        && let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                    {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &["~"],
+                        );
+                        self.ctx.error(
+                            operand_node.pos,
+                            operand_node.end.saturating_sub(operand_node.pos),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        );
+                    }
+                }
+
                 TypeId::NUMBER
             }
             // ++ and -- require numeric operand and valid l-value

@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8068/12574 (64.2%) — full suite, fingerprint level
+**Current score**: ~14769/19201 (76.9%) — full suite, error-code level
 
 ---
 
@@ -179,6 +179,16 @@
 - **Investigated but deferred**: TS2323 — "Cannot redeclare exported variable." Missing for exported default function redeclarations. The `has_variable_conflict` check only covers `VARIABLE` flag, not `FUNCTION`. Attempted fix (expanding to include FUNCTION) caused -3 regression because it changed TS2300→TS2323 for cases that should remain TS2300. Needs more careful condition logic.
 - **Investigated but deferred**: TS2439 — "Import or export declaration in an ambient module declaration cannot reference module through relative module name." Already implemented in `import_equals_checker.rs` but 4 tests still fail. Likely test runner or multi-file resolution issue, not a checker gap.
 - **Investigated but deferred**: TS2451 — multi-file block-scoped variable redeclaration. Cross-file symbol resolution only adds local declarations to conflict set. Fixing requires project-level aggregation of conflicts.
+
+#### Run note (2026-02-25, session 3)
+- **Fixed**: TS2469 — "The '{0}' operator cannot be applied to type 'symbol'." Was using wrong diagnostic constant (TS2736 generic operator error instead of TS2469 symbol-specific). Also added missing unary +/-/~ and compound += symbol checks. Fixed solver `evaluate_plus_chain` fast-path bypassing symbol errors, and added relational operator pre-check in binary.rs. Net improvement: +5 tests (4432 failing, down from 4437).
+- **Investigated but deferred**: TS1389 — "'{0}' is not allowed as a variable declaration name." Partially implemented for strict mode. Needs expanded reserved keyword list. LOW-MEDIUM effort.
+- **Investigated but deferred**: TS1181 — "Array element destructuring pattern expected." Parser-level issue. MEDIUM effort.
+
+### ~~TS2469 — Symbol operator errors~~ RESOLVED
+- Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
+- Also missing unary (+, -, ~) and compound (+=) symbol checks entirely
+- See "Completed Work" table below
 
 ### TS2451 — False positives (7 tests)
 - Two patterns:
@@ -431,3 +441,4 @@ All items below have been validated against the codebase (implementations + test
 | TS1131 | Emit "Property or signature expected" in parser for invalid interface/type literal members | +tests |
 | TS5071 | Bundler-implied resolveJsonModule with none/system/umd module | +1 test |
 | TS5102 | Remove incorrect ignoreDeprecations suppression of TS5102 for removed options | +1 test |
+| TS2469 | Symbol operator errors: wrong constant (TS2736→TS2469), unary +/-/~, compound +=, solver fast-path fix | +5 tests |
