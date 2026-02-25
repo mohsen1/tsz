@@ -9,6 +9,32 @@ use tsz_solver::visitor::{
     lazy_def_id,
 };
 
+// Thread-local depth counter for `ensure_application_symbols_resolved` nesting.
+//
+// This must be thread-local rather than per-context because cross-arena symbol
+// delegation (`delegate_cross_arena_symbol_resolution`) creates child CheckerContexts.
+// A per-context counter would reset to 0 in the child, defeating the depth guard.
+thread_local! {
+    static APP_SYMBOL_RESOLUTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    // Global fuel counter for total DefId resolutions within `ensure_application_symbols_resolved`.
+    // Limits total work across all nesting levels and context boundaries. Resets when
+    // the outermost `ensure_application_symbols_resolved` call completes.
+    static APP_SYMBOL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// Maximum depth for nested `ensure_application_symbols_resolved` calls.
+// Prevents explosive recursion when resolving lazy DefIds triggers type evaluation
+// (compute_type_of_symbol → evaluate_application_type → evaluate_type_with_env)
+// that calls back into ensure_application_symbols_resolved with new types.
+const MAX_APP_SYMBOL_RESOLUTION_DEPTH: u32 = 1;
+
+// Maximum total DefId resolutions across all nesting levels of
+// `ensure_application_symbols_resolved`. This acts as a global work budget:
+// once exhausted, all nested `ensure_application_symbols_resolved` calls bail out.
+// Prevents exponential work on deeply-nested generic type graphs (e.g., react16.d.ts
+// with InferProps<V>, RequiredKeys<V>, Validator<T> chains).
+const MAX_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
+
 impl<'a> CheckerState<'a> {
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
@@ -392,9 +418,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check global fuel first - if exhausted from a previous call, bail immediately.
+        let fuel = APP_SYMBOL_RESOLUTION_FUEL.get();
+        if fuel >= MAX_APP_SYMBOL_RESOLUTION_FUEL {
+            self.ctx.application_symbols_resolution_set.remove(&type_id);
+            return;
+        }
+
+        // Bail out when nested too deeply. Uses thread-local counter because
+        // cross-arena delegation creates child CheckerContexts that would reset
+        // a per-context counter to 0.
+        let depth = APP_SYMBOL_RESOLUTION_DEPTH.get();
+        if depth >= MAX_APP_SYMBOL_RESOLUTION_DEPTH {
+            self.ctx.application_symbols_resolution_set.remove(&type_id);
+            return;
+        }
+
+        let is_outermost = depth == 0;
+        if is_outermost {
+            // Reset fuel for each top-level resolution
+            APP_SYMBOL_RESOLUTION_FUEL.set(0);
+        }
+        APP_SYMBOL_RESOLUTION_DEPTH.set(depth + 1);
+
         let mut visited: FxHashSet<TypeId> = FxHashSet::default();
         let fully_resolved = self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
         self.ctx.application_symbols_resolution_set.remove(&type_id);
+        APP_SYMBOL_RESOLUTION_DEPTH.set(depth);
         if fully_resolved {
             self.ctx.application_symbols_resolved.extend(visited);
         }
@@ -538,6 +588,13 @@ impl<'a> CheckerState<'a> {
         let mut resolved_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
 
         while let Some(current) = worklist.pop() {
+            // Check global fuel - bail if exhausted (prevents unbounded work
+            // on deeply-nested generic type graphs like react16.d.ts).
+            if APP_SYMBOL_RESOLUTION_FUEL.get() >= MAX_APP_SYMBOL_RESOLUTION_FUEL {
+                fully_resolved = false;
+                break;
+            }
+
             if !seen_types.insert(current) {
                 continue;
             }
@@ -552,6 +609,9 @@ impl<'a> CheckerState<'a> {
                 if !seen_def_ids.insert(def_id) {
                     continue;
                 }
+
+                // Consume fuel for each DefId resolution (the expensive part)
+                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
 
                 match self.resolve_lazy_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
@@ -571,6 +631,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Consume fuel for enum resolution too
+                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
+
                 match self.resolve_enum_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
                         fully_resolved &= inserted;
@@ -589,6 +652,10 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.binder.get_symbol(sym_id).is_none() {
                     continue;
                 }
+
+                // Consume fuel for type query resolution
+                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
+
                 let resolved = self.type_reference_symbol_type(sym_id);
                 let inserted = self.insert_type_env_symbol(sym_id, resolved);
                 fully_resolved &= inserted;

@@ -13,6 +13,33 @@ use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 
+// Thread-local counters for `evaluate_application_type` that survive cross-arena
+// delegation. Per-context counters (`instantiation_depth`, `application_eval_set`)
+// reset to 0 when `with_parent_cache` creates child contexts, allowing cascading
+// recursion across context boundaries (e.g., react16.d.ts with deeply-nested
+// generics like InferProps<V>, RequiredKeys<V>, Validator<T>).
+//
+// Two thread-local counters work together:
+// - **Depth**: tracks nesting of `evaluate_application_type` calls (like the
+//   per-context `instantiation_depth` but global). Catches individual deep chains.
+// - **Fuel**: limits the TOTAL number of non-cached `evaluate_application_type`
+//   calls across ALL contexts. Catches wide, shallow cascades where thousands of
+//   unique Application types each trigger moderate-depth evaluation.
+//
+// Fuel resets at the start of `build_type_environment` so each file gets a fresh budget.
+thread_local! {
+    static GLOBAL_INSTANTIATION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static GLOBAL_INSTANTIATION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// Global instantiation depth limit — tighter than the per-context MAX_INSTANTIATION_DEPTH (50).
+const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = 10;
+
+// Global instantiation fuel limit — maximum non-cached `evaluate_application_type`
+// invocations per file. react16.d.ts can trigger thousands of unique Application
+// evaluations via `build_type_environment`; this caps the total work.
+const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = 2000;
+
 impl<'a> CheckerState<'a> {
     // Get type of object literal.
     // =========================================================================
@@ -213,16 +240,27 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH {
+        // Check BOTH per-context and thread-local instantiation depth/fuel.
+        // Per-context counters reset to 0 on cross-arena delegation (with_parent_cache),
+        // so thread-local counters provide global bounds that survive delegation.
+        let global_depth = GLOBAL_INSTANTIATION_DEPTH.get();
+        let global_fuel = GLOBAL_INSTANTIATION_FUEL.get();
+        if *self.ctx.instantiation_depth.borrow() >= MAX_INSTANTIATION_DEPTH
+            || global_depth >= MAX_GLOBAL_INSTANTIATION_DEPTH
+            || global_fuel >= MAX_GLOBAL_INSTANTIATION_FUEL
+        {
             *self.ctx.depth_exceeded.borrow_mut() = true;
             self.ctx.application_eval_set.remove(&type_id);
             return type_id;
         }
         *self.ctx.instantiation_depth.borrow_mut() += 1;
+        GLOBAL_INSTANTIATION_DEPTH.set(global_depth + 1);
+        GLOBAL_INSTANTIATION_FUEL.set(global_fuel + 1);
 
         let result = self.evaluate_application_type_inner(type_id);
 
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
+        GLOBAL_INSTANTIATION_DEPTH.set(GLOBAL_INSTANTIATION_DEPTH.get().saturating_sub(1));
         self.ctx.application_eval_set.remove(&type_id);
         if can_cache {
             let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
@@ -486,6 +524,11 @@ impl<'a> CheckerState<'a> {
     /// that needs to resolve type references.
     pub fn build_type_environment(&mut self) -> tsz_solver::TypeEnvironment {
         use tsz_binder::symbol_flags;
+
+        // Reset the global instantiation fuel for this file. Each file gets a
+        // fresh budget for Application type evaluations. Without this, a complex
+        // file (react16.d.ts) would exhaust the fuel and starve subsequent files.
+        GLOBAL_INSTANTIATION_FUEL.set(0);
 
         // Collect unique symbols from user code only (node_symbols).
         // Lib symbols from file_locals are NOT included here — they are resolved
