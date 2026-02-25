@@ -312,11 +312,21 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    // Check for `export type { ... }` or `export type * from ...`
-                    if let Some(export) = self.arena.get_export_decl(stmt_node)
-                        && export.is_type_only
-                    {
-                        return true;
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        // `export type { ... }` or `export type * from ...`
+                        if export.is_type_only {
+                            return true;
+                        }
+                        // `export interface ...` / `export type X = ...` wrapped in EXPORT_DECLARATION
+                        if export.export_clause.is_some() {
+                            if let Some(clause_node) = self.arena.get(export.export_clause) {
+                                if clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                    || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}
