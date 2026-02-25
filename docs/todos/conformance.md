@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~6590/12574 (52.4%) — full suite, fingerprint level (new framework)
+**Current score**: ~6911/12565 (55.0%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -491,3 +491,4 @@ All items below have been validated against the codebase (implementations + test
 | TS2496/TS2522 | Remove dead arrow/async function arguments diagnostics | included above |
 | arguments | Fix arguments resolution in arrow functions (transparent scope capture) | included above |
 | mapped types | Homomorphic mapped type assignability (T <: Partial<T>, flatten_mapped_chain eval, transitive deferral) | +1 test |
+| TS18050 | Remove incorrect strictNullChecks gate on TS18050 emission for null/undefined binary operands (3 locations) | +20 tests |
