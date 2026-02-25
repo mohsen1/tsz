@@ -130,3 +130,34 @@ class Foo {}
     assert_eq!(amd_modules.len(), 1);
     assert_eq!(amd_modules[0].0, "ModuleName");
 }
+
+#[test]
+fn test_triple_slash_in_block_comment_ignored() {
+    // Triple-slash references inside block comments should NOT be parsed.
+    let source = r#"/*
+/// <reference path="non-existing-file.d.ts" />
+*/
+void 0;"#;
+    let refs = extract_reference_paths(source);
+    assert_eq!(
+        refs.len(),
+        0,
+        "references inside block comments should be ignored"
+    );
+
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 0);
+
+    let amd = extract_amd_module_names(source);
+    assert_eq!(amd.len(), 0);
+}
+
+#[test]
+fn test_triple_slash_after_block_comment_still_works() {
+    let source = r#"/* comment */
+/// <reference path="real-file.d.ts" />
+void 0;"#;
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].0, "real-file.d.ts");
+}
