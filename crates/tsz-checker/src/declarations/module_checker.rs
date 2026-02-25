@@ -86,8 +86,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
     ) {
-        use crate::diagnostics::diagnostic_codes;
-
         if !self.ctx.report_unresolved_imports {
             return;
         }
@@ -174,16 +172,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Fallback: Module not found - emit TS2307
-        // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+        // Fallback: Module not found - emit TS2307 or TS2792 (Classic resolution)
+        // Check if we've already emitted for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             self.ctx.modules_with_ts2307_emitted.insert(module_key);
-            self.error_at_node_msg(
-                arg_idx,
-                diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-                &[module_name],
-            );
+            let (message, code) = self.module_not_found_diagnostic(module_name);
+            self.error_at_node(arg_idx, &message, code);
         }
     }
 
@@ -328,11 +323,8 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.modules_with_ts2307_emitted.insert(module_key);
-        self.error_at_node_msg(
-            export_decl.module_specifier,
-            diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-            &[module_name],
-        );
+        let (message, code) = self.module_not_found_diagnostic(module_name);
+        self.error_at_node(export_decl.module_specifier, &message, code);
 
         self.ctx.import_resolution_stack.pop();
     }

@@ -279,10 +279,9 @@ pub(super) fn collect_diagnostics(
                         // TypeScript emits TS2792 (instead of TS2307) when module resolution
                         // is Classic. The `implied_classic_resolution` flag is computed from
                         // `effective_module_resolution()` at config resolution time.
-                        let has_explicit_extension =
-                            std::path::Path::new(specifier).extension().is_some();
+                        // tsc emits TS2792 regardless of whether the specifier has a file
+                        // extension — the decision is purely based on the resolution mode.
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
-                            && !has_explicit_extension
                             && options.checker.implied_classic_resolution
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
