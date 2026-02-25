@@ -63,6 +63,8 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: The 7 `flow/control_flow_*.rs` files were reorganized into `flow/control_flow/` subdirectory (a1b53e74f), mirroring the binder `state_*.rs` → `state/` pattern. The 3 `flow_analysis_*.rs` files were similarly reorganized into `flow/flow_analysis/` subdirectory. The 2 `flow_graph_builder*.rs` files were similarly reorganized into `flow/flow_graph_builder/` subdirectory. All flow-domain file groups now use the subdirectory pattern.
 
+**Note**: The 6 `state/state_*_checking.rs` files were reorganized into `state/state_checking/` subdirectory (36bdf4523), following the same subdirectory pattern. Renames: `state_checking.rs` → `mod.rs`, `state_class_checking.rs` → `class.rs`, `state_directive_checking.rs` → `directive.rs`, `state_heritage_checking.rs` → `heritage.rs`, `state_property_checking.rs` → `property.rs`, `state_readonly_checking.rs` → `readonly.rs`.
+
 ### 4. Cross-Layer Imports — CLEAN
 
 - **Emitter -> Checker**: No `tsz_checker` imports in emitter. Emitter depends on parser, binder, solver only.

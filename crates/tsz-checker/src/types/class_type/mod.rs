@@ -1,5 +1,7 @@
 //! Class instance type resolution (instance members, inheritance, interface merging).
 
+pub mod constructor;
+
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
