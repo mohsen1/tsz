@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7536/12565 (60.0%) — full suite, fingerprint level (new framework)
+**Current score**: ~7529/12565 (59.9%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -524,7 +524,8 @@ All items below have been validated against the codebase (implementations + test
 | TS2496/TS2522 | Remove dead arrow/async function arguments diagnostics | included above |
 | arguments | Fix arguments resolution in arrow functions (transparent scope capture) | included above |
 | mapped types | Homomorphic mapped type assignability (T <: Partial<T>, flatten_mapped_chain eval, transitive deferral) | +1 test |
-| TS18050 | Remove incorrect strictNullChecks gate on TS18050 emission for null/undefined binary operands (3 locations) | +20 tests |
+| TS18050 | ~~Remove incorrect strictNullChecks gate on TS18050 emission~~ REVERSED: gate TS18050 binary ops on strictNullChecks (tsc DOES gate) | net +20 tests (prior), corrected |
 | strict defaults | Match tsc 6.0 strict-family defaults (all true when `strict` not set in tsconfig) | +613 tests |
 | TS2862 | Remove dead TS2862 diagnostic (tsc 6.0 never emits "generic indexed write restriction") | +1 test |
 | mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Partial<T> <: T, T <: Required<T>) | +1 test |
+| TS18050/TS2365 snc gate | Gate TS18050 binary op errors on strictNullChecks; suppress TS2365 for nullish+nullish when snc off | +1 test (bitwiseNotOperatorWithAnyOtherType) |
