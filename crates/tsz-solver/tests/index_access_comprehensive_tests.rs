@@ -400,8 +400,8 @@ fn test_multiple_index_access() {
 #[test]
 fn test_cyclic_lazy_index_access_does_not_stack_overflow() {
     use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
     use crate::evaluation::evaluate::TypeEvaluator;
-    use crate::type_resolver::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -438,8 +438,8 @@ fn test_cyclic_lazy_index_access_does_not_stack_overflow() {
 #[test]
 fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
     use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
     use crate::evaluation::evaluate::TypeEvaluator;
-    use crate::type_resolver::TypeEnvironment;
 
     let interner = TypeInterner::new();
 

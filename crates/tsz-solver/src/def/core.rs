@@ -577,5 +577,5 @@ impl ContentAddressedDefIds {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "../tests/def_tests.rs"]
+#[path = "../../tests/def_tests.rs"]
 mod tests;

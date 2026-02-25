@@ -35,7 +35,7 @@ pub mod relations;
 #[cfg(test)]
 mod sound;
 pub mod type_queries;
-pub mod type_resolver;
+// type_resolver moved into def/resolver.rs
 pub mod types;
 pub mod unsoundness_audit;
 pub mod utils;
