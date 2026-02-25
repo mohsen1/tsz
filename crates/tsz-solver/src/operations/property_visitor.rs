@@ -20,18 +20,10 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
 
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
         match kind {
-            IntrinsicKind::Any => Some(PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                write_type: None,
-                from_index_signature: false,
-            }),
+            IntrinsicKind::Any => Some(PropertyAccessResult::simple(TypeId::ANY)),
             IntrinsicKind::Never => {
                 // Property access on never returns never (code is unreachable)
-                Some(PropertyAccessResult::Success {
-                    type_id: TypeId::NEVER,
-                    write_type: None,
-                    from_index_signature: false,
-                })
+                Some(PropertyAccessResult::simple(TypeId::NEVER))
             }
             IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
             IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
@@ -164,22 +156,18 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(value_type),
+            ));
         }
 
         // Try numeric index signature if property name looks numeric
         if resolver.is_numeric_index_name(prop_name)
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(value_type),
+            ));
         }
 
         Some(PropertyAccessResult::PropertyNotFound {
@@ -221,11 +209,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
 
         // Check string index signature
         if let Some(ref idx) = shape.string_index {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(idx.value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(idx.value_type),
+            ));
         }
 
         // Check numeric index signature if property name looks numeric
@@ -233,11 +219,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if resolver.is_numeric_index_name(prop_name)
             && let Some(ref idx) = shape.number_index
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(idx.value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(idx.value_type),
+            ));
         }
 
         // Reconstruct obj_type for PropertyNotFound result
@@ -387,22 +371,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if resolver.has_index_signature(obj_type, IndexKind::String)
             && let Some(value_type) = resolver.resolve_string_index(obj_type)
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(value_type),
+            ));
         }
 
         // Try numeric index signature if property name looks numeric
         if resolver.is_numeric_index_name(prop_name)
             && let Some(value_type) = resolver.resolve_number_index(obj_type)
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(value_type),
+            ));
         }
 
         Some(PropertyAccessResult::PropertyNotFound {
@@ -445,11 +425,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Check string index signature
         if let Some(ref idx) = shape.string_index {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(idx.value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(idx.value_type),
+            ));
         }
 
         // Check numeric index signature if property name looks numeric
@@ -457,11 +435,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if resolver.is_numeric_index_name(prop_name)
             && let Some(ref idx) = shape.number_index
         {
-            return Some(PropertyAccessResult::Success {
-                type_id: self.add_undefined_if_unchecked(idx.value_type),
-                write_type: None,
-                from_index_signature: true,
-            });
+            return Some(PropertyAccessResult::from_index(
+                self.add_undefined_if_unchecked(idx.value_type),
+            ));
         }
 
         // Reconstruct obj_type for PropertyNotFound result
@@ -498,20 +474,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Fast-path: if ANY member is any, result is any
         if members.contains(&TypeId::ANY) {
-            return Some(PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                write_type: None,
-                from_index_signature: false,
-            });
+            return Some(PropertyAccessResult::simple(TypeId::ANY));
         }
 
         // Fast-path: if ANY member is error, result is error
         if members.contains(&TypeId::ERROR) {
-            return Some(PropertyAccessResult::Success {
-                type_id: TypeId::ERROR,
-                write_type: None,
-                from_index_signature: false,
-            });
+            return Some(PropertyAccessResult::simple(TypeId::ERROR));
         }
 
         // Filter out UNKNOWN members - they shouldn't cause the entire union to be unknown
@@ -611,21 +579,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if resolver.has_index_signature(obj_type, IndexKind::String)
                 && let Some(value_type) = resolver.resolve_string_index(obj_type)
             {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
+                return Some(PropertyAccessResult::from_index(
+                    self.add_undefined_if_unchecked(value_type),
+                ));
             }
 
             if resolver.is_numeric_index_name(prop_name)
                 && let Some(value_type) = resolver.resolve_number_index(obj_type)
             {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
+                return Some(PropertyAccessResult::from_index(
+                    self.add_undefined_if_unchecked(value_type),
+                ));
             }
 
             return Some(PropertyAccessResult::PropertyNotFound {

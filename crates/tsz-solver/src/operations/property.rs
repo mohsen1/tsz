@@ -55,6 +55,39 @@ pub enum PropertyAccessResult {
 }
 
 impl PropertyAccessResult {
+    /// Convenience constructor: successful access returning the given type.
+    /// Shorthand for `Success { type_id, write_type: None, from_index_signature: false }`.
+    #[inline]
+    pub const fn simple(type_id: TypeId) -> Self {
+        Self::Success {
+            type_id,
+            write_type: None,
+            from_index_signature: false,
+        }
+    }
+
+    /// Convenience constructor: successful access resolved via an index signature.
+    /// Shorthand for `Success { type_id, write_type: None, from_index_signature: true }`.
+    #[inline]
+    pub const fn from_index(type_id: TypeId) -> Self {
+        Self::Success {
+            type_id,
+            write_type: None,
+            from_index_signature: true,
+        }
+    }
+
+    /// Convenience constructor: successful access with divergent read/write types.
+    /// Shorthand for `Success { type_id, write_type: Some(write), from_index_signature: false }`.
+    #[inline]
+    pub const fn with_write_type(type_id: TypeId, write_type: TypeId) -> Self {
+        Self::Success {
+            type_id,
+            write_type: Some(write_type),
+            from_index_signature: false,
+        }
+    }
+
     /// Returns true if this is a successful property access.
     #[inline]
     pub const fn is_success(&self) -> bool {
@@ -236,11 +269,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 TypeData::Intrinsic(kind) => {
                     // Inline visitor logic for intrinsics
                     match kind {
-                        IntrinsicKind::Any => Some(PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }),
+                        IntrinsicKind::Any => Some(PropertyAccessResult::simple(TypeId::ANY)),
                         IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
                         IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined => {
                             let cause = if kind == IntrinsicKind::Void
@@ -322,11 +351,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
-                    return PropertyAccessResult::Success {
-                        type_id: self.optional_property_type(prop),
-                        write_type: None,
-                        from_index_signature: false,
-                    };
+                    return PropertyAccessResult::simple(self.optional_property_type(prop));
                 }
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
@@ -341,22 +366,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if resolver.has_index_signature(obj_type, IndexKind::String)
                     && let Some(value_type) = resolver.resolve_string_index(obj_type)
                 {
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(value_type),
+                    );
                 }
 
                 // Try numeric index signature if property name looks numeric
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(value_type) = resolver.resolve_number_index(obj_type)
                 {
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(value_type),
+                    );
                 }
 
                 PropertyAccessResult::PropertyNotFound {
@@ -372,11 +393,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
-                    return PropertyAccessResult::Success {
-                        type_id: self.optional_property_type(prop),
-                        write_type: None,
-                        from_index_signature: false,
-                    };
+                    return PropertyAccessResult::simple(self.optional_property_type(prop));
                 }
 
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
@@ -385,11 +402,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Check string index signature
                 if let Some(ref idx) = shape.string_index {
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(idx.value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(idx.value_type),
+                    );
                 }
 
                 // Check numeric index signature if property name looks numeric
@@ -398,11 +413,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(ref idx) = shape.number_index
                 {
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(idx.value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(idx.value_type),
+                    );
                 }
 
                 PropertyAccessResult::PropertyNotFound {
@@ -423,20 +436,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 for prop in &shape.properties {
                     if prop.name == prop_atom {
-                        return PropertyAccessResult::Success {
-                            type_id: self.optional_property_type(prop),
-                            write_type: None,
-                            from_index_signature: false,
-                        };
+                        return PropertyAccessResult::simple(self.optional_property_type(prop));
                     }
                 }
                 // Check string index signature (for static index signatures on class constructors)
                 if let Some(ref idx) = shape.string_index {
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(idx.value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(idx.value_type),
+                    );
                 }
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
@@ -506,11 +513,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         if resolver.has_index_signature(member, IndexKind::String)
                             && let Some(value_type) = resolver.resolve_string_index(member)
                         {
-                            return PropertyAccessResult::Success {
-                                type_id: self.add_undefined_if_unchecked(value_type),
-                                write_type: None,
-                                from_index_signature: true,
-                            };
+                            return PropertyAccessResult::from_index(
+                                self.add_undefined_if_unchecked(value_type),
+                            );
                         }
                     }
 
@@ -518,11 +523,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if resolver.is_numeric_index_name(prop_name) {
                         for &member in members.iter() {
                             if let Some(value_type) = resolver.resolve_number_index(member) {
-                                return PropertyAccessResult::Success {
-                                    type_id: self.add_undefined_if_unchecked(value_type),
-                                    write_type: None,
-                                    from_index_signature: true,
-                                };
+                                return PropertyAccessResult::from_index(
+                                    self.add_undefined_if_unchecked(value_type),
+                                );
                             }
                         }
                     }
@@ -679,11 +682,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Can't determine the actual type - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -704,11 +703,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Can't resolve type query - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -740,11 +735,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -774,11 +765,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -808,11 +795,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
                 // 'this' type not resolved - return ANY to avoid false positives
                 // (checker should resolve 'this' before reaching solver)
-                PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    write_type: None,
-                    from_index_signature: false,
-                }
+                PropertyAccessResult::simple(TypeId::ANY)
             }
 
             // Lazy types (interfaces, classes, type aliases) need resolution
@@ -841,11 +824,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Can't evaluate - return ANY to avoid false positives
-                        PropertyAccessResult::Success {
-                            type_id: TypeId::ANY,
-                            write_type: None,
-                            from_index_signature: false,
-                        }
+                        PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }
             }
@@ -871,11 +850,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     return result;
                 }
                 // For truly unknown types, return ANY to avoid false positives
-                PropertyAccessResult::Success {
-                    type_id: TypeId::ANY,
-                    write_type: None,
-                    from_index_signature: false,
-                }
+                PropertyAccessResult::simple(TypeId::ANY)
             }
         }
     }

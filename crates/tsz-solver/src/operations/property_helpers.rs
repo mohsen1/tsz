@@ -92,11 +92,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             Some(MappedModifier::Remove) | None => property_type,
         };
 
-        Some(PropertyAccessResult::Success {
-            type_id: final_type,
-            write_type: None,
-            from_index_signature: false,
-        })
+        Some(PropertyAccessResult::simple(final_type))
     }
 
     /// Handle array method access on mapped types applied to array-like sources.
@@ -320,11 +316,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     fn method_result(&self, return_type: TypeId) -> PropertyAccessResult {
-        PropertyAccessResult::Success {
-            type_id: self.any_args_function(return_type),
-            write_type: None,
-            from_index_signature: false,
-        }
+        PropertyAccessResult::simple(self.any_args_function(return_type))
     }
 
     /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
@@ -371,11 +363,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 if type_params.is_empty() {
                     // No type params available, return the property type as-is
-                    return PropertyAccessResult::Success {
-                        type_id: prop.type_id,
-                        write_type: None,
-                        from_index_signature: false,
-                    };
+                    return PropertyAccessResult::simple(prop.type_id);
                 }
 
                 // Create substitution: map type params to application args
@@ -393,11 +381,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
-                return PropertyAccessResult::Success {
-                    type_id: final_type,
-                    write_type: None,
-                    from_index_signature: false,
-                };
+                return PropertyAccessResult::simple(final_type);
             }
 
             return PropertyAccessResult::PropertyNotFound {
@@ -416,11 +400,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let type_params = self.db.get_array_base_type_params();
 
                 if type_params.is_empty() {
-                    return PropertyAccessResult::Success {
-                        type_id: prop.type_id,
-                        write_type: None,
-                        from_index_signature: false,
-                    };
+                    return PropertyAccessResult::simple(prop.type_id);
                 }
 
                 let substitution =
@@ -435,20 +415,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
-                return PropertyAccessResult::Success {
-                    type_id: final_type,
-                    write_type: None,
-                    from_index_signature: false,
-                };
+                return PropertyAccessResult::simple(final_type);
             }
 
             // Check index signatures if property not found
             if let Some(ref idx) = shape.string_index {
-                return PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(idx.value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                };
+                return PropertyAccessResult::from_index(
+                    self.add_undefined_if_unchecked(idx.value_type),
+                );
             }
 
             return PropertyAccessResult::PropertyNotFound {
@@ -473,11 +447,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 if type_params.is_empty() {
                     // No type params available, return the property type as-is
-                    return PropertyAccessResult::Success {
-                        type_id: prop.type_id,
-                        write_type: None,
-                        from_index_signature: false,
-                    };
+                    return PropertyAccessResult::simple(prop.type_id);
                 }
 
                 // Task 2.2: Lazy Member Instantiation
@@ -500,11 +470,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
-                return PropertyAccessResult::Success {
-                    type_id: final_type,
-                    write_type: None,
-                    from_index_signature: false,
-                };
+                return PropertyAccessResult::simple(final_type);
             }
 
             return PropertyAccessResult::PropertyNotFound {
@@ -627,11 +593,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let instantiated_value =
                         instantiate_type(self.interner(), idx.value_type, &substitution);
 
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(instantiated_value),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(instantiated_value),
+                    );
                 }
 
                 // Check numeric index signature for numeric property names
@@ -645,11 +609,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let instantiated_value =
                         instantiate_type(self.interner(), idx.value_type, &substitution);
 
-                    return PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(instantiated_value),
-                        write_type: None,
-                        from_index_signature: true,
-                    };
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(instantiated_value),
+                    );
                 }
 
                 // Property not found
@@ -688,11 +650,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         match apparent_primitive_member_kind(self.interner(), kind, prop_name) {
-            Some(ApparentMemberKind::Value(type_id)) => PropertyAccessResult::Success {
-                type_id,
-                write_type: None,
-                from_index_signature: false,
-            },
+            Some(ApparentMemberKind::Value(type_id)) => PropertyAccessResult::simple(type_id),
             Some(ApparentMemberKind::Method(return_type)) => self.method_result(return_type),
             None => PropertyAccessResult::PropertyNotFound {
                 type_id: owner_type,
@@ -707,11 +665,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         _prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
         match apparent_object_member_kind(prop_name) {
-            Some(ApparentMemberKind::Value(type_id)) => Some(PropertyAccessResult::Success {
-                type_id,
-                write_type: None,
-                from_index_signature: false,
-            }),
+            Some(ApparentMemberKind::Value(type_id)) => Some(PropertyAccessResult::simple(type_id)),
             Some(ApparentMemberKind::Method(return_type)) => Some(self.method_result(return_type)),
             None => None,
         }
@@ -795,11 +749,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Atom,
     ) -> PropertyAccessResult {
         if prop_name == "toString" || prop_name == "valueOf" {
-            return PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                write_type: None,
-                from_index_signature: false,
-            };
+            return PropertyAccessResult::simple(TypeId::ANY);
         }
 
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
@@ -839,11 +789,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let resolver = IndexSignatureResolver::new(self.interner());
         if resolver.is_numeric_index_name(prop_name) {
             let element_or_undefined = self.element_type_with_undefined(element_type);
-            return PropertyAccessResult::Success {
-                type_id: element_or_undefined,
-                write_type: None,
-                from_index_signature: true,
-            };
+            return PropertyAccessResult::from_index(element_or_undefined);
         }
 
         // Fall back to Object prototype properties (constructor, valueOf, hasOwnProperty, etc.)
@@ -1026,26 +972,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match prop_name {
             "apply" | "call" | "bind" => self.method_result(TypeId::ANY),
             "toString" => self.method_result(TypeId::STRING),
-            "name" => PropertyAccessResult::Success {
-                type_id: TypeId::STRING,
-                write_type: None,
-                from_index_signature: false,
-            },
-            "length" => PropertyAccessResult::Success {
-                type_id: TypeId::NUMBER,
-                write_type: None,
-                from_index_signature: false,
-            },
-            "prototype" | "arguments" => PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                write_type: None,
-                from_index_signature: false,
-            },
-            "caller" => PropertyAccessResult::Success {
-                type_id: self.any_args_function(TypeId::ANY),
-                write_type: None,
-                from_index_signature: false,
-            },
+            "name" => PropertyAccessResult::simple(TypeId::STRING),
+            "length" => PropertyAccessResult::simple(TypeId::NUMBER),
+            "prototype" | "arguments" => PropertyAccessResult::simple(TypeId::ANY),
+            "caller" => PropertyAccessResult::simple(self.any_args_function(TypeId::ANY)),
             _ => {
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
                     return result;
