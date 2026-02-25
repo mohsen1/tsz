@@ -104,6 +104,11 @@ pub struct CheckerOptions {
     /// When true, allow import paths to end with `.ts`, `.tsx`, `.mts`, `.cts` extensions.
     /// When false (default), such imports emit TS5097.
     pub allow_importing_ts_extensions: bool,
+    /// When true, the effective module resolution is Classic.
+    /// Used by `module_not_found_diagnostic()` to decide between TS2792 and TS2307.
+    /// TS2792 ("Did you mean to set moduleResolution to nodenext?") is only emitted
+    /// when Classic resolution is in effect.
+    pub implied_classic_resolution: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -166,6 +171,7 @@ impl Default for CheckerOptions {
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             allow_importing_ts_extensions: false,
+            implied_classic_resolution: false,
         }
     }
 }

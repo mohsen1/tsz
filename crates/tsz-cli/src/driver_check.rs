@@ -276,27 +276,14 @@ pub(super) fn collect_diagnostics(
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
                         let mut diagnostic = failure_to_use.to_diagnostic();
 
-                        // TypeScript emits TS2792 (instead of TS2307) for certain module kinds.
-                        // These are "classic-like" module systems (AMD, System, UMD) and ES modules.
-                        use tsz_common::common::ModuleKind;
-                        let module_kind_prefers_2792 = matches!(
-                            options.checker.module,
-                            ModuleKind::System
-                                | ModuleKind::AMD
-                                | ModuleKind::UMD
-                                | ModuleKind::ES2015
-                                | ModuleKind::ES2020
-                                | ModuleKind::ES2022
-                                | ModuleKind::ESNext
-                                | ModuleKind::Preserve
-                        );
+                        // TypeScript emits TS2792 (instead of TS2307) when module resolution
+                        // is Classic. The `implied_classic_resolution` flag is computed from
+                        // `effective_module_resolution()` at config resolution time.
                         let has_explicit_extension =
                             std::path::Path::new(specifier).extension().is_some();
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && !has_explicit_extension
-                            && module_kind_prefers_2792
-                            && options.effective_module_resolution()
-                                != tsz::config::ModuleResolutionKind::Bundler
+                            && options.checker.implied_classic_resolution
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(
