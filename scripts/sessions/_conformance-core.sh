@@ -62,10 +62,10 @@ PHASE 2 — GET CONFORMANCE DATA (use cached snapshot if fresh)
    another session pushes an updated snapshot. Your area is fixed at this step.
 
    Also note the snapshot summary which includes:
-   - pass_rate_error_code: error-code level pass rate
-   - pass_rate_fingerprint: fingerprint level pass rate (code + location + message)
-   - fingerprint_total / fingerprint_passed: exact fingerprint counts
-   Use this to understand overall progress and gap between ec and fp rates.
+   - pass_rate: error-code level pass rate (percentage)
+   - total_tests / passed / failed: raw counts
+   Use --verbose on individual tests to see fingerprint-level detail
+   (code + location + message) beyond the error-code level summary.
 
 ═══════════════════════════════════════════════════════════════════
 PHASE 3 — DRILL DOWN & CLASSIFY (mandatory before coding)
