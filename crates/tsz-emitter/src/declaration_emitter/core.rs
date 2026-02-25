@@ -488,18 +488,16 @@ impl<'a> DeclarationEmitter<'a> {
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
         for comment in &source_file.comments {
-            // Extract the comment text from the source file
             let text = &source_file.text[comment.pos as usize..comment.end as usize];
 
             // Triple-slash directives start with ///
             if let Some(stripped) = text.strip_prefix("///") {
                 let trimmed = stripped.trim_start();
 
-                // Check if this is a directive we should preserve
-                if trimmed.starts_with("<reference")
-                    || trimmed.starts_with("<amd-module")
-                    || trimmed.starts_with("<amd-dependency")
-                {
+                // In declaration emit, tsc does NOT copy source `/// <reference>` directives.
+                // It generates needed type/lib references itself during declaration emit.
+                // Only preserve `<amd-module>` and `<amd-dependency>` directives.
+                if trimmed.starts_with("<amd-module") || trimmed.starts_with("<amd-dependency") {
                     self.write(text);
                     self.write_line();
                 }
