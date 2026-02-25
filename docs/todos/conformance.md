@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7537/12565 (60.0%) — full suite, fingerprint level (new framework)
+**Current score**: ~7551/12565 (60.1%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -246,6 +246,16 @@
   3. Declared-type fix for optional properties only applied to `-?` (MappedModifier::Remove) case — generalized to all homomorphic mapped types where source property is optional
 - **Root cause detail**: During generic instantiation, `keyof T` in type args was eagerly evaluated to `"a" | "b"` while `T` was resolved to a different TypeId. This caused Method 1 homomorphism check (`obj != source_from_constraint`) to fail, and Method 2 (`expected_keys == mapped.constraint`) to fail because constraint was still `KeyOf(Lazy(...))`.
 - **Tests added**: 3 evaluate tests (keyof preserves optional/readonly, post-instantiation preserves optional) + 1 integration test (Pick identity bidirectional subtype)
+
+#### Run note (2026-02-25, session 13) — references area
+- **Area**: references (13.3% → 93.3%, 2/15 → 14/15, +12 in area, +14 net suite-wide)
+- **Fixed**: Three root causes for `/// <reference types="..." />` resolution:
+  1. `normalize_type_roots()` had a heuristic that reinterpreted absolute paths as relative to project root when they didn't exist on disk. tsc treats absolute typeRoots as-is — removed the heuristic.
+  2. `resolve_type_reference_from_node_modules()` fallback was gated on `!Classic` module resolution mode. tsc always does node_modules walk-up for type reference directives regardless of module resolution mode — removed the gate.
+  3. Scoped package name mangling missing: `@scope/name` → `@types/scope__name` — added to `type_package_candidates()` and `resolve_type_reference_from_node_modules()`.
+- **Also fixed**: TS2688 diagnostic byte offset now points at the type name inside the directive (column 23) instead of line start (column 1). Threaded `types_offset`/`types_len` through `type_reference_errors`.
+- **Also fixed**: Empty typeRoots with explicit `types` config option — when no valid type roots exist, all entries in `types` are now correctly reported as unresolved (TS2688).
+- **Remaining**: library-reference-5.ts needs TS2403 (conflicting secondary references with different types). This is a checker-level gap, not a resolution issue.
 
 #### Run note (2026-02-25, session 12) — expressions/typeGuards area
 - **Area**: expressions/typeGuards (27.0% → 31.7%, 17/63 → 20/63, +3 in area, +3 net suite-wide)
