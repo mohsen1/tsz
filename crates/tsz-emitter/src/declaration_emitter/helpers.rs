@@ -314,9 +314,10 @@ impl<'a> DeclarationEmitter<'a> {
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                     // Check for `export type { ... }` or `export type * from ...`
                     if let Some(export) = self.arena.get_export_decl(stmt_node)
-                        && export.is_type_only {
-                            return true;
-                        }
+                        && export.is_type_only
+                    {
+                        return true;
+                    }
                 }
                 _ => {}
             }
