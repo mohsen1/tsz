@@ -1290,8 +1290,8 @@ fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
 
 #[test]
 fn test_class_inheritance_paths_use_shared_class_declaration_lookup_helper() {
-    let instance_src = fs::read_to_string("src/types/class_type/mod.rs")
-        .expect("failed to read src/types/class_type/mod.rs for architecture guard");
+    let instance_src = fs::read_to_string("src/types/class_type/core.rs")
+        .expect("failed to read src/types/class_type/core.rs for architecture guard");
     let constructor_src = fs::read_to_string("src/types/class_type/constructor.rs")
         .expect("failed to read src/types/class_type/constructor.rs for architecture guard");
 

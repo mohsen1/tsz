@@ -79,9 +79,11 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: `context/mod.rs` had implementation logic extracted into `core.rs`. `context/mod.rs` (1093 → 642 LOC). Moved `impl TypeCache`, `impl CheckerContext`, and TypeCache tests into `context/core.rs` (469 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC), ~~`types/utilities/mod.rs` (1007 LOC)~~ ✅ Extracted into `types/utilities/core.rs` (1007 LOC), reducing mod.rs to 7 LOC.
 
-**Note**: `types/utilities/mod.rs` had implementation logic extracted into `core.rs`. `types/utilities/mod.rs` (1007 → 7 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC).
+**Note**: `types/utilities/mod.rs` had implementation logic extracted into `core.rs`. `types/utilities/mod.rs` (1007 → 7 LOC). ~~Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC).~~ ✅ All mod.rs files now use thin re-export pattern.
 
-**Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/mod.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
+**Note**: `types/class_type/mod.rs` had implementation logic extracted into `core.rs`. `types/class_type/mod.rs` (1013 → 6 LOC). All checker subdirectory `mod.rs` files now follow the thin-mod.rs pattern with implementation in `core.rs`.
+
+**Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/core.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
 
 ### 4. Cross-Layer Imports — CLEAN
 
