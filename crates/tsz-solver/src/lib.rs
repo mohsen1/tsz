@@ -48,25 +48,23 @@ pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
 pub use operations::widening;
 pub use visitors::visitor::{
-    ConstAssertionVisitor, ObjectTypeKind, RecursiveTypeCollector, TypeKind, TypeKindVisitor,
-    TypePredicateVisitor, TypeVisitor, application_id, array_element_type, bound_parameter_index,
-    callable_shape_id, classify_object_type, collect_all_types, collect_enum_def_ids,
-    collect_infer_bindings, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
-    conditional_type_id, contains_error_type, contains_infer_types, contains_this_type,
-    contains_type_matching, contains_type_parameters, enum_components, for_each_child,
-    for_each_child_by_id, function_shape_id, index_access_parts, intersection_list_id,
-    intrinsic_kind, is_array_type, is_conditional_type, is_empty_object_type,
+    application_id, array_element_type, bound_parameter_index, callable_shape_id,
+    collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids, collect_referenced_types,
+    collect_type_queries, conditional_type_id, contains_error_type, contains_infer_types,
+    contains_this_type, contains_type_matching, contains_type_parameters, enum_components,
+    for_each_child, for_each_child_by_id, function_shape_id, index_access_parts,
+    intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type, is_empty_object_type,
     is_empty_object_type_through_type_constraints, is_enum_type, is_error_type, is_function_type,
     is_function_type_through_type_constraints, is_generic_application, is_identity_comparable_type,
     is_index_access_type, is_intersection_type, is_literal_type,
     is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
     is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
-    is_template_literal_type, is_this_type, is_tuple_type, is_type_kind, is_type_parameter,
-    is_type_reference, is_union_type, keyof_inner_type, lazy_def_id, literal_number,
-    literal_string, literal_value, mapped_type_id, module_namespace_symbol_ref,
-    no_infer_inner_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
-    recursive_index, string_intrinsic_components, template_literal_id, test_type, tuple_list_id,
-    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref, walk_referenced_types,
+    is_template_literal_type, is_this_type, is_tuple_type, is_type_parameter, is_type_reference,
+    is_union_type, keyof_inner_type, lazy_def_id, literal_number, literal_string, literal_value,
+    mapped_type_id, module_namespace_symbol_ref, no_infer_inner_type, object_shape_id,
+    object_with_index_shape_id, readonly_inner_type, recursive_index, string_intrinsic_components,
+    template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
+    unique_symbol_ref, walk_referenced_types,
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
