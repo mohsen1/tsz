@@ -98,13 +98,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Without strictNullChecks, null/undefined are in every type's domain (assignable
+        // to number), so tsc does NOT emit TS18050 for binary operations.
+        // Note: TS18050 for property access on literal null/undefined (`null.foo`) is
+        // independent of strictNullChecks and handled separately in property_access_type.rs.
+        if !self.ctx.compiler_options.strict_null_checks {
+            return false;
+        }
+
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
-
-        // TS18050 is emitted for null/undefined operands regardless of strictNullChecks.
-        // tsc emits "The value 'null' cannot be used here." even without --strictNullChecks
-        // because the literal values null/undefined are never valid arithmetic/bitwise operands.
         let should_emit_nullish_error = matches!(
             op,
             "+" | "-"
@@ -222,9 +226,9 @@ impl<'a> CheckerState<'a> {
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
 
-        // TS18050 is emitted for null/undefined operands regardless of strictNullChecks.
-        // tsc emits "The value 'null' cannot be used here." even without --strictNullChecks
-        // because the literal values null/undefined are never valid arithmetic/bitwise operands.
+        // TS18050 for binary ops is gated on strictNullChecks (handled in
+        // check_and_emit_nullish_binary_operands). Track which operators would
+        // produce TS18050 to suppress redundant TS2362/TS2363 when it was emitted.
         let should_emit_nullish_error = matches!(
             op,
             "+" | "-"
@@ -393,7 +397,12 @@ impl<'a> CheckerState<'a> {
         // For + operator, TSC emits TS2365 ("Operator '+' cannot be applied to types"),
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
         // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
+        // When strictNullChecks is off, null/undefined are implicitly valid operands
+        // (assignable to number), so suppress TS2365 when both operands are nullish.
         if op == "+" {
+            if snc_off && left_is_nullish && right_is_nullish {
+                return;
+            }
             if !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
                     "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
