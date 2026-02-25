@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T12:01:33Z",
-  "git_sha": "296621441d680e16fd93aee6335ded0f12dfa723",
+  "timestamp": "2026-02-25T12:34:31Z",
+  "git_sha": "767e1d94ef341b8b5ffce4f38d9fdaf4f8d76348",
   "summary": {
     "total_tests": 12565,
-    "passed": 6891,
-    "failed": 5674,
-    "pass_rate": 54.8
+    "passed": 6911,
+    "failed": 5654,
+    "pass_rate": 55.0
   },
   "areas_by_pass_rate": [
     {
@@ -21,13 +21,6 @@
       "passed": 2,
       "failed": 13,
       "pass_rate": 13.33
-    },
-    {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 11,
-      "failed": 54,
-      "pass_rate": 16.92
     },
     {
       "area": "interfaces/declarationMerging",
@@ -86,11 +79,11 @@
       "pass_rate": 27.78
     },
     {
-      "area": "expressions/assignmentOperator",
-      "total": 10,
-      "passed": 3,
-      "failed": 7,
-      "pass_rate": 30.0
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 21,
+      "failed": 44,
+      "pass_rate": 32.31
     },
     {
       "area": "externalModules/typeOnly",
@@ -226,13 +219,6 @@
       "pass_rate": 38.71
     },
     {
-      "area": "expressions/unaryOperators",
-      "total": 58,
-      "passed": 23,
-      "failed": 35,
-      "pass_rate": 39.66
-    },
-    {
       "area": "projects/jsFileCompilation",
       "total": 20,
       "passed": 8,
@@ -244,6 +230,13 @@
       "total": 15,
       "passed": 6,
       "failed": 9,
+      "pass_rate": 40.0
+    },
+    {
+      "area": "expressions/assignmentOperator",
+      "total": 10,
+      "passed": 4,
+      "failed": 6,
       "pass_rate": 40.0
     },
     {
@@ -289,6 +282,13 @@
       "pass_rate": 42.86
     },
     {
+      "area": "expressions/unaryOperators",
+      "total": 58,
+      "passed": 25,
+      "failed": 33,
+      "pass_rate": 43.1
+    },
+    {
       "area": "externalModules",
       "total": 126,
       "passed": 55,
@@ -308,13 +308,6 @@
       "passed": 25,
       "failed": 32,
       "pass_rate": 43.86
-    },
-    {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 19,
-      "failed": 23,
-      "pass_rate": 45.24
     },
     {
       "area": "es2019",
@@ -399,6 +392,13 @@
       "passed": 94,
       "failed": 96,
       "pass_rate": 49.47
+    },
+    {
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 21,
+      "failed": 21,
+      "pass_rate": 50.0
     },
     {
       "area": "moduleResolution",
@@ -508,9 +508,9 @@
     {
       "area": "compiler",
       "total": 6468,
-      "passed": 3806,
-      "failed": 2662,
-      "pass_rate": 58.84
+      "passed": 3811,
+      "failed": 2657,
+      "pass_rate": 58.92
     },
     {
       "area": "transpile",
@@ -942,10 +942,6 @@
       "count": 36
     },
     {
-      "code": "TS18050",
-      "count": 33
-    },
-    {
       "code": "TS2352",
       "count": 30
     },
@@ -960,6 +956,10 @@
     {
       "code": "TS1212",
       "count": 27
+    },
+    {
+      "code": "TS7008",
+      "count": 25
     }
   ]
 }
