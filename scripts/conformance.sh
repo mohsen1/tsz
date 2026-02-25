@@ -522,13 +522,14 @@ snapshot_tests() {
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" RETURN
 
+    # Runner exits non-zero when any tests fail, which is expected
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
         --print-test \
-        "${REMAINING_ARGS[@]}" > "$tmpfile"
+        "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true
 
     # Verify runner produced output
     if [ ! -s "$tmpfile" ]; then
@@ -537,31 +538,23 @@ snapshot_tests() {
     fi
 
     # 2) Extract summary values via Python -> JSON (no eval)
+    #    Runner output format: "FINAL RESULTS: N/M passed (X.X%)"
     local summary_json
     summary_json=$(mktemp)
     python3 -c "
 import re, sys, json
 text = open(sys.argv[1]).read()
-m = re.search(r'Error-code level:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
-ec_passed, ec_total, ec_rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0)
-m2 = re.search(r'Fingerprint level:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
-fp_passed, fp_total, fp_rate = (int(m2.group(1)), int(m2.group(2)), float(m2.group(3))) if m2 else (0, 0, 0)
-json.dump({
-    'total': ec_total, 'passed': ec_passed, 'failed': ec_total - ec_passed,
-    'rate_ec': ec_rate, 'rate_fp': fp_rate,
-    'fp_total': fp_total, 'fp_passed': fp_passed
-}, sys.stdout)
+m = re.search(r'FINAL RESULTS:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
+passed, total, rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0.0)
+json.dump({'total': total, 'passed': passed, 'failed': total - passed, 'rate': rate}, sys.stdout)
 " "$tmpfile" > "$summary_json"
 
     # Read values from JSON (no eval)
-    local total_tests passed failed pass_rate_ec pass_rate_fp fp_total fp_passed
-    total_tests=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['total'])")
-    passed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['passed'])")
-    failed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['failed'])")
-    pass_rate_ec=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['rate_ec'])")
-    pass_rate_fp=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['rate_fp'])")
-    fp_total=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['fp_total'])")
-    fp_passed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['fp_passed'])")
+    local total_tests passed failed pass_rate
+    total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
+    passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
+    failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
+    pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
 
     # 3) Run analyze with JSON output
     local analyze_json
@@ -584,9 +577,8 @@ import json, sys
 
 timestamp, git_sha = sys.argv[1], sys.argv[2]
 total, passed, failed = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-rate_ec, rate_fp = float(sys.argv[6]), float(sys.argv[7])
-fp_total, fp_passed = int(sys.argv[8]), int(sys.argv[9])
-analyze_path, areas_path, out_path = sys.argv[10], sys.argv[11], sys.argv[12]
+rate = float(sys.argv[6])
+analyze_path, areas_path, out_path = sys.argv[7], sys.argv[8], sys.argv[9]
 
 analyze, areas = {}, {}
 try:
@@ -601,8 +593,7 @@ snapshot = {
     'git_sha': git_sha,
     'summary': {
         'total_tests': total, 'passed': passed, 'failed': failed,
-        'pass_rate_error_code': rate_ec, 'pass_rate_fingerprint': rate_fp,
-        'fingerprint_total': fp_total, 'fingerprint_passed': fp_passed,
+        'pass_rate': rate,
     },
     'areas_by_pass_rate': areas.get('areas', []),
     'top_failures': analyze.get('quick_wins', []),
@@ -613,12 +604,11 @@ snapshot = {
 with open(out_path, 'w') as f:
     json.dump(snapshot, f, indent=2)
 
-print(f'Snapshot saved: {total} tests, {passed} passed ({rate_ec}% error-code, {rate_fp}% fingerprint)')
+print(f'Snapshot saved: {total} tests, {passed} passed ({rate}%)')
 print(f'Git SHA: {git_sha}')
 print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
 " "$timestamp" "$git_sha" "$total_tests" "$passed" "$failed" \
-  "$pass_rate_ec" "$pass_rate_fp" "$fp_total" "$fp_passed" \
-  "$analyze_json" "$areas_json" "$snapshot_file" \
+  "$pass_rate" "$analyze_json" "$areas_json" "$snapshot_file" \
   || { echo "ERROR: failed to assemble snapshot JSON"; return 1; }
 
     rm -f "$summary_json" "$analyze_json" "$areas_json"
