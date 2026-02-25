@@ -4,6 +4,8 @@
 //! transform directives during emission (Phase 2 architecture).
 
 use super::*;
+use std::sync::Arc;
+use tracing::debug;
 
 enum EmitDirective {
     Identity,
