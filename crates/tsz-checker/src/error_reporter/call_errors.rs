@@ -316,32 +316,55 @@ impl<'a> CheckerState<'a> {
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
     /// TS2554: Expected {0} arguments, but got {1}.
+    ///
+    /// When there are excess arguments (`got > expected_max`), tsc points the
+    /// diagnostic span at the excess arguments rather than the call expression.
+    /// The `args` slice provides the argument node indices so we can compute
+    /// the span from the first excess argument to the last argument.
     pub fn error_argument_count_mismatch_at(
         &mut self,
         expected_min: usize,
         expected_max: usize,
         got: usize,
         idx: NodeIndex,
+        args: &[NodeIndex],
     ) {
-        let report_idx = self.call_error_anchor_node(idx);
-        if let Some(loc) = self.get_source_location(report_idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-            let diag = builder.argument_count_mismatch(
-                expected_min,
-                expected_max,
-                got,
-                loc.start,
-                loc.length(),
-            );
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
-        }
+        // When there are excess arguments, point to them instead of the callee.
+        let excess_loc = if got > expected_max && expected_max < args.len() {
+            // Compute span from the first excess argument to the last argument.
+            let first_excess = &args[expected_max];
+            let last_arg = &args[args.len() - 1];
+            let start_loc = self.get_source_location(*first_excess);
+            let end_loc = self.get_source_location(*last_arg);
+            match (start_loc, end_loc) {
+                (Some(s), Some(e)) => Some((s.start, e.end.saturating_sub(s.start))),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let (start, length) = if let Some((s, l)) = excess_loc {
+            (s, l)
+        } else {
+            let report_idx = self.call_error_anchor_node(idx);
+            if let Some(loc) = self.get_source_location(report_idx) {
+                (loc.start, loc.length())
+            } else {
+                return;
+            }
+        };
+
+        let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+            self.ctx.types,
+            &self.ctx.binder.symbols,
+            self.ctx.file_name.as_str(),
+        )
+        .with_def_store(&self.ctx.definition_store);
+        let diag = builder.argument_count_mismatch(expected_min, expected_max, got, start, length);
+        self.ctx
+            .diagnostics
+            .push(diag.to_checker_diagnostic(&self.ctx.file_name));
     }
 
     /// Report a spread argument type error (TS2556).
