@@ -810,10 +810,11 @@ impl ParserState {
 
         // Parse modifiers (static, public, private, protected, readonly, abstract, override)
         let parsed_modifiers = self.parse_class_member_modifiers();
+        let had_keyword_modifiers = parsed_modifiers.is_some();
 
         // Combine decorators and modifiers into a single modifiers list
         // TypeScript stores decorators as part of the modifiers array
-        let modifiers = match (decorators, parsed_modifiers) {
+        let mut modifiers = match (decorators, parsed_modifiers) {
             (Some(dec), Some(mods)) => {
                 // Combine: decorators come first, then regular modifiers
                 let mut combined = dec.nodes;
@@ -829,6 +830,26 @@ impl ParserState {
             (None, Some(mods)) => Some(mods),
             (None, None) => None,
         };
+
+        // TS1436: Decorators must precede the name and all keywords of property declarations.
+        // Detect `@` appearing after keyword modifiers (e.g., `public @dec prop`).
+        // Emit the specific diagnostic, then parse and consume the misplaced decorators
+        // so the rest of the member can be parsed normally for recovery.
+        if had_keyword_modifiers && self.is_token(SyntaxKind::AtToken) {
+            self.parse_error_at_current_token(
+                "Decorators must precede the name and all keywords of property declarations.",
+                diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
+            );
+            // Parse the misplaced decorators to consume them
+            if let Some(late_decs) = self.parse_decorators() {
+                if let Some(ref mut mods) = modifiers {
+                    mods.nodes.extend(late_decs.nodes);
+                    mods.end = late_decs.end;
+                } else {
+                    modifiers = Some(late_decs);
+                }
+            }
+        }
 
         // Handle static block after modifiers: { ... }
         if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
@@ -1164,6 +1185,18 @@ impl ParserState {
         } else {
             self.parse_optional(SyntaxKind::ExclamationToken)
         };
+
+        // TS1436: Decorator after property name (e.g., `private prop @decorator`).
+        // Detect `@` after the member name where `:`, `=`, `;`, `(`, or `<` is expected.
+        if self.is_token(SyntaxKind::AtToken) {
+            self.parse_error_at_current_token(
+                "Decorators must precede the name and all keywords of property declarations.",
+                diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
+            );
+            // Parse and consume the misplaced decorator(s) for recovery
+            let _ = self.parse_decorators();
+        }
+
         let method_saved_flags = self.context_flags;
         self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
