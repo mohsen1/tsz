@@ -40,7 +40,13 @@ impl<'a> CheckerState<'a> {
     /// Matches tsc's `getSyntacticTruthySemantics` — purely syntactic, never type-based.
     /// TS2872: Check if expression is syntactically always truthy.
     /// Used for left side of `||` and `??` operators.
+    ///
+    /// Gated on `strictNullChecks`: without it, all types implicitly include
+    /// `null | undefined`, so nothing is semantically "always truthy."
     pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex) {
+        if !self.ctx.compiler_options.strict_null_checks {
+            return;
+        }
         if self.get_syntactic_truthy_semantics(node_idx) == SyntacticTruthiness::AlwaysTruthy {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
@@ -59,6 +65,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Same as `check_truthy_or_falsy`, but reuses a caller-provided type.
+    ///
+    /// The `void` check is unconditional (testing void for truthiness is always wrong).
+    /// The TS2872/TS2873 syntactic checks are gated on `strictNullChecks` because
+    /// without it, all types implicitly include `null | undefined`.
     pub(crate) fn check_truthy_or_falsy_with_type(&mut self, node_idx: NodeIndex, ty: TypeId) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -68,6 +78,10 @@ impl<'a> CheckerState<'a> {
                 "An expression of type 'void' cannot be tested for truthiness.",
                 diagnostic_codes::AN_EXPRESSION_OF_TYPE_VOID_CANNOT_BE_TESTED_FOR_TRUTHINESS,
             );
+        }
+
+        if !self.ctx.compiler_options.strict_null_checks {
+            return;
         }
 
         match self.get_syntactic_truthy_semantics(node_idx) {
