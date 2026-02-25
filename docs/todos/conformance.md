@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7535/12565 (60.0%) — full suite, fingerprint level (new framework)
+**Current score**: ~7537/12565 (60.0%) — full suite, fingerprint level (new framework)
 
 ---
 
