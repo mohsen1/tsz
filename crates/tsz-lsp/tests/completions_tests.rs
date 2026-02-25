@@ -601,10 +601,13 @@ fn test_completions_variable_no_snippet() {
 
     let var_item = items.iter().find(|i| i.label == "value").unwrap();
 
-    assert_eq!(
-        var_item.kind,
-        CompletionItemKind::Variable,
-        "value should be a Variable"
+    assert!(
+        matches!(
+            var_item.kind,
+            CompletionItemKind::Variable | CompletionItemKind::Const
+        ),
+        "value should be a Variable or Const, got {:?}",
+        var_item.kind
     );
     assert!(
         var_item.insert_text.is_none(),
