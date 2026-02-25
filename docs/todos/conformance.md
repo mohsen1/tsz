@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7529/12565 (59.9%) — full suite, fingerprint level (new framework)
+**Current score**: ~7535/12565 (60.0%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -529,3 +529,4 @@ All items below have been validated against the codebase (implementations + test
 | TS2862 | Remove dead TS2862 diagnostic (tsc 6.0 never emits "generic indexed write restriction") | +1 test |
 | mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Partial<T> <: T, T <: Required<T>) | +1 test |
 | TS18050/TS2365 snc gate | Gate TS18050 binary op errors on strictNullChecks; suppress TS2365 for nullish+nullish when snc off | +1 test (bitwiseNotOperatorWithAnyOtherType) |
+| TS2454/narrowing | Reorder check_flow_usage: apply narrowing before TS2454 to suppress false "used before assigned" in typeof guard branches | +2 tests |
