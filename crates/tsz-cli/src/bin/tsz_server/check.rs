@@ -803,6 +803,8 @@ impl Server {
                     "es2022" => tsz::ModuleKind::ES2022,
                     "esnext" => tsz::ModuleKind::ESNext,
                     "node16" => tsz::ModuleKind::Node16,
+                    "node18" => tsz::ModuleKind::Node18,
+                    "node20" => tsz::ModuleKind::Node20,
                     "nodenext" => tsz::ModuleKind::NodeNext,
                     _ => tsz::ModuleKind::None,
                 }

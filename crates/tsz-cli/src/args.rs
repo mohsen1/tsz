@@ -780,7 +780,9 @@ impl Module {
             Self::Es2022 => ModuleKind::ES2022,
             Self::EsNext => ModuleKind::ESNext,
             Self::Preserve => ModuleKind::Preserve,
-            Self::Node16 | Self::Node18 | Self::Node20 => ModuleKind::Node16,
+            Self::Node16 => ModuleKind::Node16,
+            Self::Node18 => ModuleKind::Node18,
+            Self::Node20 => ModuleKind::Node20,
             Self::NodeNext => ModuleKind::NodeNext,
         }
     }

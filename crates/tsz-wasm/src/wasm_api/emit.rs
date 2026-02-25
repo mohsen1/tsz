@@ -101,6 +101,8 @@ impl TranspileOptions {
             7 => ModuleKind::ES2020,
             99 => ModuleKind::ESNext,
             100 => ModuleKind::Node16,
+            101 => ModuleKind::Node18,
+            102 => ModuleKind::Node20,
             199 => ModuleKind::NodeNext,
             _ => ModuleKind::None,
         };

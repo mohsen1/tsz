@@ -34,7 +34,7 @@ impl<'a> Printer<'a> {
         // extension explicitly opts into ESM (`.mts`/`.mjs`).
         if matches!(
             self.ctx.options.module,
-            ModuleKind::Node16 | ModuleKind::NodeNext
+            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext
         ) {
             let file_name = source.file_name.to_ascii_lowercase();
             let is_explicit_esm = file_name.ends_with(".mts") || file_name.ends_with(".mjs");
@@ -193,6 +193,8 @@ impl<'a> Printer<'a> {
                 | ModuleKind::ESNext
                 | ModuleKind::Preserve
                 | ModuleKind::Node16
+                | ModuleKind::Node18
+                | ModuleKind::Node20
                 | ModuleKind::NodeNext
         );
         let is_amd_or_umd = matches!(self.ctx.options.module, ModuleKind::AMD | ModuleKind::UMD);

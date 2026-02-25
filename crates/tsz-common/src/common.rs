@@ -176,6 +176,12 @@ pub enum ModuleKind {
     /// Node.js ESM (package.json "type": "module")
     Node16 = 100,
 
+    /// Node.js 18 module support
+    Node18 = 101,
+
+    /// Node.js 20 module support
+    Node20 = 102,
+
     /// Node.js with automatic detection
     NodeNext = 199,
 
@@ -189,7 +195,23 @@ impl ModuleKind {
     pub const fn is_commonjs(self) -> bool {
         matches!(
             self,
-            Self::CommonJS | Self::UMD | Self::Node16 | Self::NodeNext
+            Self::CommonJS
+                | Self::UMD
+                | Self::Node16
+                | Self::Node18
+                | Self::Node20
+                | Self::NodeNext
+        )
+    }
+
+    /// Check if this is a Node.js-style module kind (Node16 through `NodeNext`).
+    ///
+    /// These require a matching `moduleResolution` of Node16 or `NodeNext`.
+    #[must_use]
+    pub const fn is_node_module(self) -> bool {
+        matches!(
+            self,
+            Self::Node16 | Self::Node18 | Self::Node20 | Self::NodeNext
         )
     }
 
@@ -208,7 +230,7 @@ impl ModuleKind {
 
     /// Check if this module kind supports dynamic `import()` expressions.
     ///
-    /// Dynamic imports require ES2020+, CommonJS, AMD, System, UMD, Node16,
+    /// Dynamic imports require ES2020+, CommonJS, AMD, System, UMD, Node16+,
     /// or `NodeNext`. ES2015 and None do not support them (TS1323).
     #[must_use]
     pub const fn supports_dynamic_import(self) -> bool {
@@ -222,6 +244,8 @@ impl ModuleKind {
                 | Self::System
                 | Self::UMD
                 | Self::Node16
+                | Self::Node18
+                | Self::Node20
                 | Self::NodeNext
                 | Self::Preserve
         )
