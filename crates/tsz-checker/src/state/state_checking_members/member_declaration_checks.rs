@@ -1075,6 +1075,9 @@ impl<'a> CheckerState<'a> {
                 self.check_accessor_declaration(member_idx);
             }
             syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                // TS2729: Check for use-before-init of static properties in static blocks
+                self.check_static_block_initialization_order(member_idx);
+
                 // Static blocks contain statements that must be type-checked
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     let prev_unreachable = self.ctx.is_unreachable;

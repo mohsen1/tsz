@@ -4761,6 +4761,144 @@ class NoError {
 }
 
 #[test]
+fn test_static_block_property_used_before_initialization_2729() {
+    // Error 2729: Property used before initialization in static blocks
+    // Static blocks referencing later-declared static properties via C.X or this.X
+    use crate::parser::ParserState;
+
+    let source = r#"
+class C {
+    static f1 = 1;
+    static {
+        console.log(C.f1, C.f2, C.f3)
+    }
+    static f2 = 2;
+    static {
+        console.log(C.f1, C.f2, C.f3)
+    }
+    static f3 = 3;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // First static block: C.f2 (after) and C.f3 (after) → 2 errors
+    // Second static block: C.f3 (after) → 1 error
+    // Total: 3 TS2729 errors
+    let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
+    assert_eq!(
+        count_2729, 3,
+        "Expected 3 TS2729 errors for static block use-before-init, got {count_2729} in: {codes:?}"
+    );
+}
+
+#[test]
+fn test_static_block_this_access_2729() {
+    // Error 2729: this.X in static block where X is declared after
+    use crate::parser::ParserState;
+
+    let source = r#"
+class C {
+    static s1 = 1;
+    static {
+        this.s1;
+        C.s1;
+        this.s2;
+        C.s2;
+    }
+    static s2 = 2;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // this.s2 and C.s2 are before s2's declaration → 2 errors
+    let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
+    assert_eq!(
+        count_2729, 2,
+        "Expected 2 TS2729 errors for this.s2 and C.s2 in static block, got {count_2729} in: {codes:?}"
+    );
+}
+
+#[test]
+fn test_static_block_no_error_for_arrow_function_2729() {
+    // Accesses inside arrow functions in static blocks are deferred — no TS2729
+    use crate::parser::ParserState;
+
+    let source = r#"
+class C {
+    static {
+        const fn = () => C.s1;
+    }
+    static s1 = 1;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Arrow function defers the access — no TS2729
+    let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
+    assert_eq!(
+        count_2729, 0,
+        "Expected 0 TS2729 errors (arrow function defers access), got {count_2729} in: {codes:?}"
+    );
+}
+
+#[test]
 fn test_property_not_assignable_to_same_in_base_2416() {
     // Error 2416: Property 'num' in type 'WrongTypePropertyImpl' is not assignable
     // to the same property in base type 'WrongTypeProperty'.
