@@ -478,3 +478,6 @@ All items below have been validated against the codebase (implementations + test
 | TS1382/TS1381 | Scanner emits bare `>` / `}` diagnostics in JSX text content | prerequisite |
 | TS2354 | Target-aware tslib helper detection (skip __extends at ES2015+) | +2 tests |
 | TS1436 | Misplaced decorator in class members: after modifiers (`public @dec prop`) and after property name (`prop @dec`) | +9 tests |
+| TS2792→TS2307 | Module resolver: return NotFound instead of ModuleResolutionModeMismatch for Node16/NodeNext exports failures | -11 false TS2792 |
+| skipLibCheck | Extend skipLibCheck to .d.cts/.d.mts (not just .d.ts) | +2 node tests |
+| node_modules | Suppress diagnostics for declaration files inside node_modules | included in above |
