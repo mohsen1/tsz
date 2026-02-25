@@ -3,7 +3,7 @@
 //! Handles class member modifiers, constructor prologue with parameter
 //! properties and field initializers, and destructuring temp estimation.
 
-use super::*;
+use super::super::*;
 use tsz_parser::parser::NodeList;
 
 impl<'a> Printer<'a> {
@@ -12,7 +12,7 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Emit class member modifiers (static, public, private, etc.)
-    pub(super) fn emit_class_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
+    pub(in crate::emitter) fn emit_class_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -36,7 +36,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_method_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_method_declaration(&mut self, node: &Node) {
         let Some(method) = self.arena.get_method_decl(node) else {
             return;
         };
@@ -225,7 +225,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit method modifiers for JavaScript (static, async, and ES decorators)
-    pub(super) fn emit_method_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
+    pub(in crate::emitter) fn emit_method_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -247,7 +247,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_property_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_property_declaration(&mut self, node: &Node) {
         let Some(prop) = self.arena.get_property_decl(node) else {
             return;
         };
@@ -296,7 +296,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit class member modifiers for JavaScript (static, accessor, and ES decorators)
-    pub(super) fn emit_class_member_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
+    pub(in crate::emitter) fn emit_class_member_modifiers_js(
+        &mut self,
+        modifiers: &Option<NodeList>,
+    ) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -315,7 +318,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_constructor_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_constructor_declaration(&mut self, node: &Node) {
         let Some(ctor) = self.arena.get_constructor(node) else {
             return;
         };
@@ -388,7 +391,10 @@ impl<'a> Printer<'a> {
 
     /// Collect parameter property names from constructor parameters.
     /// Returns names of parameters that have accessibility modifiers (public/private/protected/readonly).
-    pub(super) fn collect_parameter_properties(&self, params: &[NodeIndex]) -> Vec<String> {
+    pub(in crate::emitter) fn collect_parameter_properties(
+        &self,
+        params: &[NodeIndex],
+    ) -> Vec<String> {
         let mut names = Vec::new();
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
@@ -854,7 +860,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_get_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
+    pub(in crate::emitter) fn emit_get_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };
@@ -872,7 +878,7 @@ impl<'a> Printer<'a> {
         self.emit_accessor_body(accessor.body, compact_body);
     }
 
-    pub(super) fn emit_set_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
+    pub(in crate::emitter) fn emit_set_accessor(&mut self, node: &Node, accessor_node: NodeIndex) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };

@@ -1,5 +1,5 @@
-use super::Printer;
-use super::declarations_namespace::rewrite_enum_iife_for_namespace_export;
+use super::super::Printer;
+use super::namespace::rewrite_enum_iife_for_namespace_export;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::NodeIndex;
@@ -12,7 +12,7 @@ impl<'a> Printer<'a> {
     // Declarations
     // =========================================================================
 
-    pub(super) fn emit_function_declaration(&mut self, node: &Node, _idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_function_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -148,7 +148,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_variable_declaration_list(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {
         // Variable declaration list is stored as VariableData
         let Some(decl_list) = self.arena.get_variable(node) else {
             return;
@@ -187,7 +187,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_variable_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_variable_declaration(&mut self, node: &Node) {
         let Some(decl) = self.arena.get_variable_declaration(node) else {
             return;
         };
@@ -268,7 +268,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn emit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(enum_decl) = self.arena.get_enum(node) else {
             return;
         };
@@ -343,7 +343,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_enum_member(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_enum_member(&mut self, node: &Node) {
         let Some(member) = self.arena.get_enum_member(node) else {
             return;
         };
@@ -357,7 +357,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit an interface declaration (for .d.ts declaration emit mode)
-    pub(super) fn emit_interface_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_interface_declaration(&mut self, node: &Node) {
         let Some(interface) = self.arena.get_interface(node) else {
             return;
         };
@@ -416,7 +416,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a type alias declaration (for .d.ts declaration emit mode)
-    pub(super) fn emit_type_alias_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_type_alias_declaration(&mut self, node: &Node) {
         let Some(type_alias) = self.arena.get_type_alias(node) else {
             return;
         };

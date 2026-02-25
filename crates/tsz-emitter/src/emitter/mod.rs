@@ -15,7 +15,7 @@
 //! - `core.rs` - Core Printer struct, dispatch logic, and emit methods
 //! - `expressions.rs` - Expression emission helpers
 //! - `statements.rs` - Statement emission helpers
-//! - `declarations.rs` - Declaration emission helpers
+//! - `declarations/` - Declaration emission (classes, class members, namespaces)
 //! - `functions.rs` - Function emission helpers
 //! - `types.rs` - Type emission helpers
 //! - `jsx.rs` - JSX emission helpers
@@ -30,9 +30,6 @@ mod comment_helpers;
 mod comments;
 mod core;
 mod declarations;
-mod declarations_class;
-mod declarations_class_members;
-mod declarations_namespace;
 mod es5;
 mod expressions;
 mod expressions_access;
