@@ -1002,6 +1002,8 @@ impl<'a> CheckerState<'a> {
                 | ModuleKind::ESNext
                 | ModuleKind::System
                 | ModuleKind::Node16
+                | ModuleKind::Node18
+                | ModuleKind::Node20
                 | ModuleKind::NodeNext
                 | ModuleKind::Preserve
         );

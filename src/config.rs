@@ -389,7 +389,9 @@ impl ResolvedCompilerOptions {
             }
             ModuleKind::CommonJS => ModuleResolutionKind::Node,
             ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
-            ModuleKind::Node16 => ModuleResolutionKind::Node16,
+            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 => {
+                ModuleResolutionKind::Node16
+            }
             _ => ModuleResolutionKind::Classic,
         }
     }
@@ -2071,7 +2073,9 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
         "es2020" => ModuleKind::ES2020,
         "es2022" => ModuleKind::ES2022,
         "esnext" => ModuleKind::ESNext,
-        "node16" | "node18" | "node20" => ModuleKind::Node16,
+        "node16" => ModuleKind::Node16,
+        "node18" => ModuleKind::Node18,
+        "node20" => ModuleKind::Node20,
         "nodenext" => ModuleKind::NodeNext,
         "preserve" => ModuleKind::Preserve,
         _ => bail!("unsupported compilerOptions.module '{value}'"),

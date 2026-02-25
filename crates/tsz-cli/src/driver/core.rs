@@ -1235,27 +1235,28 @@ fn check_module_resolution_compatibility(
     tsconfig_path: Option<&Path>,
 ) -> Option<Diagnostic> {
     use tsz::config::ModuleResolutionKind;
-    use tsz_common::common::ModuleKind;
 
     let module_resolution = resolved.module_resolution?;
-    let required = match module_resolution {
-        ModuleResolutionKind::Node16 => ModuleKind::Node16,
-        ModuleResolutionKind::NodeNext => ModuleKind::NodeNext,
-        _ => return None,
-    };
-
-    if resolved.printer.module == required {
+    // Only check when moduleResolution is Node16 or NodeNext
+    let is_node_resolution = matches!(
+        module_resolution,
+        ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+    );
+    if !is_node_resolution {
         return None;
     }
 
-    let required_str = match required {
-        ModuleKind::NodeNext => "NodeNext",
-        _ => "Node16",
-    };
+    // tsc accepts any module in the Node16..NodeNext range with node-style resolution
+    if resolved.printer.module.is_node_module() {
+        return None;
+    }
+
+    // Determine the name to display in the diagnostic message
     let resolution_str = match module_resolution {
         ModuleResolutionKind::NodeNext => "NodeNext",
         _ => "Node16",
     };
+    let required_str = resolution_str;
 
     let message = format_message(
         diagnostic_messages::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,

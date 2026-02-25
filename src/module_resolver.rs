@@ -746,6 +746,8 @@ impl ModuleResolver {
             | ModuleKind::ES2022
             | ModuleKind::ESNext
             | ModuleKind::Node16
+            | ModuleKind::Node18
+            | ModuleKind::Node20
             | ModuleKind::NodeNext
             | ModuleKind::Preserve => {}
         }

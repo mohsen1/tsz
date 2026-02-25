@@ -265,6 +265,12 @@
 - **Investigated but not fixed**: var vs let TS2454 behavior — tsc emits TS2454 for both var and let declarations without initializers. The narrowing-first approach is a useful heuristic that correctly suppresses TS2454 in typeof true branches but incorrectly suppresses it in typeof false branches (where undefined could still be the runtime value). A more precise fix would require integrating typeof narrowing with definite assignment to determine if the narrowed branch eliminates undefined.
 - **Remaining expressions/typeGuards failures**: 43/63 still fail. Dominant causes: TS2322/TS2339 from narrowing accuracy issues (typeof/instanceof/in narrowing not fully integrated), TS2454 fingerprint-level mismatches (correct codes but wrong line numbers), TS2564 false positives for class properties, TS2367 missing comparisons.
 
+#### Run note (2026-02-25, session 14) — expressions/unaryOperators area + Node18/Node20
+- **Area**: expressions/unaryOperators (investigated on old broken cache — see session 8-9 for the cache fix by another session)
+- **Fixed**: ModuleKind::Node18/Node20 — Added `Node18 = 101` and `Node20 = 102` variants to `ModuleKind` enum with `is_node_module()` helper. Updated all exhaustive matches across 12+ files (args, config, checker, emitter, resolver, wasm).
+- **Fixed**: TS5110 range-based check — Changed from exact-match to range-based logic for "Option 'module' must be set to '{0}'" diagnostic. tsc accepts any module in [Node16, NodeNext] range with node-style resolution; we were checking for exact match only. Added 4 unit tests for Node18/Node20 acceptance, ES2015 rejection, and Classic resolution passthrough.
+- **Fixed**: Variant filter removal — `filter_incompatible_module_resolution_variants` was filtering out variants that should produce TS5110 errors. Now passes all variants through since the corrected cache contains proper expected errors for each combination.
+
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
 - Also missing unary (+, -, ~) and compound (+=) symbol checks entirely

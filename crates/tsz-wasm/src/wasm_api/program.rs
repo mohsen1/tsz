@@ -78,6 +78,8 @@ impl TsCompilerOptions {
             Some(7) => tsz::common::ModuleKind::ES2022,
             Some(99) => tsz::common::ModuleKind::ESNext,
             Some(100) => tsz::common::ModuleKind::Node16,
+            Some(101) => tsz::common::ModuleKind::Node18,
+            Some(102) => tsz::common::ModuleKind::Node20,
             Some(199) => tsz::common::ModuleKind::NodeNext,
             _ => tsz::common::ModuleKind::None,
         }

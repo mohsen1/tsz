@@ -60,6 +60,83 @@ fn test_module_resolution_incompatibility_preserves_existing_config_diagnostics(
     ));
 }
 
+/// Node18 and Node20 modules are accepted with Node16/NodeNext resolution (no TS5110).
+#[test]
+fn test_node18_node20_accepted_with_node16_resolution() {
+    for module in [ModuleKind::Node18, ModuleKind::Node20] {
+        let resolved = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            printer: PrinterOptions {
+                module,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let diag = check_module_resolution_compatibility(&resolved, None);
+        assert!(
+            diag.is_none(),
+            "module {:?} should be accepted with Node16 resolution",
+            module
+        );
+    }
+}
+
+#[test]
+fn test_node18_node20_accepted_with_nodenext_resolution() {
+    for module in [ModuleKind::Node18, ModuleKind::Node20] {
+        let resolved = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::NodeNext),
+            printer: PrinterOptions {
+                module,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let diag = check_module_resolution_compatibility(&resolved, None);
+        assert!(
+            diag.is_none(),
+            "module {:?} should be accepted with NodeNext resolution",
+            module
+        );
+    }
+}
+
+/// Non-node modules (e.g. ES2015, CommonJS) with node resolution should emit TS5110.
+#[test]
+fn test_non_node_module_rejected_with_nodenext_resolution() {
+    let resolved = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        printer: PrinterOptions {
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let diag = check_module_resolution_compatibility(&resolved, None);
+    assert!(
+        diag.is_some(),
+        "ES2015 should be rejected with NodeNext resolution"
+    );
+}
+
+/// Non-node resolution (e.g. Classic) should never produce TS5110 regardless of module.
+#[test]
+fn test_classic_resolution_never_emits_ts5110() {
+    let resolved = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Classic),
+        printer: PrinterOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let diag = check_module_resolution_compatibility(&resolved, None);
+    assert!(
+        diag.is_none(),
+        "Classic resolution should never emit TS5110"
+    );
+}
+
 #[test]
 fn test_read_source_file_binary_with_control_bytes() {
     let mut file = NamedTempFile::new().expect("temporary file should be created");

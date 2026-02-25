@@ -1262,6 +1262,8 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
         | ModuleKind::ES2022
         | ModuleKind::ESNext
         | ModuleKind::Node16
+        | ModuleKind::Node18
+        | ModuleKind::Node20
         | ModuleKind::NodeNext => {
             push_condition(&mut conditions, "import");
         }
