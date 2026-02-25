@@ -1,6 +1,6 @@
 //! Lazy type resolution and type environment population.
 
-use crate::query_boundaries::state_type_environment as query;
+use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;

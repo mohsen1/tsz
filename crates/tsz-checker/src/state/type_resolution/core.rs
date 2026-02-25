@@ -1,7 +1,7 @@
 //! Type reference resolution: interfaces, type aliases, and type references
 //! on `CheckerState`.
 
-use crate::query_boundaries::state_type_resolution as query;
+use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::{SymbolId, symbol_flags};

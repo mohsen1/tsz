@@ -1,6 +1,6 @@
 use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
-pub(crate) use super::common::{
+pub(crate) use super::super::common::{
     is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
 };
 pub(crate) use tsz_solver::type_queries::{
@@ -54,5 +54,5 @@ pub(crate) fn get_conditional_type(
 }
 
 #[cfg(test)]
-#[path = "../../tests/state_type_environment.rs"]
+#[path = "../../../tests/state_type_environment.rs"]
 mod tests;

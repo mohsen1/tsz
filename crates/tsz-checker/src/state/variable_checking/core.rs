@@ -2,7 +2,7 @@
 //!
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
-use crate::query_boundaries::state_checking as query;
+use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;

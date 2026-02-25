@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => {
                     if let Some(shape) =
-                        crate::query_boundaries::state_type_analysis::callable_shape_for_type(
+                        crate::query_boundaries::state::type_analysis::callable_shape_for_type(
                             self.ctx.types,
                             resolved_type,
                         )
@@ -434,7 +434,7 @@ impl<'a> CheckerState<'a> {
                 // The solver might not find it due to type encoding issues.
                 // FALLBACK: Try to manually find the property in the callable type
                 if let Some(shape) =
-                    crate::query_boundaries::state_type_analysis::callable_shape_for_type(
+                    crate::query_boundaries::state::type_analysis::callable_shape_for_type(
                         self.ctx.types,
                         declaring_type,
                     )

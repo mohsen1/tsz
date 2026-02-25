@@ -2,7 +2,7 @@
 //!
 //! Readonly assignment checking lives in the sibling `readonly` module.
 
-use crate::query_boundaries::state_checking as query;
+use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use std::collections::HashSet;
 use tsz_common::interner::Atom;
@@ -868,14 +868,14 @@ impl<'a> CheckerState<'a> {
         // property-access inputs. Already-resolved/function-like inputs don't
         // need relation preconditioning here.
         let resolution_kind =
-            crate::query_boundaries::state_type_environment::classify_for_property_access_resolution(
+            crate::query_boundaries::state::type_environment::classify_for_property_access_resolution(
                 self.ctx.types,
                 object_type,
             );
         if !matches!(
             resolution_kind,
-            crate::query_boundaries::state_type_environment::PropertyAccessResolutionKind::Resolved
-                | crate::query_boundaries::state_type_environment::PropertyAccessResolutionKind::FunctionLike
+            crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::Resolved
+                | crate::query_boundaries::state::type_environment::PropertyAccessResolutionKind::FunctionLike
         ) {
             self.ensure_relation_input_ready(object_type);
         }

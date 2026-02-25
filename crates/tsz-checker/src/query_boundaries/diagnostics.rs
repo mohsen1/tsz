@@ -1,4 +1,4 @@
-use super::state_checking;
+use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 
 pub(crate) fn collect_property_name_atoms_for_diagnostics(

@@ -1,6 +1,6 @@
 //! Destructuring pattern type resolution and validation.
 
-use crate::query_boundaries::state_checking as query;
+use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

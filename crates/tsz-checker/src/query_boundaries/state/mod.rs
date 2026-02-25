@@ -1,3 +1,8 @@
+pub(crate) mod checking;
+pub(crate) mod type_analysis;
+pub(crate) mod type_environment;
+pub(crate) mod type_resolution;
+
 use tsz_solver::TypeId;
 use tsz_solver::type_queries::{EvaluationNeeded, classify_for_evaluation};
 

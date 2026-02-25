@@ -3,7 +3,7 @@ use tsz_common::Atom;
 use tsz_solver::TupleElement;
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::common::{
+pub(crate) use super::super::common::{
     array_element_type, intersection_members, is_mapped_type, is_string_type,
     is_type_parameter_like, is_unit_type, object_shape_for_type as object_shape, tuple_elements,
     union_members,
@@ -42,5 +42,5 @@ where
 }
 
 #[cfg(test)]
-#[path = "../../tests/state_checking.rs"]
+#[path = "../../../tests/state_checking.rs"]
 mod tests;

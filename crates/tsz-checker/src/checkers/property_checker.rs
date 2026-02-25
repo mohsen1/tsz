@@ -205,13 +205,13 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
         object_type: tsz_solver::TypeId,
     ) -> bool {
-        use crate::query_boundaries::state_checking;
+        use crate::query_boundaries::state::checking;
 
         if self.ctx.enclosing_class.is_some() {
             return false;
         }
 
-        let Some(members) = state_checking::union_members(self.ctx.types, object_type) else {
+        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
             return false;
         };
 

@@ -4,7 +4,7 @@ use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
-use crate::query_boundaries::state_checking::find_property_in_object_by_str;
+use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use std::rc::Rc;
 use tsz_binder::{SymbolId, flow_flags};
