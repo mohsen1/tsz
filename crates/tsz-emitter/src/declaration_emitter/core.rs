@@ -784,11 +784,7 @@ impl<'a> DeclarationEmitter<'a> {
             Some(prop.name)
         } else if let Some(method) = self.arena.get_method_decl(member_node) {
             Some(method.name)
-        } else {
-            self.arena
-                .get_accessor(member_node)
-                .map(|accessor| accessor.name)
-        };
+        } else { self.arena.get_accessor(member_node).map(|accessor| accessor.name) };
         if let Some(name_idx) = name_idx
             && let Some(name_node) = self.arena.get(name_idx)
         {
@@ -1363,11 +1359,11 @@ impl<'a> DeclarationEmitter<'a> {
     pub(super) fn is_negative_literal(&self, node: &tsz_parser::parser::node::Node) -> bool {
         if let Some(unary) = self.arena.get_unary_expr(node)
             && unary.operator == SyntaxKind::MinusToken as u16
-            && let Some(operand_node) = self.arena.get(unary.operand)
-        {
-            let k = operand_node.kind;
-            return k == SyntaxKind::NumericLiteral as u16 || k == SyntaxKind::BigIntLiteral as u16;
-        }
+                && let Some(operand_node) = self.arena.get(unary.operand) {
+                    let k = operand_node.kind;
+                    return k == SyntaxKind::NumericLiteral as u16
+                        || k == SyntaxKind::BigIntLiteral as u16;
+                }
         false
     }
 
@@ -1384,24 +1380,21 @@ impl<'a> DeclarationEmitter<'a> {
             // Check property declarations
             if let Some(prop) = self.arena.get_property_decl(member_node)
                 && let Some(name_node) = self.arena.get(prop.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
             // Check method declarations
             if let Some(method) = self.arena.get_method_decl(member_node)
                 && let Some(name_node) = self.arena.get(method.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
             // Check accessors
             if let Some(accessor) = self.arena.get_accessor(member_node)
                 && let Some(name_node) = self.arena.get(accessor.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
+                    && name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
         }
         false
     }

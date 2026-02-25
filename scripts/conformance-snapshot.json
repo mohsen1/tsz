@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-25T14:17:37Z",
-  "git_sha": "981cc468302b29e888a8df7c727ce199707e15fd",
+  "timestamp": "2026-02-25T15:06:29Z",
+  "git_sha": "a7dc397eb59b2c2bf861aa89a0032262ca79628f",
   "summary": {
     "total_tests": 12565,
-    "passed": 7534,
-    "failed": 5031,
+    "passed": 7536,
+    "failed": 5029,
     "pass_rate": 60.0
   },
   "areas_by_pass_rate": [
@@ -21,13 +21,6 @@
       "passed": 2,
       "failed": 13,
       "pass_rate": 13.33
-    },
-    {
-      "area": "expressions/typeGuards",
-      "total": 63,
-      "passed": 17,
-      "failed": 46,
-      "pass_rate": 26.98
     },
     {
       "area": "types/rest",
@@ -56,6 +49,13 @@
       "passed": 8,
       "failed": 18,
       "pass_rate": 30.77
+    },
+    {
+      "area": "expressions/typeGuards",
+      "total": 63,
+      "passed": 20,
+      "failed": 43,
+      "pass_rate": 31.75
     },
     {
       "area": "externalModules/typeOnly",
@@ -298,9 +298,9 @@
     {
       "area": "classes/members",
       "total": 198,
-      "passed": 101,
-      "failed": 97,
-      "pass_rate": 51.01
+      "passed": 100,
+      "failed": 98,
+      "pass_rate": 50.51
     },
     {
       "area": "classes/constructorDeclarations",
@@ -507,10 +507,10 @@
     },
     {
       "area": "compiler",
-      "total": 6468,
-      "passed": 4128,
-      "failed": 2340,
-      "pass_rate": 63.82
+      "total": 6467,
+      "passed": 4129,
+      "failed": 2338,
+      "pass_rate": 63.85
     },
     {
       "area": "es6/modules",
@@ -646,18 +646,18 @@
       "pass_rate": 81.48
     },
     {
+      "area": "types/stringLiteral",
+      "total": 33,
+      "passed": 27,
+      "failed": 6,
+      "pass_rate": 81.82
+    },
+    {
       "area": "es6/variableDeclarations",
       "total": 13,
       "passed": 11,
       "failed": 2,
       "pass_rate": 84.62
-    },
-    {
-      "area": "types/stringLiteral",
-      "total": 33,
-      "passed": 28,
-      "failed": 5,
-      "pass_rate": 84.85
     },
     {
       "area": "dynamicImport",
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS2307",
-      "count": 174
+      "count": 173
     },
     {
       "code": "TS2322",

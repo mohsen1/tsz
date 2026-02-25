@@ -60,20 +60,31 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Check definite assignment for block-scoped variables without initializers
-        if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
+        // Apply type narrowing based on control flow FIRST.
+        // This is needed to handle typeof guards correctly: `typeof x === "string"`
+        // narrows x to `string` in the true branch, and the narrowed type means
+        // x has a definite value — TS2454 should not fire in narrowed branches.
+        trace!("Applying flow narrowing");
+        let narrowed_type = self.apply_flow_narrowing(idx, declared_type);
+        trace!(?narrowed_type, "flow narrowing result");
+
+        // Check definite assignment for block-scoped variables without initializers.
+        // Only emit TS2454 when the flow analysis did NOT narrow the type — meaning
+        // we're not in a type-guarded branch that implies the variable has a value.
+        // This matches tsc behavior where typeof/instanceof guards suppress TS2454
+        // in their narrowed branches.
+        if narrowed_type == declared_type
+            && should_report_variable_use_before_assignment(self, idx, declared_type, sym_id)
+        {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
-            // Return declared type to avoid cascading errors
+            // Return declared type (same as narrowed here since they're equal)
             trace!("Definite assignment error, returning declared type");
             return declared_type;
         }
 
-        // Apply type narrowing based on control flow
-        trace!("Applying flow narrowing");
-        let result = self.apply_flow_narrowing(idx, declared_type);
-        trace!(?result, "check_flow_usage result");
-        result
+        trace!(?narrowed_type, "check_flow_usage result");
+        narrowed_type
     }
 
     fn symbol_participates_in_flow_analysis(&self, sym_id: SymbolId) -> bool {
@@ -359,23 +370,16 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            if !is_function_scoped {
+            // Skip TS2454 when an initialized variable is used from a nested function.
+            // The inner function might be called after the variable is assigned.
+            if self.find_enclosing_function_or_source_file(decl_id_to_check)
+                != self.find_enclosing_function_or_source_file(idx)
+            {
                 return false;
             }
 
-            if let Some(_usage_node) = self.ctx.arena.get(idx) {
-                // Check if usage is textually inside the initializer expression of the variable.
-                // e.g. var x = f(() => x); // `x` inside is used before assignment completes!
-                // However, general usages after the declaration shouldn't be skipped just because of position,
-                // as they could be in a catch block or after a conditional return.
-                // The control flow graph should be the ultimate source of truth.
-
-                // If usage is inside a nested function relative to the declaration, skip
-                if self.find_enclosing_function_or_source_file(decl_id_to_check)
-                    != self.find_enclosing_function_or_source_file(idx)
-                {
-                    return false;
-                }
+            if !is_function_scoped {
+                return false;
             }
         }
 
