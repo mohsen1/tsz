@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
                 if self.new_target_is_class_symbol(new_expr.expression) {
                     return TypeId::ERROR;
                 }
-                self.error_not_constructable_at(constructor_type, idx);
+                self.error_not_constructable_at(constructor_type, new_expr.expression);
                 TypeId::ERROR
             }
             CallResult::ArgumentCountMismatch {
