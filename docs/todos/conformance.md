@@ -1,8 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~14769/19201 (76.9%) — full suite, error-code level
-**Fingerprint score**: ~8099/12574 (64.4%) — full suite, fingerprint level
+**Current score**: ~6589/12574 (52.4%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -215,6 +214,13 @@
 - **Investigated but deferred**: TS2556 — spread arguments not tuple type. ~5 tests in callWithSpread2-5. Requires implementing spread-to-tuple expansion in call argument resolution.
 - **Investigated but deferred**: Overload resolution — ~3 tests (overloadResolution, overloadResolutionConstructors, overloadResolutionClassConstructors). Complex multi-signature resolution gaps.
 - **Investigated but deferred**: TS2347 vs TS2349 — SubFunc extends Function not callable with type arguments. functionCalls.ts expects TS2347 for `subFunc<number>(0)` but we emit TS2349.
+
+#### Run note (2026-02-25, session 8) — es6/arrowFunction area
+- **Area**: es6/arrowFunction (38.8% → 89.6%, 26/67 → 60/67)
+- **Net gain**: +59 tests across full suite (6530 → 6589)
+- **Fixed**: Remove dead TS1100/TS1210/TS2496/TS2522 diagnostics — tsc 6.0 never emits these. They were false positives across function expressions, declarations, parameters, variables, assignments, and unary operators. Removed all emission sites (7 files).
+- **Fixed**: `arguments` resolution in arrow functions — Arrow functions are transparent for `arguments` (they capture from the enclosing scope). Previously `arguments` in arrow functions fell through to normal resolution and emitted false TS2304 ("Cannot find name"). Now resolves to IArguments regardless of scope, matching tsc behavior.
+- **Remaining failures**: arrowFunctionErrorSpan (TS1200 line terminator + TS2345), arrowFunctionsMissingTokens (TS1109), arrowFunctionInConstructorArgument1 (TS2304), disallowLineTerminatorBeforeArrow (TS1200), arrowFunctionContexts (TS1101/TS2331/TS2410). All unrelated to the fixed diagnostics.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
@@ -481,3 +487,6 @@ All items below have been validated against the codebase (implementations + test
 | TS2792→TS2307 | Module resolver: return NotFound instead of ModuleResolutionModeMismatch for Node16/NodeNext exports failures | -11 false TS2792 |
 | skipLibCheck | Extend skipLibCheck to .d.cts/.d.mts (not just .d.ts) | +2 node tests |
 | node_modules | Suppress diagnostics for declaration files inside node_modules | included in above |
+| TS1100/TS1210 | Remove dead strict-mode eval/arguments diagnostics (tsc 6.0 no longer emits) | +59 tests |
+| TS2496/TS2522 | Remove dead arrow/async function arguments diagnostics | included above |
+| arguments | Fix arguments resolution in arrow functions (transparent scope capture) | included above |
