@@ -1,4 +1,4 @@
-use super::Printer;
+use super::super::Printer;
 use crate::transforms::ir::IRNode;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
@@ -7,7 +7,7 @@ use tsz_scanner::SyntaxKind;
 
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
-pub(super) fn rewrite_enum_iife_for_namespace_export(
+pub(in crate::emitter) fn rewrite_enum_iife_for_namespace_export(
     ir: &mut IRNode,
     enum_name: &str,
     ns_name: &str,
@@ -64,7 +64,7 @@ impl<'a> Printer<'a> {
     // Namespace / Module Declarations
     // =========================================================================
 
-    pub(super) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
         };
@@ -616,7 +616,7 @@ impl<'a> Printer<'a> {
     /// This mirrors TypeScript behavior for `export import X = Y;` inside namespaces:
     /// when `Y` is type-only (e.g. non-instantiated namespace), no runtime assignment
     /// should be emitted.
-    pub(super) fn namespace_alias_target_has_runtime_value(
+    pub(in crate::emitter) fn namespace_alias_target_has_runtime_value(
         &self,
         target: NodeIndex,
         scope_body: Option<NodeIndex>,

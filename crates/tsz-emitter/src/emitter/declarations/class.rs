@@ -1,4 +1,4 @@
-use super::{Printer, ScriptTarget};
+use super::super::{Printer, ScriptTarget};
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::NodeIndex;
@@ -16,7 +16,7 @@ impl<'a> Printer<'a> {
     // Classes
     // =========================================================================
 
-    pub(super) fn collect_class_decorators(
+    pub(in crate::emitter) fn collect_class_decorators(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> Vec<NodeIndex> {
@@ -34,7 +34,7 @@ impl<'a> Printer<'a> {
             .collect()
     }
 
-    pub(super) fn emit_legacy_class_decorator_assignment(
+    pub(in crate::emitter) fn emit_legacy_class_decorator_assignment(
         &mut self,
         class_name: &str,
         decorators: &[NodeIndex],
@@ -87,7 +87,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a class declaration.
-    pub(super) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -235,11 +235,11 @@ impl<'a> Printer<'a> {
     /// Emit a class using ES6 native class syntax (no transforms).
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
-    pub(super) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
         self.emit_class_es6_with_options(node, idx, false, None);
     }
 
-    pub(super) fn emit_class_es6_with_options(
+    pub(in crate::emitter) fn emit_class_es6_with_options(
         &mut self,
         node: &Node,
         _idx: NodeIndex,
@@ -1352,7 +1352,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn class_has_auto_accessor_members(
+    pub(in crate::emitter) fn class_has_auto_accessor_members(
         &self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> bool {
@@ -1584,5 +1584,5 @@ impl<'a> Printer<'a> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/declarations_class.rs"]
+#[path = "../../../tests/declarations_class.rs"]
 mod tests;
