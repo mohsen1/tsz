@@ -501,6 +501,23 @@ impl ResolutionFailure {
     pub const fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound { .. })
     }
+
+    /// Check if this failure type should trigger a fallback resolution attempt.
+    ///
+    /// tsc tries all resolution strategies before giving up. Our `ModuleResolver`
+    /// may fail with `ModuleResolutionModeMismatch` or `PackageJsonError` even
+    /// though the legacy/classic fallback resolver would succeed (e.g. for virtual
+    /// test files or files that don't need package.json exports). We should try
+    /// the fallback for these "soft" failures before emitting an error.
+    pub const fn should_try_fallback(&self) -> bool {
+        matches!(
+            self,
+            Self::NotFound { .. }
+                | Self::ModuleResolutionModeMismatch { .. }
+                | Self::PackageJsonError { .. }
+                | Self::PathMappingFailed { .. }
+        )
+    }
 }
 
 /// Module resolver that implements TypeScript's resolution algorithms

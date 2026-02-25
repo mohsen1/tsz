@@ -459,8 +459,10 @@ pub fn resolve_compiler_options(
         }
     }
     let effective_resolution = resolved.effective_module_resolution();
-    resolved.checker.implied_classic_resolution =
-        matches!(effective_resolution, ModuleResolutionKind::Classic);
+    // tsc 6.0 no longer emits TS2792 ("Did you mean to set moduleResolution to
+    // nodenext?") for classic resolution. It always uses TS2307. Keep the flag
+    // false so all downstream code emits TS2307 instead.
+    resolved.checker.implied_classic_resolution = false;
     resolved.resolve_package_json_exports = options.resolve_package_json_exports.unwrap_or({
         matches!(
             effective_resolution,
@@ -3766,13 +3768,14 @@ mod tests {
 
     #[test]
     fn test_implied_classic_resolution_es2015_module() {
-        // module: es2015 without explicit moduleResolution → Classic resolution
+        // tsc 6.0 no longer emits TS2792 for classic resolution, so
+        // implied_classic_resolution is always false.
         let json = r#"{"compilerOptions":{"module":"es2015"}}"#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
         assert!(
-            resolved.checker.implied_classic_resolution,
-            "ES2015 module without explicit moduleResolution should imply Classic resolution"
+            !resolved.checker.implied_classic_resolution,
+            "implied_classic_resolution should always be false (tsc 6.0 removed TS2792)"
         );
     }
 
