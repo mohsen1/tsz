@@ -69,6 +69,8 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: The 3 `declarations/import_*.rs` files were reorganized into `declarations/import/` subdirectory. Renames: `import_checker.rs` → `import/mod.rs`, `import_declaration_checker.rs` → `import/declaration.rs`, `import_equals_checker.rs` → `import/equals.rs`.
 
+**Note**: The 5 `query_boundaries/state_*.rs` files were reorganized into `query_boundaries/state/` subdirectory (e6969996e). Renames: `state.rs` → `state/mod.rs`, `state_checking.rs` → `state/checking.rs`, `state_type_analysis.rs` → `state/type_analysis.rs`, `state_type_environment.rs` → `state/type_environment.rs`, `state_type_resolution.rs` → `state/type_resolution.rs`. Remaining `query_boundaries/` candidates for future subdirectory grouping: `type_computation_*` (3 files), checker-specific boundaries (6 `*_checker.rs` files).
+
 ### 4. Cross-Layer Imports — CLEAN
 
 - **Emitter -> Checker**: No `tsz_checker` imports in emitter. Emitter depends on parser, binder, solver only.
