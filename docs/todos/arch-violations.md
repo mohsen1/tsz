@@ -83,6 +83,8 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: `types/class_type/mod.rs` had implementation logic extracted into `core.rs`. `types/class_type/mod.rs` (1013 → 6 LOC). All checker subdirectory `mod.rs` files now follow the thin-mod.rs pattern with implementation in `core.rs`.
 
+**Note — Solver thin-mod.rs migration**: `narrowing/mod.rs` had implementation logic extracted into `core.rs`. `narrowing/mod.rs` (1450 → 54 LOC). Three private methods (`narrow_type_param`, `is_js_primitive`, `is_assignable_to`) promoted to `pub(super)` for sibling module access. Remaining solver mod.rs files with heavy implementation: `intern/mod.rs` (1416 LOC), `operations/mod.rs` (1106 LOC), `diagnostics/mod.rs` (924 LOC), `type_queries/mod.rs` (894 LOC), `contextual/mod.rs` (799 LOC).
+
 **Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/core.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
 
 ### 4. Cross-Layer Imports — CLEAN
@@ -152,7 +154,8 @@ CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manua
    - ~~`application.rs` (190 LOC) → `instantiation/application.rs`~~ ✅ Done (db9084e91) — type application evaluation is conceptually part of the instantiation pipeline.
    - ~~`type_factory.rs` (184 LOC) → `intern/type_factory.rs`~~ ✅ Done (c492109bf) — type construction facade is conceptually adjacent to the interning engine.
    - ~~`format.rs` (787 LOC) → `diagnostics/format.rs`~~ ✅ Done — type formatting is the primary consumer of diagnostics infrastructure and its sole internal caller is `diagnostics/builders.rs`.
-   - Remaining top-level candidates: `tracer.rs` (735 LOC); `unsoundness_audit.rs` (835 LOC — not runtime code, could move to docs); `recursion.rs` (664 LOC) + `canonicalize.rs` (617 LOC) could group together.
+   - ~~`def.rs` (581 LOC) + `type_resolver.rs` (593 LOC) → `def/` subdirectory~~ ✅ Done (795d697bd) — `def.rs` → `def/core.rs` (DefId, DefinitionStore, DefKind, DefInfo), `type_resolver.rs` → `def/resolver.rs` (TypeResolver trait, TypeEnvironment). Both form the DefId-first semantic type resolution system (§6).
+   - Remaining top-level candidates: `unsoundness_audit.rs` (830 LOC — not runtime code, could move to docs); `recursion.rs` (664 LOC) + `canonicalize.rs` (609 LOC) could group together.
 4. ~~**Checker `context*.rs` files**: organized into `context/` subdirectory~~ ✅ Done
 5. ~~**Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit~~ ✅ Done — extracted constructor/class/instance classifiers (~482 LOC) into `extended_constructors.rs`, reducing `extended.rs` to ~1,442 LOC.
 6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 → 1,395 LOC by extracting iterable classifications into `iterable.rs` and then traversal/property-access classifications (~355 LOC) into `traversal.rs`. Remaining sections: core type queries, intrinsic queries, composite queries, constructor/static collection, construct signatures, constraint classification, signature classification, property lookup classification, evaluation-needed classification.
