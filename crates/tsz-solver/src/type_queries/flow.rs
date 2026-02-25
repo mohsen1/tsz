@@ -95,7 +95,10 @@ pub fn classify_for_constructor_instance(
 
 /// Extract the instance type from a constructor type.
 ///
-/// Given a type with construct signatures, returns the union of their return types.
+/// Follows tsc's `getInstanceType` logic:
+/// 1. Check for a `prototype` property whose type is not `any` (highest priority)
+/// 2. Fall back to construct signature return types
+///
 /// Recursively handles union types (collecting from all members) and intersection types
 /// (returning from the first member with construct signatures).
 pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -103,6 +106,18 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
         return Some(type_id);
     }
 
+    // Step 1: Check for `prototype` property (highest priority per tsc spec).
+    // If the constructor has a `prototype` property whose type is not `any`,
+    // that type IS the instance type. This handles interfaces like:
+    //   interface C1 { (): C1; prototype: C1; p1: string; }
+    if let Some(proto_prop) =
+        crate::type_queries::find_property_in_type_by_str(db, type_id, "prototype")
+        && proto_prop.type_id != TypeId::ANY
+    {
+        return Some(proto_prop.type_id);
+    }
+
+    // Step 2: Fall back to construct signatures
     match classify_for_constructor_instance(db, type_id) {
         ConstructorInstanceKind::Callable(shape_id) => {
             let shape = db.callable_shape(shape_id);
