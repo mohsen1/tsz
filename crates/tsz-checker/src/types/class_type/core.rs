@@ -1,0 +1,1011 @@
+//! Core implementation for class instance type resolution.
+
+use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
+use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
+use tsz_lowering::TypeLowering;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::visitor::is_template_literal_type;
+use tsz_solver::{
+    CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
+    TypeSubstitution, Visibility, instantiate_type,
+};
+
+#[inline]
+pub(in crate::types_domain) const fn can_skip_base_instantiation(
+    base_type_param_count: usize,
+    explicit_type_arg_count: usize,
+) -> bool {
+    base_type_param_count == 0 && explicit_type_arg_count == 0
+}
+
+#[inline]
+const fn exceeds_class_inheritance_depth_limit(depth: usize) -> bool {
+    // Keep well above realistic inheritance chains while bounding pathological recursion.
+    depth > 256
+}
+
+#[inline]
+fn in_progress_class_instance_result(
+    in_resolution_set: bool,
+    cached: Option<TypeId>,
+) -> Option<TypeId> {
+    if in_resolution_set {
+        Some(cached.unwrap_or(TypeId::ERROR))
+    } else {
+        None
+    }
+}
+
+// =============================================================================
+// Class Type Resolution
+// =============================================================================
+
+impl<'a> CheckerState<'a> {
+    /// Get the instance type of a class declaration.
+    ///
+    /// This is the type that instances of the class will have. It includes:
+    /// - Instance properties and methods
+    /// - Inherited members from base classes
+    /// - Members from implemented interfaces
+    /// - Index signatures
+    /// - Private brand property for nominal typing (if class has private/protected members)
+    ///
+    /// # Arguments
+    /// * `class_idx` - The `NodeIndex` of the class declaration
+    /// * `class` - The parsed class data
+    ///
+    /// # Returns
+    /// The `TypeId` representing the instance type of the class
+    pub(crate) fn get_class_instance_type(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> TypeId {
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let is_in_resolution_set = current_sym
+            .is_some_and(|sym_id| self.ctx.class_instance_resolution_set.contains(&sym_id));
+
+        // Fast path for re-entrant class instance queries: avoid re-entering
+        // the full inheritance walk while the class is already being resolved.
+        if let Some(result) = in_progress_class_instance_result(
+            is_in_resolution_set,
+            self.ctx.class_instance_type_cache.get(&class_idx).copied(),
+        ) {
+            return result;
+        }
+
+        if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            return cached;
+        }
+
+        let mut visited = FxHashSet::default();
+        let mut visited_nodes = FxHashSet::default();
+        let result =
+            self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
+
+        // Cache all terminal outcomes (including ERROR) so pathological
+        // inheritance graphs don't repeatedly recompute the same failing class.
+        self.ctx.class_instance_type_cache.insert(class_idx, result);
+        result
+    }
+
+    /// Inner implementation of class instance type resolution with cycle detection.
+    ///
+    /// This function builds the complete instance type by:
+    /// 1. Collecting all instance members (properties, methods, accessors)
+    /// 2. Processing constructor parameter properties
+    /// 3. Handling index signatures
+    /// 4. Merging base class members
+    /// 5. Merging implemented interface members
+    /// 6. Adding private brand for nominal typing if needed
+    /// 7. Inheriting Object prototype members
+    pub(crate) fn get_class_instance_type_inner(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        visited: &mut FxHashSet<SymbolId>,
+        visited_nodes: &mut FxHashSet<NodeIndex>,
+    ) -> TypeId {
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let factory = self.ctx.types.factory();
+
+        // Try to insert into global class_instance_resolution_set for recursion prevention.
+        // If the symbol is already in the set, it means this type is currently being resolved
+        // somewhere up the call stack — return ERROR to break the recursion. Do NOT emit
+        // TS2506 here: this is a recursion guard, not a cycle detector. The symbol being
+        // in the set does not prove circular inheritance. True TS2506 cycle detection is
+        // handled by dedicated inheritance checks in class_inheritance.rs.
+        let did_insert_into_global_set = if let Some(sym_id) = current_sym {
+            if self.ctx.class_instance_resolution_set.insert(sym_id) {
+                true // We inserted it
+            } else {
+                // Symbol already being resolved — break recursion without diagnostic
+                return TypeId::ERROR;
+            }
+        } else {
+            false
+        };
+
+        // Check for cycles using both symbol ID (for same-file cycles)
+        // and node index (for cross-file cycles with @Filename annotations)
+        if let Some(sym_id) = current_sym
+            && !visited.insert(sym_id)
+        {
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR; // Circular reference detected via symbol
+        }
+        if !visited_nodes.insert(class_idx) {
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR; // Circular reference detected via node index
+        }
+        if exceeds_class_inheritance_depth_limit(visited_nodes.len()) {
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR;
+        }
+
+        // Check fuel to prevent timeout on pathological inheritance hierarchies
+        if !self.ctx.consume_fuel() {
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+            return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
+        }
+
+        // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
+        // Keep class type parameters in scope while constructing the instance type.
+        let (_class_type_params, class_type_param_updates) =
+            self.push_type_parameters(&class.type_parameters);
+
+        struct MethodAggregate {
+            overload_signatures: Vec<CallSignature>,
+            impl_signatures: Vec<CallSignature>,
+            overload_optional: bool,
+            impl_optional: bool,
+            visibility: Visibility,
+        }
+
+        struct AccessorAggregate {
+            getter: Option<TypeId>,
+            setter: Option<TypeId>,
+            visibility: Visibility,
+        }
+
+        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let mut methods: FxHashMap<Atom, MethodAggregate> = FxHashMap::default();
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+        let mut string_index: Option<IndexSignature> = None;
+        let mut number_index: Option<IndexSignature> = None;
+        let mut has_nominal_members = false;
+        let mut merged_interface_type_for_class: Option<TypeId> = None;
+
+        // Process all class members
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    if self.member_requires_nominal(&prop.modifiers, prop.name) {
+                        has_nominal_members = true;
+                    }
+                    let Some(name) = self.get_property_name(prop.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let is_readonly = self.has_readonly_modifier(&prop.modifiers);
+                    let type_id = if prop.type_annotation.is_some() {
+                        self.get_type_from_type_node(prop.type_annotation)
+                    } else if prop.initializer.is_some() {
+                        let prev = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
+                        let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.preserve_literal_types = prev;
+                        // Widen literal types for mutable class properties.
+                        // `class Foo { name = "" }` → `name: string`.
+                        // Readonly properties keep literal types:
+                        // `class Foo { readonly tag = "x" }` → `tag: "x"`.
+                        if is_readonly {
+                            init_type
+                        } else {
+                            self.widen_literal_type(init_type)
+                        }
+                    } else {
+                        // Class properties without type annotation or initializer
+                        // get implicit 'any' type (TS7008 when noImplicitAny is on)
+                        TypeId::ANY
+                    };
+
+                    let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
+
+                    properties.insert(
+                        name_atom,
+                        PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: prop.question_token,
+                            readonly: is_readonly,
+                            is_method: false,
+                            visibility,
+                            parent_id: current_sym,
+                        },
+                    );
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
+                    if self.member_requires_nominal(&method.modifiers, method.name) {
+                        has_nominal_members = true;
+                    }
+                    let Some(name) = self.get_property_name(method.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let signature = self.call_signature_from_method(method, member_idx);
+                    let visibility = self.get_visibility_from_modifiers(&method.modifiers);
+                    let entry = methods.entry(name_atom).or_insert(MethodAggregate {
+                        overload_signatures: Vec::new(),
+                        impl_signatures: Vec::new(),
+                        overload_optional: false,
+                        impl_optional: false,
+                        visibility,
+                    });
+                    if method.body.is_none() {
+                        entry.overload_signatures.push(signature);
+                        entry.overload_optional |= method.question_token;
+                    } else {
+                        entry.impl_signatures.push(signature);
+                        entry.impl_optional |= method.question_token;
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
+                    if self.member_requires_nominal(&accessor.modifiers, accessor.name) {
+                        has_nominal_members = true;
+                    }
+                    let Some(name) = self.get_property_name(accessor.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_visibility_from_modifiers(&accessor.modifiers);
+                    let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                        getter: None,
+                        setter: None,
+                        visibility,
+                    });
+
+                    if k == syntax_kind_ext::GET_ACCESSOR {
+                        let getter_type = if accessor.type_annotation.is_some() {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        } else {
+                            self.infer_getter_return_type(accessor.body)
+                        };
+                        entry.getter = Some(getter_type);
+                    } else {
+                        let setter_type = accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .and_then(|param| {
+                                (param.type_annotation.is_some())
+                                    .then(|| self.get_type_from_type_node(param.type_annotation))
+                            })
+                            .unwrap_or(TypeId::UNKNOWN);
+                        entry.setter = Some(setter_type);
+                    }
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    if ctor.body.is_none() {
+                        continue;
+                    }
+                    // Process constructor parameter properties
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        if !self.has_parameter_property_modifier(&param.modifiers) {
+                            continue;
+                        }
+                        if self.has_private_modifier(&param.modifiers)
+                            || self.has_protected_modifier(&param.modifiers)
+                        {
+                            has_nominal_members = true;
+                        }
+                        let Some(name) = self.get_property_name(param.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        if properties.contains_key(&name_atom) {
+                            continue;
+                        }
+                        let is_readonly = self.has_readonly_modifier(&param.modifiers);
+                        let type_id = if param.type_annotation.is_some() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else if param.initializer.is_some() {
+                            let init_type = self.get_type_of_node(param.initializer);
+                            // Widen for mutable constructor parameter properties
+                            if is_readonly {
+                                init_type
+                            } else {
+                                self.widen_literal_type(init_type)
+                            }
+                        } else {
+                            TypeId::ANY
+                        };
+
+                        let visibility = self.get_visibility_from_modifiers(&param.modifiers);
+                        properties.insert(
+                            name_atom,
+                            PropertyInfo {
+                                name: name_atom,
+                                type_id,
+                                write_type: type_id,
+                                optional: param.question_token,
+                                readonly: is_readonly,
+                                is_method: false,
+                                visibility,
+                                parent_id: current_sym,
+                            },
+                        );
+                    }
+                }
+                k if k == syntax_kind_ext::INDEX_SIGNATURE => {
+                    let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&index_sig.modifiers) {
+                        continue;
+                    }
+
+                    let param_idx = index_sig
+                        .parameters
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+
+                    let key_type = if param.type_annotation.is_none() {
+                        TypeId::ANY
+                    } else {
+                        self.get_type_from_type_node(param.type_annotation)
+                    };
+
+                    // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                    // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
+                    let has_param_grammar_error = param.dot_dot_dot_token || param.question_token;
+                    let is_valid_index_type = key_type == TypeId::STRING
+                        || key_type == TypeId::NUMBER
+                        || key_type == TypeId::SYMBOL
+                        || is_template_literal_type(self.ctx.types, key_type);
+
+                    if !is_valid_index_type && !has_param_grammar_error {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
+
+                    let value_type = if index_sig.type_annotation.is_none() {
+                        TypeId::ANY
+                    } else {
+                        self.get_type_from_type_node(index_sig.type_annotation)
+                    };
+                    let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+
+                    let index = IndexSignature {
+                        key_type,
+                        value_type,
+                        readonly,
+                    };
+
+                    if key_type == TypeId::NUMBER {
+                        Self::merge_index_signature(&mut number_index, index);
+                    } else {
+                        Self::merge_index_signature(&mut string_index, index);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Convert accessors to properties
+        for (name, accessor) in accessors {
+            if methods.contains_key(&name) {
+                continue;
+            }
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
+            let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            properties.insert(
+                name,
+                PropertyInfo {
+                    name,
+                    type_id: read_type,
+                    write_type,
+                    optional: false,
+                    readonly,
+                    is_method: false,
+                    visibility: accessor.visibility,
+                    parent_id: current_sym,
+                },
+            );
+        }
+
+        // Convert methods to callable properties
+        for (name, method) in methods {
+            // Keep existing field/accessor entries for duplicate names.
+            // Duplicate member diagnostics are handled separately (TS2300/TS2393),
+            // and preserving the non-method member avoids cascading TS2322 errors.
+            if properties.contains_key(&name) {
+                continue;
+            }
+            let (signatures, optional) = if !method.overload_signatures.is_empty() {
+                (method.overload_signatures, method.overload_optional)
+            } else {
+                (method.impl_signatures, method.impl_optional)
+            };
+            if signatures.is_empty() {
+                continue;
+            }
+            let type_id = factory.callable(CallableShape {
+                call_signatures: signatures,
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+            });
+            properties.insert(
+                name,
+                PropertyInfo {
+                    name,
+                    type_id,
+                    write_type: type_id,
+                    optional,
+                    readonly: false,
+                    is_method: true,
+                    visibility: method.visibility,
+                    parent_id: current_sym,
+                },
+            );
+        }
+
+        // Add private brand property for nominal typing
+        if has_nominal_members {
+            let brand_name = if let Some(sym_id) = current_sym {
+                format!("__private_brand_{}", sym_id.0)
+            } else {
+                format!("__private_brand_node_{}", class_idx.0)
+            };
+            let brand_atom = self.ctx.types.intern_string(&brand_name);
+            properties.entry(brand_atom).or_insert(PropertyInfo {
+                name: brand_atom,
+                type_id: TypeId::UNKNOWN,
+                write_type: TypeId::UNKNOWN,
+                optional: false,
+                readonly: true,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            });
+        }
+
+        // Merge base class instance properties (derived members take precedence)
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    break;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    break;
+                };
+
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else {
+                        (type_idx, None)
+                    };
+
+                let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
+                    Some(base_sym_id) => base_sym_id,
+                    None => {
+                        // Can't resolve symbol (e.g., anonymous class expression like
+                        // `class extends class { a = 1 }`), try expression-based resolution
+                        if let Some(base_instance_type) =
+                            self.base_instance_type_from_expression(expr_idx, type_arguments)
+                        {
+                            tracing::debug!(
+                                ?base_instance_type,
+                                "heritage: resolved base instance type from expression"
+                            );
+                            self.merge_base_instance_properties(
+                                base_instance_type,
+                                &mut properties,
+                                &mut string_index,
+                                &mut number_index,
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?expr_idx,
+                                "heritage: base_instance_type_from_expression returned None"
+                            );
+                        }
+                        break;
+                    }
+                };
+                let base_class_decl = self.get_class_declaration_from_symbol(base_sym_id);
+
+                // Canonicalize class symbol for cycle guards. Some paths can observe
+                // alias/default-export symbols while the active resolution set tracks
+                // the declaration symbol; check both to avoid recursion leaks.
+                let canonical_base_sym =
+                    base_class_decl.and_then(|decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+                let base_in_resolution_set = self
+                    .ctx
+                    .class_instance_resolution_set
+                    .contains(&base_sym_id)
+                    || canonical_base_sym
+                        .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym));
+                let base_visited = visited.contains(&base_sym_id)
+                    || canonical_base_sym.is_some_and(|sym| visited.contains(&sym));
+
+                // CRITICAL: Check for self-referential class BEFORE processing
+                // This catches class C extends C, class D<T> extends D<T>, etc.
+                if let Some(current_sym) = current_sym {
+                    if base_sym_id == current_sym || canonical_base_sym == Some(current_sym) {
+                        // Self-referential inheritance - emit error and stop
+                        self.error_circular_class_inheritance(expr_idx, class_idx);
+                        break;
+                    }
+
+                    // CRITICAL: Check global resolution set to prevent infinite recursion
+                    // If the base class is currently being resolved, skip it immediately
+                    if base_in_resolution_set {
+                        // Base class is already being resolved up the call stack
+                        // Skip to prevent infinite recursion
+                        break;
+                    }
+                }
+
+                // Check for circular inheritance using symbol tracking
+                if base_visited {
+                    break;
+                }
+
+                let Some(base_class_idx) = base_class_decl else {
+                    // Base class node not found in current arena (cross-file case).
+                    // Try to resolve the base class type through the symbol system.
+                    // If base class is being resolved, skip to prevent infinite loop
+                    if base_in_resolution_set {
+                        break;
+                    }
+
+                    if let Some(base_instance_type) =
+                        self.base_instance_type_from_expression(expr_idx, type_arguments)
+                    {
+                        self.merge_base_instance_properties(
+                            base_instance_type,
+                            &mut properties,
+                            &mut string_index,
+                            &mut number_index,
+                        );
+                    }
+                    break;
+                };
+
+                // Check for circular inheritance using node index tracking (for cross-file cycles)
+                // CRITICAL: Return immediately to prevent infinite recursion, not just break
+                if visited_nodes.contains(&base_class_idx) {
+                    if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                        self.ctx.class_instance_resolution_set.remove(&sym_id);
+                    }
+                    return TypeId::ANY; // Cycle detected - break recursion
+                }
+                let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
+                    break;
+                };
+                let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+                    break;
+                };
+
+                // CRITICAL: Check global resolution set BEFORE recursing into base class
+                // This prevents infinite recursion when we have forward references in cycles
+                if let Some(base_class_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
+                    if self
+                        .ctx
+                        .class_instance_resolution_set
+                        .contains(&base_class_sym)
+                    {
+                        // Base class is already being resolved up the call stack
+                        // Return ANY to break the cycle and stop recursion
+                        if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                            self.ctx.class_instance_resolution_set.remove(&sym_id);
+                        }
+                        return TypeId::ANY;
+                    }
+                } else {
+                    // CRITICAL: Forward reference detected (symbol not bound yet)
+                    // If we've seen this node before in the current resolution path, it's a cycle
+                    // This handles cases like: class C extends E {} where E doesn't exist yet
+                    // but will be declared later with extends D, and D extends C
+                    if visited_nodes.contains(&base_class_idx) {
+                        if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                            self.ctx.class_instance_resolution_set.remove(&sym_id);
+                        }
+                        return TypeId::ANY; // Forward reference cycle - break recursion
+                    }
+                    // Otherwise, continue - the forward reference might resolve later
+                }
+
+                let mut type_args = Vec::new();
+                if let Some(args) = type_arguments {
+                    for &arg_idx in &args.nodes {
+                        type_args.push(self.get_type_from_type_node(arg_idx));
+                    }
+                }
+
+                // Get the base class instance type.
+                // We already resolved a concrete class declaration (`base_class_idx`) above, so
+                // we can read through the declaration cache directly and avoid an extra symbol
+                // resolution round trip on this hot inheritance path.
+                let base_instance_type = self
+                    .ctx
+                    .class_instance_type_cache
+                    .get(&base_class_idx)
+                    .copied()
+                    .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
+                let base_instance_type = self.resolve_lazy_type(base_instance_type);
+                let base_instance_type = if can_skip_base_instantiation(
+                    base_class
+                        .type_parameters
+                        .as_ref()
+                        .map_or(0, |params| params.nodes.len()),
+                    type_args.len(),
+                ) {
+                    base_instance_type
+                } else {
+                    let (base_type_params, base_type_param_updates) =
+                        self.push_type_parameters(&base_class.type_parameters);
+
+                    if type_args.len() < base_type_params.len() {
+                        for param in base_type_params.iter().skip(type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            type_args.push(fallback);
+                        }
+                    }
+                    if type_args.len() > base_type_params.len() {
+                        type_args.truncate(base_type_params.len());
+                    }
+
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                    let instantiated =
+                        instantiate_type(self.ctx.types, base_instance_type, &substitution);
+                    self.pop_type_parameters(base_type_param_updates);
+                    instantiated
+                };
+
+                if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
+                {
+                    for base_prop in &base_shape.properties {
+                        properties
+                            .entry(base_prop.name)
+                            .or_insert_with(|| base_prop.clone());
+                    }
+                    if let Some(ref idx) = base_shape.string_index {
+                        Self::merge_index_signature(&mut string_index, idx.clone());
+                    }
+                    if let Some(ref idx) = base_shape.number_index {
+                        Self::merge_index_signature(&mut number_index, idx.clone());
+                    }
+                }
+
+                break;
+            }
+        }
+
+        // Merge implemented interface properties (class members take precedence)
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ImplementsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+
+                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else {
+                        (type_idx, None)
+                    };
+
+                    let Some(interface_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                        continue;
+                    };
+
+                    let mut type_args = Vec::new();
+                    if let Some(args) = type_arguments {
+                        for &arg_idx in &args.nodes {
+                            type_args.push(self.get_type_from_type_node(arg_idx));
+                        }
+                    }
+
+                    let mut interface_type = self.type_reference_symbol_type(interface_sym_id);
+                    let interface_type_params = self.get_type_params_for_symbol(interface_sym_id);
+
+                    if type_args.len() < interface_type_params.len() {
+                        for param in interface_type_params.iter().skip(type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            type_args.push(fallback);
+                        }
+                    }
+                    if type_args.len() > interface_type_params.len() {
+                        type_args.truncate(interface_type_params.len());
+                    }
+
+                    // Resolve Lazy(DefId) to structural type BEFORE instantiation.
+                    // If we instantiate a Lazy(DefId), the substitution is lost because
+                    // Lazy types don't recursively hold their structure.
+                    interface_type = self.resolve_lazy_type(interface_type);
+
+                    if !interface_type_params.is_empty() {
+                        let substitution = TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &interface_type_params,
+                            &type_args,
+                        );
+                        interface_type =
+                            instantiate_type(self.ctx.types, interface_type, &substitution);
+                    }
+
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
+                        for prop in &shape.properties {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
+                        if let Some(ref idx) = shape.string_index {
+                            Self::merge_index_signature(&mut string_index, idx.clone());
+                        }
+                        if let Some(ref idx) = shape.number_index {
+                            Self::merge_index_signature(&mut number_index, idx.clone());
+                        }
+                    } else if let Some(shape) =
+                        callable_shape_for_type(self.ctx.types, interface_type)
+                    {
+                        for prop in &shape.properties {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Merge interface declarations for class/interface merging (class members take precedence)
+        if let Some(sym_id) = current_sym
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let interface_decls: Vec<NodeIndex> = symbol
+                .declarations
+                .iter()
+                .copied()
+                .filter(|&decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_interface(node))
+                        .is_some()
+                })
+                .collect();
+
+            if !interface_decls.is_empty() {
+                let type_param_bindings = self.get_type_param_bindings();
+                let type_resolver =
+                    |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                let value_resolver =
+                    |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let lowering = TypeLowering::with_resolvers(
+                    self.ctx.arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(type_param_bindings);
+                let interface_type = lowering.lower_interface_declarations(&interface_decls);
+                let interface_type =
+                    self.merge_interface_heritage_types(&interface_decls, interface_type);
+                merged_interface_type_for_class = Some(interface_type);
+
+                if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
+                    for prop in &shape.properties {
+                        properties.entry(prop.name).or_insert_with(|| prop.clone());
+                    }
+                    if let Some(ref idx) = shape.string_index {
+                        Self::merge_index_signature(&mut string_index, idx.clone());
+                    }
+                    if let Some(ref idx) = shape.number_index {
+                        Self::merge_index_signature(&mut number_index, idx.clone());
+                    }
+                } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
+                {
+                    for prop in &shape.properties {
+                        properties.entry(prop.name).or_insert_with(|| prop.clone());
+                    }
+                }
+            }
+        }
+
+        // NOTE: Object prototype members (toString, hasOwnProperty, etc.) are NOT
+        // merged into the class instance type. The solver handles these via its own
+        // Object prototype fallback (resolve_object_member) during property access.
+        // Including them as explicit properties would cause false TS2322 errors when
+        // assigning plain objects to class-typed variables, since the plain objects
+        // wouldn't have these as own properties.
+
+        // Build the final instance type
+        let props: Vec<PropertyInfo> = properties.into_values().collect();
+        let mut instance_type = if string_index.is_some() || number_index.is_some() {
+            factory.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: props,
+                string_index,
+                number_index,
+                symbol: current_sym,
+            })
+        } else {
+            // Use object_with_index even without index signatures to set the symbol for nominal typing
+            factory.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: props,
+                string_index: None,
+                number_index: None,
+                symbol: current_sym,
+            })
+        };
+
+        // Final interface merging pass
+        if let Some(sym_id) = current_sym {
+            if let Some(interface_type) = merged_interface_type_for_class {
+                instance_type = self.merge_interface_types(instance_type, interface_type);
+            }
+            visited.remove(&sym_id);
+            visited_nodes.remove(&class_idx);
+            // Only remove from global set if we inserted it ourselves
+            if did_insert_into_global_set {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
+            }
+        }
+        // Register the mapping from instance type to class declaration.
+        // This allows get_class_decl_from_type to correctly identify the class
+        // for derived classes that have no private/protected members (and thus no brand).
+        self.ctx
+            .class_decl_miss_cache
+            .borrow_mut()
+            .remove(&instance_type);
+        self.ctx
+            .class_instance_type_to_decl
+            .insert(instance_type, class_idx);
+
+        self.pop_type_parameters(class_type_param_updates);
+
+        instance_type
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        can_skip_base_instantiation, exceeds_class_inheritance_depth_limit,
+        in_progress_class_instance_result,
+    };
+    use tsz_solver::TypeId;
+
+    #[test]
+    fn skip_base_instantiation_only_without_generics() {
+        assert!(can_skip_base_instantiation(0, 0));
+        assert!(!can_skip_base_instantiation(1, 0));
+        assert!(!can_skip_base_instantiation(0, 1));
+        assert!(!can_skip_base_instantiation(2, 3));
+    }
+
+    #[test]
+    fn class_inheritance_depth_guard_is_conservative() {
+        assert!(!exceeds_class_inheritance_depth_limit(1));
+        assert!(!exceeds_class_inheritance_depth_limit(100));
+        assert!(!exceeds_class_inheritance_depth_limit(256));
+        assert!(exceeds_class_inheritance_depth_limit(257));
+    }
+
+    #[test]
+    fn in_progress_class_instance_uses_cached_or_error() {
+        assert_eq!(
+            in_progress_class_instance_result(true, Some(TypeId(42))),
+            Some(TypeId(42))
+        );
+        assert_eq!(
+            in_progress_class_instance_result(true, None),
+            Some(TypeId::ERROR)
+        );
+        assert_eq!(in_progress_class_instance_result(false, None), None);
+    }
+}
