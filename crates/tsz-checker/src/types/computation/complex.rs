@@ -387,6 +387,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Resolve TypeQuery types (`typeof X`) that may come through interface/object
+        // property access. The solver cannot resolve TypeQuery internally (no TypeResolver),
+        // so we resolve it here to the actual constructor/value type.
+        constructor_type = self.resolve_type_query_type(constructor_type);
+
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         constructor_type = self.evaluate_application_type(constructor_type);
 

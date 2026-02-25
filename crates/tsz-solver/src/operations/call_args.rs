@@ -99,8 +99,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
+    /// Check if a parameter type contains `void` — either is `void` directly
+    /// or is a union with `void` as a member (e.g., `number | void`).
+    fn param_type_contains_void(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::VOID {
+            return true;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return members.contains(&TypeId::VOID);
+        }
+        false
+    }
+
     pub(crate) fn arg_count_bounds(&self, params: &[ParamInfo]) -> (usize, Option<usize>) {
-        let required = crate::utils::required_param_count(params);
+        // Count required parameters, treating trailing `void`-containing params as optional.
+        // In TypeScript, a parameter of type `void` (or union containing void like `number | void`)
+        // can be omitted at the call site, but only if all subsequent params are also optional/void.
+        // e.g., `f(x: number, y: void): void` → f(1) is valid (trailing void)
+        //        `f(x: void, y: number): void` → f() is NOT valid (void before required)
+        let non_rest_params: &[ParamInfo] = if params.last().is_some_and(|p| p.rest) {
+            &params[..params.len() - 1]
+        } else {
+            params
+        };
+        // Find the rightmost required param that does NOT contain void.
+        // Everything after it (void-containing or optional) is effectively optional.
+        let required = non_rest_params
+            .iter()
+            .rposition(|p| p.is_required() && !self.param_type_contains_void(p.type_id))
+            .map(|pos| pos + 1)
+            .unwrap_or(0);
         let rest_param = params.last().filter(|param| param.rest);
         let Some(rest_param) = rest_param else {
             return (required, Some(params.len()));

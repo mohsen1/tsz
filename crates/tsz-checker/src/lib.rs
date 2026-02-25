@@ -234,6 +234,9 @@ mod member_access_architecture_boundary_tests;
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
+#[path = "../tests/new_typeof_property_tests.rs"]
+mod new_typeof_property_tests;
+#[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
@@ -242,6 +245,9 @@ mod repro_parserreal;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
+#[cfg(test)]
+#[path = "../tests/void_param_optionality_tests.rs"]
+mod void_param_optionality_tests;
 
 // Re-export key types
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
