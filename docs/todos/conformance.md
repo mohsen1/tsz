@@ -171,7 +171,13 @@
 #### Run note (2026-02-24, session 2)
 - **Fixed**: TS5103 — removed bogus "5.5" from valid ignoreDeprecations list (+1 test).
 - **Fixed**: TS2435/TS1035 — module augmentations inside ambient external modules no longer false-positive TS2435 or TS1035 (+4 tests).
-- **Investigated but deferred**: TS5071 — implied `resolveJsonModule=true` via `moduleResolution: bundler`. Needs two coordinated changes: (1) detect bundler-implied resolveJsonModule, (2) fall back error position to `module` key when `resolveJsonModule` is absent. ~20 lines, MEDIUM complexity.
+- ~~**Investigated but deferred**: TS5071~~ RESOLVED below.
+
+#### Run note (2026-02-25, session 2)
+- **Fixed**: TS5071 — `moduleResolution: bundler` now implies `resolveJsonModule=true`. When combined with `module: none/system/umd`, TS5071 is now emitted. Error position falls back to `module` key when `resolveJsonModule` is absent from tsconfig (+1 test).
+- **Investigated**: TS7017 — Only emitted by tsc for `globalThis` dot-access (not element access). Element access always uses TS7053 regardless of whether object has index signatures. Previous session's analysis was incorrect about TS7017 being a generic "no index signature" diagnostic. Implementation would require detecting `globalThis` symbol in property access paths.
+- **Investigated but deferred**: TS2323 — "Cannot redeclare exported variable." Missing for exported default function redeclarations. The `has_variable_conflict` check only covers `VARIABLE` flag, not `FUNCTION`. Attempted fix (expanding to include FUNCTION) caused -3 regression because it changed TS2300→TS2323 for cases that should remain TS2300. Needs more careful condition logic.
+- **Investigated but deferred**: TS2439 — "Import or export declaration in an ambient module declaration cannot reference module through relative module name." Already implemented in `import_equals_checker.rs` but 4 tests still fail. Likely test runner or multi-file resolution issue, not a checker gap.
 - **Investigated but deferred**: TS2451 — multi-file block-scoped variable redeclaration. Cross-file symbol resolution only adds local declarations to conflict set. Fixing requires project-level aggregation of conflicts.
 
 ### TS2451 — False positives (7 tests)
@@ -216,9 +222,10 @@
 - Requires `tsc --build` and composite project-reference support (not yet implemented)
 - **Difficulty**: HIGH
 
-### TS5071 — resolveJsonModule incompatible with module kind (not implemented)
-- Needed by 3 TS5095 remaining tests, plus syntheticDefaultExports and noBundledEmitFromNodeModules tests
-- **Difficulty**: EASY-MEDIUM
+### ~~TS5071 — resolveJsonModule incompatible with module kind~~ PARTIALLY RESOLVED
+- Bundler-implied resolveJsonModule now triggers TS5071 for none/system/umd
+- Remaining: 3 TS5095 tests need TS5071 + TS5109, plus syntheticDefaultExports and noBundledEmitFromNodeModules tests
+- **Difficulty**: EASY-MEDIUM (remaining cases)
 
 ### TS5095 — Remaining failures
 - `bundlerOptionsCompat.ts`: Needs TS5095 + TS5109
@@ -422,3 +429,4 @@ All items below have been validated against the codebase (implementations + test
 | TS2435/TS1035 | Module augmentation in ambient modules: skip TS2435 for string-named parents, skip TS1035 in ambient context | +4 tests |
 | TS5103 | Reject ignoreDeprecations "6.0" (not yet valid in tsc 6.0) | +48 tests |
 | TS1131 | Emit "Property or signature expected" in parser for invalid interface/type literal members | +tests |
+| TS5071 | Bundler-implied resolveJsonModule with none/system/umd module | +1 test |

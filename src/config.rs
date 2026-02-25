@@ -1285,7 +1285,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
         // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
-        if option_is_truthy(compiler_opts.get("resolveJsonModule")) {
+        // Note: moduleResolution: bundler implies resolveJsonModule=true even when not explicitly set.
+        let resolve_json_explicit = option_is_truthy(compiler_opts.get("resolveJsonModule"));
+        let resolve_json_implied_by_bundler = !resolve_json_explicit
+            && compiler_opts.get("resolveJsonModule").is_none()
+            && matches!(
+                compiler_opts.get("moduleResolution").and_then(|v| v.as_str()).map(normalize_option),
+                Some(ref mr) if mr == "bundler"
+            );
+        if resolve_json_explicit || resolve_json_implied_by_bundler {
             // Compute effective moduleResolution from raw JSON options
             let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
                 compiler_opts.get("moduleResolution")
@@ -1309,7 +1317,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
             };
 
-            if effective_mr == "classic" {
+            if resolve_json_explicit && effective_mr == "classic" {
                 let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
                 let key_len = "resolveJsonModule".len() as u32 + 2;
                 diagnostics.push(Diagnostic::error(
@@ -1326,8 +1334,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let mod_normalized =
                     normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
-                    let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
-                    let key_len = "resolveJsonModule".len() as u32 + 2;
+                    // When resolveJsonModule is explicitly set, point at that key.
+                    // When implied by bundler, fall back to the module key.
+                    let (error_key, key_len) = if resolve_json_explicit {
+                        ("resolveJsonModule", "resolveJsonModule".len() as u32 + 2)
+                    } else {
+                        ("module", "module".len() as u32 + 2)
+                    };
+                    let start = find_key_offset_in_source(&stripped, error_key);
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -3575,6 +3589,42 @@ mod tests {
         assert!(
             codes.contains(&5103),
             "Should emit TS5103 for ignoreDeprecations '6.0', got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5071_bundler_implied_resolve_json_module_with_umd() {
+        // moduleResolution: bundler implies resolveJsonModule=true.
+        // Combined with module=umd, this should emit TS5071.
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"umd"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for bundler-implied resolveJsonModule with module=umd, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5071_bundler_implied_resolve_json_module_with_system() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"system"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for bundler-implied resolveJsonModule with module=system, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5071_not_emitted_for_bundler_with_esnext() {
+        // moduleResolution: bundler + module=esnext should NOT emit TS5071
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5071),
+            "Should NOT emit TS5071 for bundler+esnext, got: {codes:?}"
         );
     }
 }

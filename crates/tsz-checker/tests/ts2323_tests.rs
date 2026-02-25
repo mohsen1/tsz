@@ -44,6 +44,6 @@ fn test_exported_class_redeclaration_not_ts2323() {
     let codes = get_error_codes("export class Foo {}\nexport class Foo {}");
     assert!(
         !codes.contains(&2323),
-        "Should NOT emit TS2323 for exported classes (only for variables), got: {codes:?}"
+        "Should NOT emit TS2323 for exported classes (only for variables/functions), got: {codes:?}"
     );
 }
