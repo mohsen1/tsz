@@ -102,25 +102,27 @@ impl<'a> CheckerState<'a> {
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
-            && matches!(
-                op,
-                "+" | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "**"
-                    | "&"
-                    | "|"
-                    | "^"
-                    | "<<"
-                    | ">>"
-                    | ">>>"
-                    | "<"
-                    | ">"
-                    | "<="
-                    | ">="
-            );
+        // TS18050 is emitted for null/undefined operands regardless of strictNullChecks.
+        // tsc emits "The value 'null' cannot be used here." even without --strictNullChecks
+        // because the literal values null/undefined are never valid arithmetic/bitwise operands.
+        let should_emit_nullish_error = matches!(
+            op,
+            "+" | "-"
+                | "*"
+                | "/"
+                | "%"
+                | "**"
+                | "&"
+                | "|"
+                | "^"
+                | "<<"
+                | ">>"
+                | ">>>"
+                | "<"
+                | ">"
+                | "<="
+                | ">="
+        );
 
         // For the `+` operator, tsc suppresses TS18050 when the other operand is a
         // string type — `+` becomes string concatenation, and null/undefined are
@@ -220,32 +222,27 @@ impl<'a> CheckerState<'a> {
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
 
-        // TS18050 is emitted for null/undefined operands in arithmetic, bitwise, AND `+` operations.
-        // tsc emits TS18050 per-operand for each null/undefined value, not TS2365 for the expression.
-        // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
-        // For now, we only handle arithmetic/bitwise/+ since our evaluator doesn't distinguish
-        // literal values from variables typed as null/undefined.
-        // TS18050 only applies under strictNullChecks — without it, null/undefined are in
-        // every type's domain and should not trigger this error.
-        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
-            && matches!(
-                op,
-                "+" | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "**"
-                    | "&"
-                    | "|"
-                    | "^"
-                    | "<<"
-                    | ">>"
-                    | ">>>"
-                    | "<"
-                    | ">"
-                    | "<="
-                    | ">="
-            );
+        // TS18050 is emitted for null/undefined operands regardless of strictNullChecks.
+        // tsc emits "The value 'null' cannot be used here." even without --strictNullChecks
+        // because the literal values null/undefined are never valid arithmetic/bitwise operands.
+        let should_emit_nullish_error = matches!(
+            op,
+            "+" | "-"
+                | "*"
+                | "/"
+                | "%"
+                | "**"
+                | "&"
+                | "|"
+                | "^"
+                | "<<"
+                | ">>"
+                | ">>>"
+                | "<"
+                | ">"
+                | "<="
+                | ">="
+        );
 
         use tsz_solver::BinaryOpEvaluator;
 
