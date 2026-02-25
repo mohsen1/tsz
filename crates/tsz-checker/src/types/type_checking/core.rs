@@ -659,15 +659,40 @@ impl<'a> CheckerState<'a> {
         // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
         // here to avoid duplicate TS2488 errors.
 
+        let pattern_kind = pattern_node.kind;
+
+        let is_declarative_pattern = self
+            .ctx
+            .arena
+            .get_extended(pattern_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent| {
+                matches!(
+                    parent.kind,
+                    syntax_kind_ext::VARIABLE_DECLARATION | syntax_kind_ext::PARAMETER
+                )
+            });
+
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            if i < elements_len - 1
+            if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && i < elements_len - 1
                 && let Some(element_node) = self.ctx.arena.get(element_idx)
                 && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
                 && element_data.dot_dot_dot_token
             {
                 use tsz_common::diagnostics::diagnostic_codes;
+                let diag_node = if is_declarative_pattern {
+                    self.ctx
+                        .arena
+                        .get(element_data.name)
+                        .and_then(|node| self.ctx.arena.get_identifier(node))
+                        .and(Some(element_data.name))
+                        .unwrap_or(element_idx)
+                } else {
+                    element_idx
+                };
                 self.error_at_node_msg(
-                    element_idx,
+                    diag_node,
                     diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
                     &[],
                 );

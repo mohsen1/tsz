@@ -499,3 +499,35 @@ const chars = [...str];  // Should be string[]
         "Expected no TS2488 error for string spread, got {ts2488_count}"
     );
 }
+
+#[test]
+fn test_object_rest_not_last_does_not_emit_array_rest_error() {
+    let source = r#"
+var { ...rest, x } = { x: 1 };
+
+({ ...rest, x } = { x: 1 });
+"#;
+
+    let diagnostics = check_source(source);
+
+    let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
+    assert_eq!(
+        ts2462_count, 0,
+        "Expected no TS2462 for object rest when it is not an array pattern, got {ts2462_count}"
+    );
+}
+
+#[test]
+fn test_array_rest_not_last_still_reports_ts2462() {
+    let source = r#"
+var [...rest, x] = [1, 2, 3];
+"#;
+
+    let diagnostics = check_source(source);
+
+    let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
+    assert!(
+        ts2462_count >= 1,
+        "Expected TS2462 for array rest that is not last, got {ts2462_count}"
+    );
+}

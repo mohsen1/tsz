@@ -8,6 +8,7 @@
 //! - Array-to-tuple and tuple-to-array compatibility
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::iterators::get_iterator_info;
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
 use crate::visitor::{array_element_type, tuple_list_id};
@@ -329,16 +330,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<SubtypeResult> {
         let array_base = self.resolver.get_array_base_type()?;
         let params = self.resolver.get_array_base_type_params();
-        if params.is_empty() {
-            // No type params means we can't instantiate — just check directly
-            return Some(self.check_subtype(array_base, target));
+        let instantiated = if params.is_empty() {
+            array_base
+        } else {
+            // Instantiate Array<T> → Array<element_type>
+            let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+            instantiate_type(self.interner, array_base, &subst)
+        };
+
+        let direct = self.check_subtype(instantiated, target);
+        if direct.is_true() {
+            return Some(direct);
         }
 
-        // Instantiate Array<T> → Array<element_type>
-        let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
-        let instantiated = instantiate_type(self.interner, array_base, &subst);
+        // Fallback: iterator protocol compatibility.
+        // If target is iterable and source array elements are assignable to the
+        // yielded type, accept the assignment.
+        let Some(query_db) = self.query_db else {
+            return Some(direct);
+        };
+        let Some(iter_info) = get_iterator_info(query_db, target, false) else {
+            return Some(direct);
+        };
 
-        Some(self.check_subtype(instantiated, target))
+        Some(self.check_subtype(element_type, iter_info.yield_type))
     }
 
     /// Get the element type of an array type, or return the type itself for any[].

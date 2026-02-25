@@ -390,27 +390,24 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Get the property name or index
+        // Extract the static property name from binding element.
+        // Handles: { x }, { x: a }, { 'b': a }, { ['b']: a }, { [ident]: a }.
+        let property_name = self.extract_binding_property_name(element_data);
+
+        // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
+        // check index signatures when the key resolves to a dynamic type
+        // (string or number, not a literal matching a known property).
         if element_data.property_name.is_some() {
-            // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
-            // check index signatures when the key is not a simple identifier key.
-            // This aligns with TS2537 behavior for destructuring from `{}`.
             let computed_expr = self
                 .ctx
                 .arena
                 .get(element_data.property_name)
                 .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
                 .map(|computed| computed.expression);
-            let computed_is_identifier = computed_expr
-                .and_then(|expr_idx| {
-                    self.ctx
-                        .arena
-                        .get(expr_idx)
-                        .and_then(|expr_node| self.ctx.arena.get_identifier(expr_node))
-                })
-                .is_some();
 
-            if !computed_is_identifier {
+            // Only check index signatures for truly dynamic keys (not identifiers
+            // or string/numeric literals that resolve to known properties).
+            if computed_expr.is_some() && property_name.is_none() {
                 let key_type =
                     computed_expr.map_or(TypeId::ANY, |expr_idx| self.get_type_of_node(expr_idx));
                 let key_is_string = key_type == TypeId::STRING;
@@ -462,34 +459,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let property_name = if element_data.property_name.is_some() {
-            // { x: a } - property_name is "x"
-            if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                self.ctx
-                    .arena
-                    .get_identifier(prop_node)
-                    .map(|ident| ident.escaped_text.clone())
-            } else {
-                None
-            }
-        } else {
-            // { x } - the name itself is the property name
-            if let Some(name_node) = self.ctx.arena.get(element_data.name) {
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
-            } else {
-                None
-            }
-        };
-
         if element_data.dot_dot_dot_token {
             if self.is_untyped_parameter_binding_pattern_without_context(pattern_idx) {
                 return TypeId::ANY;
             }
-            // TODO: compute actual object rest type omitting non-rest properties
-            return parent_type;
+            return self.compute_object_rest_type(pattern_idx, parent_type);
         }
 
         if parent_type == TypeId::UNKNOWN {
@@ -537,6 +511,118 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Compute the type for an object rest element: `{ a, b, ...rest } = obj`.
+    ///
+    /// The rest type is the parent type with all statically-named non-rest properties
+    /// excluded (like `Omit<T, 'a' | 'b'>`). For union parent types, compute the rest
+    /// for each member and union the results.
+    fn compute_object_rest_type(&self, pattern_idx: NodeIndex, parent_type: TypeId) -> TypeId {
+        // Collect the names of all non-rest sibling properties in this binding pattern.
+        let excluded = self.collect_non_rest_property_names(pattern_idx);
+        if excluded.is_empty() {
+            return parent_type;
+        }
+
+        // For union types, compute rest type for each member and union them.
+        if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+            let rest_types: Vec<TypeId> = members
+                .iter()
+                .map(|&m| self.omit_properties_from_type(m, &excluded))
+                .collect();
+            return if rest_types.len() == 1 {
+                rest_types[0]
+            } else {
+                self.ctx.types.factory().union(rest_types)
+            };
+        }
+
+        self.omit_properties_from_type(parent_type, &excluded)
+    }
+
+    /// Collect static property names from all non-rest sibling elements in
+    /// an object binding pattern.
+    fn collect_non_rest_property_names(&self, pattern_idx: NodeIndex) -> Vec<String> {
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return Vec::new();
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        for &element_idx in pattern_data.elements.nodes.iter() {
+            if element_idx.is_none() {
+                continue;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            // Skip rest elements — they are the target, not excluded.
+            if element_data.dot_dot_dot_token {
+                continue;
+            }
+            // Extract the property name (same logic as the main property_name extraction).
+            let prop_name = if element_data.property_name.is_some() {
+                if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
+                    // Try identifier first
+                    if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
+                        Some(ident.escaped_text.clone())
+                    } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
+                        // String literal property name: { 'b': renamed }
+                        Some(lit.text.clone())
+                    } else if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
+                        // Computed property with string literal: { ['b']: renamed }
+                        self.ctx
+                            .arena
+                            .get(computed.expression)
+                            .and_then(|expr| self.ctx.arena.get_literal(expr))
+                            .map(|lit| lit.text.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                // Shorthand: { x } — the name itself is the property name.
+                self.ctx
+                    .arena
+                    .get(element_data.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            };
+            if let Some(name) = prop_name {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// Create a new object type from `type_id` with the given property names excluded.
+    fn omit_properties_from_type(&self, type_id: TypeId, excluded: &[String]) -> TypeId {
+        let Some(shape) = query::object_shape(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        let remaining_props: Vec<_> = shape
+            .properties
+            .iter()
+            .filter(|prop| {
+                let name = self.ctx.types.resolve_atom_ref(prop.name);
+                !excluded.iter().any(|ex| ex == name.as_ref())
+            })
+            .cloned()
+            .collect();
+
+        self.ctx.types.factory().object(remaining_props)
+    }
+
     /// Rest bindings from tuple members should produce an array type.
     /// Variadic tuple members can already carry array types (`...T[]`), so avoid
     /// wrapping those into nested arrays.
@@ -546,6 +632,50 @@ impl<'a> CheckerState<'a> {
             tuple_member_type
         } else {
             self.ctx.types.factory().array(tuple_member_type)
+        }
+    }
+
+    /// Extract a static property name from a binding element.
+    ///
+    /// Handles the following patterns:
+    /// - `{ x }` → "x" (shorthand, name is the property)
+    /// - `{ x: a }` → "x" (identifier property name)
+    /// - `{ 'b': a }` → "b" (string literal property name)
+    /// - `{ ['b']: a }` → "b" (computed with string literal)
+    /// - `{ [ident]: a }` → "ident" (computed with identifier)
+    ///
+    /// Returns None for truly dynamic computed keys (e.g., `{ [expr]: a }`).
+    fn extract_binding_property_name(
+        &self,
+        element_data: &tsz_parser::parser::node::BindingElementData,
+    ) -> Option<String> {
+        if element_data.property_name.is_some() {
+            let prop_node = self.ctx.arena.get(element_data.property_name)?;
+            // Try identifier: { x: a }
+            if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            // Try string/numeric literal: { 'b': a }
+            if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
+                return Some(lit.text.clone());
+            }
+            // Try computed property with static literal value: { ['b']: a } or { [42]: a }
+            // Note: { [ident]: a } is NOT static — the property depends on the runtime
+            // value of `ident`, so we return None for computed-with-identifier.
+            if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
+                let expr_node = self.ctx.arena.get(computed.expression)?;
+                if let Some(lit) = self.ctx.arena.get_literal(expr_node) {
+                    return Some(lit.text.clone());
+                }
+            }
+            None
+        } else {
+            // Shorthand: { x } — the name itself is the property name
+            let name_node = self.ctx.arena.get(element_data.name)?;
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone())
         }
     }
 
