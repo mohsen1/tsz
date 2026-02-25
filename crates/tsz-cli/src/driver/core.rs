@@ -1027,6 +1027,16 @@ fn compile_inner(
     if !binary_file_names.is_empty() {
         diagnostics.retain(|d| !binary_file_names.contains(&d.file));
     }
+    // tsc suppresses options-level deprecation diagnostics (TS5107/TS5101) when there
+    // are syntactic errors. See TypeScript's emitFilesAndReportErrors() in watch.ts:
+    // options diagnostics are only collected when getSyntacticDiagnostics() returns nothing.
+    let has_syntactic_errors = diagnostics.iter().any(|d| (1000..2000).contains(&d.code));
+    if has_syntactic_errors {
+        config_diagnostics.retain(|d| {
+            d.code != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+                && d.code != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        });
+    }
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
