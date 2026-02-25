@@ -5,6 +5,37 @@
 Note: test count changed from 13546→11477→7163 due to TypeScript submodule updates.
 Pass rate stable at ~74.5% JS.
 
+### Fixed (2026-02-25, session 19) — Suppress Extra "use strict" in System Bundles and JS Passthrough (+43 JS)
+
+- **Extra "use strict" in System module bundles** (source_file.rs):
+  `has_define_wrapper_stmt` only detected AMD-style `define(...)` calls at the top
+  level. SystemJS `--outFile` bundles use `System.register(...)` (property access
+  pattern), which was missed. The emitter incorrectly prepended `"use strict"` before
+  the `System.register()` calls. Fix: renamed to `has_module_wrapper_stmt` and added
+  property-access detection for `System.register(...)` via `get_access_expr`.
+- **Extra "use strict" on JS passthrough files** (source_file.rs):
+  When `alwaysStrict` was enabled, `.js` source files passed through the emitter
+  received a spurious `"use strict"` prologue. tsc does not inject this into JS
+  passthrough files. Fix: added `!self.is_current_root_js_source` guard to
+  `needs_use_strict_always` condition.
+- JS: 9941→9984 (+43), DTS: 780→780, zero regressions.
+- Unit tests: `system_register_bundle_suppresses_top_level_use_strict`,
+  `js_passthrough_no_use_strict_from_always_strict`.
+
+### Skipped / Investigated (2026-02-25, session 19)
+
+- **Export/import brace spacing** (`export { x }` vs `export {x}`): 116 contributing
+  tests, but only 6-7 as sole diff. tsc uses BOTH conventions depending on context
+  (with space for user-written exports, without space for synthesized ones). Complex
+  to fix correctly without over-fitting.
+- **Empty function body spacing** (`{}` vs `{ }`): 61 contributing tests, only 4-5
+  as sole diff. Low impact, deferred.
+- **JS passthrough `is_current_root_js_source` not set in multi-file tests**: 2 tests
+  (`pathMappingBasedModuleResolution_withExtension_MapedToNodeModules`,
+  `untypedModuleImport_noImplicitAny_typesForPackageExist`) still have extra "use strict"
+  because the CLI transpiler may not set `is_current_root_js_source` for secondary .js
+  files in multi-file test cases. Needs investigation in CLI transpiler layer.
+
 ### Fixed (2026-02-25, session 18) — Panic Fixes for Multi-byte UTF-8 Escapes and Malformed Class Sources (+2 JS)
 
 - **Multi-byte UTF-8 after backslash in string literals** (literals.rs):

@@ -251,27 +251,52 @@ impl<'a> Printer<'a> {
         //    Pre-bundled files with define() wrappers already have it inside.
         // 3. alwaysStrict is on AND the file is not already an ES module output.
         let is_file_module = self.file_is_module(&source.statements);
-        let has_define_wrapper_stmt = source.statements.nodes.iter().any(|&idx| {
-            self.arena
+        let has_module_wrapper_stmt = source.statements.nodes.iter().any(|&idx| {
+            let callee_idx = self
+                .arena
                 .get(idx)
                 .and_then(|stmt| self.arena.get_expression_statement(stmt))
                 .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
                 .and_then(|expr| self.arena.get_call_expr(expr))
-                .and_then(|call| self.arena.get(call.expression))
-                .and_then(|callee| self.arena.get_identifier(callee))
-                .is_some_and(|ident| ident.escaped_text.as_str() == "define")
+                .map(|call| call.expression);
+            let Some(callee_idx) = callee_idx else {
+                return false;
+            };
+            let Some(callee_node) = self.arena.get(callee_idx) else {
+                return false;
+            };
+            // Check direct calls: `define(...)`
+            if let Some(ident) = self.arena.get_identifier(callee_node) {
+                return ident.escaped_text.as_str() == "define";
+            }
+            // Check property access calls: `System.register(...)`
+            if let Some(access) = self.arena.get_access_expr(callee_node) {
+                let obj_is_system = self
+                    .arena
+                    .get(access.expression)
+                    .and_then(|obj| self.arena.get_identifier(obj))
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "System");
+                let prop_is_register = self
+                    .arena
+                    .get(access.name_or_argument)
+                    .and_then(|name| self.arena.get_identifier(name))
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "register");
+                return obj_is_system && prop_is_register;
+            }
+            false
         });
-        // Note: AMD/UMD module files are handled by emit_module_wrapper() before
-        // reaching here (line ~647), so conditions below only affect:
+        // Note: AMD/UMD/System module files are handled by emit_module_wrapper() before
+        // reaching here, so conditions below only affect:
         //   - non-module scripts under any module kind
-        //   - outFile bundles with pre-existing define() wrappers
+        //   - outFile bundles with pre-existing define()/System.register() wrappers
         // Whether we need "use strict" at the top of this output.
         let needs_use_strict_cjs = is_top_level_cjs && is_file_module;
-        let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_define_wrapper_stmt;
+        let needs_use_strict_amd_umd = is_amd_or_umd && is_file_module && !has_module_wrapper_stmt;
         let needs_use_strict_always = self.ctx.options.always_strict
-            && !has_define_wrapper_stmt
+            && !has_module_wrapper_stmt
             && self.ctx.original_module_kind.is_none()
-            && !(is_es_module_output && is_file_module);
+            && !(is_es_module_output && is_file_module)
+            && !self.is_current_root_js_source;
 
         let should_emit_use_strict = !source_has_use_strict
             && (needs_use_strict_cjs || needs_use_strict_amd_umd || needs_use_strict_always);
@@ -928,6 +953,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -1039,6 +1065,70 @@ class RegularClass {\n    accessor shouldError;\n}\n";
         assert!(
             output.contains("export { C }"),
             "Real export should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn system_register_bundle_suppresses_top_level_use_strict() {
+        // In --outFile bundles with --module system, tsc does NOT emit "use strict"
+        // before System.register() calls. Each callback has its own "use strict" inside.
+        let source = r#"System.register("a", [], function (exports_1, context_1) {
+    "use strict";
+    var A;
+    var __moduleName = context_1 && context_1.id;
+    return {
+        setters: [],
+        execute: function () {
+            A = class A { };
+            exports_1("A", A);
+        }
+    };
+});
+"#;
+        let mut parser = ParserState::new("bundle.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrinterOptions {
+            module: ModuleKind::System,
+            always_strict: true,
+            ..Default::default()
+        };
+        let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // "use strict" should NOT appear before System.register
+        let system_pos = output
+            .find("System.register")
+            .expect("System.register should be emitted");
+        let use_strict_before = output[..system_pos].contains("\"use strict\"");
+        assert!(
+            !use_strict_before,
+            "\"use strict\" should NOT appear before System.register() in bundled output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn js_passthrough_no_use_strict_from_always_strict() {
+        // tsc does NOT add "use strict" to .js passthrough files even with alwaysStrict.
+        // The alwaysStrict option only applies to TypeScript source files.
+        let source = "const x = 0;\n";
+        let mut parser = ParserState::new("sub.js".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            always_strict: true,
+            ..Default::default()
+        };
+        let mut printer = EmitterPrinter::with_options(&parser.arena, opts);
+        printer.set_current_root_js_source(true);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("\"use strict\""),
+            "JS passthrough files should NOT get \"use strict\" from alwaysStrict.\nOutput:\n{output}"
         );
     }
 
