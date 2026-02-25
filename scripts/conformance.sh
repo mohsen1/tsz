@@ -154,11 +154,9 @@ binaries_are_fresh() {
     return 0
 }
 
-# Build binaries (always rebuilds to pick up code changes; cargo no-ops if unchanged)
+# Build binaries if source has changed (cargo handles incremental compilation)
 ensure_binaries() {
-    export RUST_LOG=tsz_checker=trace
     export RUST_BACKTRACE=1
-    rm -rf "$REPO_ROOT/.target/$BUILD_PROFILE"
 
     # Fast path: check if binaries are already fresh
     if binaries_are_fresh; then
