@@ -50,7 +50,10 @@ impl ParserState {
             let current = self.current_token;
 
             self.next_token();
-            let is_predicate = self.is_token(SyntaxKind::IsKeyword);
+            // A line break before `is` means ASI applies — the identifier is a type,
+            // not a type predicate parameter. Matches tsc's `!scanner.hasPrecedingLineBreak()`.
+            let is_predicate =
+                self.is_token(SyntaxKind::IsKeyword) && !self.scanner.has_preceding_line_break();
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
@@ -129,7 +132,10 @@ impl ParserState {
             let current = self.current_token;
 
             self.next_token();
-            let is_predicate = self.is_token(SyntaxKind::IsKeyword);
+            // A line break before `is` means ASI applies — the identifier is a type,
+            // not a type predicate parameter. Matches tsc's `!scanner.hasPrecedingLineBreak()`.
+            let is_predicate =
+                self.is_token(SyntaxKind::IsKeyword) && !self.scanner.has_preceding_line_break();
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 

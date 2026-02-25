@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7534/12565 (60.0%) — full suite, fingerprint level (new framework)
+**Current score**: ~7536/12565 (60.0%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -246,6 +246,14 @@
   3. Declared-type fix for optional properties only applied to `-?` (MappedModifier::Remove) case — generalized to all homomorphic mapped types where source property is optional
 - **Root cause detail**: During generic instantiation, `keyof T` in type args was eagerly evaluated to `"a" | "b"` while `T` was resolved to a different TypeId. This caused Method 1 homomorphism check (`obj != source_from_constraint`) to fail, and Method 2 (`expected_keys == mapped.constraint`) to fail because constraint was still `KeyOf(Lazy(...))`.
 - **Tests added**: 3 evaluate tests (keyof preserves optional/readonly, post-instantiation preserves optional) + 1 integration test (Pick identity bidirectional subtype)
+
+#### Run note (2026-02-25, session 12) — expressions/typeGuards area
+- **Area**: expressions/typeGuards (27.0% → 31.7%, 17/63 → 20/63, +3 in area, +3 net suite-wide)
+- **Fixed**: TS2454 narrowing-first approach — Reordered `check_flow_usage()` to apply flow narrowing BEFORE definite assignment checking. When typeof/instanceof guards narrow the type in a branch, the narrowing implies the variable has a value, so TS2454 should not fire. This prevents false TS2454 in narrowed branches while preserving them for non-narrowed code paths.
+- **Fixed**: Type predicate ASI in parser — Added `!scanner.has_preceding_line_break()` check before treating `is` as a type predicate keyword in both `parse_type()` and `parse_return_type_inner()`. A line break before `is` means ASI applies and `is` should be parsed as an identifier (method name), not as a type predicate. Matches tsc's `parseTypePredicatePrefix()`.
+- **Fixed**: Solver formatting — Reformatted let-chains in `core.rs` and `generics.rs` (cosmetic only).
+- **Investigated but not fixed**: var vs let TS2454 behavior — tsc emits TS2454 for both var and let declarations without initializers. The narrowing-first approach is a useful heuristic that correctly suppresses TS2454 in typeof true branches but incorrectly suppresses it in typeof false branches (where undefined could still be the runtime value). A more precise fix would require integrating typeof narrowing with definite assignment to determine if the narrowed branch eliminates undefined.
+- **Remaining expressions/typeGuards failures**: 43/63 still fail. Dominant causes: TS2322/TS2339 from narrowing accuracy issues (typeof/instanceof/in narrowing not fully integrated), TS2454 fingerprint-level mismatches (correct codes but wrong line numbers), TS2564 false positives for class properties, TS2367 missing comparisons.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
