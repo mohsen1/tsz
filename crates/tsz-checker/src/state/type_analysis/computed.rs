@@ -1241,44 +1241,15 @@ impl<'a> CheckerState<'a> {
                             return (TypeId::ERROR, Vec::new());
                         }
 
-                        // `import { default as X } from 'mod'` is a named import lookup,
-                        // so missing `default` should be TS2305 (not TS1192).
-                        // Use declarations list as fallback when value_decl is NONE
-                        // (ES6 named imports don't set value_declaration).
-                        let binding_node = if value_decl.is_some() {
-                            tracing::debug!(value_decl = %value_decl.0, "using value_decl as binding_node");
-                            value_decl
-                        } else {
-                            let node = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                            tracing::debug!(from_declarations = %node.0, decls_len = declarations.len(), "using first declaration as binding_node");
-                            node
-                        };
-
-                        tracing::debug!(binding_node = %binding_node.0, module_name, export_name, "checking if this is a true default import");
-                        let is_true_default = false;
-                        tracing::debug!(is_true_default, allow_synthetic = %self.ctx.allow_synthetic_default_imports(), "result of is_true_default_import_binding");
-
-                        if !is_true_default {
-                            // With allowSyntheticDefaultImports, `{ default as X }` resolves
-                            // to the module namespace (same as `import X from "mod"`).
-                            if !self.ctx.allow_synthetic_default_imports() {
-                                tracing::debug!(
-                                    "NOT a true default import and allowSyntheticDefaultImports is false, emitting TS2305"
-                                );
-                                self.emit_no_exported_member_error(
-                                    module_name,
-                                    export_name,
-                                    value_decl,
-                                );
-                                return (TypeId::ERROR, Vec::new());
-                            }
+                        // For missing default exports, check_imported_members already
+                        // emits TS1192 for positional default imports (`import X from "mod"`).
+                        // Don't emit a duplicate TS2305 here — just return ERROR and let
+                        // the import checker handle the diagnostic.
+                        if !self.ctx.allow_synthetic_default_imports() {
                             tracing::debug!(
-                                "NOT a true default import but allowSyntheticDefaultImports is true, allowing it"
+                                "default export missing and allowSyntheticDefaultImports is false, returning ERROR (TS1192 handled by import checker)"
                             );
-                        } else {
-                            tracing::debug!(
-                                "IS a true default import, will emit TS1192 later if needed"
-                            );
+                            return (TypeId::ERROR, Vec::new());
                         }
 
                         // For default imports without a default export:
