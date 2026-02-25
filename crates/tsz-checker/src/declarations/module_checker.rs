@@ -658,6 +658,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Check if the export clause is inside an ambient module declaration
+        // (e.g., `declare module "m" { export { X }; }`). Inside such blocks,
+        // only declarations within the module scope are local — file-level
+        // declarations from the outer scope are NOT local to the module.
+        let inside_ambient_module =
+            self.is_inside_string_literal_module_declaration(named_exports_idx);
+
         for &specifier_idx in &named_exports.elements.nodes {
             let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
                 continue;
@@ -684,34 +691,48 @@ impl<'a> CheckerState<'a> {
                 .get_identifier_text_from_idx(name_idx)
                 .unwrap_or_else(|| String::from("unknown"));
 
-            let mut is_local_or_imported = false;
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(&name_str)
-                && self.ctx.binder.get_symbol(sym_id).is_some()
-            {
-                // file_locals already scopes to declarations/imports in the current source file.
-                is_local_or_imported = true;
-            }
+            // Check if the symbol is a local declaration or import.
+            // file_locals includes merged globals from other files, so we must also
+            // verify decl_file_idx matches the current file (or is u32::MAX for single-file).
+            // Inside ambient module declarations, file-level symbols are not local to the
+            // module and should emit TS2661.
+            let current_file_idx = self.ctx.current_file_idx as u32;
+            let is_local = if inside_ambient_module {
+                // Inside `declare module "m"`, only symbols declared within
+                // the module's own scope count as local. Check the binder's
+                // scope chain: walk from the specifier's scope up to the first
+                // Module scope and check its symbol table.
+                self.is_name_in_enclosing_module_scope(&name_str, specifier_idx)
+            } else {
+                self.ctx
+                    .binder
+                    .file_locals
+                    .get(&name_str)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .is_some_and(|sym| {
+                        sym.decl_file_idx == current_file_idx || sym.decl_file_idx == u32::MAX
+                    })
+            };
 
-            // Also check scope resolution — symbols declared inside `declare module`
-            // scopes won't be in file_locals but ARE local to the module.
-            if !is_local_or_imported && self.resolve_identifier_symbol(name_idx).is_some() {
-                is_local_or_imported = true;
-            }
+            if !is_local {
+                // Symbol is not local to the current module/file.
+                // Distinguish between accessible-but-not-local (TS2661) and truly missing (TS2304).
+                let is_resolvable = self.resolve_identifier_symbol(name_idx).is_some()
+                    || matches!(
+                        name_str.as_str(),
+                        "undefined"
+                            | "any"
+                            | "unknown"
+                            | "never"
+                            | "string"
+                            | "number"
+                            | "boolean"
+                            | "symbol"
+                            | "object"
+                            | "bigint"
+                    );
 
-            if !is_local_or_imported {
-                if matches!(
-                    name_str.as_str(),
-                    "undefined"
-                        | "any"
-                        | "unknown"
-                        | "never"
-                        | "string"
-                        | "number"
-                        | "boolean"
-                        | "symbol"
-                        | "object"
-                        | "bigint"
-                ) {
+                if is_resolvable {
                     self.error_at_node_msg(
                         name_idx,
                         crate::diagnostics::diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE,
@@ -727,6 +748,94 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+    /// Check if a node is inside an ambient module declaration with a string-literal name
+    /// (e.g., `declare module "m" { ... }`). Returns false for namespace declarations
+    /// (e.g., `declare namespace Foo { ... }`).
+    fn is_inside_string_literal_module_declaration(
+        &self,
+        node_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let mut current = node_idx;
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = self.ctx.arena.get_module(node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(module_decl.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a name is declared within the nearest enclosing Module scope.
+    /// Used inside `declare module "m"` blocks to distinguish local declarations
+    /// from outer-scope symbols.
+    fn is_name_in_enclosing_module_scope(
+        &self,
+        name: &str,
+        node_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_binder::scopes::ContainerKind;
+
+        // Find the enclosing scope for this node
+        let Some(scope_id) = self
+            .ctx
+            .binder
+            .node_scope_ids
+            .get(&node_idx.0)
+            .copied()
+            .or_else(|| {
+                // Walk up parent nodes to find one with a scope
+                let mut current = node_idx;
+                loop {
+                    let ext = self.ctx.arena.get_extended(current)?;
+                    current = ext.parent;
+                    if current.is_none() {
+                        return None;
+                    }
+                    if let Some(&sid) = self.ctx.binder.node_scope_ids.get(&current.0) {
+                        return Some(sid);
+                    }
+                }
+            })
+        else {
+            return false;
+        };
+
+        // Walk up the scope chain to find the nearest Module scope
+        let mut sid = scope_id;
+        while sid.is_some() {
+            let Some(scope) = self.ctx.binder.scopes.get(sid.0 as usize) else {
+                break;
+            };
+            if scope.kind == ContainerKind::Module {
+                // Check if the name is in this module's scope table
+                return scope.table.has(name);
+            }
+            sid = scope.parent;
+        }
+        false
+    }
+
     /// Eagerly checks all alias symbols in the current file for circular definitions.
     /// Emits TS2303 for any alias that circularly references itself.
     pub(crate) fn check_circular_import_aliases(&mut self) {
