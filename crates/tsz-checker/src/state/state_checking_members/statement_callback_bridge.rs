@@ -73,9 +73,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             && func.name.is_some()
             && let Some(func_name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
-            && crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
-                self.emit_strict_mode_reserved_word_error(func.name, &ident.escaped_text, true);
-            }
+            && crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text)
+        {
+            self.emit_strict_mode_reserved_word_error(func.name, &ident.escaped_text, true);
+        }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if function has 'declare' modifier but also has a body
