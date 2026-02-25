@@ -41301,3 +41301,185 @@ fn test_union_reduction_literal_into_base() {
     let result = evaluator.evaluate(union);
     assert_eq!(result, TypeId::STRING);
 }
+
+/// Homomorphic mapped type with `keyof` constraint preserves optional modifiers.
+///
+/// This tests the core fix for Pick<TP, keyof TP> where TP has optional properties.
+/// The mapped type `{ [P in keyof TP]: TP[P] }` should produce the same type as TP,
+/// preserving optional/readonly modifiers from the source.
+///
+/// Previously, the evaluator would produce `{ a: number | undefined, b: string | undefined }`
+/// instead of `{ a?: number, b?: string }` because:
+/// 1. `IndexAccess` on optional properties adds `| undefined`
+/// 2. The homomorphic detection failed when the source object was extracted from the
+///    template vs the constraint (different `TypeIds` for the same logical type)
+#[test]
+fn test_homomorphic_mapped_keyof_preserves_optional() {
+    let interner = TypeInterner::new();
+
+    let key_a = interner.intern_string("a");
+    let key_b = interner.intern_string("b");
+
+    // Source: { a?: number, b?: string }
+    let source = interner.object(vec![
+        PropertyInfo {
+            name: key_a,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        },
+        PropertyInfo {
+            name: key_b,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        },
+    ]);
+
+    // Constraint: keyof source
+    let keyof_source = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(keyof_source),
+        default: None,
+        is_const: false,
+    };
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+
+    // Template: source[P]
+    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
+
+    // Mapped: { [P in keyof source]: source[P] }
+    let mapped = MappedType {
+        type_param: key_param,
+        constraint: keyof_source,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+
+    // Result should be identical to source: { a?: number, b?: string }
+    assert_eq!(result, source);
+}
+
+/// Homomorphic mapped type with post-instantiation keyof (union constraint).
+///
+/// After generic instantiation, `keyof T` may be eagerly evaluated to a literal union.
+/// The mapped type should still be detected as homomorphic via Method 2 (comparing
+/// `keyof obj` with the constraint) and preserve optional modifiers.
+#[test]
+fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
+    let interner = TypeInterner::new();
+
+    let key_a = interner.intern_string("a");
+    let key_b = interner.intern_string("b");
+
+    // Source: { a?: number, b?: string }
+    let source = interner.object(vec![
+        PropertyInfo {
+            name: key_a,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        },
+        PropertyInfo {
+            name: key_b,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        },
+    ]);
+
+    // Constraint: "a" | "b" (post-instantiation form of keyof source)
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_constraint = interner.union(vec![lit_a, lit_b]);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(union_constraint),
+        default: None,
+        is_const: false,
+    };
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+
+    // Template: source[P] (uses the concrete object, not type param)
+    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
+
+    // Mapped: { [P in "a" | "b"]: source[P] } — post-instantiation form
+    let mapped = MappedType {
+        type_param: key_param,
+        constraint: union_constraint,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+
+    // Result should preserve optional: { a?: number, b?: string }
+    assert_eq!(result, source);
+}
+
+/// Homomorphic mapped type preserves readonly in the same way as optional.
+#[test]
+fn test_homomorphic_mapped_keyof_preserves_readonly() {
+    let interner = TypeInterner::new();
+
+    let key_a = interner.intern_string("a");
+
+    // Source: { readonly a: number }
+    let source = interner.object(vec![PropertyInfo {
+        name: key_a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: true,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let keyof_source = interner.keyof(source);
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(keyof_source),
+        default: None,
+        is_const: false,
+    };
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
+
+    let mapped = MappedType {
+        type_param: key_param,
+        constraint: keyof_source,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+    assert_eq!(result, source);
+}

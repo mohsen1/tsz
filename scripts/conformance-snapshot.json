@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-25T13:37:35Z",
-  "git_sha": "96b7aeb68526e67402afe958a5accc8ca636d848",
+  "timestamp": "2026-02-25T14:02:23Z",
+  "git_sha": "82dc7a9431cfaf65d084f57deecb9762b661ac80",
   "summary": {
     "total_tests": 12565,
-    "passed": 7528,
-    "failed": 5037,
+    "passed": 7532,
+    "failed": 5033,
     "pass_rate": 59.9
   },
   "areas_by_pass_rate": [
@@ -21,13 +21,6 @@
       "passed": 2,
       "failed": 13,
       "pass_rate": 13.33
-    },
-    {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 6,
-      "failed": 20,
-      "pass_rate": 23.08
     },
     {
       "area": "expressions/typeGuards",
@@ -56,6 +49,13 @@
       "passed": 57,
       "failed": 133,
       "pass_rate": 30.0
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 8,
+      "failed": 18,
+      "pass_rate": 30.77
     },
     {
       "area": "externalModules/typeOnly",
@@ -499,18 +499,18 @@
       "pass_rate": 63.08
     },
     {
-      "area": "compiler",
-      "total": 6468,
-      "passed": 4125,
-      "failed": 2343,
-      "pass_rate": 63.78
-    },
-    {
       "area": "expressions/unaryOperators",
       "total": 58,
       "passed": 37,
       "failed": 21,
       "pass_rate": 63.79
+    },
+    {
+      "area": "compiler",
+      "total": 6468,
+      "passed": 4127,
+      "failed": 2341,
+      "pass_rate": 63.81
     },
     {
       "area": "es6/modules",

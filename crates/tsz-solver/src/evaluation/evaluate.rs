@@ -619,8 +619,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Application(_)
             | TypeData::Conditional(_)
             | TypeData::Mapped(_)
-            | TypeData::TemplateLiteral(_) => {
-                // Use evaluate() to ensure depth limits are enforced
+            | TypeData::TemplateLiteral(_)
+            | TypeData::KeyOf(_) => {
+                // Use evaluate() to ensure depth limits are enforced.
+                // KeyOf must be expanded here so that after generic instantiation,
+                // the mapped type constraint and template reference the same source
+                // object TypeId (critical for homomorphic mapped type detection).
                 self.evaluate(arg)
             }
             TypeData::Lazy(def_id) => {
