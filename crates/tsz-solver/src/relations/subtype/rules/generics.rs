@@ -876,21 +876,22 @@ pub(crate) fn flatten_mapped_chain(
 
     // Try to flatten through the source object if it's itself a mapped type
     if let Some(inner_mapped_id) = mapped_type_id(interner, obj)
-        && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id) {
-            return Some(FlattenedMapped {
-                source: inner.source,
-                has_optional: if removes_optional {
-                    false
-                } else {
-                    has_optional || inner.has_optional
-                },
-                has_readonly: if removes_readonly {
-                    false
-                } else {
-                    has_readonly || inner.has_readonly
-                },
-            });
-        }
+        && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id)
+    {
+        return Some(FlattenedMapped {
+            source: inner.source,
+            has_optional: if removes_optional {
+                false
+            } else {
+                has_optional || inner.has_optional
+            },
+            has_readonly: if removes_readonly {
+                false
+            } else {
+                has_readonly || inner.has_readonly
+            },
+        });
+    }
 
     // Base case: source object is not a mapped type
     Some(FlattenedMapped {
