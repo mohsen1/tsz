@@ -1,4 +1,4 @@
-use super::Printer;
+use super::super::Printer;
 use tsz_parser::parser::{
     NodeIndex,
     node::{AccessExprData, Node},
@@ -7,7 +7,7 @@ use tsz_parser::parser::{
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_property_access(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_property_access(&mut self, node: &Node) {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
@@ -167,7 +167,7 @@ impl<'a> Printer<'a> {
         self.write(".");
     }
 
-    pub(super) fn emit_element_access(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_element_access(&mut self, node: &Node) {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
@@ -413,7 +413,10 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.
-    pub(super) fn type_assertion_wraps_object_literal(&self, mut idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn type_assertion_wraps_object_literal(
+        &self,
+        mut idx: NodeIndex,
+    ) -> bool {
         loop {
             let Some(node) = self.arena.get(idx) else {
                 return false;

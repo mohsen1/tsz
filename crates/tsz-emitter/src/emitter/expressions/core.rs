@@ -1,4 +1,4 @@
-use super::{Printer, get_operator_text};
+use super::super::{Printer, get_operator_text};
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -7,7 +7,7 @@ impl<'a> Printer<'a> {
     // Expressions
     // =========================================================================
 
-    pub(super) fn emit_binary_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_binary_expression(&mut self, node: &Node) {
         let Some(binary) = self.arena.get_binary_expr(node) else {
             return;
         };
@@ -38,7 +38,7 @@ impl<'a> Printer<'a> {
             binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16;
         let is_nullish = binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
         let supports_logical_assignment =
-            (self.ctx.options.target as u8) >= (super::ScriptTarget::ES2021 as u8);
+            (self.ctx.options.target as u8) >= (super::super::ScriptTarget::ES2021 as u8);
 
         if (is_exponentiation || is_exponentiation_assignment) && self.ctx.needs_es2016_lowering {
             self.emit_exponentiation_expression(binary);
@@ -159,7 +159,7 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_binary_operand = prev_in_binary;
     }
 
-    pub(super) fn emit_prefix_unary(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_prefix_unary(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr(node) else {
             return;
         };
@@ -203,7 +203,7 @@ impl<'a> Printer<'a> {
         self.ctx.flags.in_binary_operand = prev;
     }
 
-    pub(super) fn emit_postfix_unary(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_postfix_unary(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr(node) else {
             return;
         };
@@ -224,7 +224,7 @@ impl<'a> Printer<'a> {
         self.write(get_operator_text(unary.operator));
     }
 
-    pub(super) fn emit_new_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_new_expression(&mut self, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
@@ -299,7 +299,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn emit_parenthesized(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_parenthesized(&mut self, node: &Node) {
         let Some(paren) = self.arena.get_parenthesized(node) else {
             return;
         };
@@ -394,7 +394,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Unwrap type assertion chain and return the kind of the underlying expression.
-    pub(super) fn unwrap_type_assertion_kind(&self, mut idx: NodeIndex) -> Option<u16> {
+    pub(in crate::emitter) fn unwrap_type_assertion_kind(&self, mut idx: NodeIndex) -> Option<u16> {
         loop {
             let node = self.arena.get(idx)?;
             match node.kind {
@@ -440,7 +440,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_type_assertion_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_type_assertion_expression(&mut self, node: &Node) {
         let Some(assertion) = self.arena.get_type_assertion(node) else {
             self.write("void 0");
             return;
@@ -449,7 +449,7 @@ impl<'a> Printer<'a> {
         self.emit_expression(assertion.expression);
     }
 
-    pub(super) fn emit_non_null_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_non_null_expression(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
             self.write("void 0");
             return;
@@ -458,7 +458,7 @@ impl<'a> Printer<'a> {
         self.emit_expression(unary.expression);
     }
 
-    pub(super) fn emit_conditional(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_conditional(&mut self, node: &Node) {
         let Some(cond) = self.arena.get_conditional_expr(node) else {
             return;
         };

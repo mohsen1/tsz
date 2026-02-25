@@ -13,7 +13,7 @@
 //!
 //! The emitter is organized as a directory module:
 //! - `core.rs` - Core Printer struct, dispatch logic, and emit methods
-//! - `expressions.rs` - Expression emission helpers
+//! - `expressions/` - Expression emission (binary, access, call, literals, downlevel)
 //! - `statements.rs` - Statement emission helpers
 //! - `declarations/` - Declaration emission (classes, class members, namespaces)
 //! - `functions.rs` - Function emission helpers
@@ -32,10 +32,6 @@ mod core;
 mod declarations;
 mod es5;
 mod expressions;
-mod expressions_access;
-mod expressions_binary_downlevel;
-mod expressions_call;
-mod expressions_literals;
 mod functions;
 mod helpers;
 mod jsx;
