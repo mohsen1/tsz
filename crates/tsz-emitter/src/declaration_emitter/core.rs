@@ -583,7 +583,9 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
 
-        if !self.should_emit_public_api_member(&func.modifiers) {
+        if !self.should_emit_public_api_member(&func.modifiers)
+            && !self.should_emit_public_api_dependency(func.name)
+        {
             return;
         }
 
@@ -679,7 +681,9 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&class.modifiers) {
+        if !self.should_emit_public_api_member(&class.modifiers)
+            && !self.should_emit_public_api_dependency(class.name)
+        {
             return;
         }
         let is_abstract = self
@@ -1250,7 +1254,9 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self
             .arena
             .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&enum_data.modifiers) {
+        if !self.should_emit_public_api_member(&enum_data.modifiers)
+            && !self.should_emit_public_api_dependency(enum_data.name)
+        {
             return;
         }
         let is_const = self
@@ -1549,7 +1555,28 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&var_stmt.modifiers) {
-            return;
+            // Check if any individual variable is referenced by the public API
+            let has_dependency = var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        {
+                            self.should_emit_public_api_dependency(decl.name)
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            });
+            if !has_dependency {
+                return;
+            }
         }
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
