@@ -1014,6 +1014,121 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ));
         }
 
+        // Check 6.0-wave deprecated compiler options (TS5107 / TS5101)
+        // These options were deprecated in TS 6.0 and will be removed in TS 7.0.
+        // Suppressed when ignoreDeprecations >= "6.0".
+        let ignore_deprecations_silences_6_0 = matches!(
+            compiler_opts.get("ignoreDeprecations"),
+            Some(serde_json::Value::String(v)) if v == "6.0"
+        );
+        if !ignore_deprecations_silences_6_0 {
+            // Value-based deprecations (TS5107): "Option '{0}={1}' is deprecated..."
+            type DeprecationCheck = (
+                &'static str,
+                &'static dyn Fn(&serde_json::Value) -> Option<&'static str>,
+            );
+            let value_deprecations: &[DeprecationCheck] = &[
+                ("alwaysStrict", &|v| {
+                    if v == &serde_json::Value::Bool(false) {
+                        Some("false")
+                    } else {
+                        None
+                    }
+                }),
+                ("target", &|v| match v {
+                    serde_json::Value::String(s) => {
+                        let n = normalize_option(s);
+                        if n == "es5" { Some("ES5") } else { None }
+                    }
+                    _ => None,
+                }),
+                ("moduleResolution", &|v| match v {
+                    serde_json::Value::String(s) => {
+                        let n = normalize_option(s);
+                        if n == "node10" || n == "node" {
+                            Some("node10")
+                        } else if n == "classic" {
+                            Some("classic")
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }),
+                ("esModuleInterop", &|v| {
+                    if v == &serde_json::Value::Bool(false) {
+                        Some("false")
+                    } else {
+                        None
+                    }
+                }),
+                ("allowSyntheticDefaultImports", &|v| {
+                    if v == &serde_json::Value::Bool(false) {
+                        Some("false")
+                    } else {
+                        None
+                    }
+                }),
+                ("module", &|v| match v {
+                    serde_json::Value::String(s) => {
+                        let n = normalize_option(s);
+                        match n.as_str() {
+                            "none" => Some("None"),
+                            "amd" => Some("AMD"),
+                            "umd" => Some("UMD"),
+                            "system" => Some("System"),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }),
+            ];
+            for (key, check_fn) in value_deprecations {
+                if let Some(value) = compiler_opts.get(*key)
+                    && let Some(display_value) = check_fn(value)
+                {
+                    let start = find_value_offset_in_source(&stripped, key);
+                    let value_len = estimate_json_value_len(value);
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
+                        &[key, display_value, "7.0", "6.0"],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
+                    ));
+                }
+            }
+
+            // No-value deprecations (TS5101): "Option '{0}' is deprecated..."
+            let key_deprecations = ["baseUrl", "outFile", "downlevelIteration"];
+            for key in &key_deprecations {
+                if compiler_opts.contains_key(*key) {
+                    let search = format!("\"{key}\"");
+                    let compiler_opts_pos = stripped.find("compilerOptions").unwrap_or(0);
+                    let start = stripped[compiler_opts_pos..]
+                        .find(&search)
+                        .map(|p| (compiler_opts_pos + p) as u32)
+                        .unwrap_or(0);
+                    let key_len = key.len() as u32 + 2; // include quotes
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
+                        &[key, "7.0", "6.0"],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        msg,
+                        diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
+                    ));
+                }
+            }
+        }
+
         // Check moduleResolution/module compatibility (TS5095)
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
         if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
@@ -3718,6 +3833,66 @@ mod tests {
         assert!(
             !resolved.checker.implied_classic_resolution,
             "Explicit moduleResolution: bundler should override Classic inference"
+        );
+    }
+
+    #[test]
+    fn test_ts5107_always_strict_false() {
+        let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code == 5107),
+            "alwaysStrict=false should trigger TS5107; got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5107_target_es5() {
+        let source = r#"{"compilerOptions":{"target":"ES5"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code == 5107),
+            "target=ES5 should trigger TS5107; got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5107_suppressed_by_ignore_deprecations_6_0() {
+        let source = r#"{"compilerOptions":{"alwaysStrict":false,"ignoreDeprecations":"6.0"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            !parsed.diagnostics.iter().any(|d| d.code == 5107),
+            "ignoreDeprecations=6.0 should suppress TS5107; got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_ts5101_base_url() {
+        let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.code == 5101),
+            "baseUrl should trigger TS5101; got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| d.code)
+                .collect::<Vec<_>>()
         );
     }
 }
