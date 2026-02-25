@@ -58,58 +58,20 @@ impl<'a> Completions<'a> {
                 }
             }
 
-            // Inside object literal expression - new property names are valid
-            if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                return true;
-            }
+            // Note: Object literal expression (`OBJECT_LITERAL_EXPRESSION`) is NOT
+            // included here. TypeScript only returns `isNewIdentifierLocation = true`
+            // for object literals when the contextual type has an index signature.
+            // Since we lack type-checking context, we default to `false` which matches
+            // the common case (object literals with known property names).
 
             // Inside type literal - new member names are valid
             if k == syntax_kind_ext::TYPE_LITERAL {
                 return true;
             }
 
-            // Inside enum declaration body - new member names are valid
-            if k == syntax_kind_ext::ENUM_DECLARATION {
-                let text_before = &self.source_text[..offset as usize];
-                let in_decl_text = &text_before[node.pos as usize..];
-                let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
-                if matches!(last_non_ws, Some(b'{') | Some(b',') | Some(b';')) {
-                    return true;
-                }
-            }
-        }
-
-        // Also check ancestor nodes - the cursor node might be a child
-        // (e.g. an identifier being typed) inside an object literal or class body.
-        {
-            let mut current = node_idx;
-            while current.is_some() {
-                if let Some(node) = self.arena.get(current) {
-                    let k = node.kind;
-                    // If we're directly inside a class/interface body at a member position
-                    if k == syntax_kind_ext::CLASS_DECLARATION
-                        || k == syntax_kind_ext::CLASS_EXPRESSION
-                        || k == syntax_kind_ext::INTERFACE_DECLARATION
-                        || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        || k == syntax_kind_ext::TYPE_LITERAL
-                    {
-                        return true;
-                    }
-                    // Stop walking at block/function boundaries - these are NOT
-                    // new identifier locations
-                    if k == syntax_kind_ext::BLOCK
-                        || k == syntax_kind_ext::SOURCE_FILE
-                        || k == syntax_kind_ext::MODULE_BLOCK
-                    {
-                        break;
-                    }
-                }
-                if let Some(ext) = self.arena.get_extended(current) {
-                    current = ext.parent;
-                } else {
-                    break;
-                }
-            }
+            // Note: Enum member positions use CompletionKind.MemberLike in TypeScript,
+            // which returns isNewIdentifierLocation = false. So enum body is NOT
+            // included here.
         }
 
         // Text-based heuristic for the context token
@@ -210,6 +172,13 @@ impl<'a> Completions<'a> {
                     | "import"
                     | "export"
                     | "from"
+                    | "this"
+                    | "super"
+                    | "yield"
+                    | "await"
+                    | "case"
+                    | "default"
+                    | "instanceof"
             ) {
                 return false;
             }
