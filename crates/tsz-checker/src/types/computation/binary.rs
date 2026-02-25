@@ -764,10 +764,9 @@ impl<'a> CheckerState<'a> {
                 let left_is_boxed = self.is_boxed_primitive_type(left_type);
                 let right_is_boxed = self.is_boxed_primitive_type(right_type);
 
-                // If one operand is null/undefined and strict_null_checks is on, tsc prioritizes TS18050
+                // If one operand is null/undefined, tsc prioritizes TS18050
                 // over the boxed primitive error (TS2362/TS2363/TS2365).
-                let skip_boxed_error = self.ctx.compiler_options.strict_null_checks
-                    && (left_is_nullish || right_is_nullish);
+                let skip_boxed_error = left_is_nullish || right_is_nullish;
 
                 if (left_is_boxed || right_is_boxed) && !skip_boxed_error {
                     // Emit appropriate error based on operator
@@ -1205,6 +1204,51 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == 18050),
             "Expected TS18050 for null - number, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    fn check_source_diagnostics_no_strict_null(
+        source: &str,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        crate::test_utils::check_source(
+            source,
+            "test.ts",
+            crate::context::CheckerOptions {
+                strict_null_checks: false,
+                ..crate::context::CheckerOptions::default()
+            },
+        )
+    }
+
+    #[test]
+    fn ts18050_null_plus_number_without_strict_null_checks() {
+        // TS18050 is emitted even without strictNullChecks — tsc emits
+        // "The value 'null' cannot be used here." regardless of the flag.
+        let diags = check_source_diagnostics_no_strict_null("var x = null + 1;");
+        assert!(
+            diags.iter().any(|d| d.code == 18050),
+            "Expected TS18050 for null + number even without strictNullChecks, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+        // Should NOT emit TS2365 when TS18050 is present
+        let has_2365 = diags.iter().any(|d| d.code == 2365);
+        assert!(
+            !has_2365,
+            "Should NOT emit TS2365 when TS18050 is emitted for null operand, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts18050_undefined_multiply_boolean_without_strict_null_checks() {
+        // TS18050 for undefined operand + TS2363 for boolean operand (not valid arithmetic)
+        let diags = check_source_diagnostics_no_strict_null(
+            "declare var a: boolean;\nvar x = undefined * a;",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == 18050),
+            "Expected TS18050 for undefined in arithmetic without strictNullChecks, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
