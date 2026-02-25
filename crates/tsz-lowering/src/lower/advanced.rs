@@ -1,7 +1,15 @@
 //! Advanced type lowering: conditionals, mapped types, indexed access,
 //! literal parsing, type references, and remaining simple type forms.
 
-use super::*;
+use super::core::*;
+
+use tsz_parser::parser::base::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::types::{
+    ConditionalType, MappedModifier, MappedType, ParamInfo, SymbolRef, TemplateSpan, TypeId,
+    TypeParamInfo, TypePredicate, TypePredicateTarget,
+};
 
 impl<'a> TypeLowering<'a> {
     /// Lower a conditional type (T extends U ? X : Y)
