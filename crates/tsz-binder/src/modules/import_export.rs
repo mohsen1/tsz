@@ -470,7 +470,7 @@ impl BinderState {
 
                             // Create symbols for re-export specifiers so they can be tracked
                             // in the compilation cache for incremental invalidation
-                            for (exported, _, spec_idx) in &export_mappings {
+                            for (exported, original, spec_idx) in &export_mappings {
                                 // Use declare_symbol to add to file_locals
                                 let sym_id = self.declare_symbol(
                                     exported,
@@ -481,6 +481,13 @@ impl BinderState {
                                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                                     sym.is_exported = true;
                                     sym.is_type_only = export_type_only;
+                                    sym.import_module = Some(source_module.clone());
+                                    sym.import_name = Some(
+                                        original
+                                            .as_ref()
+                                            .cloned()
+                                            .unwrap_or_else(|| exported.clone()),
+                                    );
                                 }
                                 self.node_symbols.insert(spec_idx.0, sym_id);
                             }
