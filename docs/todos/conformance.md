@@ -430,3 +430,4 @@ All items below have been validated against the codebase (implementations + test
 | TS5103 | Reject ignoreDeprecations "6.0" (not yet valid in tsc 6.0) | +48 tests |
 | TS1131 | Emit "Property or signature expected" in parser for invalid interface/type literal members | +tests |
 | TS5071 | Bundler-implied resolveJsonModule with none/system/umd module | +1 test |
+| TS5102 | Remove incorrect ignoreDeprecations suppression of TS5102 for removed options | +1 test |
