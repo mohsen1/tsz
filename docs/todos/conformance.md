@@ -2,6 +2,7 @@
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: ~14769/19201 (76.9%) — full suite, error-code level
+**Fingerprint score**: ~8077/12574 (64.2%) — full suite, fingerprint level
 
 ---
 
@@ -150,13 +151,13 @@
   - (d) Scoped `@types` mangling (`@beep/boop` → `@types/beep__boop`)
 - **Difficulty**: MEDIUM-HIGH
 
-### TS2792 — "Did you mean to set moduleResolution to nodenext?" (41 single-code tests)
-- **Root cause**: `effective_module_resolution()` in `src/config.rs` maps ES2015/ES2020/ESNext → Bundler,
-  but tsc defaults these to Classic. Attempted fix caused -31 regressions.
-- **Fix options**:
-  - (a) Fix `effective_module_resolution()` to match tsc defaults (13 callers, broad impact)
-  - (b) Add separate `tsc_diagnostic_module_resolution()` helper just for TS2792 decision
-- **Difficulty**: MEDIUM-HIGH
+### ~~TS2792 — "Did you mean to set moduleResolution to nodenext?"~~ PARTIALLY RESOLVED
+- **Fixed**: Added `implied_classic_resolution` flag to `CheckerOptions`, computed from
+  `effective_module_resolution()` at config resolution time. Updated all 5 TS2792 emission
+  points (import_checker, module resolution, driver) to use the flag instead of `ModuleKind`
+  pattern matching. (+3 tests)
+- **Remaining**: 28 missing, 70 extra TS2792 — many tests have multiple error mismatches
+  beyond just the TS2792/TS2307 code swap.
 
 #### Run note (2026-02-24)
 - **Deferred**: `tests/conformance/suite/types` slices for `TS2322/TS2345/TS2339` remain out-of-scope for this pass; they still require cross-layer Solver/Checker compatibility-gate refactors (`query_boundaries`, `CompatChecker`, `Lazy(DefId)`-aware relation traversal).
@@ -172,6 +173,11 @@
 - **Fixed**: TS5103 — removed bogus "5.5" from valid ignoreDeprecations list (+1 test).
 - **Fixed**: TS2435/TS1035 — module augmentations inside ambient external modules no longer false-positive TS2435 or TS1035 (+4 tests).
 - ~~**Investigated but deferred**: TS5071~~ RESOLVED below.
+
+#### Run note (2026-02-25, session 4)
+- **Fixed**: TS2792→TS2307 code swap — Added `implied_classic_resolution` to CheckerOptions, fixed all 5 emission points. TS2792 only fires when effective resolution is Classic. (+3 tests, 8077/12574)
+- **Investigated but reverted**: TS5103 false positive removal — tsc only emits TS5103 when there are TS5101/TS5107 deprecated options to suppress. Removing unconditional TS5103 emission was correct behavior but caused net -48 regression because 43 conformance tests expect TS5103 for `@ignoreDeprecations: 6.0` pragmas.
+- **Analysis**: 2449 tests have diff=0 (matching error codes, different fingerprints). These are diverse — no single fix flips many. Top patterns: TS2322 column offsets (error at wrong node), TS2769 span at callee vs first arg, message text differences (type alias expansion, union member ordering).
 
 #### Run note (2026-02-25, session 2)
 - **Fixed**: TS5071 — `moduleResolution: bundler` now implies `resolveJsonModule=true`. When combined with `module: none/system/umd`, TS5071 is now emitted. Error position falls back to `module` key when `resolveJsonModule` is absent from tsconfig (+1 test).
