@@ -1296,6 +1296,45 @@ mod error_detection_tests {
         assert!(checker.is_assignable(type_b, type_a));
     }
 
+    /// Test that excess property check for union targets uses union semantics.
+    ///
+    /// In TypeScript, when assigning a fresh object literal to a union type,
+    /// a property is "known" (not excess) if it exists in ANY constituent.
+    /// `{ a: "x", b: 1 }` assigned to `{ a: string } | { b: number }` should
+    /// not report excess properties because `a` exists in member 1 and `b`
+    /// exists in member 2.
+    #[test]
+    fn test_excess_property_union_target_any_member() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        let a_name = interner.intern_string("a");
+        let b_name = interner.intern_string("b");
+        let c_name = interner.intern_string("c");
+
+        // Target union: { a: string } | { b: number }
+        let member_a = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
+        let member_b = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+        let target = interner.union(vec![member_a, member_b]);
+
+        // Fresh source: { a: "hello", b: 42 }
+        // Both properties exist in SOME member → no excess
+        let source = interner.object_fresh(vec![
+            PropertyInfo::new(a_name, TypeId::STRING),
+            PropertyInfo::new(b_name, TypeId::NUMBER),
+        ]);
+        assert!(checker.is_assignable(source, target));
+
+        // Fresh source: { a: "hello", b: 42, c: true }
+        // `c` doesn't exist in ANY member → excess property
+        let source_with_excess = interner.object_fresh(vec![
+            PropertyInfo::new(a_name, TypeId::STRING),
+            PropertyInfo::new(b_name, TypeId::NUMBER),
+            PropertyInfo::new(c_name, TypeId::BOOLEAN),
+        ]);
+        assert!(!checker.is_assignable(source_with_excess, target));
+    }
+
     /// Test function parameter count compatibility.
     ///
     /// In TypeScript, a function with fewer parameters IS assignable to one with

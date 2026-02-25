@@ -600,8 +600,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Collect all property names from a type into a set (handles intersections and unions).
     ///
-    /// For intersections: property exists if it's in ANY member
-    /// For unions: property exists if it's in ALL members
+    /// For both intersections and unions: property exists if it's in ANY member.
+    /// This matches tsc's `isKnownProperty` semantics for excess property checking.
+    ///
     /// Check if a type or any of its composite members has a string or numeric index signature.
     /// Returns `(has_string_index, has_number_index)`.
     fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
@@ -668,18 +669,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
             Some(TypeData::Union(members_id)) => {
                 let members = self.interner.type_list(members_id);
-                if members.is_empty() {
-                    return properties;
-                }
-                // For unions, property exists if it's in ALL members
-                // Start with first member's properties
-                let mut all_props = self.collect_target_properties(members[0]);
-                // Intersect with remaining members
-                for &member in members.iter().skip(1) {
+                // For excess property checking, a property is "known" if it exists
+                // in ANY member of the union (same as tsc's isKnownProperty).
+                // The source only needs to be assignable to one constituent.
+                for &member in members.iter() {
                     let member_props = self.collect_target_properties(member);
-                    all_props = all_props.intersection(&member_props).cloned().collect();
+                    properties.extend(member_props);
                 }
-                properties = all_props;
             }
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
