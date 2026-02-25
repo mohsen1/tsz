@@ -1,7 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7551/12565 (60.1%) — full suite, fingerprint level (new framework)
+**Current score**: ~6992/12565 (55.6%) — full suite, fingerprint level (new framework)
+> Note: score dropped from ~7661 to ~6992 after rebase onto upstream commits (c2d558ca80..8cb0b8d57) that introduced a regression.
 
 ---
 
@@ -390,6 +391,22 @@
 ### TS2875 — JSX runtime module (14 tests)
 - See "Not Implemented Error Codes" section above
 
+### JSX Diagnostic Position Fixes (Session 2026-02-25) — DONE
+- **Fixed**: TS2322/TS2741 anchor at attribute name / tag name instead of value expression
+- **Fixed**: Boolean JSX attributes (`<x disabled />`) now checked against expected type
+- **Fixed**: Excess property type display `{ attr: type; }` instead of `{attr}`
+- **Fixed**: TS1005 `'</' expected` instead of `'token' expected` (parser token_to_string)
+- **Fixed**: TS7005 suppressed in .d.ts files
+- **Net gain**: +5 tests (at baseline HEAD; post-rebase gains may differ due to upstream regression)
+
+### JSX Remaining Gaps (classified during session)
+- **TS2874 false positives**: JSX pragma/factory resolution gap — `@jsx`/`@jsxFactory` pragma support needed
+- **TS7026 emission**: Fewer TS7026 instances than tsc for some tests (namespaced JSX like `<svg:path>`)
+- **TS7008 member name quoting**: Runner filename handling with `@filename` directives complicates comparison
+- **TS2322 for component props**: Needs `IntrinsicAttributes` intersection in JSX type checking
+- **Type display differences**: `string | undefined` vs `string` for optional props; property ordering in objects
+- **71 zero-error tests**: Dominated by missing TS2307 (react module resolution) and TS7026
+
 ---
 
 ## Other Open Issues
@@ -546,3 +563,4 @@ All items below have been validated against the codebase (implementations + test
 | mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Partial<T> <: T, T <: Required<T>) | +1 test |
 | TS18050/TS2365 snc gate | Gate TS18050 binary op errors on strictNullChecks; suppress TS2365 for nullish+nullish when snc off | +1 test (bitwiseNotOperatorWithAnyOtherType) |
 | TS2454/narrowing | Reorder check_flow_usage: apply narrowing before TS2454 to suppress false "used before assigned" in typeof guard branches | +2 tests |
+| JSX diagnostics | Anchor TS2322/TS2741 at attr name/tag name; boolean attr checking; excess property type display; `</` parser token; TS7005 .d.ts suppression | +5 tests |
