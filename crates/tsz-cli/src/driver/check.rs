@@ -3,6 +3,18 @@
 use super::check_utils::*;
 use super::*;
 
+/// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
+fn is_declaration_file(name: &str) -> bool {
+    name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts")
+}
+
+/// Check if a filename is a declaration file inside node_modules.
+/// tsc doesn't report diagnostics for external library declaration files.
+fn is_node_modules_declaration_file(name: &str) -> bool {
+    is_declaration_file(name)
+        && (name.contains("/node_modules/") || name.contains("\\node_modules\\"))
+}
+
 /// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
 /// This function reuses already-loaded lib files from the binding phase, avoiding a second
@@ -680,8 +692,15 @@ pub(super) fn collect_diagnostics(
                     parse_diagnostic,
                 ));
             }
-            // skipLibCheck: skip type checking of declaration files (.d.ts)
-            if options.skip_lib_check && file.file_name.ends_with(".d.ts") {
+            // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
+            if options.skip_lib_check && is_declaration_file(&file.file_name) {
+                diagnostics.extend(file_diagnostics);
+                continue;
+            }
+
+            // Skip semantic checking of declaration files in node_modules.
+            // tsc doesn't report diagnostics for external library files.
+            if is_node_modules_declaration_file(&file.file_name) {
                 diagnostics.extend(file_diagnostics);
                 continue;
             }
@@ -810,8 +829,14 @@ pub(super) fn check_file_for_parallel<'a>(
     } = context;
     let file = &program.files[file_idx];
 
-    // skipLibCheck: skip type checking of declaration files (.d.ts)
-    if skip_lib_check && file.file_name.ends_with(".d.ts") {
+    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
+    if skip_lib_check && is_declaration_file(&file.file_name) {
+        return Vec::new();
+    }
+
+    // Skip semantic checking of declaration files in node_modules.
+    // tsc doesn't report diagnostics for external library files.
+    if is_node_modules_declaration_file(&file.file_name) {
         return Vec::new();
     }
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -901,4 +926,51 @@ pub(super) fn check_file_for_parallel<'a>(
     }
 
     file_diagnostics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_declaration_file() {
+        assert!(is_declaration_file("types.d.ts"));
+        assert!(is_declaration_file("index.d.mts"));
+        assert!(is_declaration_file("index.d.cts"));
+        assert!(is_declaration_file("/path/to/file.d.ts"));
+        assert!(is_declaration_file("/path/to/file.d.mts"));
+        assert!(is_declaration_file("/path/to/file.d.cts"));
+
+        assert!(!is_declaration_file("index.ts"));
+        assert!(!is_declaration_file("index.mts"));
+        assert!(!is_declaration_file("index.cts"));
+        assert!(!is_declaration_file("index.js"));
+    }
+
+    #[test]
+    fn test_is_node_modules_declaration_file() {
+        assert!(is_node_modules_declaration_file(
+            "/project/node_modules/pkg/index.d.ts"
+        ));
+        assert!(is_node_modules_declaration_file(
+            "/project/node_modules/inner/index.d.cts"
+        ));
+        assert!(is_node_modules_declaration_file(
+            "/project/node_modules/inner/index.d.mts"
+        ));
+        // Windows paths
+        assert!(is_node_modules_declaration_file(
+            "C:\\project\\node_modules\\pkg\\index.d.ts"
+        ));
+
+        // Not in node_modules
+        assert!(!is_node_modules_declaration_file("/project/src/types.d.ts"));
+        // In node_modules but not a declaration file
+        assert!(!is_node_modules_declaration_file(
+            "/project/node_modules/pkg/index.ts"
+        ));
+        assert!(!is_node_modules_declaration_file(
+            "/project/node_modules/pkg/index.js"
+        ));
+    }
 }
