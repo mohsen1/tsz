@@ -596,8 +596,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check source to Mapped expansion (one-sided Mapped case).
     ///
-    /// When the source is a Mapped type that can be expanded, we first expand it
-    /// and then check subtyping.
+    /// When the target is a Mapped type, first try expansion. If expansion fails
+    /// (e.g., keyof T where T is a type parameter), fall back to homomorphic
+    /// mapped type assignability: source <: { [K in keyof S]: S[K] } holds when
+    /// source <: S and the mapped type doesn't remove optionality.
     pub(crate) fn check_source_to_mapped_expansion(
         &mut self,
         source: TypeId,
@@ -608,12 +610,68 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(expanded) => self.check_subtype(source, expanded),
             None => {
                 if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
-                    self.check_subtype(source, expanded)
+                    let result = self.check_subtype(source, expanded);
+                    if result.is_true() {
+                        return result;
+                    }
+                }
+
+                // Homomorphic mapped type shortcut:
+                // source <: { [K in keyof S]+?: S[K] } when source <: S
+                // and the mapped type doesn't remove optional.
+                if self.check_source_to_homomorphic_mapped(source, mapped_id) {
+                    SubtypeResult::True
                 } else {
                     SubtypeResult::False
                 }
             }
         }
+    }
+
+    /// Check if any source type is assignable to a homomorphic mapped type.
+    ///
+    /// This is the general form of the type parameter check:
+    /// S <: { [K in keyof S]+?: S[K] } when S is the same as the constraint source
+    /// and the mapped type doesn't remove optional.
+    fn check_source_to_homomorphic_mapped(
+        &mut self,
+        source: TypeId,
+        mapped_id: MappedTypeId,
+    ) -> bool {
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // Must not have name remapping (as clause)
+        if mapped.name_type.is_some() {
+            return false;
+        }
+
+        // Must not remove optional
+        if mapped.optional_modifier == Some(MappedModifier::Remove) {
+            return false;
+        }
+
+        // Constraint must be keyof(S) for some S
+        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+            return false;
+        };
+
+        // Template must be S[K] where K is the iteration parameter
+        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
+        else {
+            return false;
+        };
+        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
+            return false;
+        };
+        if idx_param.name != mapped.type_param.name {
+            return false;
+        }
+        if template_obj != constraint_source {
+            return false;
+        }
+
+        // Check if source is assignable to the constraint source
+        self.check_subtype(source, constraint_source).is_true()
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
@@ -874,8 +932,11 @@ pub(crate) fn flatten_mapped_chain(
         return None;
     }
 
-    // Try to flatten through the source object if it's itself a mapped type
-    if let Some(inner_mapped_id) = mapped_type_id(interner, obj)
+    // Try to flatten through the source object if it's itself a mapped type.
+    // Evaluate first to normalize Application types (e.g. Application(Partial, [T]))
+    // to their Mapped form, so nested chains like Readonly<Partial<T>> flatten correctly.
+    let obj_eval = crate::evaluation::evaluate::evaluate_type(interner, obj);
+    if let Some(inner_mapped_id) = mapped_type_id(interner, obj_eval)
         && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id)
     {
         return Some(FlattenedMapped {

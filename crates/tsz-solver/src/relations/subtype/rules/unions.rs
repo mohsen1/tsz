@@ -8,9 +8,12 @@
 
 use crate::TypeDatabase;
 use crate::type_queries::data::get_object_shape_id;
-use crate::types::{ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo};
+use crate::types::{
+    MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
+};
 use crate::visitor::{
-    is_identity_comparable_type, is_literal_type, type_param_info, union_list_id,
+    index_access_parts, is_identity_comparable_type, is_literal_type, keyof_inner_type,
+    mapped_type_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -70,13 +73,101 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Type parameter vs concrete type
         if let Some(constraint) = s_info.constraint {
-            return self.check_subtype(constraint, target);
+            let result = self.check_subtype(constraint, target);
+            if result.is_true() {
+                return result;
+            }
+        } else {
+            // Unconstrained type parameter: use unknown as base constraint.
+            let result = self.check_subtype(TypeId::UNKNOWN, target);
+            if result.is_true() {
+                return result;
+            }
         }
 
-        // Unconstrained type parameter: use unknown as base constraint.
-        // In TypeScript 4.8+, an unconstrained type parameter's base constraint is `unknown`,
-        // meaning it cannot be assigned to `object` or `{}` without a cast or constraint.
-        self.check_subtype(TypeId::UNKNOWN, target)
+        // Homomorphic mapped type target check:
+        // T is assignable to { [K in keyof T]+?: T[K] } (Partial<T>)
+        // T is assignable to { readonly [K in keyof T]: T[K] } (Readonly<T>)
+        // T is assignable to { [K in keyof T]: T[K] } (identity mapped type)
+        //
+        // This implements tsc's typeRelatedToMappedType: when the target is a
+        // generic homomorphic mapped type whose source is the same type parameter
+        // (or a supertype), and the mapped type doesn't remove optionality,
+        // the source type parameter is assignable.
+        if let Some(mapped_id) = mapped_type_id(self.interner, target)
+            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id) {
+                return SubtypeResult::True;
+            }
+
+        SubtypeResult::False
+    }
+
+    /// Check if a type (identified by name and optional constraint) is assignable
+    /// to a homomorphic mapped type.
+    ///
+    /// A type T is assignable to `{ [K in keyof S]: S[K] }` (with optional modifiers)
+    /// when T is related to S and the mapped type doesn't remove optionality (-?).
+    ///
+    /// This covers:
+    /// - `T <: Partial<T>` (adds optional)
+    /// - `T <: Readonly<T>` (adds readonly)
+    /// - `T <: { [K in keyof T]: T[K] }` (identity)
+    /// - `U extends T => U <: Partial<T>` (constraint-based)
+    fn is_assignable_to_homomorphic_mapped(
+        &mut self,
+        source_name: Atom,
+        source_constraint: Option<TypeId>,
+        mapped_id: MappedTypeId,
+    ) -> bool {
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // Must not have name remapping (as clause)
+        if mapped.name_type.is_some() {
+            return false;
+        }
+
+        // Must not remove optional (-?) — removing optional makes target
+        // more restrictive than source (Required<T> is not a supertype of T)
+        if mapped.optional_modifier == Some(MappedModifier::Remove) {
+            return false;
+        }
+
+        // Constraint must be keyof(S) for some S
+        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+            return false;
+        };
+
+        // Template must be S[K] where K is the iteration parameter (homomorphic form)
+        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
+        else {
+            return false;
+        };
+        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
+            return false;
+        };
+        if idx_param.name != mapped.type_param.name {
+            return false;
+        }
+
+        // Template object must match constraint source (e.g., T[K] where constraint is keyof T)
+        if template_obj != constraint_source {
+            return false;
+        }
+
+        // Source type parameter must be related to the mapped type's source:
+        // - Same name: T <: { [K in keyof T]: T[K] } (direct match)
+        // - Constraint-based: U extends T => U <: Partial<T>
+        if let Some(source_param) = type_param_info(self.interner, constraint_source)
+            && source_param.name == source_name {
+                return true;
+            }
+
+        // Check if source constraint is assignable to the mapped type source
+        if let Some(constraint) = source_constraint {
+            return self.check_subtype(constraint, constraint_source).is_true();
+        }
+
+        false
     }
 
     /// Check subtype with optional method bivariance.

@@ -726,3 +726,177 @@ fn test_mapped_to_mapped_readonly_partial_t_equiv_partial_readonly_t() {
         "Partial<Readonly<T>> should be subtype of Readonly<Partial<T>>"
     );
 }
+
+// =========================================================================
+// Type parameter <: homomorphic mapped type tests
+// =========================================================================
+// These test the fix for T <: Partial<T>, T <: Readonly<T>, etc.
+// In TypeScript, a type parameter is assignable to a homomorphic mapped type
+// over itself when the mapped type doesn't remove optionality.
+
+#[test]
+fn test_type_param_subtype_of_partial_t() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Partial<T>: { [K in keyof T]?: T[K] }
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, partial_t).is_true(),
+        "T should be subtype of Partial<T>"
+    );
+}
+
+#[test]
+fn test_type_param_subtype_of_readonly_t() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Readonly<T>: { readonly [K in keyof T]: T[K] }
+    let readonly_t =
+        make_homomorphic_mapped(&interner, t_param, None, Some(crate::MappedModifier::Add));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, readonly_t).is_true(),
+        "T should be subtype of Readonly<T>"
+    );
+}
+
+#[test]
+fn test_type_param_subtype_of_identity_mapped() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Identity: { [K in keyof T]: T[K] } (no modifiers)
+    let identity_t = make_homomorphic_mapped(&interner, t_param, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, identity_t).is_true(),
+        "T should be subtype of identity mapped type"
+    );
+}
+
+#[test]
+fn test_partial_t_not_subtype_of_t() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(partial_t, t_param).is_true(),
+        "Partial<T> should NOT be subtype of T (properties may be missing)"
+    );
+}
+
+#[test]
+fn test_type_param_not_subtype_of_required_t() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Required<T>: { [K in keyof T]-?: T[K] } — removes optional
+    let required_t = make_homomorphic_mapped(
+        &interner,
+        t_param,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(t_param, required_t).is_true(),
+        "T should NOT be subtype of Required<T> (Required removes optionality)"
+    );
+}
+
+#[test]
+fn test_partial_t_subtype_of_readonly_partial_t() {
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    // Readonly<Partial<T>>: readonly wrapper around Partial<T>
+    let readonly_partial_t =
+        make_homomorphic_mapped(&interner, partial_t, None, Some(crate::MappedModifier::Add));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker
+            .check_subtype(partial_t, readonly_partial_t)
+            .is_true(),
+        "Partial<T> should be subtype of Readonly<Partial<T>>"
+    );
+}
+
+#[test]
+fn test_t_subtype_of_partial_t_with_constraint() {
+    let interner = TypeInterner::new();
+
+    // Create a constraint type (e.g., { [key: string]: number })
+    let constraint_obj = interner.object_with_index(crate::ObjectShape {
+        flags: Default::default(),
+        properties: vec![],
+        string_index: Some(crate::IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint_obj),
+        default: None,
+        is_const: false,
+    }));
+
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, partial_t).is_true(),
+        "T extends {{[key: string]: number}} should be subtype of Partial<T>"
+    );
+}
