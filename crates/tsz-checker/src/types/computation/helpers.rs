@@ -3,7 +3,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::diagnostics::Diagnostic;
-use crate::query_boundaries::type_computation::evaluate_contextual_structure_with;
+use crate::query_boundaries::type_computation::core::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

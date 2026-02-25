@@ -866,8 +866,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     let type_computation_access_src = fs::read_to_string("src/types/computation/access.rs")
         .expect("failed to read src/types/computation/access.rs for architecture guard");
     assert!(
-        type_computation_access_src.contains("query_boundaries::type_computation_access::"),
-        "computation/access solver queries should route through query_boundaries::type_computation_access"
+        type_computation_access_src.contains("query_boundaries::type_computation::access::"),
+        "computation/access solver queries should route through query_boundaries::type_computation::access"
     );
     assert!(
         !type_computation_access_src

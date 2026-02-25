@@ -1,6 +1,6 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
+pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries::{
     AbstractClassCheckKind, CallSignaturesKind, ClassDeclTypeKind, LazyTypeKind,
 };

@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation_access::literal_property_name(
+                        crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -128,7 +128,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation_access::literal_property_name(
+                        crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
-                            crate::query_boundaries::type_computation_access::literal_property_name(
+                            crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
@@ -470,7 +470,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation_access::literal_property_name(
+                        crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -557,7 +557,7 @@ impl<'a> CheckerState<'a> {
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
-                            crate::query_boundaries::type_computation_access::literal_property_name(
+                            crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
@@ -618,7 +618,7 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
                     let name_opt = self.get_property_name(accessor.name).or_else(|| {
                         let prop_name_type = self.get_type_of_node(accessor.name);
-                        crate::query_boundaries::type_computation_access::literal_property_name(
+                        crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -672,7 +672,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        crate::query_boundaries::type_computation_access::literal_property_name(
+                        crate::query_boundaries::type_computation::access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -888,7 +888,7 @@ impl<'a> CheckerState<'a> {
                     {
                         prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
-                            crate::query_boundaries::type_computation_access::literal_property_name(
+                            crate::query_boundaries::type_computation::access::literal_property_name(
                                 self.ctx.types,
                                 prop_name_type,
                             )
@@ -990,7 +990,7 @@ impl<'a> CheckerState<'a> {
                     // TS2698: Spread types may only be created from object types
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    if !crate::query_boundaries::type_computation_access::is_valid_spread_type(
+                    if !crate::query_boundaries::type_computation::access::is_valid_spread_type(
                         self.ctx.types,
                         resolved_spread,
                     ) {
