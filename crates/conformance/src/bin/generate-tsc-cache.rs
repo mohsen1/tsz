@@ -109,9 +109,16 @@ fn resolve_tsc_path() -> Result<String> {
     // This ensures the cache is generated with the pinned tsc version from
     // scripts/package.json, not a random global tsc (which may be a different
     // major version and produce different diagnostics).
+    //
+    // IMPORTANT: canonicalize to an absolute path because the cache generator
+    // runs tsc with current_dir set to a temp directory, so a relative path
+    // like "scripts/node_modules/..." would fail with MODULE_NOT_FOUND.
     let scripts_tsc = Path::new("scripts/node_modules/typescript/lib/tsc.js");
     if scripts_tsc.exists() {
-        return Ok(scripts_tsc.to_string_lossy().to_string());
+        let abs = scripts_tsc
+            .canonicalize()
+            .unwrap_or_else(|_| scripts_tsc.to_path_buf());
+        return Ok(abs.to_string_lossy().to_string());
     }
     if let Ok(output) = Command::new("node")
         .args([
@@ -407,6 +414,19 @@ fn process_test_file(
             return Err(anyhow::anyhow!("Failed to run tsc: {}", e));
         }
     };
+
+    // Detect tsc infrastructure failures (e.g., MODULE_NOT_FOUND) vs genuine
+    // compilation results. If tsc exits non-zero but produces no TS diagnostics,
+    // check stderr for Node.js errors that indicate tsc never actually ran.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("Cannot find module") || stderr.contains("MODULE_NOT_FOUND") {
+            return Err(anyhow::anyhow!(
+                "tsc failed to start (MODULE_NOT_FOUND). Is the tsc path absolute? stderr: {}",
+                stderr.lines().next().unwrap_or("")
+            ));
+        }
+    }
 
     let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options);
 
