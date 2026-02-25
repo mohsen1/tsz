@@ -29,6 +29,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
+                // tsc normalizes initializer string literals to double quotes
                 if let Some(lit) = self.arena.get_literal(expr_node) {
                     self.write("\"");
                     self.write(&lit.text);
@@ -103,9 +104,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    self.write("\"");
+                    let quote = self.original_quote_char(node);
+                    self.write(quote);
                     self.write(&lit.text);
-                    self.write("\"");
+                    self.write(quote);
                 }
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
@@ -803,6 +805,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.pending_source_pos.take()
     }
 
+    /// Returns the quote character used for a string literal in the original source.
+    /// Falls back to double quote if source text is unavailable.
+    pub(crate) fn original_quote_char(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> &'static str {
+        if let Some(text) = self.source_file_text.as_ref() {
+            let pos = node.pos as usize;
+            if pos < text.len() {
+                let ch = text.as_bytes()[pos];
+                if ch == b'\'' {
+                    return "'";
+                }
+            }
+        }
+        "\""
+    }
+
     pub(crate) fn get_source_slice(&self, start: u32, end: u32) -> Option<String> {
         let text = self.source_file_text.as_ref()?;
         let start = start as usize;
@@ -973,7 +993,8 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ident.escaped_text.clone());
         }
         if let Some(literal) = self.arena.get_literal(node) {
-            return Some(format!("\"{}\"", literal.text));
+            let quote = self.original_quote_char(node);
+            return Some(format!("{}{}{}", quote, literal.text, quote));
         }
         self.get_source_slice(node.pos, node.end)
     }
