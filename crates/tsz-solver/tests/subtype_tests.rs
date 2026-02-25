@@ -1,4 +1,5 @@
 use super::*;
+use crate::QueryCache;
 use crate::TypeInterner;
 use crate::TypeResolver;
 use crate::def::DefId;
@@ -1155,6 +1156,71 @@ fn test_array_subtyping() {
 
     // Covariance with any
     assert!(checker.is_subtype_of(string_array, any_array));
+}
+
+#[test]
+fn test_array_to_iterable_protocol_subtyping() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let mut checker = SubtypeChecker::with_resolver(&interner, &cache).with_query_db(&cache);
+
+    let array_length = interner.intern_string("length");
+    let array_base = interner.object(vec![PropertyInfo::readonly(array_length, TypeId::NUMBER)]);
+    interner.set_array_base_type(array_base, vec![]);
+
+    let iterator_name = interner.intern_string("[Symbol.iterator]");
+    let next_name = interner.intern_string("next");
+    let value_name = interner.intern_string("value");
+    let done_name = interner.intern_string("done");
+
+    let iterator_result_type = |value_ty| {
+        interner.object(vec![
+            PropertyInfo::new(value_name, value_ty),
+            PropertyInfo::readonly(done_name, TypeId::BOOLEAN),
+        ])
+    };
+
+    let iterator_type = |value_ty| {
+        let next = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: iterator_result_type(value_ty),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        interner.object(vec![PropertyInfo::method(next_name, next)])
+    };
+
+    let iterable_of = |value_ty| {
+        let iter_fn = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: iterator_type(value_ty),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        interner.object(vec![PropertyInfo::method(iterator_name, iter_fn)])
+    };
+
+    let iterable_number = iterable_of(TypeId::NUMBER);
+    let iterable_string = iterable_of(TypeId::STRING);
+    let iterator_info =
+        crate::operations::iterators::get_iterator_info(&cache, iterable_number, false)
+            .expect("iterable target should expose iterable info");
+    assert_eq!(iterator_info.yield_type, TypeId::NUMBER);
+    let source = interner.array(TypeId::NUMBER);
+
+    assert!(!checker.is_subtype_of(array_base, iterable_number));
+    let interface_result = checker
+        .check_array_interface_subtype(TypeId::NUMBER, iterable_number)
+        .expect("array interface check should apply");
+    assert!(interface_result.is_true());
+    assert!(checker.is_subtype_of(source, iterable_number));
+    assert!(!checker.is_subtype_of(source, iterable_string));
 }
 
 #[test]

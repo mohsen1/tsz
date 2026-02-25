@@ -489,6 +489,7 @@ impl<'a> CheckerState<'a> {
             if should_check_iterability {
                 self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
             }
+            self.check_array_destructuring_rest_position(left_idx);
             self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
@@ -595,6 +596,41 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
             );
             return;
+        }
+    }
+
+    /// TS2462: A rest element in array destructuring must be the last element.
+    ///
+    /// Enforce syntax for array destructuring assignment targets.
+    fn check_array_destructuring_rest_position(&mut self, left_idx: NodeIndex) {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        if left_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(array_lit) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+
+        let elements_len = array_lit.elements.nodes.len();
+        if elements_len == 0 {
+            return;
+        }
+        for (i, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
+            if i + 1 >= elements_len {
+                break;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                self.error_at_node_msg(
+                    element_idx,
+                    diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+                    &[],
+                );
+            }
         }
     }
 
