@@ -568,6 +568,12 @@ impl<'a> BinaryOpEvaluator<'a> {
                 return Some(TypeId::ERROR);
             }
 
+            // Symbol operands need error reporting — bail to the normal path
+            // so TS2469 / TS2365 can be emitted by the checker.
+            if self.is_symbol_like(operand) {
+                return None;
+            }
+
             all_number &= operand == TypeId::NUMBER;
             all_bigint &= operand == TypeId::BIGINT;
             all_string &= operand == TypeId::STRING;

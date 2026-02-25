@@ -251,60 +251,90 @@ impl<'a> CheckerState<'a> {
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
 
-        // TS2469: Check if either operand is a symbol type
-        // TS2469 is emitted when an operator cannot be applied to type 'symbol'
-        // We check both operands and emit TS2469 for the symbol operand(s)
+        // TS2469: Check if either operand is a symbol type.
+        // tsc's behavior for TS2469 varies by operator category:
+        //
+        // Relational (<, >, <=, >=): emit TS2469 on the first symbol operand, no TS2365.
+        // Binary + / +=: emit TS2469 only when one side is symbol and the other is string
+        //   or any. If both symbol or symbol+number, fall through to TS2365.
+        // Arithmetic (-, *, /, etc.): never TS2469 — use TS2362/TS2363 instead.
         let left_is_symbol = evaluator.is_symbol_like(left_type);
         let right_is_symbol = evaluator.is_symbol_like(right_type);
 
         if left_is_symbol || right_is_symbol {
-            // Format type strings first to avoid holding formatter across mutable borrows
-            let left_type_str =
-                left_is_symbol.then(|| self.ctx.create_type_formatter().format(left_type));
-            let right_type_str =
-                right_is_symbol.then(|| self.ctx.create_type_formatter().format(right_type));
+            let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
+            let is_plus_like = matches!(op, "+" | "+=");
 
-            // Emit TS2469 for symbol operands
-            if let (Some(loc), Some(type_str)) =
-                (self.get_source_location(left_idx), left_type_str.as_deref())
-            {
-                let message = format_message(
-                    diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                    &[op, type_str],
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
-                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                ));
-            }
-
-            if let (Some(loc), Some(type_str)) = (
-                self.get_source_location(right_idx),
-                right_type_str.as_deref(),
-            ) {
-                let message = format_message(
-                    diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                    &[op, type_str],
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
-                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                ));
-            }
-
-            // If both are symbols, we're done (no need for TS2365)
-            if left_is_symbol && right_is_symbol {
+            if is_relational {
+                // For relational operators: emit TS2469 on the first (leftmost) symbol
+                // operand and return — tsc does not also emit TS2365.
+                let (target_idx, _) = if left_is_symbol {
+                    (left_idx, left_type)
+                } else {
+                    (right_idx, right_type)
+                };
+                if let Some(loc) = self.get_source_location(target_idx) {
+                    let message = format_message(
+                        diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        &[op],
+                    );
+                    self.ctx.diagnostics.push(Diagnostic::error(
+                        self.ctx.file_name.clone(),
+                        loc.start,
+                        loc.length(),
+                        message,
+                        diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                    ));
+                }
                 return;
             }
 
-            // If only one is symbol, continue to check the other operand
-            // (but we've already emitted TS2469 for the symbol)
+            if is_plus_like {
+                // For + / +=: emit TS2469 only when one side is symbol and the other
+                // is string or any. If both symbol, or symbol+number, fall through to TS2365.
+                let left_is_string_or_any =
+                    left_type == TypeId::ANY || self.is_string_like_type(left_type);
+                let right_is_string_or_any =
+                    right_type == TypeId::ANY || self.is_string_like_type(right_type);
+
+                let should_emit_2469 = (left_is_symbol && right_is_string_or_any)
+                    || (right_is_symbol && left_is_string_or_any);
+
+                if should_emit_2469 {
+                    // Emit TS2469 on each symbol operand
+                    if left_is_symbol && let Some(loc) = self.get_source_location(left_idx) {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &[op],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            loc.start,
+                            loc.length(),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        ));
+                    }
+                    if right_is_symbol && let Some(loc) = self.get_source_location(right_idx) {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &[op],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            loc.start,
+                            loc.length(),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        ));
+                    }
+                    return;
+                }
+                // Otherwise (both symbol, symbol+number): fall through to TS2365
+            }
+
+            // For arithmetic/bitwise operators (-, *, /, etc.): do NOT emit TS2469,
+            // fall through to TS2362/TS2363 below.
         }
 
         let mut formatter = self.ctx.create_type_formatter();

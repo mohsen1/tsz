@@ -840,6 +840,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS2469: For relational operators (<, >, <=, >=), emit TS2469 when
+            // operands are symbol-typed. tsc rejects symbol in comparisons.
+            // This must be checked before the evaluator because the comparability
+            // fallback would incorrectly accept `symbol < symbol`.
+            if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                let left_is_symbol = evaluator.is_symbol_like(left_type);
+                let right_is_symbol = evaluator.is_symbol_like(right_type);
+                if left_is_symbol || right_is_symbol {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let target_idx = if left_is_symbol { left_idx } else { right_idx };
+                    if let Some(loc) = self.get_source_location(target_idx) {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &[op_str],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            loc.start,
+                            loc.length(),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        ));
+                    }
+                    type_stack.push(TypeId::BOOLEAN);
+                    continue;
+                }
+            }
+
             // Evaluate types to resolve unevaluated conditional/mapped types before
             // passing to the solver. e.g., DeepPartial<number> | number → number
             let eval_left = self.evaluate_type_for_binary_ops(left_type);

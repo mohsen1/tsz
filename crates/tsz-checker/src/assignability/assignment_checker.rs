@@ -902,6 +902,60 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS2469: For += with symbol operands, emit when one side is symbol and the
+        // other is string or any. Uses "+=" in the message (not "+").
+        if operator == SyntaxKind::PlusEqualsToken as u16
+            && left_type != TypeId::ERROR
+            && right_type != TypeId::ERROR
+        {
+            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let left_is_symbol = evaluator.is_symbol_like(left_type);
+            let right_is_symbol = evaluator.is_symbol_like(right_type);
+            if left_is_symbol || right_is_symbol {
+                let left_is_string_or_any = left_type == TypeId::ANY
+                    || left_type == TypeId::STRING
+                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, left_type);
+                let right_is_string_or_any = right_type == TypeId::ANY
+                    || right_type == TypeId::STRING
+                    || tsz_solver::type_queries::is_string_literal(self.ctx.types, right_type);
+                let should_emit_2469 = (left_is_symbol && right_is_string_or_any)
+                    || (right_is_symbol && left_is_string_or_any);
+                if should_emit_2469 {
+                    use crate::diagnostics::{
+                        Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    if left_is_symbol && let Some(loc) = self.get_source_location(left_idx) {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &["+="],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            loc.start,
+                            loc.length(),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        ));
+                        emitted_operator_error = true;
+                    }
+                    if right_is_symbol && let Some(loc) = self.get_source_location(right_idx) {
+                        let message = format_message(
+                            diagnostic_messages::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                            &["+="],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                            self.ctx.file_name.clone(),
+                            loc.start,
+                            loc.length(),
+                            message,
+                            diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        ));
+                        emitted_operator_error = true;
+                    }
+                }
+            }
+        }
+
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
         let is_arithmetic_compound = matches!(
