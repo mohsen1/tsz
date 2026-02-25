@@ -995,15 +995,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // Valid value accepted by tsc 6.0: only "5.0". The value "6.0" is NOT yet valid —
-        // tsc uses a conservative deprecation strategy where "N.0" only becomes valid when
-        // tsc (N+1).0 introduces new deprecations.
-        // tsc emits TS5103 when the ignoreDeprecations value is invalid and would have been
-        // used to suppress a deprecation warning. In practice, nearly all configs that set
-        // ignoreDeprecations do so because they use deprecated features; tsz conservatively
-        // emits TS5103 whenever the value is invalid, matching tsc behavior in the common case.
+        // tsc 6.0 accepts both "5.0" and "6.0" as valid ignoreDeprecations values.
+        // See TypeScript/src/compiler/program.ts getIgnoreDeprecationsVersion():
+        //   "5.0" silences 5.0-wave deprecation warnings (now removals → TS5102).
+        //   "6.0" silences 6.0-wave deprecation warnings (TS5107).
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
+            && id_value != "6.0"
         {
             let start = find_value_offset_in_source(&stripped, "ignoreDeprecations");
             let value_len = id_value.len() as u32 + 2; // include quotes
@@ -2990,9 +2988,9 @@ mod tests {
 
     #[test]
     fn test_ts5102_fires_with_ignore_deprecations_6_0() {
-        // "6.0" is NOT a valid ignoreDeprecations value in tsc 6.0 — tsc's conservative
-        // deprecation strategy means "N.0" only becomes valid in tsc (N+1).0.
-        // So both TS5102 (removed option) and TS5103 (invalid ignoreDeprecations) fire.
+        // "6.0" IS a valid ignoreDeprecations value in tsc 6.0.
+        // TS5102 still fires for removed 5.0-wave options (past removal deadline).
+        // TS5103 must NOT fire because "6.0" is valid.
         let source =
             r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
@@ -3001,10 +2999,9 @@ mod tests {
             codes.contains(&5102),
             "Should emit TS5102 even with ignoreDeprecations '6.0' (option is past removal), got: {codes:?}"
         );
-        // ignoreDeprecations: "6.0" is NOT a valid value (only "5.0" is), so TS5103 fires too
         assert!(
-            codes.contains(&5103),
-            "Should emit TS5103 for invalid ignoreDeprecations '6.0', got: {codes:?}"
+            !codes.contains(&5103),
+            "Should NOT emit TS5103 — '6.0' is a valid ignoreDeprecations value, got: {codes:?}"
         );
     }
 
@@ -3224,20 +3221,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5103_emitted_for_6_0_value() {
-        // "6.0" is NOT a valid deprecation wave — ignoreDeprecations only covers
-        // past deprecation waves ("5.0", "5.5"), not the current version.
-        // tsc 6.0.0-dev rejects "6.0" with TS5103.
-        let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-        assert!(
-            codes.contains(&5103),
-            "Expected TS5103 for ignoreDeprecations='6.0' (not a valid wave), got: {codes:?}"
-        );
-    }
-
-    #[test]
     fn test_ts5103_not_emitted_for_valid_value() {
         let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.0"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
@@ -3249,16 +3232,35 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5103_emitted_for_6_0() {
-        // "6.0" is NOT a valid ignoreDeprecations value in tsc 6.0.
-        // tsc's conservative deprecation strategy: "N.0" only becomes valid
-        // when tsc (N+1).0 introduces new deprecations.
+    fn test_ts5103_not_emitted_for_valid_6_0() {
+        // tsc 6.0 accepts both "5.0" and "6.0" as valid ignoreDeprecations values.
+        // See TypeScript/src/compiler/program.ts getIgnoreDeprecationsVersion():
+        //   if (ignoreDeprecations === "5.0" || ignoreDeprecations === "6.0") return new Version(...)
         let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            codes.contains(&5103),
-            "Should emit TS5103 for ignoreDeprecations='6.0' (not yet valid), got: {codes:?}"
+            !codes.contains(&5103),
+            "Should NOT emit TS5103 for valid ignoreDeprecations='6.0', got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5103_not_emitted_for_6_0_with_deprecated_options() {
+        // ignoreDeprecations: "6.0" silences 6.0-wave deprecation warnings.
+        // TS5102 still fires for removed 5.0-wave options (noImplicitUseStrict is removed),
+        // but TS5103 must NOT fire because "6.0" is a valid value.
+        let source =
+            r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5102),
+            "Should still emit TS5102 for removed option, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&5103),
+            "Should NOT emit TS5103 — '6.0' is a valid ignoreDeprecations value, got: {codes:?}"
         );
     }
 
@@ -3620,21 +3622,6 @@ mod tests {
         assert!(
             !codes.contains(&6082),
             "Should NOT emit TS6082 without outFile, got: {codes:?}"
-        );
-    }
-
-    #[test]
-    fn test_ts5103_value_6_0_is_not_valid() {
-        // tsc 6.0 only accepts "5.0" as a valid ignoreDeprecations value.
-        // "6.0" is NOT yet valid — tsc uses a conservative deprecation strategy
-        // where "N.0" only becomes valid when tsc (N+1).0 introduces new deprecations.
-        let source =
-            r#"{"compilerOptions":{"ignoreDeprecations":"6.0","target":"es5","out":"foo.js"}}"#;
-        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-        assert!(
-            codes.contains(&5103),
-            "Should emit TS5103 for ignoreDeprecations '6.0', got: {codes:?}"
         );
     }
 

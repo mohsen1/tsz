@@ -31,7 +31,10 @@ struct Args {
     output: String,
 
     /// Path to tsserver binary (or use npx tsserver)
-    #[arg(long, default_value = "npx")]
+    #[arg(
+        long,
+        default_value = "scripts/node_modules/typescript/lib/tsserver.js"
+    )]
     tsserver: String,
 
     /// Maximum number of tests to process (0 = unlimited)
@@ -96,6 +99,10 @@ impl TsServerClient {
         let mut cmd = if tsserver_path == "npx" {
             let mut c = Command::new("npx");
             c.arg("tsserver");
+            c
+        } else if tsserver_path.ends_with(".js") {
+            let mut c = Command::new("node");
+            c.arg(tsserver_path);
             c
         } else {
             Command::new(tsserver_path)
@@ -817,6 +824,18 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 }
 
 fn resolve_tsc_version() -> Result<String> {
+    // Prefer reading version from the project-local TypeScript installation
+    // to ensure the reported version matches the tsc actually being used.
+    let local_pkg = std::path::Path::new("scripts/node_modules/typescript/package.json");
+    if local_pkg.exists() {
+        if let Ok(content) = std::fs::read_to_string(local_pkg) {
+            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(version) = pkg.get("version").and_then(|v| v.as_str()) {
+                    return Ok(version.to_string());
+                }
+            }
+        }
+    }
     let script = "const fs = require('fs'); const p = require.resolve('typescript/package.json'); const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); console.log(pkg.version || 'unknown');";
     let output = std::process::Command::new("node")
         .args(["-e", script])

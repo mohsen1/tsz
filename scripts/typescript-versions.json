@@ -9,9 +9,9 @@
       "note": "Previous pinned TypeScript commit, retained for history."
     },
     "cdc205d5e6338d96b0fb54657af33d473d480a9c": {
-      "npm": "6.0.0-dev.20260215",
-      "date": "2026-02-15",
-      "note": "Commit from TypeScript main branch, nightly build from same date"
+      "npm": "6.0.0-dev.20260224",
+      "date": "2026-02-24",
+      "note": "Updated from 20260215 to 20260224 to pick up ignoreDeprecations 6.0 fixes"
     }
   },
   "default": {

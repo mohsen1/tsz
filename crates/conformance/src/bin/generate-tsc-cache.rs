@@ -105,6 +105,14 @@ impl CountingSemaphore {
 }
 
 fn resolve_tsc_path() -> Result<String> {
+    // Prefer the project-local TypeScript installed in scripts/node_modules.
+    // This ensures the cache is generated with the pinned tsc version from
+    // scripts/package.json, not a random global tsc (which may be a different
+    // major version and produce different diagnostics).
+    let scripts_tsc = Path::new("scripts/node_modules/typescript/lib/tsc.js");
+    if scripts_tsc.exists() {
+        return Ok(scripts_tsc.to_string_lossy().to_string());
+    }
     if let Ok(output) = Command::new("node")
         .args([
             "-e",
@@ -431,21 +439,24 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 }
 
 fn resolve_tsc_version() -> Result<String> {
+    // Read the actual version from the project-local TypeScript installation.
+    // This must match the tsc binary resolved by resolve_tsc_path() to ensure
+    // the version metadata in cache entries accurately reflects which tsc ran.
+    let local_pkg = Path::new("scripts/node_modules/typescript/package.json");
+    if local_pkg.exists() {
+        if let Ok(content) = std::fs::read_to_string(local_pkg) {
+            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(version) = pkg.get("version").and_then(|v| v.as_str()) {
+                    return Ok(version.to_string());
+                }
+            }
+        }
+    }
+    // Fallback: try require.resolve
     let script = r#"
-        const fs = require('fs');
-        const path = require('path');
-        const versionsPath = path.join(process.cwd(), 'scripts', 'typescript-versions.json');
-        try {
-            const cfg = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
-            const current = cfg.current;
-            const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm;
-            const fallback = cfg.default && cfg.default.npm;
-            const version = mapping || fallback;
-            if (version) { console.log(version); process.exit(0); }
-        } catch {}
         try {
             const p = require.resolve('typescript/package.json');
-            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const pkg = JSON.parse(require('fs').readFileSync(p, 'utf8'));
             console.log(pkg.version || 'unknown');
         } catch { console.log('unknown'); }
     "#;
