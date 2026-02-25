@@ -111,7 +111,7 @@ fn resolve_tsc_path() -> Result<String> {
     // major version and produce different diagnostics).
     let scripts_tsc = Path::new("scripts/node_modules/typescript/lib/tsc.js");
     if scripts_tsc.exists() {
-        // Canonicalize to absolute path so it works when Command uses current_dir(work_dir)
+        // Canonicalize to absolute path so it works when current_dir is a temp directory
         let abs = scripts_tsc
             .canonicalize()
             .unwrap_or_else(|_| scripts_tsc.to_path_buf());
@@ -200,7 +200,6 @@ fn main() -> Result<()> {
             tsc_path_ref,
             tsc_version.as_str(),
             &node_semaphore,
-            args.timeout,
         ) {
             Ok(Some((key, entry))) => {
                 cache.lock().unwrap().insert(key, entry);
@@ -306,7 +305,6 @@ fn process_test_file(
     tsc_path: &str,
     tsc_version: &str,
     node_sem: &CountingSemaphore,
-    timeout_secs: u64,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
     use tsz_conformance::text_decode::{decode_source_text, DecodedSourceText};
@@ -373,7 +371,7 @@ fn process_test_file(
     // Acquire semaphore before spawning node subprocess to cap memory usage
     node_sem.acquire();
 
-    let child = if tsc_path.starts_with("npx:") {
+    let output = if tsc_path.starts_with("npx:") {
         Command::new("npx")
             .arg("tsc")
             .arg("--project")
@@ -382,9 +380,7 @@ fn process_test_file(
             .arg("--pretty")
             .arg("false")
             .current_dir(work_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+            .output()
     } else if tsc_path.ends_with(".js") {
         Command::new("node")
             .arg(tsc_path)
@@ -394,9 +390,7 @@ fn process_test_file(
             .arg("--pretty")
             .arg("false")
             .current_dir(work_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+            .output()
     } else {
         Command::new(tsc_path)
             .arg("--project")
@@ -405,38 +399,7 @@ fn process_test_file(
             .arg("--pretty")
             .arg("false")
             .current_dir(work_dir)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-    };
-
-    let output = match child {
-        Ok(mut c) => {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-            // Poll with try_wait until complete or timeout
-            loop {
-                match c.try_wait() {
-                    Ok(Some(_status)) => break c.wait_with_output(),
-                    Ok(None) => {
-                        if std::time::Instant::now() >= deadline {
-                            let _ = c.kill();
-                            let _ = c.wait();
-                            node_sem.release();
-                            return Ok(None); // Skip timed-out tests
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                    Err(e) => {
-                        node_sem.release();
-                        return Err(anyhow::anyhow!("Failed waiting for tsc: {}", e));
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            node_sem.release();
-            return Err(anyhow::anyhow!("Failed to spawn tsc: {}", e));
-        }
+            .output()
     };
 
     // Release permit immediately after subprocess completes
@@ -448,6 +411,22 @@ fn process_test_file(
             return Err(anyhow::anyhow!("Failed to run tsc: {}", e));
         }
     };
+
+    // Detect node/tsc startup failures (e.g. MODULE_NOT_FOUND) that produce
+    // no TS diagnostics.  Without this check the test silently caches as [].
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        && stderr.contains("Cannot find module")
+        && !stderr.contains("error TS")
+    {
+        return Err(anyhow::anyhow!(
+            "tsc startup failure (MODULE_NOT_FOUND): {}",
+            stderr
+                .lines()
+                .find(|l| l.contains("Cannot find module"))
+                .unwrap_or("unknown")
+        ));
+    }
 
     let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options);
 

@@ -1102,7 +1102,7 @@ impl<'a> CheckerState<'a> {
                 target_type,
                 source_level,
                 target_level,
-                right_idx,
+                left_idx,
             );
             return;
         }
@@ -1120,5 +1120,46 @@ impl<'a> CheckerState<'a> {
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::CheckerOptions;
+    use crate::test_utils::check_source;
+
+    fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        check_source(source, "test.ts", CheckerOptions::default())
+    }
+
+    #[test]
+    fn constructor_accessibility_assignment_error_targets_lhs() {
+        let source = r#"
+            class Foo {
+                constructor(public x: number) {}
+            }
+            class Bar {
+                protected constructor(public x: number) {}
+            }
+            let a = Foo;
+            a = Bar;
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.code == 2322)
+            .expect("expected TS2322");
+
+        let expected_start = source.find("a = Bar").expect("expected assignment span") as u32;
+
+        assert_eq!(
+            diag.start, expected_start,
+            "TS2322 should be anchored to LHS"
+        );
+        assert_eq!(
+            diag.length, 1,
+            "TS2322 should target only the assignment target"
+        );
     }
 }
