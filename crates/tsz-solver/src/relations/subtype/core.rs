@@ -22,8 +22,8 @@ use crate::types::{
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
-    enum_components, function_shape_id, intersection_list_id, intrinsic_kind,
-    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
+    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, template_literal_id, tuple_list_id,
     type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
@@ -1415,9 +1415,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Try application that resolves to a mapped type (e.g., Readonly<T>, Partial<T>)
         if let Some(app_id) = application_id(self.interner, source)
             && let Some(expanded) = self.try_expand_application(app_id)
-                && let Some(mapped_id) = mapped_type_id(self.interner, expanded) {
-                    return self.check_homomorphic_mapped_to_target(mapped_id, target);
-                }
+            && let Some(mapped_id) = mapped_type_id(self.interner, expanded)
+        {
+            return self.check_homomorphic_mapped_to_target(mapped_id, target);
+        }
 
         false
     }
