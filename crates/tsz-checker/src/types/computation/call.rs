@@ -685,7 +685,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Use TS2554 for exact count, range, or too many args
                     let max = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(expected_min, max, actual, call_idx);
+                    self.error_argument_count_mismatch_at(
+                        expected_min,
+                        max,
+                        actual,
+                        call_idx,
+                        args,
+                    );
                 }
                 TypeId::ERROR
             }

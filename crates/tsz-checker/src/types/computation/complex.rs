@@ -616,7 +616,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Use TS2554 for exact count, range, or too many args
                     let max = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(expected_min, max, actual, idx);
+                    self.error_argument_count_mismatch_at(expected_min, max, actual, idx, args);
                 }
                 // Recover with the constructor instance type so downstream checks
                 // (e.g. property access TS2339) still run after arity diagnostics.
