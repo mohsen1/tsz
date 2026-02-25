@@ -1394,18 +1394,13 @@ impl ModuleResolver {
                         &conditions,
                     ) {
                         Ok(resolved) => return Ok(resolved),
-                        Err(e @ ResolutionFailure::ModuleResolutionModeMismatch { .. }) => {
-                            // Package found with exports field but resolution failed.
-                            // exports is authoritative — do not continue searching.
-                            return Err(e);
-                        }
                         Err(e @ ResolutionFailure::NotFound { .. }) => {
-                            if self.should_stop_on_bundler_exports_failure(
+                            // In Node16/NodeNext/Bundler, exports field is authoritative —
+                            // don't continue searching parent node_modules.
+                            if self.should_stop_on_exports_failure(
                                 &package_dir,
                                 subpath.as_deref(),
                                 &conditions,
-                                containing_file,
-                                specifier,
                             ) {
                                 return Err(e);
                             }
@@ -1479,15 +1474,18 @@ impl ModuleResolver {
         })
     }
 
-    fn should_stop_on_bundler_exports_failure(
+    fn should_stop_on_exports_failure(
         &self,
         package_dir: &Path,
         subpath: Option<&str>,
         conditions: &[String],
-        _containing_file: &str,
-        _specifier: &str,
     ) -> bool {
-        if !matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
+        if !matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Bundler
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+        ) {
             return false;
         }
         if !self.resolve_package_json_exports {
@@ -1638,17 +1636,13 @@ impl ModuleResolver {
                     });
                 }
                 // In Node16/NodeNext/Bundler, exports field is authoritative for subpaths.
+                // Return NotFound (TS2307) — the driver handles Classic→TS2792 conversion.
                 if matches!(
                     self.resolution_kind,
-                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                    ModuleResolutionKind::Node16
+                        | ModuleResolutionKind::NodeNext
+                        | ModuleResolutionKind::Bundler
                 ) {
-                    return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                        specifier: original_specifier.to_string(),
-                        containing_file: containing_file.to_string(),
-                        span: specifier_span,
-                    });
-                }
-                if matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
                     return Err(ResolutionFailure::NotFound {
                         specifier: original_specifier.to_string(),
                         containing_file: containing_file.to_string(),
@@ -1708,18 +1702,13 @@ impl ModuleResolver {
                 });
             }
             // In Node16/NodeNext/Bundler, exports field is authoritative.
-            // Node16/NodeNext emit TS2792; Bundler uses TS2307.
+            // Return NotFound (TS2307) — the driver handles Classic→TS2792 conversion.
             if matches!(
                 self.resolution_kind,
-                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
             ) {
-                return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                    specifier: original_specifier.to_string(),
-                    containing_file: containing_file.to_string(),
-                    span: specifier_span,
-                });
-            }
-            if matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
                 return Err(ResolutionFailure::NotFound {
                     specifier: original_specifier.to_string(),
                     containing_file: containing_file.to_string(),
@@ -3559,6 +3548,95 @@ mod tests {
     // =========================================================================
     // PackageType tests
     // =========================================================================
+
+    #[test]
+    fn test_node16_exports_failure_produces_ts2307_not_ts2792() {
+        // When moduleResolution is Node16/NodeNext and a package has an exports
+        // field but the subpath can't be resolved, the error should be TS2307
+        // (NotFound), NOT TS2792 (ModuleResolutionModeMismatch).
+        // TS2792 means "set moduleResolution to nodenext" which is nonsensical
+        // when you're already on Node16/NodeNext.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_node16_exports_ts2307");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        // Package with exports field that won't match our subpath
+        fs::write(
+            dir.join("node_modules/inner/package.json"),
+            r#"{"name":"inner","exports":{"./cjs/*":"./*.cjs","./mjs/*":"./*.mjs"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/index.ts"),
+            "import * as x from 'inner/cjs/foo';",
+        )
+        .unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve(
+            "inner/cjs/foo",
+            &dir.join("src/index.ts"),
+            Span::new(24, 38),
+        );
+
+        // Should be NotFound (TS2307), not ModuleResolutionModeMismatch (TS2792)
+        let err = result.expect_err("Expected resolution to fail");
+        let diagnostic = err.to_diagnostic();
+        assert_eq!(
+            diagnostic.code, CANNOT_FIND_MODULE,
+            "Node16 exports failure should produce TS2307, not TS2792"
+        );
+        assert!(
+            !matches!(err, ResolutionFailure::ModuleResolutionModeMismatch { .. }),
+            "Node16 exports failure should NOT be ModuleResolutionModeMismatch"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_nodenext_entry_exports_failure_produces_ts2307() {
+        // Same test but for entry point (no subpath) with NodeNext resolution.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_nodenext_entry_ts2307");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        // Package with exports "." pointing to a non-existent file
+        fs::write(
+            dir.join("node_modules/pkg/package.json"),
+            r#"{"name":"pkg","exports":{".":"./nonexistent.js"}}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::NodeNext),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+
+        let mut resolver = ModuleResolver::new(&options);
+        let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(24, 29));
+
+        let err = result.expect_err("Expected resolution to fail");
+        let diagnostic = err.to_diagnostic();
+        assert_eq!(
+            diagnostic.code, CANNOT_FIND_MODULE,
+            "NodeNext entry exports failure should produce TS2307, not TS2792"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_package_type_default_is_commonjs() {
