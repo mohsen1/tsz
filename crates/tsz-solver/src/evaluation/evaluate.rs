@@ -386,25 +386,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner.lookup(mapped.constraint)
                             && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
                             && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
-                                && idx < expanded_args.len()
-                            {
-                                let arg = expanded_args[idx];
-                                let resolved_arg = self.evaluate(arg);
-                                if is_primitive_type(self.interner, resolved_arg) {
-                                    if let Some(db) = self.query_db {
-                                        db.insert_application_eval_cache(
-                                            def_id,
-                                            &expanded_args,
-                                            no_unchecked_indexed_access,
-                                            resolved_arg,
-                                        );
-                                    }
-                                    if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                        *d = d.saturating_sub(1);
-                                    }
-                                    return resolved_arg;
+                            && idx < expanded_args.len()
+                        {
+                            let arg = expanded_args[idx];
+                            let resolved_arg = self.evaluate(arg);
+                            if is_primitive_type(self.interner, resolved_arg) {
+                                if let Some(db) = self.query_db {
+                                    db.insert_application_eval_cache(
+                                        def_id,
+                                        &expanded_args,
+                                        no_unchecked_indexed_access,
+                                        resolved_arg,
+                                    );
                                 }
+                                if let Some(d) = self.def_depth.get_mut(&def_id) {
+                                    *d = d.saturating_sub(1);
+                                }
+                                return resolved_arg;
                             }
+                        }
                     }
 
                     // Instantiate the resolved type with the type arguments
