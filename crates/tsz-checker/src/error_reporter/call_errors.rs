@@ -494,9 +494,10 @@ impl<'a> CheckerState<'a> {
             return call_idx;
         };
         if let Some(args) = &call.arguments
-            && let Some(&first) = args.nodes.first() {
-                return first;
-            }
+            && let Some(&first) = args.nodes.first()
+        {
+            return first;
+        }
         call_idx
     }
 
