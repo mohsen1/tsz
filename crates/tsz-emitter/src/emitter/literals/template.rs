@@ -1,4 +1,4 @@
-use super::Printer;
+use crate::emitter::Printer;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 
@@ -7,7 +7,11 @@ impl<'a> Printer<'a> {
     // Template Literals
     // =========================================================================
 
-    pub(super) fn emit_tagged_template_expression(&mut self, node: &Node, _idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_tagged_template_expression(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+    ) {
         let Some(tagged) = self.arena.get_tagged_template(node) else {
             return;
         };
@@ -17,7 +21,7 @@ impl<'a> Printer<'a> {
         self.emit(tagged.template);
     }
 
-    pub(super) fn emit_template_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_template_expression(&mut self, node: &Node) {
         let Some(tpl) = self.arena.get_template_expr(node) else {
             self.write("``");
             return;
@@ -32,7 +36,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_no_substitution_template(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_no_substitution_template(&mut self, node: &Node) {
         let text = self
             .get_raw_template_part_text(node)
             .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
@@ -44,7 +48,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_template_span(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_template_span(&mut self, node: &Node) {
         let Some(span) = self.arena.get_template_span(node) else {
             return;
         };
@@ -59,7 +63,7 @@ impl<'a> Printer<'a> {
         self.emit(span.literal);
     }
 
-    pub(super) fn emit_template_head(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_template_head(&mut self, node: &Node) {
         let text = self
             .get_raw_template_part_text(node)
             .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
@@ -69,7 +73,7 @@ impl<'a> Printer<'a> {
         self.write(&text);
     }
 
-    pub(super) fn emit_template_middle(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_template_middle(&mut self, node: &Node) {
         let text = self
             .get_raw_template_part_text(node)
             .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
@@ -78,7 +82,7 @@ impl<'a> Printer<'a> {
         self.write(&text);
     }
 
-    pub(super) fn emit_template_tail(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_template_tail(&mut self, node: &Node) {
         let text = self
             .get_raw_template_part_text(node)
             .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
@@ -90,7 +94,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
+    pub(in crate::emitter) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
         let text = self.source_text?;
         let cooked_fallback = self
             .arena

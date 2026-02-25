@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
-use super::Printer;
 use crate::context::transform::IdentifierId;
+use crate::emitter::Printer;
 use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
@@ -9,7 +9,7 @@ impl<'a> Printer<'a> {
     // Literals
     // =========================================================================
 
-    pub(super) fn emit_identifier(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_identifier(&mut self, node: &Node) {
         if let Some(ident) = self.arena.get_identifier(node) {
             let original_text = &ident.escaped_text;
 
@@ -59,13 +59,13 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn write_identifier_by_id(&mut self, id: IdentifierId) {
+    pub(in crate::emitter) fn write_identifier_by_id(&mut self, id: IdentifierId) {
         if let Some(ident) = self.arena.identifiers.get(id as usize) {
             self.write_identifier(&ident.escaped_text);
         }
     }
 
-    pub(super) fn emit_bigint_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_bigint_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000n → 1000000n
             let text = if lit.text.contains('_') {
@@ -129,7 +129,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
             let had_separators = lit.text.contains('_');
@@ -251,7 +251,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_regex_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_regex_literal(&mut self, node: &Node) {
         // Regex literals should be emitted exactly as they appear in source
         // to preserve the pattern and flags (e.g., /\r\n/g)
         if let Some(text) = self.source_text {
@@ -291,7 +291,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_string_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_string_literal(&mut self, node: &Node) {
         // Try to use raw source text to preserve line continuations and escape forms.
         if let Some(raw) = self.get_raw_string_literal(node) {
             if !self.ctx.options.target.supports_es2015()
@@ -396,7 +396,7 @@ impl<'a> Printer<'a> {
         None
     }
 
-    pub(super) fn emit_string_literal_text(&mut self, text: &str) {
+    pub(in crate::emitter) fn emit_string_literal_text(&mut self, text: &str) {
         let quote = if self.ctx.options.single_quote {
             '\''
         } else {
@@ -407,7 +407,7 @@ impl<'a> Printer<'a> {
         self.write_char(quote);
     }
 
-    pub(super) fn emit_raw_string_literal_text(&mut self, text: &str) {
+    pub(in crate::emitter) fn emit_raw_string_literal_text(&mut self, text: &str) {
         let quote = if self.ctx.options.single_quote {
             '\''
         } else {
@@ -435,7 +435,7 @@ impl<'a> Printer<'a> {
         Some(format!("{quote_char}{converted}{quote_char}"))
     }
 
-    pub(super) fn downlevel_codepoint_escapes_in_literal_text(
+    pub(in crate::emitter) fn downlevel_codepoint_escapes_in_literal_text(
         &self,
         text: &str,
         quote_char: char,
@@ -557,7 +557,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_escaped_string(&mut self, s: &str, quote_char: char) {
+    pub(in crate::emitter) fn emit_escaped_string(&mut self, s: &str, quote_char: char) {
         for ch in s.chars() {
             match ch {
                 '\n' => self.write("\\n"),
