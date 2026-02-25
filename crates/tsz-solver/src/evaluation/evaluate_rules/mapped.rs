@@ -365,10 +365,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // 2. The source property is optional
             // Regardless of whether the output property stays optional or not (e.g., `-?`
             // removes optionality, but the declared type is still correct).
-            if is_homomorphic && source_optional
-                && let Some((_, _, declared_type)) = source_info {
-                    property_type = *declared_type;
-                }
+            if is_homomorphic
+                && source_optional
+                && let Some((_, _, declared_type)) = source_info
+            {
+                property_type = *declared_type;
+            }
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
