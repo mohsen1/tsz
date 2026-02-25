@@ -712,12 +712,26 @@ impl Runner {
                         .or_else(|| options.get("allowjs"))
                         .is_some_and(|v| v == "true");
                     if is_js_file && !check_js && !allow_js {
+                        // Preserve TS18003 (no inputs found) since it's a config-level
+                        // diagnostic that tsc emits regardless of JS checking mode.
+                        let had_18003 = all_codes.contains(&18003);
+                        let fps_18003: Vec<_> = all_fingerprints
+                            .iter()
+                            .filter(|fp| fp.code == 18003)
+                            .cloned()
+                            .collect();
                         all_codes.clear();
                         all_fingerprints.clear();
+                        if had_18003 {
+                            all_codes.insert(18003);
+                            all_fingerprints.extend(fps_18003);
+                        }
                     }
 
                     // Some multi-file conformance tests provide a tsconfig with allowJs and only JS inputs.
-                    // In that setup, TS18003 is a harness artifact and should not be compared.
+                    // In that setup, TS18003 may be a harness artifact (tsz emits it but tsc doesn't).
+                    // Only strip TS18003 when tsc does NOT expect it.
+                    let tsc_expects_18003 = tsc_result.error_codes.contains(&18003);
                     let has_tsconfig = parsed
                         .directives
                         .filenames
@@ -730,7 +744,7 @@ impl Runner {
                             || lower.ends_with(".mjs")
                             || lower.ends_with(".cjs")
                     });
-                    if has_tsconfig && has_js_input_file {
+                    if has_tsconfig && has_js_input_file && !tsc_expects_18003 {
                         all_codes.remove(&18003);
                         all_fingerprints.retain(|fp| fp.code != 18003);
                     }

@@ -156,10 +156,12 @@ pub(super) fn collect_diagnostics(
                         {
                             resolved_override = Some(resolved_path.clone());
                         }
-                        // Check if this is NotFound and the old
-                        // resolver would find it (virtual test files). In that case,
-                        // validate Node16 rules before accepting the fallback.
-                        if failure.is_not_found()
+                        // Check if the fallback resolver can find this module.
+                        // tsc tries all resolution strategies before giving up.
+                        // Our ModuleResolver may fail with ModuleResolutionModeMismatch,
+                        // PackageJsonError, etc. even though a simpler resolution
+                        // strategy would succeed. Try the fallback for these cases too.
+                        if failure.should_try_fallback()
                             && let Some(resolved) = resolve_module_specifier(
                                 file_path,
                                 specifier,
