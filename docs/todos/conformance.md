@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7528/12565 (59.9%) — full suite, fingerprint level (new framework)
+**Current score**: ~7534/12565 (60.0%) — full suite, fingerprint level (new framework)
 
 ---
 
@@ -236,6 +236,16 @@
 - **Fixed**: Reverse homomorphic mapped type assignability — Added `check_homomorphic_mapped_source_to_type_param` in core.rs and `check_homomorphic_mapped_to_target` in generics.rs. Detects identity-shaped mapped types (`{ [K in keyof S]: S[K] }`) and allows them to be assigned to their source type parameter (Readonly<T> <: T, Partial<T> <: T).
 - **Fixed**: Forward homomorphic mapped type with -? modifier — Removed MappedModifier::Remove restriction from both unions.rs (`is_assignable_to_homomorphic_mapped`) and generics.rs (`check_source_to_homomorphic_mapped`). T <: Required<T> now works at generic level.
 - **Remaining types/mapped failures**: 19/26 still fail. Dominant causes: TS2322 false positives from missing generic mapped type instantiation/evaluation (mappedTypes5/6, mappedTypeRelationships), TS7053 noImplicitAny gaps (isomorphicMappedTypeInference), TS2403/TS2536 property modifier enforcement gaps (mappedTypeModifiers, mappedTypeErrors2), parser issues in mappedTypeProperties (TS1005/TS1128).
+
+#### Run note (2026-02-25, session 11) — types/mapped area (continued)
+- **Area**: types/mapped — fixed homomorphic mapped type optional/readonly preservation
+- **Net gain**: +6 tests (7528 → 7534, 60.0%)
+- **Fixed**: Three root causes for `Pick<TP, keyof TP>` producing wrong types:
+  1. `try_expand_type_arg()` didn't expand `KeyOf` type arguments during Application evaluation — added KeyOf to the evaluate arm in `evaluate.rs`
+  2. `is_homomorphic_mapped_type()` returned bool, not source object — refactored to `homomorphic_mapped_source()` returning `Option<TypeId>` so Method 2 (post-instantiation form with eagerly evaluated keyof) can extract source properties
+  3. Declared-type fix for optional properties only applied to `-?` (MappedModifier::Remove) case — generalized to all homomorphic mapped types where source property is optional
+- **Root cause detail**: During generic instantiation, `keyof T` in type args was eagerly evaluated to `"a" | "b"` while `T` was resolved to a different TypeId. This caused Method 1 homomorphism check (`obj != source_from_constraint`) to fail, and Method 2 (`expected_keys == mapped.constraint`) to fail because constraint was still `KeyOf(Lazy(...))`.
+- **Tests added**: 3 evaluate tests (keyof preserves optional/readonly, post-instantiation preserves optional) + 1 integration test (Pick identity bidirectional subtype)
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
