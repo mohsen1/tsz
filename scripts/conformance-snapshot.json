@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-25T15:06:29Z",
-  "git_sha": "a7dc397eb59b2c2bf861aa89a0032262ca79628f",
+  "timestamp": "2026-02-25T15:30:39Z",
+  "git_sha": "1b9c2228114f43969f41fcf63a267124c9f39e79",
   "summary": {
     "total_tests": 12565,
-    "passed": 7536,
-    "failed": 5029,
+    "passed": 7537,
+    "failed": 5028,
     "pass_rate": 60.0
   },
   "areas_by_pass_rate": [
@@ -499,18 +499,11 @@
       "pass_rate": 63.08
     },
     {
-      "area": "expressions/unaryOperators",
-      "total": 58,
-      "passed": 37,
-      "failed": 21,
-      "pass_rate": 63.79
-    },
-    {
       "area": "compiler",
-      "total": 6467,
+      "total": 6468,
       "passed": 4129,
-      "failed": 2338,
-      "pass_rate": 63.85
+      "failed": 2339,
+      "pass_rate": 63.84
     },
     {
       "area": "es6/modules",
@@ -532,6 +525,13 @@
       "passed": 444,
       "failed": 243,
       "pass_rate": 64.63
+    },
+    {
+      "area": "expressions/unaryOperators",
+      "total": 58,
+      "passed": 38,
+      "failed": 20,
+      "pass_rate": 65.52
     },
     {
       "area": "types/import",
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS2307",
-      "count": 173
+      "count": 174
     },
     {
       "code": "TS2322",
