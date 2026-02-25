@@ -76,9 +76,9 @@
   flag), expanding TS18046 causes regressions on multi-file tests.
 - **Difficulty**: MEDIUM-HIGH (requires TypeId architecture decision)
 
-### TS1382 — Unexpected token in decorator context (7 tests)
-- **Needed**: Parser-level fix for expression start in decorated declarations
-- **Difficulty**: MEDIUM
+### ~~TS1382 — Unexpected token `>` in JSX text~~ PARTIALLY RESOLVED
+- **Fixed**: Scanner now emits TS1382 (`>`) and TS1381 (`}`) during JSX text scanning
+- **Remaining**: Tests that expect TS1382 also need other JSX diagnostics (TS1003, TS17014, etc.) to pass
 
 ### TS17019 — Resolving expression in computed property (6 tests)
 - **Difficulty**: MEDIUM
@@ -196,6 +196,10 @@
 
 #### Run note (2026-02-25, session 5)
 - **Fixed**: TS1389 — "'{0}' is not allowed as a variable declaration name." Parser now emits TS1389 instead of generic TS1359 when a reserved word appears as a var/let/const/using declaration name. Added `error_reserved_word_in_variable_declaration()` and intercept in `parse_variable_declaration_name()` (+2 tests, 4089→4091).
+- **Fixed**: TS1382/TS1381 — Scanner now emits TS1382 (bare `>`) and TS1381 (bare `}`) inside JSX text content. Prerequisite for JSX conformance; no immediate test gains (tests need additional JSX fixes).
+- **Fixed**: TS2354 — False positive tslib helper detection. `required_helpers()` now respects target level: `__extends` only needed at target < ES2015. Prevents false TS2354 when `--importHelpers` is set but class extends is native (+2 tests, 4090→4092).
+- **Investigated but reverted**: TS2497 — "Module can only be referenced with ECMAScript imports/exports." Implementation detected `export=` in module exports table for namespace imports, but was too aggressive (8 false positives). Needs deeper solver integration to check if exported value is namespace-like before emitting. Deferred.
+- **Remaining TS2354 false positives (4 tests)**: Multi-target test configurations (es5+es2015), inline tslib file detection, and decorator helper awareness at es2022+ target.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
@@ -456,3 +460,5 @@ All items below have been validated against the codebase (implementations + test
 | TS2661 | Non-local export specifier detection (decl_file_idx + module scope table) | +7 tests |
 | TS1389 | Reserved word as variable declaration name (TS1389 instead of generic TS1359) | +2 tests |
 | TS6133 | ES private names (`#foo`): recognize `#`-prefix as private + reference tracking in private property access and `#name in expr` | +22 tests |
+| TS1382/TS1381 | Scanner emits bare `>` / `}` diagnostics in JSX text content | prerequisite |
+| TS2354 | Target-aware tslib helper detection (skip __extends at ES2015+) | +2 tests |
