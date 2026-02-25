@@ -189,14 +189,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ERROR;
         }
 
-        // Check if this is a homomorphic mapped type (template is T[K] indexed access)
-        // In this case, we should preserve the original property modifiers
-        let is_homomorphic = self.is_homomorphic_mapped_type(mapped);
+        // Check if this is a homomorphic mapped type (template is T[K] indexed access).
+        // Returns the source object T if homomorphic.
+        // This handles both pre-evaluation form (constraint is `keyof T`) and
+        // post-instantiation form (constraint eagerly evaluated to literal union).
+        let homomorphic_source = self.homomorphic_mapped_source(mapped);
+        let is_homomorphic = homomorphic_source.is_some();
 
-        // Extract source object type from the constraint if it is `keyof T`
-        // This is needed for homomorphic mapped types and for preserving Array/Tuple
-        // structure in mapped types over arrays/tuples (even non-homomorphic ones).
-        let source_object = self.extract_source_from_keyof(mapped.constraint);
+        // For homomorphic types, source comes from the homomorphic check.
+        // For non-homomorphic types, still try extracting from keyof for array/tuple preservation.
+        let source_object =
+            homomorphic_source.or_else(|| self.extract_source_from_keyof(mapped.constraint));
 
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
@@ -351,19 +354,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             };
 
-            // TypeScript homomorphic mapped type behavior: when `-?` removes optionality
-            // from an optional source property, the property type should be the DECLARED
-            // type (without the `| undefined` that IndexedAccess adds for optional properties).
-            if !optional
-                && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
-                && is_homomorphic
-                && source_optional
-            {
-                // Use the memoized declared type directly
-                if let Some((_, _, declared_type)) = source_info {
+            // TypeScript homomorphic mapped type behavior: the template `T[P]` evaluates
+            // via IndexAccess which adds `| undefined` for optional source properties.
+            // In homomorphic mapped types, since optionality is already captured by the
+            // `?` modifier on the output property, we should use the DECLARED type
+            // (without the extra `| undefined`) to avoid double-encoding optionality.
+            //
+            // This applies when:
+            // 1. The mapped type is homomorphic (template is `T[P]`)
+            // 2. The source property is optional
+            // Regardless of whether the output property stays optional or not (e.g., `-?`
+            // removes optionality, but the declared type is still correct).
+            if is_homomorphic && source_optional
+                && let Some((_, _, declared_type)) = source_info {
                     property_type = *declared_type;
                 }
-            }
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
@@ -655,6 +660,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Check if a mapped type is homomorphic (template is T[K] indexed access).
+    /// Returns `Some(source)` with the source type T if homomorphic, `None` otherwise.
     /// Homomorphic mapped types preserve modifiers from the source type.
     ///
     /// A mapped type is homomorphic if:
@@ -664,23 +670,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Also handles the post-instantiation case where the `keyof T` constraint was
     /// eagerly evaluated to a union of string literals during `instantiate_type`.
     /// In that case, we verify that `template = obj[P]` and `keyof obj == constraint`.
-    fn is_homomorphic_mapped_type(&mut self, mapped: &MappedType) -> bool {
+    fn homomorphic_mapped_source(&mut self, mapped: &MappedType) -> Option<TypeId> {
         // Method 1: Constraint is explicitly `keyof T` (pre-evaluation form)
         if let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) {
             // Check if template is an IndexAccess type T[K]
             return match self.interner().lookup(mapped.template) {
                 Some(TypeData::IndexAccess(obj, idx)) => {
                     if obj != source_from_constraint {
-                        return false;
+                        return None;
                     }
                     match self.interner().lookup(idx) {
                         Some(TypeData::TypeParameter(param)) => {
-                            param.name == mapped.type_param.name
+                            if param.name == mapped.type_param.name {
+                                Some(source_from_constraint)
+                            } else {
+                                None
+                            }
                         }
-                        _ => false,
+                        _ => None,
                     }
                 }
-                _ => false,
+                _ => None,
             };
         }
 
@@ -699,14 +709,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner().lookup(obj),
                 Some(TypeData::TypeParameter(_))
             ) {
-                return false;
+                return None;
             }
             // Verify: the constraint is exactly the keys of obj
             let expected_keys = self.evaluate_keyof(obj);
-            return expected_keys == mapped.constraint;
+            if expected_keys == mapped.constraint {
+                return Some(obj);
+            }
         }
 
-        false
+        None
     }
 
     /// Extract the source type T from a `keyof T` constraint.

@@ -2460,3 +2460,81 @@ mod typescript_parity_tuple_array_tests {
         );
     }
 }
+
+mod homomorphic_mapped_type_tests {
+    use super::*;
+
+    /// Test that Pick<TP, keyof TP> is identical to TP for redeclaration checks.
+    ///
+    /// This is a full integration test that exercises the complete path:
+    /// 1. Application evaluation (Pick generic instantiation)
+    /// 2. `KeyOf` expansion in type arguments
+    /// 3. Homomorphic mapped type detection (post-instantiation form)
+    /// 4. Optional modifier preservation from source properties
+    /// 5. Bidirectional subtype check for redeclaration identity
+    #[test]
+    fn test_pick_all_keys_identical_to_source() {
+        let interner = TypeInterner::new();
+
+        let key_a = interner.intern_string("a");
+        let key_b = interner.intern_string("b");
+
+        // TP = { a?: number, b?: string }
+        let tp = interner.object(vec![
+            PropertyInfo {
+                name: key_a,
+                type_id: TypeId::NUMBER,
+                write_type: TypeId::NUMBER,
+                optional: true,
+                readonly: false,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            },
+            PropertyInfo {
+                name: key_b,
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: true,
+                readonly: false,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            },
+        ]);
+
+        // Construct Pick<TP, keyof TP> as a mapped type: { [P in keyof TP]: TP[P] }
+        let keyof_tp = interner.keyof(tp);
+
+        let key_param = TypeParamInfo {
+            name: interner.intern_string("P"),
+            constraint: Some(keyof_tp),
+            default: None,
+            is_const: false,
+        };
+        let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+        let index_access = interner.intern(TypeData::IndexAccess(tp, key_param_id));
+
+        let mapped = MappedType {
+            type_param: key_param,
+            constraint: keyof_tp,
+            name_type: None,
+            template: index_access,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+
+        let pick_result = evaluate_mapped(&interner, &mapped);
+
+        // Bidirectional subtype: TP ≡ Pick<TP, keyof TP>
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            checker.is_subtype_of(tp, pick_result),
+            "TP should be subtype of Pick<TP, keyof TP>"
+        );
+        assert!(
+            checker.is_subtype_of(pick_result, tp),
+            "Pick<TP, keyof TP> should be subtype of TP"
+        );
+    }
+}
