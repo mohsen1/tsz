@@ -23,6 +23,7 @@ use crate::types::{
     TemplateLiteralId, TemplateSpan, TypeApplicationId, TypeData, TypeId, TypeListId,
     TypeParamInfo,
 };
+use crate::visitors::visitor_predicates::is_primitive_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of conditional type evaluation
@@ -368,6 +369,42 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             *d = d.saturating_sub(1);
                         }
                         return cached;
+                    }
+
+                    // HOMOMORPHIC MAPPED TYPE PASSTHROUGH FOR NON-OBJECT ARGUMENTS
+                    // tsc's `instantiateMappedType` checks: if the resolved body is a
+                    // homomorphic mapped type (constraint is `keyof T`) and the type
+                    // argument for T is not an object type, return the argument directly.
+                    // This makes `Partial<number>` = `number`, `DeepReadonly<string>` = `string`.
+                    //
+                    // We MUST check this BEFORE instantiation because `instantiate_type`
+                    // eagerly evaluates `keyof T` when T is concrete, destroying the
+                    // structural information needed for passthrough detection later.
+                    if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(resolved) {
+                        let mapped = self.interner.mapped_type(mapped_id);
+                        if let Some(TypeData::KeyOf(source)) =
+                            self.interner.lookup(mapped.constraint)
+                            && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
+                            && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
+                                && idx < expanded_args.len()
+                            {
+                                let arg = expanded_args[idx];
+                                let resolved_arg = self.evaluate(arg);
+                                if is_primitive_type(self.interner, resolved_arg) {
+                                    if let Some(db) = self.query_db {
+                                        db.insert_application_eval_cache(
+                                            def_id,
+                                            &expanded_args,
+                                            no_unchecked_indexed_access,
+                                            resolved_arg,
+                                        );
+                                    }
+                                    if let Some(d) = self.def_depth.get_mut(&def_id) {
+                                        *d = d.saturating_sub(1);
+                                    }
+                                    return resolved_arg;
+                                }
+                            }
                     }
 
                     // Instantiate the resolved type with the type arguments

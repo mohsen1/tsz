@@ -41483,3 +41483,164 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
     let result = evaluate_mapped(&interner, &mapped);
     assert_eq!(result, source);
 }
+
+/// Test: Homomorphic mapped type alias applied to a primitive passes through.
+/// `Partial<number>` should evaluate to `number` (not expand the mapped type).
+/// This matches tsc's `instantiateMappedType` logic:
+///   const typeVariable = getHomomorphicTypeVariable(type);
+///   if (typeVariable && !(instantiateType(typeVariable, mapper).flags & TypeFlags.Object))
+///     return instantiateType(typeVariable, mapper);
+#[test]
+fn test_application_homomorphic_mapped_type_primitive_passthrough() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    // Define type parameter T
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    // Define: type Partial<T> = { [K in keyof T]?: T[K] }
+    let k_name = interner.intern_string("K");
+    let k_param = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
+    let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
+
+    let partial_body = MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Add),
+    };
+    let partial_body_id = interner.mapped(partial_body);
+
+    // Create Lazy(DefId(1)) for Partial type alias
+    let partial_ref = interner.lazy(DefId(1));
+
+    // Test: Partial<number> should pass through to number
+    let partial_number = interner.application(partial_ref, vec![TypeId::NUMBER]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(DefId(1), partial_body_id, vec![t_param]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(partial_number);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "Partial<number> should pass through to number"
+    );
+
+    // Test: Partial<string> should pass through to string
+    let partial_string = interner.application(partial_ref, vec![TypeId::STRING]);
+    let mut evaluator2 = TypeEvaluator::with_resolver(&interner, &env);
+    let result2 = evaluator2.evaluate(partial_string);
+    assert_eq!(
+        result2,
+        TypeId::STRING,
+        "Partial<string> should pass through to string"
+    );
+
+    // Test: Partial<boolean> should pass through to boolean
+    let partial_boolean = interner.application(partial_ref, vec![TypeId::BOOLEAN]);
+    let mut evaluator3 = TypeEvaluator::with_resolver(&interner, &env);
+    let result3 = evaluator3.evaluate(partial_boolean);
+    assert_eq!(
+        result3,
+        TypeId::BOOLEAN,
+        "Partial<boolean> should pass through to boolean"
+    );
+}
+
+/// Test: Homomorphic mapped type alias applied to an object expands normally.
+/// `Partial<{ a: number }>` should expand to `{ a?: number }`, NOT pass through.
+#[test]
+fn test_application_homomorphic_mapped_type_object_expands() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    // Define type parameter T
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    // Define: type Partial<T> = { [K in keyof T]?: T[K] }
+    let k_name = interner.intern_string("K");
+    let k_param = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
+    let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
+
+    let partial_body = MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Add),
+    };
+    let partial_body_id = interner.mapped(partial_body);
+
+    // Create source: { a: number }
+    let a_name = interner.intern_string("a");
+    let source = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+
+    // Create Lazy(DefId(1)) for Partial type alias
+    let partial_ref = interner.lazy(DefId(1));
+
+    // Test: Partial<{ a: number }> should expand to { a?: number }
+    let partial_obj = interner.application(partial_ref, vec![source]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(DefId(1), partial_body_id, vec![t_param]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(partial_obj);
+
+    // Should NOT be the source object (should be expanded)
+    assert_ne!(
+        result, source,
+        "Partial<{{ a: number }}> should NOT pass through, should expand"
+    );
+
+    // Should be an object type with optional property 'a'
+    match interner.lookup(result) {
+        Some(TypeData::Object(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 1, "Should have 1 property");
+            assert_eq!(shape.properties[0].name, a_name);
+            assert!(
+                shape.properties[0].optional,
+                "Property 'a' should be optional"
+            );
+        }
+        other => panic!("Expected Object type, got {other:?}"),
+    }
+}
