@@ -178,12 +178,6 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
-            // Mirror cache generation: inject strict/alwaysStrict to match the
-            // Rust cache generator's behavior. Both generators inject these so the
-            // tsconfig options match what tsc sees during cache generation.
-            map.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
-            map.insert("strict".to_string(), serde_json::Value::Bool(true));
-
             if check_js {
                 if explicit_allow_js.is_none() {
                     // Keep historical harness behavior for tests that set checkJs
@@ -258,11 +252,7 @@ pub fn prepare_binary_test_dir(
             "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
         ]);
 
-        let mut compiler_options = convert_options_to_tsconfig(options, &[]);
-        if let serde_json::Value::Object(ref mut map) = compiler_options {
-            map.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
-            map.insert("strict".to_string(), serde_json::Value::Bool(true));
-        }
+        let compiler_options = convert_options_to_tsconfig(options, &[]);
 
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
