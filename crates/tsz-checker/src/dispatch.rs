@@ -1101,6 +1101,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     for &child in &jsx.children.nodes {
                         self.checker.get_type_of_node(child);
                     }
+                    // Check closing element for TS7026 (tsc emits for both opening and closing tags)
+                    self.checker
+                        .check_jsx_closing_element_for_implicit_any(jsx.closing_element);
                     self.checker
                         .get_type_of_jsx_opening_element(jsx.opening_element)
                 } else {

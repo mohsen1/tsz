@@ -58,9 +58,10 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|name| name.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
 
         if is_intrinsic {
+            let ie_type = self.get_intrinsic_elements_type();
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
             if let Some(tag) = tag_name
-                && let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type()
+                && let Some(intrinsic_elements_type) = ie_type
             {
                 // Evaluate IntrinsicElements from Lazy(DefId) to its concrete Object form.
                 // The solver's PropertyAccessEvaluator can't resolve Lazy types without
@@ -135,6 +136,50 @@ impl<'a> CheckerState<'a> {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
             self.compute_type_of_node(tag_name_idx)
+        }
+    }
+
+    /// Emit TS7026 for a JSX closing element if it refers to an intrinsic tag
+    /// and no `JSX.IntrinsicElements` interface exists.
+    ///
+    /// tsc emits TS7026 independently for both the opening and closing tags of
+    /// a JSX element (e.g., both `<input>` and `</input>`).  The opening tag is
+    /// handled by `get_type_of_jsx_opening_element`; this method covers the
+    /// closing tag.
+    pub(crate) fn check_jsx_closing_element_for_implicit_any(&mut self, idx: NodeIndex) {
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+        let Some(jsx_closing) = self.ctx.arena.get_jsx_closing(node) else {
+            return;
+        };
+        let tag_name_idx = jsx_closing.tag_name;
+        let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
+            return;
+        };
+        let is_intrinsic = if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .is_some_and(|id| {
+                    id.escaped_text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_lowercase())
+                })
+        } else {
+            false
+        };
+        if is_intrinsic && self.get_intrinsic_elements_type().is_none() {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                &["IntrinsicElements"],
+            );
         }
     }
 
