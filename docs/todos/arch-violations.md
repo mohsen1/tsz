@@ -73,7 +73,11 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: Three `state/` subdirectory `mod.rs` files had implementation logic extracted into `core.rs` (9e2355b37). `state/type_analysis/mod.rs` (1557 → 7 LOC), `state/state_checking/mod.rs` (1349 → 10 LOC), `state/type_environment/mod.rs` (1326 → 5 LOC).
 
-**Note**: Three `flow/` subdirectory `mod.rs` files had implementation logic extracted into `core.rs`. `flow/control_flow/mod.rs` (1389 → 30 LOC), `flow/flow_analysis/mod.rs` (1261 → 32 LOC), `flow/flow_graph_builder/mod.rs` (1128 → 16 LOC). Remaining mod.rs files with heavy implementation: `declarations/import/mod.rs` (1294 LOC), `context/mod.rs` (1093 LOC), `types/class_type/mod.rs` (1013 LOC), `types/utilities/mod.rs` (1007 LOC).
+**Note**: Three `flow/` subdirectory `mod.rs` files had implementation logic extracted into `core.rs`. `flow/control_flow/mod.rs` (1389 → 30 LOC), `flow/flow_analysis/mod.rs` (1261 → 32 LOC), `flow/flow_graph_builder/mod.rs` (1128 → 16 LOC).
+
+**Note**: `declarations/import/mod.rs` had implementation logic extracted into `core.rs` (a77614639). `declarations/import/mod.rs` (1294 → 5 LOC).
+
+**Note**: `context/mod.rs` had implementation logic extracted into `core.rs`. `context/mod.rs` (1093 → 642 LOC). Moved `impl TypeCache`, `impl CheckerContext`, and TypeCache tests into `context/core.rs` (469 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC), `types/utilities/mod.rs` (1007 LOC).
 
 **Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/mod.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
 
