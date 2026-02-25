@@ -1,6 +1,6 @@
 //! Readonly property assignment checking (TS2540, TS2542).
 //!
-//! Extracted from `state_property_checking.rs` to keep files focused and under
+//! Extracted from the `property` module to keep files focused and under
 //! the 2000-line checker file limit.
 
 use crate::state::CheckerState;

@@ -1,6 +1,6 @@
 //! Object literal excess property and property access checking.
 //!
-//! Readonly assignment checking lives in `state_readonly_checking.rs`.
+//! Readonly assignment checking lives in the sibling `readonly` module.
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
