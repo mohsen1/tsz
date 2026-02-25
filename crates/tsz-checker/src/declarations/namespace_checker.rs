@@ -24,6 +24,70 @@ impl<'a> CheckerState<'a> {
     // Namespace Export Merging
     // =========================================================================
 
+    /// Merge namespace exports into `props`, emitting TS2300 for duplicates.
+    ///
+    /// Shared loop for class+namespace and function+namespace merging.
+    /// When `check_prototype` is true, also treats `"prototype"` as a collision
+    /// (classes have an implicit static `prototype` property).
+    fn merge_exports_into_props(
+        &mut self,
+        sym_id: SymbolId,
+        props: &mut rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
+        check_prototype: bool,
+    ) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_solver::PropertyInfo;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+        let Some(exports) = symbol.exports.as_ref().cloned() else {
+            return;
+        };
+
+        for (name, member_id) in exports.iter() {
+            if self.ctx.symbol_resolution_set.contains(member_id) {
+                continue;
+            }
+
+            let type_id = self.get_type_of_symbol(*member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+
+            let is_duplicate =
+                props.contains_key(&name_atom) || (check_prototype && name == "prototype");
+            if is_duplicate {
+                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
+                    let decl_node = export_symbol.value_declaration;
+                    if decl_node != NodeIndex::NONE {
+                        let error_node = self
+                            .get_declaration_name_node(decl_node)
+                            .unwrap_or(decl_node);
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[name],
+                        );
+                    }
+                }
+                continue;
+            }
+
+            props.insert(
+                name_atom,
+                PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: type_id,
+                    optional: false,
+                    readonly: false,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                },
+            );
+        }
+    }
+
     /// Merge namespace exports into a constructor type for class+namespace merging.
     ///
     /// When a class and namespace are merged (same name), the namespace's exports
@@ -45,100 +109,39 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
     ) -> TypeId {
         use rustc_hash::FxHashMap;
-        use tsz_solver::{CallableShape, PropertyInfo};
-        let factory = self.ctx.types.factory();
+        use tsz_solver::CallableShape;
 
         // Check recursion depth to prevent stack overflow
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= MAX_MERGE_DEPTH {
-            return ctor_type; // Prevent infinite recursion in merge
+            return ctor_type;
         }
 
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return ctor_type;
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return ctor_type;
-        };
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };
 
-        let mut props: FxHashMap<Atom, PropertyInfo> = shape
+        let mut props: FxHashMap<Atom, _> = shape
             .properties
             .iter()
             .map(|prop| (prop.name, prop.clone()))
             .collect();
 
-        // Merge ALL exports from the namespace into the constructor type.
-        // This includes both value exports (consts, functions) and type-only exports (interfaces, type aliases).
-        // For merged class+namespace symbols, TypeScript allows accessing both value and type members.
-        for (name, member_id) in exports.iter() {
-            // Skip if this member is already being resolved (prevents infinite recursion)
-            if self.ctx.symbol_resolution_set.contains(member_id) {
-                continue; // Skip circular references
-            }
+        self.merge_exports_into_props(sym_id, &mut props, true);
 
-            let type_id = self.get_type_of_symbol(*member_id);
-            let name_atom = self.ctx.types.intern_string(name);
-
-            // Check for duplicate identifiers (TS2300)
-            // When a class static member and namespace export share the same name.
-            // Classes also have an implicit static `prototype` property, even when it's
-            // not materialized in the constructor shape.
-            let is_implicit_class_prototype = name == "prototype";
-            if props.contains_key(&name_atom) || is_implicit_class_prototype {
-                // Get the namespace export symbol to report error at its location
-                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                    let decl_node = export_symbol.value_declaration;
-                    if decl_node != NodeIndex::NONE {
-                        // Point to the identifier name, not the full declaration
-                        let error_node = self
-                            .get_declaration_name_node(decl_node)
-                            .unwrap_or(decl_node);
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[name],
-                        );
-                    }
-                }
-                // Skip adding this duplicate property
-                continue;
-            }
-
-            props.insert(
-                name_atom,
-                PropertyInfo {
-                    name: name_atom,
-                    type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                },
-            );
-        }
-
-        let properties: Vec<PropertyInfo> = props.into_values().collect();
-        let call_shape = CallableShape {
+        let properties = props.into_values().collect();
+        self.ctx.types.factory().callable(CallableShape {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
-        };
-
-        factory.callable(call_shape)
+        })
     }
 
     /// Merge namespace exports into a function type for function+namespace merging.
     ///
-    /// This is similar to `merge_namespace_exports_into_constructor` but for functions.
     /// When a function and namespace are merged (same name), the namespace's exports
     /// become accessible as static properties on the function type.
     ///
@@ -156,14 +159,7 @@ impl<'a> CheckerState<'a> {
         function_type: TypeId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use rustc_hash::FxHashMap;
-        use tsz_solver::{CallableShape, PropertyInfo};
-
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return (function_type, Vec::new());
-        };
-        let Some(exports) = symbol.exports.as_ref() else {
-            return (function_type, Vec::new());
-        };
+        use tsz_solver::CallableShape;
 
         // Get the callable shape from the function type.
         // Handle both TypeData::Callable (overloaded functions) and TypeData::Function
@@ -194,62 +190,15 @@ impl<'a> CheckerState<'a> {
                 return (function_type, Vec::new());
             };
 
-        let mut props: FxHashMap<Atom, PropertyInfo> = shape
+        let mut props: FxHashMap<Atom, _> = shape
             .properties
             .iter()
             .map(|prop| (prop.name, prop.clone()))
             .collect();
 
-        // Merge ALL exports from the namespace into the function type.
-        // This allows accessing namespace members via FunctionName.Member.
-        for (name, member_id) in exports.iter() {
-            // Skip if this member is already being resolved (prevents infinite recursion)
-            if self.ctx.symbol_resolution_set.contains(member_id) {
-                continue; // Skip circular references
-            }
+        self.merge_exports_into_props(sym_id, &mut props, false);
 
-            let type_id = self.get_type_of_symbol(*member_id);
-            let name_atom = self.ctx.types.intern_string(name);
-
-            // Check for duplicate identifiers (TS2300)
-            // When a function property and namespace export share the same name
-            if props.contains_key(&name_atom) {
-                // Get the namespace export symbol to report error at its location
-                if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                    let decl_node = export_symbol.value_declaration;
-                    if decl_node != NodeIndex::NONE {
-                        // Point to the identifier name, not the full declaration
-                        let error_node = self
-                            .get_declaration_name_node(decl_node)
-                            .unwrap_or(decl_node);
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[name],
-                        );
-                    }
-                }
-                // Skip adding this duplicate property
-                continue;
-            }
-
-            props.insert(
-                name_atom,
-                PropertyInfo {
-                    name: name_atom,
-                    type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                },
-            );
-        }
-
-        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        let properties = props.into_values().collect();
         let factory = self.ctx.types.factory();
         let merged_type = factory.callable(CallableShape {
             call_signatures: shape.call_signatures.clone(),
