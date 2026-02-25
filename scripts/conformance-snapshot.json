@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-25T10:33:51Z",
-  "git_sha": "7aa402a66a1cdb92201ffed5b0975b265aec51b2",
+  "timestamp": "2026-02-25T11:46:39.758Z",
+  "git_sha": "d07d00648",
   "summary": {
     "total_tests": 12574,
     "passed": 6589,
@@ -62,14 +62,14 @@
       "total": 84,
       "passed": 21,
       "failed": 63,
-      "pass_rate": 25.0
+      "pass_rate": 25
     },
     {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 6,
       "failed": 18,
-      "pass_rate": 25.0
+      "pass_rate": 25
     },
     {
       "area": "types/mapped",
@@ -139,7 +139,7 @@
       "total": 25,
       "passed": 9,
       "failed": 16,
-      "pass_rate": 36.0
+      "pass_rate": 36
     },
     {
       "area": "transpile",
@@ -195,21 +195,21 @@
       "total": 65,
       "passed": 26,
       "failed": 39,
-      "pass_rate": 40.0
+      "pass_rate": 40
     },
     {
       "area": "statements/breakStatements",
       "total": 10,
       "passed": 4,
       "failed": 6,
-      "pass_rate": 40.0
+      "pass_rate": 40
     },
     {
       "area": "types/conditional",
       "total": 10,
       "passed": 4,
       "failed": 6,
-      "pass_rate": 40.0
+      "pass_rate": 40
     },
     {
       "area": "internalModules/moduleDeclarations",
@@ -237,7 +237,7 @@
       "total": 25,
       "passed": 11,
       "failed": 14,
-      "pass_rate": 44.0
+      "pass_rate": 44
     },
     {
       "area": "types/members",
@@ -377,42 +377,42 @@
       "total": 84,
       "passed": 42,
       "failed": 42,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "interfaces/declarationMerging",
       "total": 26,
       "passed": 13,
       "failed": 13,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "classes",
       "total": 16,
       "passed": 8,
       "failed": 8,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "es2017",
       "total": 12,
       "passed": 6,
       "failed": 6,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "types/import",
       "total": 12,
       "passed": 6,
       "failed": 6,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "es2021/logicalAssignment",
       "total": 10,
       "passed": 5,
       "failed": 5,
-      "pass_rate": 50.0
+      "pass_rate": 50
     },
     {
       "area": "es6/destructuring",
@@ -517,7 +517,7 @@
       "total": 10,
       "passed": 6,
       "failed": 4,
-      "pass_rate": 60.0
+      "pass_rate": 60
     },
     {
       "area": "async/es2017",
@@ -545,7 +545,7 @@
       "total": 25,
       "passed": 16,
       "failed": 9,
-      "pass_rate": 64.0
+      "pass_rate": 64
     },
     {
       "area": "salsa",
@@ -601,7 +601,7 @@
       "total": 20,
       "passed": 15,
       "failed": 5,
-      "pass_rate": 75.0
+      "pass_rate": 75
     },
     {
       "area": "jsx",
@@ -650,7 +650,7 @@
       "total": 15,
       "passed": 12,
       "failed": 3,
-      "pass_rate": 80.0
+      "pass_rate": 80
     },
     {
       "area": "decorators/class",
@@ -699,21 +699,21 @@
       "total": 12,
       "passed": 12,
       "failed": 0,
-      "pass_rate": 100.0
+      "pass_rate": 100
     },
     {
       "area": "projects/jsFileCompilation",
       "total": 20,
       "passed": 20,
       "failed": 0,
-      "pass_rate": 100.0
+      "pass_rate": 100
     },
     {
       "area": "projects/projectOption",
       "total": 11,
       "passed": 11,
       "failed": 0,
-      "pass_rate": 100.0
+      "pass_rate": 100
     }
   ],
   "top_failures": [
@@ -728,5 +728,8 @@
       "count": 6
     }
   ],
-  "partial_codes": []
+  "partial_codes": [],
+  "passed": 6590,
+  "total": 12574,
+  "pass_rate": "52.4%"
 }
