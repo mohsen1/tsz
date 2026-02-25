@@ -256,12 +256,16 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Type operator (keyof, readonly, etc.)
+            // Type operator (keyof, readonly, unique)
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(type_op) = self.arena.get_type_operator(type_node) {
                     // Check the operator kind
                     if type_op.operator == SyntaxKind::KeyOfKeyword as u16 {
                         self.write("keyof ");
+                    } else if type_op.operator == SyntaxKind::ReadonlyKeyword as u16 {
+                        self.write("readonly ");
+                    } else if type_op.operator == SyntaxKind::UniqueKeyword as u16 {
+                        self.write("unique ");
                     }
                     self.emit_type(type_op.type_node);
                 }
