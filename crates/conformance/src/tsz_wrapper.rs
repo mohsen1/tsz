@@ -1250,9 +1250,9 @@ fn resolve_lib_references(
             let _ = std::fs::copy(&src, &dest);
         }
 
-        // Rewrite the reference path to be relative (whether or not file exists)
+        // Rewrite the reference path from absolute (/.lib/) to relative (.lib/)
         let old = caps.get(0).unwrap().as_str();
-        let new = format!("{}{}/.lib/{}{}", &caps[1], &caps[2], lib_file, &caps[2]);
+        let new = format!("{}{}.lib/{}{}", &caps[1], &caps[2], lib_file, &caps[2]);
         result = result.replace(old, &new);
     }
 
@@ -1276,12 +1276,7 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
     ABS_REF_RE
         .replace_all(content, |caps: &regex::Captures| {
             let path = &caps[3];
-            // Skip .lib/ paths - they're handled by resolve_lib_references
-            if path.starts_with(".lib/") {
-                caps[0].to_string()
-            } else {
-                format!("{}{}./{}{}", &caps[1], &caps[2], path, &caps[2])
-            }
+            format!("{}{}./{}{}", &caps[1], &caps[2], path, &caps[2])
         })
         .into_owned()
 }
