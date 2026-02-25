@@ -649,9 +649,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         if let Some(target_param) = type_param_info(self.interner, target) {
             if let Some(source_param) = type_param_info(self.interner, constraint_source)
-                && source_param.name == target_param.name {
-                    return true;
-                }
+                && source_param.name == target_param.name
+            {
+                return true;
+            }
             // Also check if the target's constraint makes it related
             if let Some(target_constraint) = target_param.constraint {
                 return self
