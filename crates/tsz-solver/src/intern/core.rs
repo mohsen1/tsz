@@ -873,7 +873,7 @@ impl TypeInterner {
             }
         }
 
-        flat.sort_by_key(|id| id.0);
+        flat.sort_by_key(|id| Self::union_sort_key(*id));
         flat.dedup();
         flat.retain(|id| *id != TypeId::NEVER);
 
@@ -939,9 +939,39 @@ impl TypeInterner {
         }
     }
 
+    /// Sort key for union member ordering that matches tsc's type creation order.
+    ///
+    /// tsc creates built-in types in order: string, number, bigint, boolean,
+    /// symbol, void, undefined, null — all with lower IDs than user-defined types.
+    /// Unions sorted by type ID in tsc thus display `string | number`.
+    /// Our built-in TypeId constants differ, so we remap only built-in IDs.
+    /// Non-built-in types (literals, objects, etc.) keep their natural TypeId
+    /// order which reflects creation order, matching tsc's behavior.
+    const fn union_sort_key(id: TypeId) -> u32 {
+        match id {
+            // Remap built-in primitives to match tsc's creation order.
+            // In tsc: string < number < bigint < boolean < symbol < void < undefined < null
+            // Our IDs: BOOLEAN(8) < NUMBER(9) < STRING(10) < BIGINT(11) < SYMBOL(12)
+            // Remap: STRING→8, NUMBER→9, BIGINT→10, BOOLEAN→11 (swap STRING/BOOLEAN)
+            TypeId::STRING => 8,
+            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE => 11,
+            TypeId::BOOLEAN_FALSE => 12,
+            TypeId::BIGINT => 10,
+            // VOID(5), UNDEFINED(6), NULL(7) need to sort AFTER primitives in tsc
+            TypeId::VOID => 13,
+            TypeId::UNDEFINED => 14,
+            TypeId::NULL => 15,
+            // Everything else (ERROR, NEVER, UNKNOWN, ANY, NUMBER, SYMBOL, OBJECT,
+            // FUNCTION, literals, user types) keeps its natural TypeId order
+            _ => id.0,
+        }
+    }
+
     pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
-        // Deduplicate and sort for consistent hashing
-        flat.sort_by_key(|id| id.0);
+        // Deduplicate and sort for consistent identity.
+        // Sort order matches tsc's type creation order so union display
+        // (e.g. `string | number`) matches tsc output.
+        flat.sort_by_key(|id| Self::union_sort_key(*id));
         flat.dedup();
 
         // Handle special cases
