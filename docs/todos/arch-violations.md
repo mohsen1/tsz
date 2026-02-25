@@ -69,7 +69,7 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: The 3 `declarations/import_*.rs` files were reorganized into `declarations/import/` subdirectory. Renames: `import_checker.rs` → `import/mod.rs`, `import_declaration_checker.rs` → `import/declaration.rs`, `import_equals_checker.rs` → `import/equals.rs`.
 
-**Note**: The 5 `query_boundaries/state_*.rs` files were reorganized into `query_boundaries/state/` subdirectory (e6969996e). Renames: `state.rs` → `state/mod.rs`, `state_checking.rs` → `state/checking.rs`, `state_type_analysis.rs` → `state/type_analysis.rs`, `state_type_environment.rs` → `state/type_environment.rs`, `state_type_resolution.rs` → `state/type_resolution.rs`. Remaining `query_boundaries/` candidates for future subdirectory grouping: `type_computation_*` (3 files), checker-specific boundaries (6 `*_checker.rs` files).
+**Note**: The 5 `query_boundaries/state_*.rs` files were reorganized into `query_boundaries/state/` subdirectory (e6969996e). Renames: `state.rs` → `state/mod.rs`, `state_checking.rs` → `state/checking.rs`, `state_type_analysis.rs` → `state/type_analysis.rs`, `state_type_environment.rs` → `state/type_environment.rs`, `state_type_resolution.rs` → `state/type_resolution.rs`. Remaining `query_boundaries/` candidates for future subdirectory grouping: `type_computation_*` (3 files). ~~checker-specific boundaries (6 `*_checker.rs` files)~~ ✅ Reorganized into `query_boundaries/checkers/` subdirectory (c681e5712). Renames: `call_checker.rs` → `checkers/call.rs`, `constructor_checker.rs` → `checkers/constructor.rs`, `generic_checker.rs` → `checkers/generic.rs`, `iterable_checker.rs` → `checkers/iterable.rs`, `promise_checker.rs` → `checkers/promise.rs`, `property_checker.rs` → `checkers/property.rs`.
 
 **Note**: Three `state/` subdirectory `mod.rs` files had implementation logic extracted into `core.rs` (9e2355b37). `state/type_analysis/mod.rs` (1557 → 7 LOC), `state/state_checking/mod.rs` (1349 → 10 LOC), `state/type_environment/mod.rs` (1326 → 5 LOC).
 
@@ -77,7 +77,9 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note**: `declarations/import/mod.rs` had implementation logic extracted into `core.rs` (a77614639). `declarations/import/mod.rs` (1294 → 5 LOC).
 
-**Note**: `context/mod.rs` had implementation logic extracted into `core.rs`. `context/mod.rs` (1093 → 642 LOC). Moved `impl TypeCache`, `impl CheckerContext`, and TypeCache tests into `context/core.rs` (469 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC), `types/utilities/mod.rs` (1007 LOC).
+**Note**: `context/mod.rs` had implementation logic extracted into `core.rs`. `context/mod.rs` (1093 → 642 LOC). Moved `impl TypeCache`, `impl CheckerContext`, and TypeCache tests into `context/core.rs` (469 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC), ~~`types/utilities/mod.rs` (1007 LOC)~~ ✅ Extracted into `types/utilities/core.rs` (1007 LOC), reducing mod.rs to 7 LOC.
+
+**Note**: `types/utilities/mod.rs` had implementation logic extracted into `core.rs`. `types/utilities/mod.rs` (1007 → 7 LOC). Remaining mod.rs files with heavy implementation: `types/class_type/mod.rs` (1013 LOC).
 
 **Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/mod.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
 
