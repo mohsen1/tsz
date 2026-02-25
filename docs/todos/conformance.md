@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7696/12570 (61.2%) — full suite, fingerprint level (new framework)
+**Current score**: ~7710/12577 (61.3%) — full suite, fingerprint level (new framework)
 > Previously ~6992/12565 (55.6%), score recovered after fixing .lib/ path rewriting, TS5107 suppression, strict defaults, and many other fixes.
 
 ---
@@ -399,9 +399,28 @@
 - **Fixed**: TS7005 suppressed in .d.ts files
 - **Net gain**: +5 tests (at baseline HEAD; post-rebase gains may differ due to upstream regression)
 
+### JSX Factory/Fragment Fixes (Session 2026-02-25 #2) — DONE
+- **Fixed**: TS2874 false positives — skip factory-in-scope check when `jsxFactory` is explicitly
+  set via config (tsc 6.0 behavior). Use `resolve_name_with_filter` with accept-all filter for
+  full scope chain (class members, parameters, locals, imports, globals).
+- **Fixed**: TS7026 about "JSX.Element" — tsc 6.0 never emits TS7026 for the Element interface,
+  only for IntrinsicElements. Removed false emission in `get_jsx_element_type` for fragments.
+- **Added**: TS17016 — "jsxFragmentFactory must be provided" when jsxFactory is set but
+  jsxFragmentFactory is not. New `check_jsx_fragment_factory()` method.
+- **New fields**: `jsx_factory_from_config` and `jsx_fragment_factory_from_config` in CheckerOptions
+  to distinguish explicit config from defaults/reactNamespace.
+- **Reverted**: TS2604 — "no construct or call signatures" check caused false positives because
+  component types aren't fully resolved yet (many evaluate to objects without signatures).
+  Needs better type resolution before this can be enabled.
+- **Net gain**: +14 tests (JSX 30.5% → 31.0%, overall +20 after rebase)
+
 ### JSX Remaining Gaps (classified during session)
-- **TS2874 false positives**: JSX pragma/factory resolution gap — `@jsx`/`@jsxFactory` pragma support needed
+- ~~**TS2874 false positives**: JSX pragma/factory resolution gap~~ RESOLVED (see above)
+- **TS2874 edge cases**: `@jsx` pragma support still needed for `inlineJsxFactoryDeclarations.tsx`
 - **TS7026 emission**: Fewer TS7026 instances than tsc for some tests (namespaced JSX like `<svg:path>`)
+- **TS7026 from jsxImportSource**: 6 tests emit extra TS7026 where JSX namespace resolution
+  should be relative to factory or jsxImportSource module, not global
+- **TS2604**: Blocked until component type resolution improves (class/function signatures)
 - **TS7008 member name quoting**: Runner filename handling with `@filename` directives complicates comparison
 - **TS2322 for component props**: Needs `IntrinsicAttributes` intersection in JSX type checking
 - **Type display differences**: `string | undefined` vs `string` for optional props; property ordering in objects
@@ -566,3 +585,4 @@ All items below have been validated against the codebase (implementations + test
 | JSX diagnostics | Anchor TS2322/TS2741 at attr name/tag name; boolean attr checking; excess property type display; `</` parser token; TS7005 .d.ts suppression | +5 tests |
 | .lib/ path fix | Fix /.lib/ reference path rewriting: format string kept leading /, rewrite func skipped .lib/ paths. Regenerated tsc cache for 138 affected entries | +28 tests (JSX 30%→42%) |
 | TS5107 suppression | Suppress TS5107 deprecation diagnostics when source files have parse errors (1000-1999), matching tsc behavior | +52 tests |
+| JSX factory/fragment | TS2874 false positive fix (jsxFactory config skip + full scope chain), TS7026 Element removal, TS17016 fragment factory diagnostic | +14 tests (JSX 30.5%→31.0%) |
