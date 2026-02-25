@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T22:19:20Z",
-  "git_sha": "70adaa0c56a615be7baa841e9d949168d07700b0",
+  "timestamp": "2026-02-25T22:25:41Z",
+  "git_sha": "c11a2554306f3d42c59e77f66b2139e7376fc6b1",
   "summary": {
     "total_tests": 12570,
-    "passed": 7717,
-    "failed": 4853,
-    "pass_rate": 61.4
+    "passed": 7729,
+    "failed": 4841,
+    "pass_rate": 61.5
   },
   "areas_by_pass_rate": [
     {
@@ -23,32 +23,11 @@
       "pass_rate": 31.75
     },
     {
-      "area": "types/tuple",
-      "total": 34,
-      "passed": 12,
-      "failed": 22,
-      "pass_rate": 35.29
-    },
-    {
-      "area": "externalModules/typeOnly",
-      "total": 65,
-      "passed": 23,
-      "failed": 42,
-      "pass_rate": 35.38
-    },
-    {
       "area": "types/union",
       "total": 25,
       "passed": 9,
       "failed": 16,
       "pass_rate": 36.0
-    },
-    {
-      "area": "types/contextualTypes",
-      "total": 19,
-      "passed": 7,
-      "failed": 12,
-      "pass_rate": 36.84
     },
     {
       "area": "expressions/functionCalls",
@@ -65,11 +44,11 @@
       "pass_rate": 37.5
     },
     {
-      "area": "node/allowJs",
-      "total": 21,
-      "passed": 8,
-      "failed": 13,
-      "pass_rate": 38.1
+      "area": "types/tuple",
+      "total": 34,
+      "passed": 13,
+      "failed": 21,
+      "pass_rate": 38.24
     },
     {
       "area": "types/rest",
@@ -77,6 +56,13 @@
       "passed": 7,
       "failed": 11,
       "pass_rate": 38.89
+    },
+    {
+      "area": "externalModules/typeOnly",
+      "total": 65,
+      "passed": 26,
+      "failed": 39,
+      "pass_rate": 40.0
     },
     {
       "area": "types/spread",
@@ -114,6 +100,13 @@
       "pass_rate": 41.18
     },
     {
+      "area": "types/contextualTypes",
+      "total": 19,
+      "passed": 8,
+      "failed": 11,
+      "pass_rate": 42.11
+    },
+    {
       "area": "expressions/typeSatisfaction",
       "total": 16,
       "passed": 7,
@@ -122,10 +115,10 @@
     },
     {
       "area": "jsx",
-      "total": 190,
+      "total": 195,
       "passed": 86,
-      "failed": 104,
-      "pass_rate": 45.26
+      "failed": 109,
+      "pass_rate": 44.1
     },
     {
       "area": "es2019",
@@ -133,6 +126,13 @@
       "passed": 5,
       "failed": 6,
       "pass_rate": 45.45
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 11,
+      "failed": 13,
+      "pass_rate": 45.83
     },
     {
       "area": "es6/arrowFunction",
@@ -147,13 +147,6 @@
       "passed": 59,
       "failed": 67,
       "pass_rate": 46.83
-    },
-    {
-      "area": "node",
-      "total": 73,
-      "passed": 35,
-      "failed": 38,
-      "pass_rate": 47.95
     },
     {
       "area": "es6/spread",
@@ -219,13 +212,6 @@
       "pass_rate": 50.0
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 12,
-      "failed": 12,
-      "pass_rate": 50.0
-    },
-    {
       "area": "functions",
       "total": 18,
       "passed": 9,
@@ -268,11 +254,11 @@
       "pass_rate": 51.28
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 15,
-      "failed": 14,
-      "pass_rate": 51.72
+      "area": "node/allowJs",
+      "total": 21,
+      "passed": 11,
+      "failed": 10,
+      "pass_rate": 52.38
     },
     {
       "area": "controlFlow",
@@ -280,6 +266,13 @@
       "passed": 30,
       "failed": 27,
       "pass_rate": 52.63
+    },
+    {
+      "area": "node",
+      "total": 73,
+      "passed": 39,
+      "failed": 34,
+      "pass_rate": 53.42
     },
     {
       "area": "es6/computedProperties",
@@ -329,6 +322,13 @@
       "passed": 136,
       "failed": 113,
       "pass_rate": 54.62
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 16,
+      "failed": 13,
+      "pass_rate": 55.17
     },
     {
       "area": "types/typeRelationships",
@@ -464,25 +464,25 @@
       "pass_rate": 63.08
     },
     {
+      "area": "jsdoc/declarations",
+      "total": 91,
+      "passed": 58,
+      "failed": 33,
+      "pass_rate": 63.74
+    },
+    {
+      "area": "compiler",
+      "total": 6510,
+      "passed": 4170,
+      "failed": 2340,
+      "pass_rate": 64.06
+    },
+    {
       "area": "async/es5",
       "total": 64,
       "passed": 41,
       "failed": 23,
       "pass_rate": 64.06
-    },
-    {
-      "area": "compiler",
-      "total": 6508,
-      "passed": 4170,
-      "failed": 2338,
-      "pass_rate": 64.07
-    },
-    {
-      "area": "jsdoc/declarations",
-      "total": 90,
-      "passed": 58,
-      "failed": 32,
-      "pass_rate": 64.44
     },
     {
       "area": "parser/ecmascript5",
@@ -786,16 +786,16 @@
       "count": 5
     },
     {
-      "code": "TS2554",
-      "count": 5
-    },
-    {
       "code": "TS2367",
       "count": 5
     },
     {
       "code": "TS7053",
       "count": 5
+    },
+    {
+      "code": "TS7006",
+      "count": 4
     }
   ],
   "not_implemented_codes": [
@@ -821,6 +821,10 @@
     },
     {
       "code": "TS2433",
+      "count": 7
+    },
+    {
+      "code": "TS2875",
       "count": 7
     },
     {
@@ -874,10 +878,6 @@
     {
       "code": "TS7009",
       "count": 4
-    },
-    {
-      "code": "TS2833",
-      "count": 4
     }
   ],
   "partial_codes": [
@@ -887,7 +887,7 @@
     },
     {
       "code": "TS2322",
-      "count": 184
+      "count": 183
     },
     {
       "code": "TS2339",
@@ -938,15 +938,15 @@
       "count": 20
     },
     {
+      "code": "TS2769",
+      "count": 20
+    },
+    {
       "code": "TS2344",
       "count": 19
     },
     {
       "code": "TS1003",
-      "count": 19
-    },
-    {
-      "code": "TS2769",
       "count": 19
     },
     {

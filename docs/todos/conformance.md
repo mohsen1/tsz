@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7716/12570 (61.4%) — full suite, fingerprint level (new framework)
-> Previously ~7710/12577 (61.3%), improved by fixing wildcard reexport resolution ordering (+5 tests).
+**Current score**: ~7729/12570 (61.5%) — full suite, fingerprint level (new framework)
+> Previously ~7717/12570 (61.4%), improved by node/allowJs fixes and closure return type correction.
 
 ---
 
