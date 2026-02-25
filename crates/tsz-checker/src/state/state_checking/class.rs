@@ -289,9 +289,8 @@ impl<'a> CheckerState<'a> {
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);
 
-        // Check for accessor type compatibility (TS2322)
-        // TS 5.1+ allows divergent types ONLY if both have explicit annotations.
-        self.check_accessor_type_compatibility(&class.members.nodes);
+        // Note: accessor type compatibility check removed — tsc 6.0 allows
+        // different get/set types unconditionally (no annotation requirement).
 
         // Check strict property initialization (TS2564)
         self.check_property_initialization(stmt_idx, class, is_declared, is_abstract_class);
@@ -435,9 +434,8 @@ impl<'a> CheckerState<'a> {
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);
 
-        // Check for accessor type compatibility (TS2322)
-        // TS 5.1+ allows divergent types ONLY if both have explicit annotations.
-        self.check_accessor_type_compatibility(&class.members.nodes);
+        // Note: accessor type compatibility check removed — tsc 6.0 allows
+        // different get/set types unconditionally (no annotation requirement).
 
         // Check for property type compatibility with base class (error 2416)
         // Property type in derived class must be assignable to same property in base class
