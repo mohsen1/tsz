@@ -469,16 +469,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// When this is true, we should not expand the mapped type because the template
     /// instantiation would fail (T[key] can't be resolved for a type parameter).
     fn is_mapped_type_over_type_parameter(&self, mapped: &MappedType) -> bool {
-        // Check if the constraint is `keyof T`
+        // Check if the constraint is `keyof S`
         let Some(TypeData::KeyOf(source)) = self.interner().lookup(mapped.constraint) else {
             return false;
         };
 
-        // Check if the source is a type parameter
-        matches!(
+        // Check if the source is a type parameter directly
+        if matches!(
             self.interner().lookup(source),
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-        )
+        ) {
+            return true;
+        }
+
+        // Also defer when the source is itself a mapped type that's over a type
+        // parameter (transitive deferral). This handles Readonly<Partial<T>> where
+        // Partial<T> is a deferred mapped type: keyof(Partial<T>) can resolve
+        // through T's constraint, but we should keep the mapped type deferred to
+        // preserve correct structural comparison with other deferred mapped types.
+        if let Some(TypeData::Mapped(inner_mapped_id)) = self.interner().lookup(source) {
+            let inner_mapped = self.interner().mapped_type(inner_mapped_id);
+            return self.is_mapped_type_over_type_parameter(&inner_mapped);
+        }
+
+        false
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
