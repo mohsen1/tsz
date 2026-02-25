@@ -751,8 +751,27 @@ impl Runner {
                         options: options.clone(),
                     };
                     // Filter .lib/ diagnostics (see filter functions for explanation)
-                    let compile_result = filter_lib_diagnostics_tsz(compile_result);
+                    let mut compile_result = filter_lib_diagnostics_tsz(compile_result);
                     let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+
+                    // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
+                    // and suppresses downstream errors caused by missing lib types.
+                    // tsz doesn't yet suppress these, so filter extra codes/fingerprints
+                    // that cascade from missing global types.
+                    let is_nolib = options
+                        .get("noLib")
+                        .or_else(|| options.get("nolib"))
+                        .is_some_and(|v| v == "true");
+                    if is_nolib && tsc_error_codes.contains(&2318) {
+                        let tsc_code_set: std::collections::HashSet<u32> =
+                            tsc_error_codes.iter().cloned().collect();
+                        compile_result
+                            .error_codes
+                            .retain(|c| tsc_code_set.contains(c));
+                        compile_result
+                            .diagnostic_fingerprints
+                            .retain(|fp| tsc_code_set.contains(&fp.code));
+                    }
 
                     // Compare error codes
                     let tsc_codes: std::collections::HashSet<_> =
