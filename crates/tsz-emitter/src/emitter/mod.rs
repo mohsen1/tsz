@@ -19,8 +19,11 @@
 //! - `functions.rs` - Function emission helpers
 //! - `types.rs` - Type emission helpers
 //! - `jsx.rs` - JSX emission helpers
+//! - `module_emission/` - Module emission (imports, exports, CommonJS/ES6)
+//! - `es5/` - ES5 downlevel binding/destructuring helpers
 //!
-//! Note: pub(super) fields and methods allow submodules to access Printer internals.
+//! Note: pub(super) and pub(in `crate::emitter`) fields and methods allow
+//! submodules to access Printer internals.
 
 mod binding_patterns;
 mod comment_helpers;
@@ -41,8 +44,6 @@ mod helpers;
 mod jsx;
 mod literals;
 mod module_emission;
-mod module_emission_exports;
-mod module_emission_imports;
 mod module_wrapper;
 mod source_file;
 mod special_expressions;

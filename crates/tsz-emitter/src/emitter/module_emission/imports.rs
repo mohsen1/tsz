@@ -1,11 +1,11 @@
-use super::{ModuleKind, Printer};
+use super::super::{ModuleKind, Printer};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_import_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_import_declaration_commonjs(node);
         } else {
@@ -13,7 +13,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_import_declaration_es6(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_declaration_es6(&mut self, node: &Node) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
@@ -97,7 +97,7 @@ impl<'a> Printer<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_import_declaration_commonjs(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_declaration_commonjs(&mut self, node: &Node) {
         use crate::transforms::module_commonjs;
 
         let Some(import) = self.arena.get_import_decl(node) else {
@@ -404,7 +404,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_import_equals_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_equals_declaration(&mut self, node: &Node) {
         let before_len = self.writer.len();
         self.emit_import_equals_declaration_inner(node);
         if self.writer.len() > before_len {
@@ -412,7 +412,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
@@ -535,7 +535,7 @@ impl<'a> Printer<'a> {
         (!rhs.is_empty()).then_some(rhs)
     }
 
-    pub(super) fn emit_import_clause(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_import_clause(&mut self, node: &Node) {
         let Some(clause) = self.arena.get_import_clause(node) else {
             return;
         };
@@ -557,7 +557,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_wrapped_import_interop_prologue(&mut self, statements: &NodeList) {
+    pub(in crate::emitter) fn emit_wrapped_import_interop_prologue(
+        &mut self,
+        statements: &NodeList,
+    ) {
         if !matches!(
             self.ctx.original_module_kind,
             Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
@@ -623,7 +626,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_named_imports(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_named_imports(&mut self, node: &Node) {
         let Some(imports) = self.arena.get_named_imports(node) else {
             return;
         };
