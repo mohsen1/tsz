@@ -226,7 +226,8 @@ pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
 pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
-    pub(super) type_reference_errors: Vec<(PathBuf, String)>,
+    /// Tuples of (file_path, type_name, byte_offset_of_types_attr, span_length).
+    pub(super) type_reference_errors: Vec<(PathBuf, String, usize, usize)>,
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
     /// Tuples of (file_path, byte_offset, span_length).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
@@ -352,7 +353,14 @@ pub(super) fn collect_type_root_files(
         None => default_type_roots(base_dir),
     };
     if roots.is_empty() {
-        return (Vec::new(), Vec::new());
+        // When no valid type roots exist, any explicitly requested types
+        // (via the `types` config option) are unresolved.
+        let unresolved = options
+            .types
+            .as_ref()
+            .map(|t| t.iter().map(|s| s.clone()).collect())
+            .unwrap_or_default();
+        return (Vec::new(), unresolved);
     }
 
     let mut files = std::collections::BTreeSet::new();
@@ -521,23 +529,17 @@ pub(super) fn read_source_files(
                         resolve_type_package_from_roots(&type_name, &type_roots, options)
                     };
                 // If type roots resolution failed, fall back to searching node_modules/
-                // directly. tsc resolves type references from node_modules/ packages
-                // (not just @types/) via the regular module resolution algorithm.
-                // This applies to Node, Node16, NodeNext, and Bundler modes.
+                // directly. tsc's resolveTypeReferenceDirective always uses node_modules
+                // walk-up as a secondary fallback after typeRoots, regardless of the
+                // configured module resolution mode (including Classic).
                 let resolved = resolved.or_else(|| {
-                    use crate::config::ModuleResolutionKind;
-                    let res = options.effective_module_resolution();
-                    if !matches!(res, ModuleResolutionKind::Classic) {
-                        crate::driver::resolution::resolve_type_reference_from_node_modules(
-                            &type_name,
-                            &path,
-                            base_dir,
-                            effective_resolution_mode.map(|s| s.as_str()),
-                            options,
-                        )
-                    } else {
-                        None
-                    }
+                    crate::driver::resolution::resolve_type_reference_from_node_modules(
+                        &type_name,
+                        &path,
+                        base_dir,
+                        effective_resolution_mode.map(|s| s.as_str()),
+                        options,
+                    )
                 });
                 if let Some(resolved) = resolved {
                     let canonical = canonicalize_or_owned(&resolved);
@@ -546,30 +548,31 @@ pub(super) fn read_source_files(
                         pending.push_back(canonical);
                     }
                 } else if !invalid_mode {
-                    type_reference_errors.push((path.clone(), type_name.clone()));
+                    type_reference_errors.push((
+                        path.clone(),
+                        type_name.clone(),
+                        types_offset,
+                        types_len,
+                    ));
                 }
                 // When resolution-mode is invalid, also try the other condition
                 // so that globals from both export paths are available.
                 // tsc appears to make all globals available in this case.
                 if invalid_mode {
-                    use crate::config::ModuleResolutionKind;
-                    let res = options.effective_module_resolution();
-                    if !matches!(res, ModuleResolutionKind::Classic) {
-                        for mode in &["import", "require"] {
-                            if let Some(alt) =
-                                crate::driver::resolution::resolve_type_reference_from_node_modules(
-                                    &type_name,
-                                    &path,
-                                    base_dir,
-                                    Some(mode),
-                                    options,
-                                )
-                            {
-                                let canonical = canonicalize_or_owned(&alt);
-                                entry.insert(canonical.clone());
-                                if seen.insert(canonical.clone()) {
-                                    pending.push_back(canonical);
-                                }
+                    for mode in &["import", "require"] {
+                        if let Some(alt) =
+                            crate::driver::resolution::resolve_type_reference_from_node_modules(
+                                &type_name,
+                                &path,
+                                base_dir,
+                                Some(mode),
+                                options,
+                            )
+                        {
+                            let canonical = canonicalize_or_owned(&alt);
+                            entry.insert(canonical.clone());
+                            if seen.insert(canonical.clone()) {
+                                pending.push_back(canonical);
                             }
                         }
                     }
