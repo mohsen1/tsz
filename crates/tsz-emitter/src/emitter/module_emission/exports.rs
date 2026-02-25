@@ -1,10 +1,10 @@
-use super::{ModuleKind, Printer};
+use super::super::{ModuleKind, Printer};
 use crate::transforms::ClassES5Emitter;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_export_declaration_commonjs(
+    pub(in crate::emitter) fn emit_export_declaration_commonjs(
         &mut self,
         node: &tsz_parser::parser::node::Node,
     ) {
@@ -119,14 +119,14 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                     if let Some(func) = self.arena.get_function(clause_node) {
                         let func_name = self.get_identifier_text_idx(func.name);
-                        is_anonymous_default =
-                            func_name == "function" || !super::is_valid_identifier_name(&func_name);
+                        is_anonymous_default = func_name == "function"
+                            || !super::super::is_valid_identifier_name(&func_name);
                     }
                 }
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     if let Some(class) = self.arena.get_class(clause_node) {
                         let class_name = self.get_identifier_text_idx(class.name);
-                        is_anonymous_default = !super::is_valid_identifier_name(&class_name);
+                        is_anonymous_default = !super::super::is_valid_identifier_name(&class_name);
                     }
                 }
                 _ => {}

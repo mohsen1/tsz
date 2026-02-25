@@ -1,4 +1,4 @@
-use super::{ModuleKind, Printer};
+use super::super::{ModuleKind, Printer};
 use crate::context::transform::IdentifierId;
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::emit_utils;
@@ -8,7 +8,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
+    pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
         let next = self
             .ctx
@@ -26,7 +26,7 @@ impl<'a> Printer<'a> {
     /// `exports.default = name;` assignment is emitted BEFORE the declaration.
     /// tsc does this because JS function declarations are hoisted — the binding
     /// exists at the top of the scope regardless of textual position.
-    pub(super) fn emit_commonjs_export_with_hoisting<F>(
+    pub(in crate::emitter) fn emit_commonjs_export_with_hoisting<F>(
         &mut self,
         names: &[IdentifierId],
         is_default: bool,
@@ -103,13 +103,21 @@ impl<'a> Printer<'a> {
         self.write_line();
     }
 
-    pub(super) fn emit_commonjs_default_export_expr(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_commonjs_default_export_expr(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
         self.emit_commonjs_default_export_assignment(|this| {
             this.emit_commonjs_default_export_expr_inner(node, idx);
         });
     }
 
-    pub(super) fn emit_commonjs_default_export_expr_inner(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_commonjs_default_export_expr_inner(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
         match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_expression(node, idx);
@@ -125,7 +133,11 @@ impl<'a> Printer<'a> {
 
     /// Emit anonymous default export as a named declaration + export assignment.
     /// TSC pattern: `export default class {}` → `class default_1 {}\nexports.default = default_1;`
-    pub(super) fn emit_commonjs_anonymous_default_as_named(&mut self, node: &Node, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_commonjs_anonymous_default_as_named(
+        &mut self,
+        node: &Node,
+        idx: NodeIndex,
+    ) {
         // Set temporary override name for anonymous default declarations
         let prev = self.anonymous_default_export_name.take();
         self.anonymous_default_export_name = Some("default_1".to_string());
@@ -135,8 +147,10 @@ impl<'a> Printer<'a> {
         self.write("exports.default = default_1;");
     }
 
-    pub(super) fn emit_commonjs_default_export_assignment<F>(&mut self, mut emit_inner: F)
-    where
+    pub(in crate::emitter) fn emit_commonjs_default_export_assignment<F>(
+        &mut self,
+        mut emit_inner: F,
+    ) where
         F: FnMut(&mut Self),
     {
         self.write("exports.default = ");
@@ -145,7 +159,10 @@ impl<'a> Printer<'a> {
         self.write_line();
     }
 
-    pub(super) fn emit_commonjs_default_export_class_es5(&mut self, class_node: NodeIndex) {
+    pub(in crate::emitter) fn emit_commonjs_default_export_class_es5(
+        &mut self,
+        class_node: NodeIndex,
+    ) {
         let Some(node) = self.arena.get(class_node) else {
             return;
         };
@@ -190,7 +207,7 @@ impl<'a> Printer<'a> {
     // Exports
     // =========================================================================
 
-    pub(super) fn emit_export_declaration(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_export_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_export_declaration_commonjs(node);
         } else {
@@ -198,7 +215,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_export_declaration_es6(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_export_declaration_es6(&mut self, node: &Node) {
         let Some(export) = self.arena.get_export_decl(node) else {
             return;
         };
@@ -337,7 +354,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit export assignment (export = expr or export default expr)
-    pub(super) fn emit_export_assignment(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_export_assignment(&mut self, node: &Node) {
         let Some(export_assign) = self.arena.get_export_assignment(node) else {
             return;
         };
@@ -396,7 +413,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Collect variable names from a `VARIABLE_STATEMENT` node
-    pub(super) fn collect_variable_names_from_node(&self, node: &Node) -> Vec<String> {
+    pub(in crate::emitter) fn collect_variable_names_from_node(&self, node: &Node) -> Vec<String> {
         let mut names = Vec::new();
         if let Some(var_stmt) = self.arena.get_variable(node) {
             // VARIABLE_STATEMENT has declarations containing VARIABLE_DECLARATION_LIST
@@ -422,7 +439,7 @@ impl<'a> Printer<'a> {
     /// Returns Some(vec of (name, `initializer_idx`)) if ALL declarators are simple
     /// identifier bindings with initializers. Returns None if any declarator uses
     /// destructuring or lacks an initializer (in which case we fall back to split form).
-    pub(super) fn try_collect_inline_cjs_exports(
+    pub(in crate::emitter) fn try_collect_inline_cjs_exports(
         &self,
         node: &Node,
     ) -> Option<Vec<(String, NodeIndex)>> {
@@ -460,11 +477,11 @@ impl<'a> Printer<'a> {
     }
 
     /// Get identifier text from optional node index
-    pub(super) fn get_identifier_text_opt(&self, idx: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn get_identifier_text_opt(&self, idx: NodeIndex) -> Option<String> {
         crate::transforms::emit_utils::identifier_text(self.arena, idx)
     }
 
-    pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<String> {
+    pub(in crate::emitter) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<String> {
         if name_idx.is_none() {
             return None;
         }
@@ -487,11 +504,11 @@ impl<'a> Printer<'a> {
     }
 
     /// Get identifier text from a node index
-    pub(super) fn get_identifier_text_idx(&self, idx: NodeIndex) -> String {
+    pub(in crate::emitter) fn get_identifier_text_idx(&self, idx: NodeIndex) -> String {
         crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
-    pub(super) fn emit_entity_name(&mut self, idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_entity_name(&mut self, idx: NodeIndex) {
         if idx.is_none() {
             return;
         }
@@ -517,7 +534,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_named_exports(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_named_exports(&mut self, node: &Node) {
         // Named exports uses the same data structure as named imports
         let Some(exports) = self.arena.get_named_imports(node) else {
             self.write("{ }");
@@ -530,7 +547,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a named import/export specifier: `[propertyName as] name`
-    pub(super) fn emit_specifier(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_specifier(&mut self, node: &Node) {
         let Some(spec) = self.arena.get_specifier(node) else {
             return;
         };
@@ -542,7 +559,10 @@ impl<'a> Printer<'a> {
         self.emit(spec.name);
     }
 
-    pub(super) fn collect_value_specifiers(&self, elements: &NodeList) -> Vec<NodeIndex> {
+    pub(in crate::emitter) fn collect_value_specifiers(
+        &self,
+        elements: &NodeList,
+    ) -> Vec<NodeIndex> {
         let mut specs = Vec::new();
         for &spec_idx in &elements.nodes {
             // Check explicit "import type" syntax (parser-set flag)
@@ -562,7 +582,7 @@ impl<'a> Printer<'a> {
         specs
     }
 
-    pub(super) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
+    pub(in crate::emitter) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
         crate::transforms::emit_utils::export_clause_is_type_only(self.arena, clause_node)
     }
 
@@ -593,7 +613,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Check if the file contains an export assignment (export =)
-    pub(super) fn has_export_assignment(&self, statements: &NodeList) -> bool {
+    pub(in crate::emitter) fn has_export_assignment(&self, statements: &NodeList) -> bool {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx)
                 && node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
@@ -605,7 +625,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn export_assignment_identifier_is_type_only(
+    pub(in crate::emitter) fn export_assignment_identifier_is_type_only(
         &self,
         export_assignment_node: &Node,
         statements: &NodeList,
@@ -740,7 +760,7 @@ impl<'a> Printer<'a> {
     /// Check whether a statement node carries an `export` modifier.
     /// Covers all declaration kinds that can be exported: variable, function,
     /// class, enum, module/namespace, interface, and type alias.
-    pub(super) fn statement_has_export_modifier(&self, node: &Node) -> bool {
+    pub(in crate::emitter) fn statement_has_export_modifier(&self, node: &Node) -> bool {
         match node.kind {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.arena.get_variable(node).is_some_and(|v| {
@@ -792,7 +812,7 @@ impl<'a> Printer<'a> {
     /// TypeScript considers a file a module if it has ANY import/export syntax,
     /// including type-only imports/exports, declared exports, and exported
     /// interfaces/type aliases.
-    pub(super) fn file_is_module(&self, statements: &NodeList) -> bool {
+    pub(in crate::emitter) fn file_is_module(&self, statements: &NodeList) -> bool {
         // moduleDetection=force: treat all non-declaration files as modules
         if self.ctx.options.module_detection_force {
             return true;
@@ -827,7 +847,10 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn collect_module_dependencies(&self, statements: &[NodeIndex]) -> Vec<String> {
+    pub(in crate::emitter) fn collect_module_dependencies(
+        &self,
+        statements: &[NodeIndex],
+    ) -> Vec<String> {
         let mut deps = Vec::new();
         for &stmt_idx in statements {
             let Some(node) = self.arena.get(stmt_idx) else {
@@ -869,7 +892,7 @@ impl<'a> Printer<'a> {
         deps
     }
 
-    pub(super) fn import_decl_has_runtime_value(
+    pub(in crate::emitter) fn import_decl_has_runtime_value(
         &self,
         import_decl: &tsz_parser::parser::node::ImportDeclData,
     ) -> bool {
@@ -949,7 +972,7 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn export_decl_has_runtime_value(
+    pub(in crate::emitter) fn export_decl_has_runtime_value(
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
     ) -> bool {
@@ -962,7 +985,7 @@ impl<'a> Printer<'a> {
     /// TypeScript emits __esModule for ANY module syntax, including type-only
     /// imports/exports, declared exports, exported interfaces/type aliases,
     /// and `import.meta` usage (which makes the file a module per spec).
-    pub(super) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
+    pub(in crate::emitter) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
         // If file has a runtime `export =`, do not emit __esModule.
         // Type-only `export =` aliases (e.g. interface) are filtered out.
         if self.has_export_assignment(statements) {
@@ -1049,7 +1072,7 @@ impl<'a> Printer<'a> {
     /// Write the appropriate variable declaration keyword based on target.
     /// For ES2015+, use `const` for top-level module imports.
     /// For ES3/ES5, use `var`.
-    pub(super) fn write_var_or_const(&mut self) {
+    pub(in crate::emitter) fn write_var_or_const(&mut self) {
         if self.ctx.target_es5 {
             self.write("var ");
         } else {
