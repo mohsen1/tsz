@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-25T21:02:21Z",
-  "git_sha": "30dc35da223e07a15245168530174db8a7c3c889",
+  "timestamp": "2026-02-25T22:10:49Z",
+  "git_sha": "7b5068bc7d22967e045df5b4302a946f9d8ab735",
   "summary": {
     "total_tests": 12570,
-    "passed": 7706,
-    "failed": 4864,
+    "passed": 7710,
+    "failed": 4860,
     "pass_rate": 61.3
   },
   "areas_by_pass_rate": [
@@ -473,9 +473,9 @@
     {
       "area": "compiler",
       "total": 6471,
-      "passed": 4161,
-      "failed": 2310,
-      "pass_rate": 64.3
+      "passed": 4163,
+      "failed": 2308,
+      "pass_rate": 64.33
     },
     {
       "area": "jsdoc/declarations",
@@ -490,13 +490,6 @@
       "passed": 453,
       "failed": 234,
       "pass_rate": 65.94
-    },
-    {
-      "area": "es6/modules",
-      "total": 39,
-      "passed": 26,
-      "failed": 13,
-      "pass_rate": 66.67
     },
     {
       "area": "types/import",
@@ -546,6 +539,13 @@
       "passed": 10,
       "failed": 4,
       "pass_rate": 71.43
+    },
+    {
+      "area": "es6/modules",
+      "total": 39,
+      "passed": 28,
+      "failed": 11,
+      "pass_rate": 71.79
     },
     {
       "area": "classes/classExpressions",
@@ -723,7 +723,7 @@
     },
     {
       "code": "TS2339",
-      "count": 30
+      "count": 29
     },
     {
       "code": "TS2345",
@@ -778,6 +778,10 @@
       "count": 5
     },
     {
+      "code": "TS2403",
+      "count": 5
+    },
+    {
       "code": "TS2882",
       "count": 5
     },
@@ -792,10 +796,6 @@
     {
       "code": "TS7053",
       "count": 5
-    },
-    {
-      "code": "TS7006",
-      "count": 4
     }
   ],
   "not_implemented_codes": [
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS5107",
-      "count": 267
+      "count": 265
     },
     {
       "code": "TS2322",
@@ -935,7 +935,7 @@
     },
     {
       "code": "TS2403",
-      "count": 19
+      "count": 20
     },
     {
       "code": "TS1003",
