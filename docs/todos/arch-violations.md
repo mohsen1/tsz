@@ -101,6 +101,8 @@ Previously near-threshold files (all successfully split): `state_class_checking.
 
 **Note — Emitter expressions/ subdirectory migration**: 5 `expressions_*.rs` files reorganized into `expressions/` subdirectory. Renames: `expressions.rs` → `expressions/core.rs`, `expressions_access.rs` → `expressions/access.rs`, `expressions_binary_downlevel.rs` → `expressions/binary_downlevel.rs`, `expressions_call.rs` → `expressions/call.rs`, `expressions_literals.rs` → `expressions/literals.rs`. All `pub(super)` methods promoted to `pub(in crate::emitter)` for sibling module access. All emitter prefix-grouped file families now use the subdirectory pattern.
 
+**Note — Emitter comments/ subdirectory migration** (5dcdc1506): 2 comment-related files reorganized into `comments/` subdirectory. Renames: `comments.rs` → `comments/core.rs`, `comment_helpers.rs` → `comments/helpers.rs`. All `pub(super)` methods promoted to `pub(in crate::emitter)` for sibling module access. Remaining emitter top-level file candidates for future grouping: `literals.rs` (843 LOC) + `template_literals.rs` (320 LOC), `type_printer.rs` (654 LOC) + `types.rs` (271 LOC).
+
 **Note — Long functions to address**: `find_circular_reference_in_type_node` (1110 lines, `state/variable_checking/core.rs:15`), `in_progress_class_instance_result` (951 lines, `types/class_type/core.rs:35`), `should_cache_base_expr_result` (847 lines, `state/type_resolution/constructors.rs:15`), `get_type_of_property_access_inner` (809 lines, `types/property_access_type.rs:25`), `dispatch_type_computation` (754 lines, `dispatch.rs:478`).
 
 ### 4. Cross-Layer Imports — CLEAN
