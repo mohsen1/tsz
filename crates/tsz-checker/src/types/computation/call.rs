@@ -8,7 +8,7 @@
 use super::complex::is_contextually_sensitive;
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::checkers::call as call_checker;
-use crate::query_boundaries::type_computation_complex as query;
+use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;

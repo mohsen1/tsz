@@ -63,10 +63,12 @@ impl<'a> CheckerState<'a> {
                     operand_types.push(ty);
                 }
 
-                if let Some(ty) = crate::query_boundaries::type_computation::evaluate_plus_chain(
-                    self.ctx.types,
-                    &operand_types,
-                ) {
+                if let Some(ty) =
+                    crate::query_boundaries::type_computation::core::evaluate_plus_chain(
+                        self.ctx.types,
+                        &operand_types,
+                    )
+                {
                     return ty;
                 }
             }

@@ -4,7 +4,7 @@
 //! the binder, checking TDZ violations, validating definite assignment,
 //! applying flow-based narrowing, and handling intrinsic/global names.
 
-use crate::query_boundaries::type_computation_complex as query;
+use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;

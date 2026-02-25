@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
             && let Some(tuple_elements) =
-                crate::query_boundaries::type_computation_access::tuple_elements(
+                crate::query_boundaries::type_computation::access::tuple_elements(
                     self.ctx.types,
                     object_type_for_access,
                 )

@@ -2,7 +2,7 @@
 //! and class type helpers.
 
 use crate::query_boundaries::checkers::call as call_checker;
-use crate::query_boundaries::type_computation_complex as query;
+use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
