@@ -14,7 +14,7 @@ DRY_RUN=false
 RUN_ONCE=false
 RUNNER_FILTER=""          # "" = all, "claude" or "codex"
 SESSION_NAME=""           # "" = use existing session.sh, else load from scripts/sessions/
-TIMEOUT_SECONDS=10800     # 3 hours
+TIMEOUT_SECONDS=43200     # 12 hours
 COOLDOWN_FALLBACK=1800    # 30 min fallback when reset time can't be parsed
 LOOP_SLEEP=10             # seconds between loop iterations
 MAX_LOG_MB=500            # prune oldest logs when total exceeds this
@@ -78,13 +78,13 @@ Options:
   -h, --help         Show this help
 
 Available sessions:
-  architect          Architecture audit + CI health check
-  conformance-1      Conformance parity (first half, --max 6000)
-  conformance-2      Conformance parity (second half, --offset 6000)
-  conformance-3      Conformance parity (start at 25% of tests)
-  conformance-4      Conformance parity (start at 75% of tests)
-  emit               Emitter correctness
-  lsp                LSP / fourslash tests
+  conformance-1      Conformance: targets #1 worst-pass-rate area
+  conformance-2      Conformance: targets #2 worst-pass-rate area
+  conformance-3      Conformance: targets #3 worst-pass-rate area
+  conformance-4      Conformance: targets #4 worst-pass-rate area
+  emit               Conformance: targets #5 worst-pass-rate area
+  lsp                Conformance: targets #6 worst-pass-rate area
+  architect          Conformance: targets #7 worst-pass-rate area
   perf               Performance benchmarking + optimization
 
 Runners are auto-discovered from:
