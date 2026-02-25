@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~6992/12565 (55.6%) — full suite, fingerprint level (new framework)
-> Note: score dropped from ~7661 to ~6992 after rebase onto upstream commits (c2d558ca80..8cb0b8d57) that introduced a regression.
+**Current score**: ~7696/12570 (61.2%) — full suite, fingerprint level (new framework)
+> Previously ~6992/12565 (55.6%), score recovered after fixing .lib/ path rewriting, TS5107 suppression, strict defaults, and many other fixes.
 
 ---
 
@@ -405,7 +405,7 @@
 - **TS7008 member name quoting**: Runner filename handling with `@filename` directives complicates comparison
 - **TS2322 for component props**: Needs `IntrinsicAttributes` intersection in JSX type checking
 - **Type display differences**: `string | undefined` vs `string` for optional props; property ordering in objects
-- **71 zero-error tests**: Dominated by missing TS2307 (react module resolution) and TS7026
+- **71 zero-error tests**: ~~Dominated by missing TS2307 (react module resolution)~~ RESOLVED: .lib/ path rewriting bug fixed (JSX 30%→42%). Remaining gaps are TS7026 and type-checking precision
 
 ---
 
@@ -564,3 +564,5 @@ All items below have been validated against the codebase (implementations + test
 | TS18050/TS2365 snc gate | Gate TS18050 binary op errors on strictNullChecks; suppress TS2365 for nullish+nullish when snc off | +1 test (bitwiseNotOperatorWithAnyOtherType) |
 | TS2454/narrowing | Reorder check_flow_usage: apply narrowing before TS2454 to suppress false "used before assigned" in typeof guard branches | +2 tests |
 | JSX diagnostics | Anchor TS2322/TS2741 at attr name/tag name; boolean attr checking; excess property type display; `</` parser token; TS7005 .d.ts suppression | +5 tests |
+| .lib/ path fix | Fix /.lib/ reference path rewriting: format string kept leading /, rewrite func skipped .lib/ paths. Regenerated tsc cache for 138 affected entries | +28 tests (JSX 30%→42%) |
+| TS5107 suppression | Suppress TS5107 deprecation diagnostics when source files have parse errors (1000-1999), matching tsc behavior | +52 tests |
