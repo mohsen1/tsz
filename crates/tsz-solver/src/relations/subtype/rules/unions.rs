@@ -95,9 +95,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (or a supertype), and the mapped type doesn't remove optionality,
         // the source type parameter is assignable.
         if let Some(mapped_id) = mapped_type_id(self.interner, target)
-            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id) {
-                return SubtypeResult::True;
-            }
+            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
+        {
+            return SubtypeResult::True;
+        }
 
         SubtypeResult::False
     }
@@ -158,9 +159,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - Same name: T <: { [K in keyof T]: T[K] } (direct match)
         // - Constraint-based: U extends T => U <: Partial<T>
         if let Some(source_param) = type_param_info(self.interner, constraint_source)
-            && source_param.name == source_name {
-                return true;
-            }
+            && source_param.name == source_name
+        {
+            return true;
+        }
 
         // Check if source constraint is assignable to the mapped type source
         if let Some(constraint) = source_constraint {
