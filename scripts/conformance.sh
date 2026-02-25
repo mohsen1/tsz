@@ -38,6 +38,8 @@ Commands:
   analyze     Analyze failures: categorize, rank by impact, find easy wins
   areas       Analyze pass/fail rates by test directory area
   all         Generate cache (if needed) and run tests (default)
+  snapshot    Run tests + analyze + areas, save structured results to
+              scripts/conformance-snapshot.json (committed to git)
   clean       Remove cache file
 
 Run options:
@@ -398,7 +400,9 @@ analyze_tests() {
         "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
 
     # Use python to analyze the output
-    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" "$category_filter" "$top_n"
+    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" \
+        ${category_filter:+--category "$category_filter"} \
+        --top "$top_n"
 }
 
 areas_analysis() {
@@ -449,7 +453,10 @@ areas_analysis() {
         "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
 
     # Use python to analyze by area
-    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" "$depth" "$min_tests" "$drilldown"
+    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" \
+        ${depth:+--depth "$depth"} \
+        ${min_tests:+--min-tests "$min_tests"} \
+        ${drilldown:+--drilldown "$drilldown"}
 }
 
 clean_cache() {
@@ -499,6 +506,127 @@ check_submodule_clean() {
         echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
     fi
     echo ""
+}
+
+snapshot_tests() {
+    local snapshot_file="$REPO_ROOT/scripts/conformance-snapshot.json"
+    local git_sha
+    git_sha="$(cd "$REPO_ROOT" && git rev-parse HEAD 2>/dev/null || echo 'unknown')"
+
+    echo -e "${GREEN}Running full conformance snapshot (run + analyze + areas)...${NC}"
+
+    cd "$REPO_ROOT"
+
+    # 1) Run tests with --print-test to get per-test results
+    local tmpfile
+    tmpfile=$(mktemp)
+    trap "rm -f '$tmpfile'" RETURN
+
+    $RUNNER_BIN \
+        --test-dir "$TEST_DIR" \
+        --cache-file "$CACHE_FILE" \
+        --tsz-binary "$TSZ_BIN" \
+        --workers $WORKERS \
+        --print-test \
+        "${REMAINING_ARGS[@]}" > "$tmpfile"
+
+    # Verify runner produced output
+    if [ ! -s "$tmpfile" ]; then
+        echo -e "${YELLOW}ERROR: conformance runner produced no output${NC}"
+        return 1
+    fi
+
+    # 2) Extract summary values via Python -> JSON (no eval)
+    local summary_json
+    summary_json=$(mktemp)
+    python3 -c "
+import re, sys, json
+text = open(sys.argv[1]).read()
+m = re.search(r'Error-code level:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
+ec_passed, ec_total, ec_rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0)
+m2 = re.search(r'Fingerprint level:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
+fp_passed, fp_total, fp_rate = (int(m2.group(1)), int(m2.group(2)), float(m2.group(3))) if m2 else (0, 0, 0)
+json.dump({
+    'total': ec_total, 'passed': ec_passed, 'failed': ec_total - ec_passed,
+    'rate_ec': ec_rate, 'rate_fp': fp_rate,
+    'fp_total': fp_total, 'fp_passed': fp_passed
+}, sys.stdout)
+" "$tmpfile" > "$summary_json"
+
+    # Read values from JSON (no eval)
+    local total_tests passed failed pass_rate_ec pass_rate_fp fp_total fp_passed
+    total_tests=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['total'])")
+    passed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['passed'])")
+    failed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['failed'])")
+    pass_rate_ec=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['rate_ec'])")
+    pass_rate_fp=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['rate_fp'])")
+    fp_total=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['fp_total'])")
+    fp_passed=$(python3 -c "import json; d=json.load(open('$summary_json')); print(d['fp_passed'])")
+
+    # 3) Run analyze with JSON output
+    local analyze_json
+    analyze_json=$(mktemp)
+    python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" \
+        --json-output "$analyze_json" || true
+
+    # 4) Run areas with JSON output (depth 2, min 10 tests)
+    local areas_json
+    areas_json=$(mktemp)
+    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" \
+        --depth 2 --min-tests 10 --json-output "$areas_json" || true
+
+    # 5) Assemble snapshot JSON (all data passed as arguments, not interpolated)
+    local timestamp
+    timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+    python3 -c "
+import json, sys
+
+timestamp, git_sha = sys.argv[1], sys.argv[2]
+total, passed, failed = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+rate_ec, rate_fp = float(sys.argv[6]), float(sys.argv[7])
+fp_total, fp_passed = int(sys.argv[8]), int(sys.argv[9])
+analyze_path, areas_path, out_path = sys.argv[10], sys.argv[11], sys.argv[12]
+
+analyze, areas = {}, {}
+try:
+    with open(analyze_path) as f: analyze = json.load(f)
+except: pass
+try:
+    with open(areas_path) as f: areas = json.load(f)
+except: pass
+
+snapshot = {
+    'timestamp': timestamp,
+    'git_sha': git_sha,
+    'summary': {
+        'total_tests': total, 'passed': passed, 'failed': failed,
+        'pass_rate_error_code': rate_ec, 'pass_rate_fingerprint': rate_fp,
+        'fingerprint_total': fp_total, 'fingerprint_passed': fp_passed,
+    },
+    'areas_by_pass_rate': areas.get('areas', []),
+    'top_failures': analyze.get('quick_wins', []),
+    'not_implemented_codes': analyze.get('not_implemented_codes', []),
+    'partial_codes': analyze.get('partial_codes', []),
+}
+
+with open(out_path, 'w') as f:
+    json.dump(snapshot, f, indent=2)
+
+print(f'Snapshot saved: {total} tests, {passed} passed ({rate_ec}% error-code, {rate_fp}% fingerprint)')
+print(f'Git SHA: {git_sha}')
+print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
+" "$timestamp" "$git_sha" "$total_tests" "$passed" "$failed" \
+  "$pass_rate_ec" "$pass_rate_fp" "$fp_total" "$fp_passed" \
+  "$analyze_json" "$areas_json" "$snapshot_file" \
+  || { echo "ERROR: failed to assemble snapshot JSON"; return 1; }
+
+    rm -f "$summary_json" "$analyze_json" "$areas_json"
+
+    # Verify snapshot is valid JSON
+    python3 -m json.tool "$snapshot_file" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
+
+    echo -e "${GREEN}Snapshot written to: $snapshot_file${NC}"
 }
 
 # Parse arguments
@@ -589,6 +717,16 @@ case "$COMMAND" in
         fi
         echo ""
         run_tests "${REMAINING_ARGS[@]}"
+        ;;
+    snapshot)
+        check_submodule_clean
+        ensure_binaries
+        if [ "$NO_CACHE" = "true" ]; then
+            generate_cache "true"
+        else
+            ensure_cache
+        fi
+        snapshot_tests
         ;;
     clean)
         clean_cache
