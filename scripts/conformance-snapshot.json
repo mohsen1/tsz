@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T14:02:23Z",
-  "git_sha": "82dc7a9431cfaf65d084f57deecb9762b661ac80",
+  "timestamp": "2026-02-25T14:17:37Z",
+  "git_sha": "981cc468302b29e888a8df7c727ce199707e15fd",
   "summary": {
     "total_tests": 12565,
-    "passed": 7532,
-    "failed": 5033,
-    "pass_rate": 59.9
+    "passed": 7534,
+    "failed": 5031,
+    "pass_rate": 60.0
   },
   "areas_by_pass_rate": [
     {
@@ -298,9 +298,9 @@
     {
       "area": "classes/members",
       "total": 198,
-      "passed": 100,
-      "failed": 98,
-      "pass_rate": 50.51
+      "passed": 101,
+      "failed": 97,
+      "pass_rate": 51.01
     },
     {
       "area": "classes/constructorDeclarations",
@@ -508,9 +508,9 @@
     {
       "area": "compiler",
       "total": 6468,
-      "passed": 4127,
-      "failed": 2341,
-      "pass_rate": 63.81
+      "passed": 4128,
+      "failed": 2340,
+      "pass_rate": 63.82
     },
     {
       "area": "es6/modules",
