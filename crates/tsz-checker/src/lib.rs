@@ -185,6 +185,9 @@ mod ts2774_tests;
 #[path = "../tests/ts2839_tests.rs"]
 mod ts2839_tests;
 #[cfg(test)]
+#[path = "../tests/ts6133_private_name_tests.rs"]
+mod ts6133_private_name_tests;
+#[cfg(test)]
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]

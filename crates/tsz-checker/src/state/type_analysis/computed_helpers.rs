@@ -252,6 +252,15 @@ impl<'a> CheckerState<'a> {
 
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
 
+        // Mark the private identifier symbol as referenced for unused-variable tracking.
+        // Private identifier accesses (`this.#foo`) go through this path (not
+        // `check_property_accessibility`), so reference tracking must happen here.
+        // Without this, ES private members accessed via `this.#foo` would be falsely
+        // reported as unused (TS6133).
+        for &sym_id in &symbols {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+
         // NOTE: Do NOT emit TS18016 here for property access expressions.
         // `obj.#prop` is always valid syntax — the private identifier in a property
         // access position is grammatically correct. TSC only emits TS18016 for truly
