@@ -122,15 +122,14 @@ impl<'a> CheckerState<'a> {
                 return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
-            // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
-            if self.ctx.no_implicit_any() {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node_msg(
-                    idx,
-                    diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
-                    &["IntrinsicElements"],
-                );
-            }
+            // Emitted unconditionally (regardless of noImplicitAny) when JSX.IntrinsicElements is absent.
+            // This is a JSX-specific diagnostic, not a standard implicit-any check.
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                &["IntrinsicElements"],
+            );
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -147,9 +146,7 @@ impl<'a> CheckerState<'a> {
     /// handled by `get_type_of_jsx_opening_element`; this method covers the
     /// closing tag.
     pub(crate) fn check_jsx_closing_element_for_implicit_any(&mut self, idx: NodeIndex) {
-        if !self.ctx.no_implicit_any() {
-            return;
-        }
+        // TS7026 is emitted unconditionally (not gated on noImplicitAny) when JSX.IntrinsicElements is absent.
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
         };
