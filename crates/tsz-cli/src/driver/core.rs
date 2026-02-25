@@ -708,11 +708,27 @@ fn compile_inner(
         });
     }
 
-    let mut resolved = resolve_compiler_options(
+    let mut resolved = match resolve_compiler_options(
         config
             .as_ref()
             .and_then(|cfg| cfg.compiler_options.as_ref()),
-    )?;
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            // If config has errors (e.g., TS5103 for invalid ignoreDeprecations),
+            // return them even if compiler options resolution fails.
+            // This ensures config diagnostics like TS5107 are reported to the user.
+            if !config_diagnostics.is_empty() {
+                return Ok(CompilationResult {
+                    diagnostics: config_diagnostics,
+                    emitted_files: Vec::new(),
+                    files_read: Vec::new(),
+                    file_infos: Vec::new(),
+                });
+            }
+            return Err(e);
+        }
+    };
     apply_cli_overrides(&mut resolved, args)?;
 
     // Wire removed-but-honored suppress flags from config
