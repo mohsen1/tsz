@@ -147,8 +147,15 @@ pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<
     // (generate-tsc-cache.rs / generate-tsc-cache-fast.mjs) takes only the
     // first comma-separated value for non-list options like target, so the
     // runner must do the same to produce matching error-code sets.
-    const MULTI_VALUE_KEYS: &[&str] =
-        &["module", "moduleresolution", "jsx", "alwaysstrict", "nolib"];
+    //
+    // Boolean options like "alwaysstrict" and "nolib" are also excluded:
+    // the cache generator does not expand them and instead passes the raw
+    // multi-value string (e.g. "true, false") to convert_options_to_tsconfig,
+    // which takes the first comma-separated value as a JSON string (not bool).
+    // tsc then emits TS5024 for the non-boolean value.  Expanding them here
+    // would convert each value to a JSON bool, suppressing the TS5024 that
+    // the cache expects.
+    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "jsx"];
 
     let mut variants = vec![options.clone()];
     for key in MULTI_VALUE_KEYS {
