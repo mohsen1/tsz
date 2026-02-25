@@ -139,6 +139,16 @@ binaries_are_fresh() {
         fi
     done
     
+    # Check root workspace src/ directory (tsz-core crate)
+    if [ -d "$REPO_ROOT/src" ]; then
+        while IFS= read -r -d '' src_file; do
+            local src_mtime=$(file_mtime "$src_file")
+            if [ "$src_mtime" -gt "$newest_binary_mtime" ]; then
+                return 1
+            fi
+        done < <(find "$REPO_ROOT/src" -name "*.rs" -print0 2>/dev/null)
+    fi
+
     # Check root Cargo.toml and Cargo.lock
     if [ -f "$REPO_ROOT/Cargo.toml" ]; then
         local root_toml_mtime=$(file_mtime "$REPO_ROOT/Cargo.toml")
