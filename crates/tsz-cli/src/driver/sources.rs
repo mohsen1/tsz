@@ -227,6 +227,9 @@ pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     pub(super) type_reference_errors: Vec<(PathBuf, String)>,
+    /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
+    /// Tuples of (file_path, byte_offset, span_length).
+    pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
 }
 
 pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
@@ -389,6 +392,7 @@ pub(super) fn read_source_files(
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut type_reference_errors = Vec::new();
+    let mut resolution_mode_errors = Vec::new();
     let use_cache = cache.is_some() && changed_paths.is_some();
 
     for path in paths {
@@ -468,9 +472,29 @@ pub(super) fn read_source_files(
                 .type_roots
                 .clone()
                 .unwrap_or_else(|| default_type_roots(base_dir));
-            for (type_name, resolution_mode, _line) in type_refs {
+            for (type_name, resolution_mode, types_offset, types_len) in type_refs {
+                // TS1453: Validate resolution-mode attribute value.
+                // tsc anchors this diagnostic at the `types` attribute value span.
+                // When invalid, tsc resolves the type reference without an explicit
+                // mode. Empirically, tsc includes the package such that globals from
+                // all export conditions are available. We emulate this by resolving
+                // with both "import" and "require" conditions.
+                let invalid_mode = if let Some(ref mode) = resolution_mode
+                    && mode != "import"
+                    && mode != "require"
+                {
+                    resolution_mode_errors.push((path.clone(), types_offset, types_len));
+                    true
+                } else {
+                    false
+                };
+                let effective_resolution_mode = if invalid_mode {
+                    None
+                } else {
+                    resolution_mode.as_ref()
+                };
                 let resolved =
-                    if let Some(ref mode) = resolution_mode {
+                    if let Some(mode) = effective_resolution_mode {
                         // With explicit resolution-mode, use exports map with the specified condition
                         let candidates =
                             crate::driver::resolution::type_package_candidates_pub(&type_name);
@@ -496,14 +520,59 @@ pub(super) fn read_source_files(
                     } else {
                         resolve_type_package_from_roots(&type_name, &type_roots, options)
                     };
+                // If type roots resolution failed, fall back to searching node_modules/
+                // directly. tsc resolves type references from node_modules/ packages
+                // (not just @types/) via the regular module resolution algorithm.
+                // This applies to Node, Node16, NodeNext, and Bundler modes.
+                let resolved = resolved.or_else(|| {
+                    use crate::config::ModuleResolutionKind;
+                    let res = options.effective_module_resolution();
+                    if !matches!(res, ModuleResolutionKind::Classic) {
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                            &type_name,
+                            &path,
+                            base_dir,
+                            effective_resolution_mode.map(|s| s.as_str()),
+                            options,
+                        )
+                    } else {
+                        None
+                    }
+                });
                 if let Some(resolved) = resolved {
                     let canonical = canonicalize_or_owned(&resolved);
                     entry.insert(canonical.clone());
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
                     }
-                } else {
-                    type_reference_errors.push((path.clone(), type_name));
+                } else if !invalid_mode {
+                    type_reference_errors.push((path.clone(), type_name.clone()));
+                }
+                // When resolution-mode is invalid, also try the other condition
+                // so that globals from both export paths are available.
+                // tsc appears to make all globals available in this case.
+                if invalid_mode {
+                    use crate::config::ModuleResolutionKind;
+                    let res = options.effective_module_resolution();
+                    if !matches!(res, ModuleResolutionKind::Classic) {
+                        for mode in &["import", "require"] {
+                            if let Some(alt) =
+                                crate::driver::resolution::resolve_type_reference_from_node_modules(
+                                    &type_name,
+                                    &path,
+                                    base_dir,
+                                    Some(mode),
+                                    options,
+                                )
+                            {
+                                let canonical = canonicalize_or_owned(&alt);
+                                entry.insert(canonical.clone());
+                                if seen.insert(canonical.clone()) {
+                                    pending.push_back(canonical);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -556,5 +625,6 @@ pub(super) fn read_source_files(
         sources: list,
         dependencies,
         type_reference_errors,
+        resolution_mode_errors,
     })
 }

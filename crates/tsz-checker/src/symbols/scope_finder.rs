@@ -233,48 +233,6 @@ impl<'a> CheckerState<'a> {
         found_arrow
     }
 
-    /// Walks up the AST from the given node. If the first function-like node
-    /// encountered is an `ArrowFunction`, returns true. If it's a regular function
-    /// (`FunctionDeclaration`, `FunctionExpression`, Method, Constructor, Accessor),
-    /// returns false since those have their own `arguments` binding.
-    pub(crate) fn is_arguments_in_arrow_function(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
-        };
-        let mut current = idx;
-        let mut iterations = 0;
-        while current.is_some() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            if let Some(node) = self.ctx.arena.get(current) {
-                match node.kind {
-                    k if k == ARROW_FUNCTION => return true,
-                    k if k == FUNCTION_DECLARATION
-                        || k == FUNCTION_EXPRESSION
-                        || k == METHOD_DECLARATION
-                        || k == CONSTRUCTOR
-                        || k == GET_ACCESSOR
-                        || k == SET_ACCESSOR =>
-                    {
-                        return false;
-                    }
-                    _ => {}
-                }
-            }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            current = ext.parent;
-        }
-        false
-    }
-
     /// Returns true if the given node is inside a regular (non-arrow) function body.
     /// Arrow functions don't have their own `arguments` binding, so this returns false for them.
     /// Returns false if at module/global scope (no enclosing function).
@@ -301,57 +259,6 @@ impl<'a> CheckerState<'a> {
                         || k == SET_ACCESSOR =>
                     {
                         return true;
-                    }
-                    _ => {}
-                }
-            }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            current = ext.parent;
-        }
-        false
-    }
-
-    /// Check if an `arguments` reference is inside an async non-arrow function/method.
-    ///
-    /// Returns true when the nearest enclosing function-like node that introduces
-    /// an `arguments` binding is async and non-arrow. Arrow functions are excluded
-    /// because they are handled by a dedicated ES5 arrow diagnostic path.
-    pub(crate) fn is_arguments_in_async_non_arrow_function(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::{
-            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
-        };
-        let mut current = idx;
-        let mut iterations = 0;
-        while current.is_some() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            if let Some(node) = self.ctx.arena.get(current) {
-                match node.kind {
-                    k if k == ARROW_FUNCTION => return false,
-                    k if k == FUNCTION_DECLARATION || k == FUNCTION_EXPRESSION => {
-                        return self
-                            .ctx
-                            .arena
-                            .get_function(node)
-                            .is_some_and(|f| f.is_async);
-                    }
-                    k if k == METHOD_DECLARATION => {
-                        return self
-                            .ctx
-                            .arena
-                            .get_method_decl(node)
-                            .is_some_and(|m| self.has_async_modifier(&m.modifiers));
-                    }
-                    k if k == CONSTRUCTOR || k == GET_ACCESSOR || k == SET_ACCESSOR => {
-                        return false;
                     }
                     _ => {}
                 }

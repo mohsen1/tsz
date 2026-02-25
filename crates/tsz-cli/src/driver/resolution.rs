@@ -87,6 +87,102 @@ pub(crate) fn resolve_type_package_from_roots(
     None
 }
 
+/// Resolve a `/// <reference types="..." />` directive by searching `node_modules/`
+/// directories walking up from the source file. This is the fallback used in
+/// Node16/NodeNext/Bundler module resolution when type roots don't contain the package.
+///
+/// In tsc, `resolveTypeReferenceDirective` uses the regular module resolution algorithm
+/// as a fallback after checking type roots. This means packages in `node_modules/`
+/// (not just `node_modules/@types/`) can be found via triple-slash type references.
+///
+/// The resolution mode is determined by either:
+/// - The explicit `resolution-mode` attribute (if present)
+/// - The source file's module format (CJS → `require`, ESM → `import`)
+pub(crate) fn resolve_type_reference_from_node_modules(
+    name: &str,
+    from_file: &Path,
+    base_dir: &Path,
+    resolution_mode: Option<&str>,
+    options: &ResolvedCompilerOptions,
+) -> Option<PathBuf> {
+    // Determine effective resolution mode from explicit attribute or file format
+    let effective_mode = resolution_mode
+        .map(String::from)
+        .unwrap_or_else(|| implied_resolution_mode_for_file(from_file, base_dir));
+
+    let mut current = from_file.parent().unwrap_or(base_dir);
+
+    loop {
+        let package_root = current.join("node_modules").join(name);
+        if package_root.is_dir() {
+            let resolved =
+                resolve_type_package_entry_with_mode(&package_root, &effective_mode, options);
+            if resolved.is_some() {
+                return resolved;
+            }
+            // Fall back to non-conditional resolution (types/typings/main/index)
+            let resolved = resolve_type_package_entry(&package_root, options);
+            if resolved.is_some() {
+                return resolved;
+            }
+        }
+
+        if current == base_dir {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+
+    None
+}
+
+/// Determine the implied resolution mode ("import" or "require") for a file
+/// based on its extension and nearest `package.json` `type` field.
+///
+/// In Node16/NodeNext:
+/// - `.mts`/`.mjs` files → ESM → "import"
+/// - `.cts`/`.cjs` files → CJS → "require"
+/// - `.ts`/`.tsx`/`.js`/`.jsx` files → depends on nearest `package.json`:
+///   - `"type": "module"` → "import"
+///   - otherwise → "require"
+fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> String {
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    match ext {
+        "mts" | "mjs" => return "import".to_string(),
+        "cts" | "cjs" => return "require".to_string(),
+        _ => {}
+    }
+
+    // Walk up from the file to find the nearest package.json with "type" field
+    let mut current = file.parent().unwrap_or(base_dir);
+    loop {
+        let pkg_json_path = current.join("package.json");
+        if pkg_json_path.is_file()
+            && let Some(pj) = read_package_json(&pkg_json_path)
+        {
+            if pj.package_type.as_deref() == Some("module") {
+                return "import".to_string();
+            }
+            // Found a package.json without "type": "module" → CJS
+            return "require".to_string();
+        }
+        if current == base_dir {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+
+    // Default to require (CJS) when no package.json is found
+    "require".to_string()
+}
+
 /// Public wrapper for `type_package_candidates`.
 pub(crate) fn type_package_candidates_pub(name: &str) -> Vec<String> {
     type_package_candidates(name)
@@ -903,7 +999,21 @@ fn expand_export_path_candidates(
     let base = normalize_path(path);
     let suffixes = &options.module_suffixes;
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
-        return candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+        let mut candidates =
+            candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
+        // In Node16/NodeNext/Bundler, exports map targets like "./foo.js" should also
+        // resolve to "./foo.d.ts", "./foo.ts", etc. (output extension remapping).
+        // This is how tsc resolves declaration files when the exports map only lists JS outputs.
+        if let Some(decl_extensions) = js_to_declaration_extensions(extension) {
+            for decl_ext in decl_extensions {
+                candidates.extend(candidates_with_suffixes_and_extension(
+                    &base_no_ext,
+                    decl_ext,
+                    suffixes,
+                ));
+            }
+        }
+        return candidates;
     }
 
     let extensions = extension_candidates_for_resolution(options, package_type);
@@ -1033,6 +1143,18 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
     ".json",
 ];
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
+
+/// Maps JS output extensions to their TypeScript/declaration equivalents.
+/// Used in exports map resolution to find declaration files when the exports
+/// map only lists JS output paths (e.g., `"./index.js"` → try `index.d.ts`).
+fn js_to_declaration_extensions(js_ext: &str) -> Option<&'static [&'static str]> {
+    match js_ext {
+        "js" | "jsx" => Some(&["ts", "tsx", "d.ts"]),
+        "mjs" => Some(&["mts", "d.mts"]),
+        "cjs" => Some(&["cts", "d.cts"]),
+        _ => None,
+    }
+}
 const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
 const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =

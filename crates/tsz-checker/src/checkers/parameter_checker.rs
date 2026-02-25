@@ -35,25 +35,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // TS1100: 'eval' and 'arguments' invalid in strict mode
-            if ident.escaped_text == "arguments" || ident.escaped_text == "eval" {
-                if use_class_strict_message && self.ctx.enclosing_class.is_some() {
-                    self.error_at_node_msg(
-                        param.name,
-                        crate::diagnostics::diagnostic_codes
-                            ::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                        &[&ident.escaped_text],
-                    );
-                } else {
-                    let code = if self.ctx.enclosing_class.is_some() {
-                        crate::diagnostics::diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
-                    } else {
-                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
-                    };
-                    self.error_at_node_msg(param.name, code, &[&ident.escaped_text]);
-                }
-            }
-
             // TS1212/TS1213/TS1214: Reserved word used as parameter name in strict mode
             if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
                 self.emit_strict_mode_reserved_word_error(

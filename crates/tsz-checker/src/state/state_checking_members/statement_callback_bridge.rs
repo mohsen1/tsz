@@ -66,27 +66,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
-        // TS1100: 'arguments' and 'eval' are invalid in function names in strict contexts.
-        // Skip in ambient contexts (declare namespace/module/global) — tsc does not emit TS1100 there.
+        // TS1212/TS1213/TS1214: Reserved word used as function name in strict mode
+        // Skip in ambient contexts (declare namespace/module/global).
         if self.is_strict_mode_for_node(func_idx)
             && !self.ctx.is_ambient_declaration(func_idx)
             && func.name.is_some()
             && let Some(func_name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
-        {
-            if ident.escaped_text == "arguments" || ident.escaped_text == "eval" {
-                self.error_at_node_msg(
-                    func.name,
-                    crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                    &[&ident.escaped_text],
-                );
-            }
-
-            // TS1212/TS1213/TS1214: Reserved word used as function name in strict mode
-            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+            && crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
                 self.emit_strict_mode_reserved_word_error(func.name, &ident.escaped_text, true);
             }
-        }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if function has 'declare' modifier but also has a body

@@ -370,30 +370,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode
-        // Use class-specific messaging in class bodies.
-        // Skip in ambient contexts (declare namespace/module/global) — tsc does not emit TS1100 there.
-        if self.is_strict_mode_for_node(var_decl.name)
-            && !self.ctx.is_ambient_declaration(decl_idx)
-            && let Some(ref name) = var_name
-            && (name == "arguments" || name == "eval")
-        {
-            use crate::diagnostics::diagnostic_codes;
-            if self.ctx.enclosing_class.is_some() {
-                self.error_at_node_msg(
-                    var_decl.name,
-                    diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                    &[name],
-                );
-            } else {
-                self.error_at_node_msg(
-                    var_decl.name,
-                    diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                    &[name],
-                );
-            }
-        }
-
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
         // TS1039/TS1254: Check initializers in ambient contexts

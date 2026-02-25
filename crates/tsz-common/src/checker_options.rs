@@ -69,7 +69,6 @@ pub struct CheckerOptions {
     /// When true, report errors for unused function parameters (TS6133).
     pub no_unused_parameters: bool,
     /// When true, parse in strict mode and emit "use strict" for each source file.
-    /// Enables TS1100 for invalid use of 'arguments' in strict mode.
     pub always_strict: bool,
     /// When true, allows importing JSON files with `.json` extension.
     /// When false, importing JSON files emits TS2732 suggesting to enable this flag.
