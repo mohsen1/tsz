@@ -54,7 +54,7 @@ pub use classes_domain::{
     class_checker, class_inheritance, constructor_checker, private_checker, super_checker,
 };
 
-pub use declarations_domain::{declarations, import_checker, module_checker, namespace_checker};
+pub use declarations_domain::{declarations, import, module_checker, namespace_checker};
 
 pub use flow_domain::{
     control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_checker,
