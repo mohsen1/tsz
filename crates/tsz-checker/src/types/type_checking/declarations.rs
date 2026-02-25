@@ -1288,6 +1288,10 @@ impl<'a> CheckerState<'a> {
                 let import = self.ctx.arena.get_import_decl(node)?;
                 Some(import.import_clause)
             }
+            syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                let export = self.ctx.arena.get_export_assignment(node)?;
+                Some(export.expression)
+            }
             _ => None,
         }
     }
