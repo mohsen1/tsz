@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T15:30:39Z",
-  "git_sha": "1b9c2228114f43969f41fcf63a267124c9f39e79",
+  "timestamp": "2026-02-25T16:10:05Z",
+  "git_sha": "e476711f040d2339f8497332d33bc54694cefaca",
   "summary": {
     "total_tests": 12565,
-    "passed": 7537,
-    "failed": 5028,
-    "pass_rate": 60.0
+    "passed": 7551,
+    "failed": 5014,
+    "pass_rate": 60.1
   },
   "areas_by_pass_rate": [
     {
@@ -14,13 +14,6 @@
       "passed": 0,
       "failed": 14,
       "pass_rate": 0.0
-    },
-    {
-      "area": "references",
-      "total": 15,
-      "passed": 2,
-      "failed": 13,
-      "pass_rate": 13.33
     },
     {
       "area": "types/rest",
@@ -501,9 +494,9 @@
     {
       "area": "compiler",
       "total": 6468,
-      "passed": 4129,
-      "failed": 2339,
-      "pass_rate": 63.84
+      "passed": 4131,
+      "failed": 2337,
+      "pass_rate": 63.87
     },
     {
       "area": "es6/modules",
@@ -688,6 +681,13 @@
       "pass_rate": 86.67
     },
     {
+      "area": "references",
+      "total": 15,
+      "passed": 14,
+      "failed": 1,
+      "pass_rate": 93.33
+    },
+    {
       "area": "es6/classDeclaration",
       "total": 27,
       "passed": 26,
@@ -746,10 +746,6 @@
       "count": 9
     },
     {
-      "code": "TS2688",
-      "count": 9
-    },
-    {
       "code": "TS2454",
       "count": 8
     },
@@ -795,6 +791,10 @@
     },
     {
       "code": "TS2367",
+      "count": 5
+    },
+    {
+      "code": "TS7053",
       "count": 5
     }
   ],
