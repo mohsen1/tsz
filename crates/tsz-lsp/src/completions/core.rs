@@ -434,10 +434,10 @@ impl<'a> Completions<'a> {
         for _ in 0..3 {
             if let Some(ext) = self.arena.get_extended(current) {
                 current = ext.parent;
-                if let Some(node) = self.arena.get(current) {
-                    if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                        return (node.flags as u32) & node_flags::CONST != 0;
-                    }
+                if let Some(node) = self.arena.get(current)
+                    && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                {
+                    return (node.flags as u32) & node_flags::CONST != 0;
                 }
             } else {
                 break;

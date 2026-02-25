@@ -31,7 +31,12 @@ impl<'a> Completions<'a> {
 
         let node_idx = self.find_completions_node(root, offset);
 
-        // Check if inside a class/interface/object-literal/type-literal/enum body
+        // Check if we're inside a JSX context - most JSX positions return false
+        if self.is_in_jsx_context(node_idx) {
+            return false;
+        }
+
+        // Check if inside a class/interface/object-literal/type-literal body
         // at a member declaration position
         if let Some(node) = self.arena.get(node_idx) {
             let k = node.kind;
@@ -45,7 +50,16 @@ impl<'a> Completions<'a> {
                 return true;
             }
 
-            // Inside class/interface body at member position (after `{` or `;`)
+            // Method declarations in class body - if cursor is after the closing `}`
+            // of a method, it's a new member position
+            if k == syntax_kind_ext::METHOD_DECLARATION {
+                // If the cursor is past the end of this method, we're at member position
+                if offset >= node.end {
+                    return true;
+                }
+            }
+
+            // Inside class/interface body at member position
             if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::INTERFACE_DECLARATION
@@ -53,9 +67,20 @@ impl<'a> Completions<'a> {
                 let text_before = &self.source_text[..offset as usize];
                 let in_decl_text = &text_before[node.pos as usize..];
                 let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
-                if matches!(last_non_ws, Some(b'{') | Some(b';')) {
+                // After `{`, `;`, or `}` (end of method body) in class/interface body
+                if matches!(last_non_ws, Some(b'{') | Some(b';') | Some(b'}')) {
                     return true;
                 }
+            }
+
+            // Inside type literal - new member names are valid
+            if k == syntax_kind_ext::TYPE_LITERAL {
+                return true;
+            }
+
+            // Inside an import clause - namespace import binding (`import * as |`)
+            if k == syntax_kind_ext::NAMESPACE_IMPORT {
+                return true;
             }
 
             // Note: Object literal expression (`OBJECT_LITERAL_EXPRESSION`) is NOT
@@ -64,14 +89,14 @@ impl<'a> Completions<'a> {
             // Since we lack type-checking context, we default to `false` which matches
             // the common case (object literals with known property names).
 
-            // Inside type literal - new member names are valid
-            if k == syntax_kind_ext::TYPE_LITERAL {
-                return true;
-            }
-
             // Note: Enum member positions use CompletionKind.MemberLike in TypeScript,
             // which returns isNewIdentifierLocation = false. So enum body is NOT
             // included here.
+        }
+
+        // Walk up to find enclosing context for member position detection
+        if self.is_in_class_or_interface_member_position(node_idx, offset) {
+            return true;
         }
 
         // Text-based heuristic for the context token
@@ -88,31 +113,37 @@ impl<'a> Completions<'a> {
         let last_word = &trimmed[last_word_start..];
 
         // Keywords after which we are creating a new identifier (name declaration position).
-        // TypeScript's isNewIdentifierLocation only returns true for specific declaration
-        // contexts where the user is expected to type a new name.
-        // Keywords like `const`, `let`, `var`, `return`, `as` return false because
-        // they expect existing identifiers or type names.
         if matches!(
             last_word,
-            "module"
-                | "namespace"
-                | "import"
-                | "function"
-                | "class"
-                | "interface"
-                | "enum"
-                | "type"
+            "module" | "namespace" | "function" | "class" | "interface" | "enum" | "type"
         ) {
             return true;
         }
 
+        // Class member modifiers: after these keywords in class body = true
+        if matches!(
+            last_word,
+            "public"
+                | "private"
+                | "protected"
+                | "static"
+                | "abstract"
+                | "readonly"
+                | "declare"
+                | "async"
+                | "override"
+                | "accessor"
+        ) && self.is_in_class_body_context(node_idx)
+        {
+            return true;
+        }
+
+        // `import` keyword: only true at statement level (not import type expressions)
+        if last_word == "import" {
+            return true;
+        }
+
         // Check the last non-whitespace character for common expression-start operators.
-        // These match TypeScript's isNewIdentifierDefinitionLocation logic for tokens
-        // that indicate the user may type a new expression (variable initializer,
-        // function argument, array element, etc.).
-        // NOTE: `{` is NOT included here because it requires AST context to distinguish
-        // block statements (false) from object literals/class bodies (true).
-        // The AST-based checks above handle `{` in the right contexts.
         let last_char = trimmed.as_bytes().last().copied();
         match last_char {
             // After `=` in variable declarations and property assignments,
@@ -128,10 +159,28 @@ impl<'a> Completions<'a> {
                     return true;
                 }
             }
-            // After these characters, a new identifier/expression may start.
-            // `{` is intentionally excluded - handled by AST checks above.
-            Some(b'(') | Some(b',') | Some(b'[') | Some(b'<') | Some(b'?') | Some(b'|')
-            | Some(b'&') | Some(b'!') => return true,
+            // After `(`, `,` (parameter/argument list), `?` (ternary),
+            // `|`, `&` (union/intersection), `!` (non-null/negation)
+            Some(b'(') | Some(b',') | Some(b'?') | Some(b'|') | Some(b'&') | Some(b'!') => {
+                return true;
+            }
+            // After `[` - only in specific contexts (array literal, binding pattern)
+            // NOT in element access expressions
+            Some(b'[') => {
+                // Check if this is a computed property access (obj[|]) - should be false
+                // vs array literal [|] or binding pattern - should be true
+                if !self.is_element_access_context(trimmed) {
+                    return true;
+                }
+            }
+            // After `<` - only for type parameter lists, NOT for JSX or comparison
+            // Type parameter: `<T, |` or `func<|`
+            Some(b'<') => {
+                // Check if this looks like a type parameter list
+                if self.is_type_parameter_context(trimmed) {
+                    return true;
+                }
+            }
             _ => {}
         }
 
@@ -169,7 +218,6 @@ impl<'a> Completions<'a> {
                     | "of"
                     | "extends"
                     | "implements"
-                    | "import"
                     | "export"
                     | "from"
                     | "this"
@@ -181,6 +229,10 @@ impl<'a> Completions<'a> {
                     | "instanceof"
             ) {
                 return false;
+            }
+            // `import` prefix is handled above; don't match partial identifiers like "importSomething"
+            if current_word == "import" {
+                return true;
             }
             let mut prev_sig_idx = idx;
             while prev_sig_idx > 0 && bytes[prev_sig_idx - 1].is_ascii_whitespace() {
@@ -194,14 +246,146 @@ impl<'a> Completions<'a> {
             if prev_sig == '.' {
                 return false;
             }
-            // `{` is intentionally excluded - handled by AST checks above.
+            // Check if we're in a class/interface member position with a partial identifier
+            if self.is_in_class_or_interface_member_position(node_idx, offset) {
+                return true;
+            }
             return matches!(
                 prev_sig,
-                '=' | '(' | ',' | '[' | '<' | '?' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
+                '=' | '(' | ',' | '?' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
             );
         }
 
         false
+    }
+
+    /// Check if the current node is inside a JSX element/attribute context
+    fn is_in_jsx_context(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        for _ in 0..10 {
+            if let Some(node) = self.arena.get(current) {
+                let k = node.kind;
+                if k == syntax_kind_ext::JSX_ELEMENT
+                    || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || k == syntax_kind_ext::JSX_OPENING_ELEMENT
+                    || k == syntax_kind_ext::JSX_ATTRIBUTES
+                    || k == syntax_kind_ext::JSX_ATTRIBUTE
+                    || k == syntax_kind_ext::JSX_FRAGMENT
+                {
+                    return true;
+                }
+                // Stop at function/class/source file boundaries
+                if k == syntax_kind_ext::SOURCE_FILE
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if we're at a member position inside a class or interface body
+    /// by walking ancestors to find the containing class/interface
+    fn is_in_class_or_interface_member_position(&self, node_idx: NodeIndex, offset: u32) -> bool {
+        let mut current = node_idx;
+        for _ in 0..15 {
+            if let Some(node) = self.arena.get(current) {
+                let k = node.kind;
+                // Found a class/interface ancestor - check if cursor is in member position
+                if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                {
+                    let text_before = &self.source_text[..offset as usize];
+                    let in_decl_text = &text_before[node.pos as usize..];
+                    let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
+                    // After `{`, `;`, `}`, or `)` in class/interface body - member position
+                    return matches!(
+                        last_non_ws,
+                        Some(b'{') | Some(b';') | Some(b'}') | Some(b')')
+                    );
+                }
+                // Stop at function boundaries - we're inside a function body, not member position
+                if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::SOURCE_FILE
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if we're inside a class body (not inside a method body within it)
+    fn is_in_class_body_context(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        for _ in 0..15 {
+            if let Some(node) = self.arena.get(current) {
+                let k = node.kind;
+                if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return true;
+                }
+                if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::SOURCE_FILE
+                {
+                    return false;
+                }
+            }
+            if let Some(ext) = self.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Check if `[` at end of text is an element access (obj[|]) rather than array literal
+    fn is_element_access_context(&self, trimmed: &str) -> bool {
+        // If the character before `[` is an identifier char, closing paren, or closing bracket,
+        // it's likely element access: `obj[`, `arr[0][`, `fn()[`
+        let before = &trimmed[..trimmed.len() - 1];
+        let before_trimmed = before.trim_end();
+        if let Some(last) = before_trimmed.as_bytes().last() {
+            matches!(
+                last,
+                b'a'..=b'z'
+                    | b'A'..=b'Z'
+                    | b'0'..=b'9'
+                    | b'_'
+                    | b'$'
+                    | b')'
+                    | b']'
+            )
+        } else {
+            false
+        }
+    }
+
+    /// Check if `<` at end of text is a type parameter context
+    const fn is_type_parameter_context(&self, _trimmed: &str) -> bool {
+        // Conservatively return true - type parameter is the more common case
+        // for `<` in TypeScript than less-than comparison in completion context.
+        // JSX is handled separately by the JSX context check.
+        true
     }
 
     pub(super) fn get_symbol_detail(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
