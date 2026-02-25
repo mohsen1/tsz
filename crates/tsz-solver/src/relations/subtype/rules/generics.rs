@@ -12,8 +12,9 @@ use crate::def::DefId;
 use crate::types::{MappedModifier, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
-    mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
+    application_id, index_access_parts, is_empty_object_type, keyof_inner_type, lazy_def_id,
+    literal_value, mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info,
+    union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -597,10 +598,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // assignable to T. In tsc 6.0, homomorphic mapped types are
                 // bidirectionally assignable to their source type parameter.
                 if self.check_homomorphic_mapped_to_target(mapped_id, target) {
-                    SubtypeResult::True
-                } else {
-                    SubtypeResult::False
+                    return SubtypeResult::True;
                 }
+
+                // Generic mapped type to index signature target:
+                // A generic mapped type like Partial<T> has an implicit string index
+                // signature derived from its template type. If the target has a string
+                // index signature and the template is assignable to the element type,
+                // the mapped type is assignable.
+                if self.check_generic_mapped_to_index_target(mapped_id, target) {
+                    return SubtypeResult::True;
+                }
+
+                SubtypeResult::False
             }
         }
     }
@@ -667,6 +677,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         false
     }
 
+    /// Check if a generic mapped type (source) is assignable to a target with
+    /// a string index signature.
+    ///
+    /// A generic mapped type like `Partial<T>` or `Readonly<T>` has an implicit
+    /// string index signature derived from its template. When the target is
+    /// `{ [x: string]: E }`, we check if the template type is assignable to E.
+    fn check_generic_mapped_to_index_target(
+        &mut self,
+        mapped_id: MappedTypeId,
+        target: TypeId,
+    ) -> bool {
+        // Target must have a string index signature
+        let t_shape_id = object_with_index_shape_id(self.interner, target)
+            .or_else(|| object_shape_id(self.interner, target));
+        let Some(t_shape_id) = t_shape_id else {
+            return false;
+        };
+        let t_shape = self.interner.object_shape(t_shape_id);
+        let Some(ref string_index) = t_shape.string_index else {
+            return false;
+        };
+        let index_value_type = string_index.value_type;
+
+        // Target must not have required named properties that the mapped type can't satisfy
+        if t_shape.properties.iter().any(|p| !p.optional) {
+            return false;
+        }
+
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // The mapped type's template produces the value type for each property.
+        // Check if the template is assignable to the index value type.
+        // For Partial<T> with template T[P], T[P] <: any is always true.
+        self.check_subtype(mapped.template, index_value_type)
+            .is_true()
+    }
+
     /// Check source to Mapped expansion (one-sided Mapped case).
     ///
     /// When the target is a Mapped type, first try expansion. If expansion fails
@@ -682,6 +729,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         match self.try_expand_mapped(mapped_id) {
             Some(expanded) => self.check_subtype(source, expanded),
             None => {
+                // tsc: an empty object {} is assignable to any mapped type that adds
+                // the optional modifier (+?), like Partial<T>. All properties are optional,
+                // so an empty object trivially satisfies all constraints.
+                {
+                    let mapped = self.interner.mapped_type(mapped_id);
+                    if mapped.optional_modifier == Some(MappedModifier::Add)
+                        && is_empty_object_type(self.interner, source)
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+
                 if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
                     let result = self.check_subtype(source, expanded);
                     if result.is_true() {
