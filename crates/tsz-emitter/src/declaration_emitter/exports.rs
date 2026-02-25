@@ -72,7 +72,7 @@ impl<'a> DeclarationEmitter<'a> {
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
                     let prev_public_api_scope_depth = self.public_api_scope_depth;
                     self.public_api_scope_depth += 1;
-                    self.emit_module_declaration(export.export_clause);
+                    self.emit_module_declaration_with_export(export.export_clause, true);
                     self.public_api_scope_depth = prev_public_api_scope_depth;
                     return;
                 }
@@ -100,7 +100,10 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(clause_node) = self.arena.get(export.export_clause) {
                 if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
                     self.emit_named_exports(export.export_clause, !export.is_type_only);
-                } else if clause_node.kind == SyntaxKind::Identifier as u16 {
+                } else if clause_node.kind == SyntaxKind::Identifier as u16
+                    || clause_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    // export * as <name> from "mod" or export * as "<string>" from "mod"
                     self.emit_namespace_export_clause(export.export_clause);
                 } else {
                     self.emit_node(export.export_clause);
@@ -155,6 +158,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_node(assign.expression);
                 self.write(";");
                 self.write_line();
+            } else if expr_node.kind == SyntaxKind::Identifier as u16 {
+                // export default <identifier> — emit directly
+                self.write("export default ");
+                self.emit_node(assign.expression);
+                self.write(";");
+                self.write_line();
             } else {
                 // Value expression - synthesize _default variable
                 // First, emit the synthesized variable with inferred type
@@ -201,9 +210,23 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&func.parameters);
         self.write(")");
 
+        let func_body = func.body;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
+            // No explicit return type, try to infer it
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
+                && let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, *func_type_id)
+            {
+                self.write(": ");
+                self.write(&self.print_type_id(return_type_id));
+            } else if func_body.is_some() && self.body_returns_void(func_body) {
+                self.write(": void");
+            }
+        } else if func_body.is_some() && self.body_returns_void(func_body) {
+            self.write(": void");
         }
 
         self.write(";");
@@ -227,8 +250,18 @@ impl<'a> DeclarationEmitter<'a> {
         if is_abstract {
             self.write("abstract ");
         }
-        self.write("class ");
-        self.emit_node(class.name);
+        // Only add space after "class" if there's a name to emit
+        if class.name.is_some()
+            && self
+                .arena
+                .get(class.name)
+                .is_some_and(|n| n.kind != SyntaxKind::Unknown as u16)
+        {
+            self.write("class ");
+            self.emit_node(class.name);
+        } else {
+            self.write("class");
+        }
 
         if let Some(ref type_params) = class.type_parameters
             && !type_params.nodes.is_empty()
@@ -243,6 +276,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
+
+        // Emit `#private;` if any member has a private identifier name
+        if self.class_has_private_identifier_member(&class.members) {
+            self.write_indent();
+            self.write("#private;");
+            self.write_line();
+        }
 
         for &member_idx in &class.members.nodes {
             self.emit_class_member(member_idx);
@@ -476,6 +516,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&func.parameters);
         self.write(")");
 
+        let func_body = func.body;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -487,7 +528,11 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
+            } else if func_body.is_some() && self.body_returns_void(func_body) {
+                self.write(": void");
             }
+        } else if func_body.is_some() && self.body_returns_void(func_body) {
+            self.write(": void");
         }
 
         self.write(";");
@@ -529,9 +574,16 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
+        }
+        if is_const {
+            self.write("const ");
         }
         self.write("enum ");
         self.emit_node(enum_data.name);
@@ -550,13 +602,20 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // Always emit the evaluated value to match TypeScript behavior
-                self.write(" = ");
                 let member_name = self.get_enum_member_name(member.name);
                 if let Some(value) = member_values.get(&member_name) {
-                    self.emit_enum_value(value);
+                    match value {
+                        crate::enums::evaluator::EnumValue::Computed => {
+                            // Computed values: no initializer in .d.ts
+                        }
+                        _ => {
+                            self.write(" = ");
+                            self.emit_enum_value(value);
+                        }
+                    }
                 } else {
                     // Fallback to index if evaluation failed
+                    self.write(" = ");
                     self.write(&i.to_string());
                 }
             }
@@ -629,22 +688,44 @@ impl<'a> DeclarationEmitter<'a> {
                     "var"
                 };
 
+                // Separate destructuring from regular declarations
+                let mut regular_decls = Vec::new();
                 for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        let name_node = self.arena.get(decl.name);
+                        let is_destructuring = name_node.is_some_and(|n| {
+                            n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        });
+
+                        if is_destructuring {
+                            self.emit_flattened_variable_declaration(decl.name, keyword, true);
+                        } else {
+                            regular_decls.push((decl_idx, decl));
+                        }
+                    }
+                }
+
+                // Emit all regular declarations together on one line
+                if !regular_decls.is_empty() {
                     self.write_indent();
-                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
                     if !self.inside_declare_namespace {
                         self.write("export declare ");
                     }
                     self.write(keyword);
                     self.write(" ");
 
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
+                    for (i, (decl_idx, decl)) in regular_decls.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+
                         self.emit_node(decl.name);
                         self.emit_variable_decl_type_or_initializer(
                             keyword,
-                            decl_idx,
+                            *decl_idx,
                             decl.name,
                             decl.type_annotation,
                             decl.initializer,
@@ -810,6 +891,14 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_module_declaration(&mut self, module_idx: NodeIndex) {
+        self.emit_module_declaration_with_export(module_idx, false);
+    }
+
+    fn emit_module_declaration_with_export(
+        &mut self,
+        module_idx: NodeIndex,
+        already_exported: bool,
+    ) {
         let Some(module_node) = self.arena.get(module_idx) else {
             return;
         };
@@ -817,15 +906,15 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self
-            .arena
-            .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
+        let is_exported = already_exported
+            || self
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_module(is_exported) {
             return;
         }
 
         self.write_indent();
-        // Don't emit 'export' or 'declare' inside a declare namespace
         if !self.inside_declare_namespace {
             if is_exported {
                 self.write("export ");
@@ -1042,6 +1131,20 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_type_parameter(param_node)
             {
+                // Emit variance/const modifiers (in, out, const)
+                if let Some(ref mods) = param.modifiers {
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.arena.get(mod_idx) {
+                            match mod_node.kind {
+                                k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
+                                k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
+                                k if k == SyntaxKind::ConstKeyword as u16 => self.write("const "),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
                 self.emit_node(param.name);
 
                 if param.constraint.is_some() {

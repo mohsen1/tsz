@@ -44,6 +44,21 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => {
                 self.write("false");
             }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(expr_node) {
+                    self.write(&lit.text);
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(expr_node) {
+                    if unary.operator == SyntaxKind::MinusToken as u16 {
+                        self.write("-");
+                    } else if unary.operator == SyntaxKind::PlusToken as u16 {
+                        self.write("+");
+                    }
+                    self.emit_expression(unary.operand);
+                }
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 // Array literal in default parameter: emit as []
                 self.write("[]");
@@ -262,7 +277,52 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
 
-        has_module_syntax && !self.has_public_api_value_exports(source_file)
+        has_module_syntax
+            && !self.has_public_api_value_exports(source_file)
+            && !self.has_public_api_type_exports(source_file)
+    }
+
+    /// Return true if the emitted output will contain exported type declarations
+    /// (type aliases, interfaces) that preserve module-ness without needing `export {}`.
+    fn has_public_api_type_exports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
+                        && self
+                            .arena
+                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = self.arena.get_interface(stmt_node)
+                        && self
+                            .arena
+                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    // Check for `export type { ... }` or `export type * from ...`
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        if export.is_type_only {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Return true if exported declarations include runtime/value-side exports.
@@ -1267,8 +1327,12 @@ impl<'a> DeclarationEmitter<'a> {
                     let k = init_node.kind;
                     k == SyntaxKind::StringLiteral as u16
                         || k == SyntaxKind::NumericLiteral as u16
+                        || k == SyntaxKind::BigIntLiteral as u16
                         || k == SyntaxKind::TrueKeyword as u16
                         || k == SyntaxKind::FalseKeyword as u16
+                        // Handle negative numeric/bigint literals: PrefixUnaryExpression(-X)
+                        || (k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                            && self.is_negative_literal(init_node))
                 } else {
                     false
                 }
@@ -1307,6 +1371,9 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
                 self.write(": ");
                 self.write(&type_text);
+            } else if keyword != "const" {
+                // For var/let without type info, default to `: any` to match tsc
+                self.write(": any");
             }
         }
     }
