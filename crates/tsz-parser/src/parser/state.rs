@@ -1419,7 +1419,7 @@ impl ParserState {
     pub(crate) fn error_declaration_expected(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token(
-            "Declaration expected",
+            "Declaration expected.",
             diagnostic_codes::DECLARATION_EXPECTED,
         );
     }
@@ -1428,7 +1428,7 @@ impl ParserState {
     pub(crate) fn error_statement_expected(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
         self.parse_error_at_current_token(
-            "Statement expected",
+            "Statement expected.",
             diagnostic_codes::STATEMENT_EXPECTED,
         );
     }

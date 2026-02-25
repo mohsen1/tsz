@@ -1127,7 +1127,7 @@ impl ParserState {
                 self.parse_error_at(
                     decl_pos,
                     1,
-                    "Declaration expected",
+                    "Declaration expected.",
                     diagnostic_codes::DECLARATION_EXPECTED,
                 );
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
