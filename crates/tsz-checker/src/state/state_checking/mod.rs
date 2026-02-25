@@ -1,5 +1,11 @@
 //! Declaration and statement checking, including `StatementCheckCallbacks`.
 
+pub(crate) mod class;
+pub(crate) mod directive;
+pub(crate) mod heritage;
+pub(crate) mod property;
+pub(crate) mod readonly;
+
 use crate::context::is_declaration_file_name;
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;

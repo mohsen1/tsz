@@ -657,16 +657,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_type_resolution relation precondition setup should route through ensure_relation_input_ready"
     );
 
-    let mut state_checking_src = fs::read_to_string("src/state/state_checking.rs")
-        .expect("failed to read src/state/state_checking.rs for architecture guard");
+    let mut state_checking_src = fs::read_to_string("src/state/state_checking/mod.rs")
+        .expect("failed to read src/state/state_checking/mod.rs for architecture guard");
     // Include split-off modules that are part of the state_checking logical module
     state_checking_src.push_str(
         &fs::read_to_string("src/state/variable_checking/core.rs")
             .expect("failed to read src/state/variable_checking/core.rs for architecture guard"),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state/state_property_checking.rs")
-            .expect("failed to read src/state/state_property_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_checking/property.rs")
+            .expect("failed to read src/state/state_checking/property.rs for architecture guard"),
     );
     state_checking_src.push_str(
         &fs::read_to_string("src/state/variable_checking/destructuring.rs").expect(
@@ -674,8 +674,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         ),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state/state_class_checking.rs")
-            .expect("failed to read src/state/state_class_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_checking/class.rs")
+            .expect("failed to read src/state/state_checking/class.rs for architecture guard"),
     );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
@@ -694,8 +694,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !state_checking_src.contains("ensure_application_symbols_resolved("),
         "state_checking should not manually orchestrate application-symbol preconditions"
     );
-    let state_property_checking_src = fs::read_to_string("src/state/state_property_checking.rs")
-        .expect("failed to read src/state/state_property_checking.rs for architecture guard");
+    let state_property_checking_src = fs::read_to_string("src/state/state_checking/property.rs")
+        .expect("failed to read src/state/state_checking/property.rs for architecture guard");
     assert!(
         !state_property_checking_src.contains("self.ctx.types.is_subtype_of("),
         "state_property_checking subtype checks should route through checker gateway helpers, not direct interner calls"
@@ -710,10 +710,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     .expect("failed to read src/state/variable_checking/destructuring.rs for architecture guard");
     let state_variable_checking_src = fs::read_to_string("src/state/variable_checking/core.rs")
         .expect("failed to read src/state/variable_checking/core.rs for architecture guard");
-    let state_class_checking_src = fs::read_to_string("src/state/state_class_checking.rs")
-        .expect("failed to read src/state/state_class_checking.rs for architecture guard");
-    let state_heritage_checking_src = fs::read_to_string("src/state/state_heritage_checking.rs")
-        .expect("failed to read src/state/state_heritage_checking.rs for architecture guard");
+    let state_class_checking_src = fs::read_to_string("src/state/state_checking/class.rs")
+        .expect("failed to read src/state/state_checking/class.rs for architecture guard");
+    let state_heritage_checking_src = fs::read_to_string("src/state/state_checking/heritage.rs")
+        .expect("failed to read src/state/state_checking/heritage.rs for architecture guard");
     let property_access_type_src = fs::read_to_string("src/types/property_access_type.rs")
         .expect("failed to read src/types/property_access_type.rs for architecture guard");
     let property_checker_src = fs::read_to_string("src/checkers/property_checker.rs")
