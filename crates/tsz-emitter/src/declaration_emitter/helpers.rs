@@ -1446,8 +1446,10 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
                 self.write(": ");
                 self.write(&type_text);
-            } else if keyword != "const" {
-                // For var/let without type info, default to `: any` to match tsc
+            } else if has_initializer || keyword != "const" {
+                // tsc always emits a type annotation in .d.ts output.
+                // For var/let without type info, and for const with an
+                // initializer but no resolved type, default to `: any`.
                 self.write(": any");
             }
         }
