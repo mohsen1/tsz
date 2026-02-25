@@ -1942,5 +1942,5 @@ pub(crate) fn env_flag(name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "driver_resolution_tests.rs"]
-mod tests;
+#[path = "resolution_tests.rs"]
+mod resolution_tests;

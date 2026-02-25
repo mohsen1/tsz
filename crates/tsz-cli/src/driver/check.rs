@@ -1,6 +1,6 @@
 //! Diagnostics collection and per-file checking orchestration for the compilation driver.
 
-use super::driver_check_utils::*;
+use super::check_utils::*;
 use super::*;
 
 /// Load lib.d.ts files and create `LibContext` objects for the checker.

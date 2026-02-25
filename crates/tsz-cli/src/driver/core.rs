@@ -29,9 +29,9 @@ use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::ModuleKind;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
-use crate::driver_emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
-pub(crate) use crate::driver_emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
-use crate::driver_resolution::{
+use super::emit::{EmitOutputsContext, emit_outputs, normalize_type_roots, write_outputs};
+pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize_root_dir};
+use super::resolution::{
     ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers, collect_module_specifiers_from_text,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots, env_flag,
@@ -1531,24 +1531,24 @@ fn hash_text(text: &str) -> u64 {
     hasher.finish()
 }
 
-#[path = "driver_sources.rs"]
-mod driver_sources;
+#[path = "sources.rs"]
+mod sources;
 #[cfg(test)]
-pub(crate) use driver_sources::has_no_types_and_symbols_directive;
-pub use driver_sources::{FileReadResult, read_source_file};
-use driver_sources::{
+pub(crate) use sources::has_no_types_and_symbols_directive;
+pub use sources::{FileReadResult, read_source_file};
+use sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
-pub(crate) use driver_sources::{
+pub(crate) use sources::{
     config_base_dir, load_config, load_config_with_diagnostics, resolve_tsconfig_path,
 };
 
-#[path = "driver_check.rs"]
-mod driver_check;
-#[path = "driver_check_utils.rs"]
-mod driver_check_utils;
-use driver_check::{collect_diagnostics, load_lib_files_for_contexts};
+#[path = "check.rs"]
+mod check;
+#[path = "check_utils.rs"]
+mod check_utils;
+use check::{collect_diagnostics, load_lib_files_for_contexts};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
     if let Some(target) = args.target {
@@ -1790,5 +1790,5 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
 }
 
 #[cfg(test)]
-#[path = "driver_tests.rs"]
+#[path = "tests.rs"]
 mod tests;
