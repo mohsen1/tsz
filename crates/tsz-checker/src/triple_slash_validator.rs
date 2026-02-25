@@ -10,9 +10,34 @@ use std::path::Path;
 /// `quote_offset` is the byte offset of the value start (after the opening quote) within the original (untrimmed) line.
 pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
     let mut references = Vec::new();
+    let mut in_block_comment = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
+
+        // Track block comment state: skip lines inside /* ... */ comments.
+        if in_block_comment {
+            if let Some(end_idx) = trimmed.find("*/") {
+                // Block comment ends on this line; check the remainder
+                let remainder = trimmed[end_idx + 2..].trim();
+                in_block_comment = false;
+                // If the remainder starts with ///, it could be a directive,
+                // but that's extremely unusual; skip for simplicity.
+                if remainder.is_empty() || !remainder.starts_with("///") {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        }
+
+        // Check for block comment start on this line (before any directive)
+        if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
 
         // Check if line starts with ///
         if !trimmed.starts_with("///") {
@@ -39,9 +64,24 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
 /// `resolution_mode` is `Some("import")` or `Some("require")` if specified.
 pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usize)> {
     let mut references = Vec::new();
+    let mut in_block_comment = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
+
+        // Track block comment state
+        if in_block_comment {
+            if trimmed.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
 
         if !trimmed.starts_with("///") {
             continue;
@@ -66,9 +106,24 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
 /// Used to detect multiple AMD module name assignments (TS2458).
 pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
     let mut amd_modules = Vec::new();
+    let mut in_block_comment = false;
 
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
+
+        // Track block comment state
+        if in_block_comment {
+            if trimmed.contains("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("/*") {
+            if !trimmed.contains("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
 
         // Check if line starts with ///
         if !trimmed.starts_with("///") {
