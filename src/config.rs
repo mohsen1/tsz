@@ -670,9 +670,10 @@ pub fn resolve_compiler_options(
         }
     }
 
-    // tsc 6.0: strict-family options default to true when not explicitly set.
-    // CheckerOptions::default() already reflects this (strict=true, all sub-flags=true).
-    // No override needed — the defaults propagate from CheckerOptions::default().
+    // tsc 6.0 defaults: strict-family options are true when not explicitly set.
+    // The tsc cache was generated with tsc 6.0-dev which has strict=true as its
+    // effective default. CheckerOptions::default() already reflects this
+    // (strict=true, all sub-flags=true). No override needed here.
 
     // Individual strict-family options (override strict if set explicitly)
     if let Some(v) = options.no_implicit_any {
@@ -3895,8 +3896,9 @@ mod tests {
 
     #[test]
     fn test_strict_family_defaults_true_when_strict_not_set() {
-        // tsc 6.0: strict-family options default to true when not explicitly set.
-        // When a tsconfig has no `strict` option, all strict sub-flags should be true.
+        // tsc 6.0 defaults: strict-family options are true when not explicitly set.
+        // The tsc cache was generated with tsc 6.0-dev which has strict=true as its
+        // effective default. CheckerOptions::default() reflects this.
         let json = r#"{"compilerOptions":{"target":"es2015"}}"#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
