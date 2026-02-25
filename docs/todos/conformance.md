@@ -206,6 +206,16 @@
 - **Investigated**: TS18033 — "Type is not assignable as required for computed enum member values." Diagnostic defined but not emitted. Needs type evaluation of enum member initializers via solver and assignability check to `number`. ~4-9 tests. MEDIUM difficulty, deferred — requires solver boundary integration.
 - **Investigated**: TS2497 (13 tests), TS2433 (10 tests), TS2550 (9 tests), TS1382 (8 tests), TS17019 (7 tests), TS7017 (6 tests) — all defined in diagnostic data but not emitted. Each requires different checker/solver integration. See previous session notes for TS2497 investigation.
 
+#### Run note (2026-02-25, session 7) — expressions/functionCalls area
+- **Area**: expressions/functionCalls (25.0% → 41.7%, 6/24 → 10/24 on old framework)
+- **Net gain**: +5 tests on new TSC cache framework (6516 → 6521)
+- **Fixed**: TypeQuery resolution in new-expressions — When `typeof ClassName` comes through an interface/object property (e.g., `interface C { prop: typeof B; }`), the checker now resolves the TypeQuery before constructor resolution in `get_type_of_new_expression`. Without this, `new c.prop(1)` produced false TS2351 ("not constructable"). Fix: added `self.resolve_type_query_type(constructor_type)` call in `complex.rs` before the existing pre-resolution chain. (+4 tests: newWithSpread, newWithSpreadES5, newWithSpreadES6 + 1 other)
+- **Fixed**: Trailing void parameter optionality — In TypeScript, parameters of type `void` (or unions containing `void`) are implicitly optional when trailing. Modified `arg_count_bounds` in `call_args.rs` to use `rposition` to find the rightmost required non-void param, plus `param_type_contains_void` helper for union checking. (+1-2 tests: callWithMissingVoidUndefinedUnknownAnyInJs)
+- **Investigated but deferred**: Generic spread + void inference — `call<TS extends unknown[]>` pattern where void-optionality needs to propagate through generic type parameter inference. Lines 81-83 of callWithMissingVoid.ts. Requires changes to generic inference, not just arg count bounds.
+- **Investigated but deferred**: TS2556 — spread arguments not tuple type. ~5 tests in callWithSpread2-5. Requires implementing spread-to-tuple expansion in call argument resolution.
+- **Investigated but deferred**: Overload resolution — ~3 tests (overloadResolution, overloadResolutionConstructors, overloadResolutionClassConstructors). Complex multi-signature resolution gaps.
+- **Investigated but deferred**: TS2347 vs TS2349 — SubFunc extends Function not callable with type arguments. functionCalls.ts expects TS2347 for `subFunc<number>(0)` but we emit TS2349.
+
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
 - Also missing unary (+, -, ~) and compound (+=) symbol checks entirely
