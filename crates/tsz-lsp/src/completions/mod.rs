@@ -866,5 +866,5 @@ impl<'a> Completions<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/completions_tests.rs"]
+#[path = "../../tests/completions_tests.rs"]
 mod completions_tests;
