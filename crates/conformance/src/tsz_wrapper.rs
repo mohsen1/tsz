@@ -1017,7 +1017,7 @@ fn strip_directive_comments(content: &str) -> String {
     content
         .lines()
         .filter(|line| {
-            let trimmed = line.trim();
+            let trimmed = line.trim().trim_start_matches('\u{feff}');
             // Keep lines that are not @ directives
             // Directives start with // @key: value
             !(trimmed.starts_with("//") && trimmed.contains("@") && trimmed.contains(":"))

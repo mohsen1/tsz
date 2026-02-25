@@ -800,7 +800,10 @@ impl ParserState {
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
             SyntaxKind::UsingKeyword => {
-                // tsc does not emit TS1206 for decorators on using declarations
+                // tsc does NOT emit TS1206 for `@dec using ...`; it relies on
+                // the variable-declaration parser to emit TS1134 when the syntax
+                // after `using` is invalid (e.g., `using 1`).  When the syntax IS
+                // valid (`using x`), no error is reported at all.
                 self.parse_variable_statement_with_modifiers(Some(start_pos), decorators)
             }
             SyntaxKind::ImportKeyword => {
