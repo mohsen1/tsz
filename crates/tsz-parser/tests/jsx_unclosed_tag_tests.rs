@@ -131,3 +131,46 @@ fn test_jsx_nested_wrong_closer_no_parent_match() {
         "Expected TS17008 for unclosed outer div, got: {errors:?}"
     );
 }
+
+// TS1382: bare `>` in JSX text
+#[test]
+fn test_jsx_bare_greater_than_emits_ts1382() {
+    let codes = get_parser_error_codes("let x = <div>></div>;", "test.tsx");
+    assert!(
+        codes.contains(&1382),
+        "Expected TS1382 for bare '>' in JSX text, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_bare_greater_than_after_expression_emits_ts1382() {
+    let codes = get_parser_error_codes("let x = <div>{\"foo\"}></div>;", "test.tsx");
+    assert!(
+        codes.contains(&1382),
+        "Expected TS1382 for bare '>' after expression, got codes: {codes:?}"
+    );
+}
+
+// TS1381: bare `}` in JSX text
+#[test]
+fn test_jsx_bare_close_brace_emits_ts1381() {
+    let codes = get_parser_error_codes("let x = <div>}</div>;", "test.tsx");
+    assert!(
+        codes.contains(&1381),
+        "Expected TS1381 for bare '}}' in JSX text, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_no_ts1382_without_bare_greater_than() {
+    // Normal JSX text without bare > should not emit TS1382
+    let codes = get_parser_error_codes("let x = <div>hello</div>;", "test.tsx");
+    assert!(
+        !codes.contains(&1382),
+        "Should not emit TS1382 for normal JSX text, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1381),
+        "Should not emit TS1381 for normal JSX text, got codes: {codes:?}"
+    );
+}

@@ -8,6 +8,7 @@
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_common::interner::{Atom, Interner};
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -2091,6 +2092,26 @@ impl ScannerState {
             // Stop on JSX special characters
             if c == CharacterCodes::OPEN_BRACE || c == CharacterCodes::LESS_THAN {
                 break;
+            }
+
+            // TS1382: bare `>` in JSX text
+            if c == CharacterCodes::GREATER_THAN {
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: self.pos,
+                    length: 1,
+                    message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                    code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                });
+            }
+
+            // TS1381: bare `}` in JSX text
+            if c == CharacterCodes::CLOSE_BRACE {
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: self.pos,
+                    length: 1,
+                    message: diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
+                    code: diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_RBRACE,
+                });
             }
 
             // Handle newlines in JSX text

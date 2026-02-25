@@ -32,7 +32,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 if file.file_name.ends_with(".d.ts") {
                     continue;
                 }
-                let helpers = required_helpers(file);
+                let helpers = required_helpers(file, options.checker.target);
                 if let Some((_helper_name, start, length)) = helpers.first() {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
@@ -60,7 +60,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                     continue;
                 }
 
-                for (helper_name, start, length) in required_helpers(file) {
+                for (helper_name, start, length) in required_helpers(file, options.checker.target) {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
                         start,
@@ -78,11 +78,17 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
     result
 }
 
-pub(super) fn required_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)> {
+pub(super) fn required_helpers(
+    file: &BoundFile,
+    target: tsz_common::ScriptTarget,
+) -> Vec<(&'static str, u32, u32)> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
     let mut first_decorator: Option<(u32, u32)> = None;
     let mut first_private_id: Option<(u32, u32)> = None;
+
+    // At ES2015+, class syntax is native — no __extends helper needed.
+    let needs_extends_helper = !target.supports_es2015();
 
     for node_idx_raw in 0..file.arena.len() {
         let node_idx = NodeIndex(node_idx_raw as u32);
@@ -98,7 +104,8 @@ pub(super) fn required_helpers(file: &BoundFile) -> Vec<(&'static str, u32, u32)
             first_decorator = Some((node.pos, node.end.saturating_sub(node.pos)));
         }
 
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+        if needs_extends_helper
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_data) = file.arena.get_class(node)
             && class_data.heritage_clauses.is_some()
             && first_decorator.is_none()
@@ -971,10 +978,14 @@ mod tests {
         program.files.into_iter().next().unwrap()
     }
 
-    /// Extract helper names from `required_helpers`.
+    /// Extract helper names from `required_helpers` (at ES5 target by default).
     fn helper_names(source: &str) -> Vec<&'static str> {
+        helper_names_at(source, tsz_common::ScriptTarget::ES5)
+    }
+
+    fn helper_names_at(source: &str, target: tsz_common::ScriptTarget) -> Vec<&'static str> {
         let file = bound_file(source);
-        required_helpers(&file)
+        required_helpers(&file, target)
             .into_iter()
             .map(|(name, _, _)| name)
             .collect()
@@ -1026,5 +1037,18 @@ mod tests {
     fn class_with_extends_emits_extends_helper() {
         let helpers = helper_names("class Base {} class Derived extends Base {}");
         assert_eq!(helpers, vec!["__extends"]);
+    }
+
+    #[test]
+    fn class_with_extends_no_helper_at_es2015() {
+        // At ES2015+, class syntax is native — __extends is not needed
+        let helpers = helper_names_at(
+            "class Base {} class Derived extends Base {}",
+            tsz_common::ScriptTarget::ES2015,
+        );
+        assert!(
+            !helpers.contains(&"__extends"),
+            "ES2015 target should not need __extends, got: {helpers:?}"
+        );
     }
 }
