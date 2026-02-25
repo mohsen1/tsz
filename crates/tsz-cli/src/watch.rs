@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use crate::args::{CliArgs, PollingWatchKind, WatchFileKind};
 use crate::config::{ResolvedCompilerOptions, resolve_compiler_options};
+use crate::driver::resolution::canonicalize_or_owned;
 use crate::driver::{self, CompilationCache};
-use crate::driver_resolution::canonicalize_or_owned;
 use crate::fs::{DEFAULT_EXCLUDES, is_ts_file};
 use crate::reporter::Reporter;
 

@@ -473,14 +473,14 @@ pub(super) fn read_source_files(
                     if let Some(ref mode) = resolution_mode {
                         // With explicit resolution-mode, use exports map with the specified condition
                         let candidates =
-                            crate::driver_resolution::type_package_candidates_pub(&type_name);
+                            crate::driver::resolution::type_package_candidates_pub(&type_name);
                         let mut result = None;
                         for root in &type_roots {
                             for candidate in &candidates {
                                 let package_root = root.join(candidate);
                                 if package_root.is_dir()
                                     && let Some(entry) =
-                                    crate::driver_resolution::resolve_type_package_entry_with_mode(
+                                    crate::driver::resolution::resolve_type_package_entry_with_mode(
                                         &package_root, mode, options,
                                     )
                                 {

@@ -3,8 +3,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 
+use super::resolution::{canonicalize_or_owned, is_declaration_file};
 use crate::config::{JsxEmit, ResolvedCompilerOptions};
-use crate::driver_resolution::{canonicalize_or_owned, is_declaration_file};
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{NewLineKind, Printer};
 use tsz::parallel::MergedProgram;
@@ -472,5 +472,5 @@ pub(crate) fn normalize_type_roots(
 }
 
 #[cfg(test)]
-#[path = "driver_emit_tests.rs"]
-mod tests;
+#[path = "emit_tests.rs"]
+mod emit_tests;

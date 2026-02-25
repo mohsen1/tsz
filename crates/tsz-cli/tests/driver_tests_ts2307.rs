@@ -6,7 +6,7 @@
 use crate::config::{
     CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, resolve_compiler_options,
 };
-use crate::driver_resolution::{ModuleResolutionCache, resolve_module_specifier};
+use crate::driver::resolution::{ModuleResolutionCache, resolve_module_specifier};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
