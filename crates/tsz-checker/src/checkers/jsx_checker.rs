@@ -445,10 +445,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // If not found, emit TS2874
+        // If not found, emit TS2874 at the tag name (tsc points at the tag name, not `<`)
+        let error_node = self
+            .ctx
+            .arena
+            .get(node_idx)
+            .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+            .map(|jsx| jsx.tag_name)
+            .unwrap_or(node_idx);
         use crate::diagnostics::diagnostic_codes;
         self.error_at_node_msg(
-            node_idx,
+            error_node,
             diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
             &[root_ident],
         );
