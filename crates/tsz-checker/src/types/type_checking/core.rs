@@ -293,6 +293,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Mark the private identifier symbol as referenced for unused-variable tracking.
+        // `#brand in obj` counts as a read of `#brand` — without this, the private member
+        // would be falsely reported as unused (TS6133).
+        for &sym_id in &symbols {
+            self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+        }
+
         // Evaluate for type checking but keep original for error messages
         let evaluated_rhs_type = self.evaluate_application_type(rhs_type);
         if evaluated_rhs_type == TypeId::ANY

@@ -2,7 +2,7 @@
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
 **Current score**: ~14769/19201 (76.9%) — full suite, error-code level
-**Fingerprint score**: ~8077/12574 (64.2%) — full suite, fingerprint level
+**Fingerprint score**: ~8099/12574 (64.4%) — full suite, fingerprint level
 
 ---
 
@@ -119,11 +119,11 @@
 - Flow analysis precision gaps
 - **Difficulty**: MEDIUM
 
-### TS6133 — Unused variable detection remaining patterns (9+ tests)
+### TS6133 — Unused variable detection remaining patterns (9 tests)
 - **Remaining patterns** (each requires a different fix):
   - `import *` as unused
   - for-of/for-in loop `const _` suppression
-  - ES private fields (`#unused`)
+  - ~~ES private fields (`#unused`)~~ RESOLVED — `name.starts_with('#')` check + reference tracking in private property access and `#name in expr`
   - `infer` positions
   - JSDoc `@template` tags
   - Self-references
@@ -455,3 +455,4 @@ All items below have been validated against the codebase (implementations + test
 | TS2469 | Symbol operator errors: wrong constant (TS2736→TS2469), unary +/-/~, compound +=, solver fast-path fix | +5 tests |
 | TS2661 | Non-local export specifier detection (decl_file_idx + module scope table) | +7 tests |
 | TS1389 | Reserved word as variable declaration name (TS1389 instead of generic TS1359) | +2 tests |
+| TS6133 | ES private names (`#foo`): recognize `#`-prefix as private + reference tracking in private property access and `#name in expr` | +22 tests |

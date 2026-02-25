@@ -206,8 +206,10 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::SET_ACCESSOR))
                 != 0;
             if is_member {
-                // Only private members get unused checking — use PRIVATE flag set by binder
-                let is_private = (flags & symbol_flags::PRIVATE) != 0;
+                // Only private members get unused checking — use PRIVATE flag set by binder.
+                // ES private names (#foo) are also private but don't use the `private` keyword
+                // modifier, so they won't have the PRIVATE flag. Detect them by name prefix.
+                let is_private = (flags & symbol_flags::PRIVATE) != 0 || name.starts_with('#');
                 if !is_private {
                     continue; // Public/protected members may be used externally
                 }
