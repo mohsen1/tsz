@@ -489,52 +489,73 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_mapped_id: MappedTypeId,
         target_mapped_id: MappedTypeId,
     ) -> SubtypeResult {
+        // Try the flattened chain approach first: flatten nested homomorphic mapped
+        // types to get the ultimate source type and combined modifiers.
+        // This handles Partial<Readonly<T>> vs Readonly<Partial<T>> vs Partial<T> etc.
+        if let (Some(s_flat), Some(t_flat)) = (
+            flatten_mapped_chain(self.interner, source_mapped_id),
+            flatten_mapped_chain(self.interner, target_mapped_id),
+        ) {
+            // Check if both have the same underlying source type
+            let sources_match = if s_flat.source == t_flat.source {
+                true
+            } else {
+                self.check_subtype(s_flat.source, t_flat.source).is_true()
+            };
+
+            if sources_match {
+                // Modifier compatibility:
+                // - Source has optional (?) but target doesn't: REJECT
+                //   (source may have missing properties that target requires)
+                // - Readonly differences: always OK
+                //   (readonly is a read-side restriction, not relevant for assignability)
+                if s_flat.has_optional && !t_flat.has_optional {
+                    return SubtypeResult::False;
+                }
+                return SubtypeResult::True;
+            }
+        }
+
+        // Fallback: single-level mapped type comparison
         let source_mapped = self.interner.mapped_type(source_mapped_id);
         let target_mapped = self.interner.mapped_type(target_mapped_id);
 
         // Both must have the same constraint for this optimization to apply.
-        // This handles cases like both being `keyof T` for the same T.
-        if source_mapped.constraint != target_mapped.constraint {
+        // First try identity comparison, then evaluate to normalize.
+        // This handles e.g. keyof(Application(Readonly, [T])) == keyof(T)
+        // because evaluate_keyof simplifies keyof(MappedType) → keyof(source).
+        let constraints_match = if source_mapped.constraint == target_mapped.constraint {
+            true
+        } else {
+            let s_eval = self.evaluate_type(source_mapped.constraint);
+            let t_eval = self.evaluate_type(target_mapped.constraint);
+            s_eval == t_eval
+        };
+
+        if !constraints_match {
             return SubtypeResult::False;
         }
 
         // Check template types.
-        // For homomorphic mapped types with the same constraint, the templates
-        // can be compared directly: source_template <: target_template.
         let source_template = source_mapped.template;
         let mut target_template = target_mapped.template;
 
-        // If the target adds optional modifier, the target template is effectively
-        // `template | undefined`, since optional properties accept undefined.
         let target_adds_optional = target_mapped.optional_modifier == Some(MappedModifier::Add);
         let source_adds_optional = source_mapped.optional_modifier == Some(MappedModifier::Add);
 
         if target_adds_optional && !source_adds_optional {
-            // Target is `{ [K in ...]?: template }` — target template effectively
-            // becomes `template | undefined`, so source template just needs to be
-            // assignable to `template | undefined`.
             target_template = self.interner.union2(target_template, TypeId::UNDEFINED);
         }
 
-        // If the source removes optional but the target doesn't, that's fine
-        // (Required<T> to Partial<T> should work).
-
-        // If the target removes optional (Required) but source doesn't, source
-        // properties may be optional while target requires them — we can't
-        // automatically approve this, so fall through to expansion.
         let target_removes_optional =
             target_mapped.optional_modifier == Some(MappedModifier::Remove);
         let source_removes_optional =
             source_mapped.optional_modifier == Some(MappedModifier::Remove);
         if target_removes_optional && !source_removes_optional {
-            // Can't easily determine if source properties include undefined,
-            // fall through to expansion.
             return SubtypeResult::False;
         }
 
         // Handle nested mapped types in templates.
-        // For example, Partial<Readonly<T>> has template that is itself a mapped type.
-        // Recursively compare if both templates are mapped types.
         if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
@@ -806,4 +827,75 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         None
     }
+}
+
+/// Result of flattening a chain of nested homomorphic mapped types.
+pub(crate) struct FlattenedMapped {
+    /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
+    pub source: TypeId,
+    /// Whether any mapped type in the chain adds optional (?)
+    pub has_optional: bool,
+    /// Whether any mapped type in the chain adds readonly
+    pub has_readonly: bool,
+}
+
+/// Flatten a chain of nested homomorphic mapped types into a single descriptor.
+///
+/// For `Partial<Readonly<T>>`, this produces:
+///   source=T, `has_optional=true` (from Partial), `has_readonly=true` (from Readonly)
+///
+/// For `Required<Partial<T>>`, this produces:
+///   source=T, `has_optional=false` (Remove cancels Add), `has_readonly=false`
+///
+/// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
+/// or template isn't `X[K]` where K is the iteration param).
+pub(crate) fn flatten_mapped_chain(
+    interner: &dyn crate::TypeDatabase,
+    mapped_id: MappedTypeId,
+) -> Option<FlattenedMapped> {
+    use crate::types::MappedModifier;
+
+    let mapped = interner.mapped_type(mapped_id);
+
+    // Can't flatten mapped types with name remapping (as clause)
+    if mapped.name_type.is_some() {
+        return None;
+    }
+
+    let has_optional = mapped.optional_modifier == Some(MappedModifier::Add);
+    let has_readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
+    let removes_optional = mapped.optional_modifier == Some(MappedModifier::Remove);
+    let removes_readonly = mapped.readonly_modifier == Some(MappedModifier::Remove);
+
+    // Check if template is X[K] where K is the iteration param (homomorphic form)
+    let (obj, idx) = index_access_parts(interner, mapped.template)?;
+    let param = type_param_info(interner, idx)?;
+    if param.name != mapped.type_param.name {
+        return None;
+    }
+
+    // Try to flatten through the source object if it's itself a mapped type
+    if let Some(inner_mapped_id) = mapped_type_id(interner, obj)
+        && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id) {
+            return Some(FlattenedMapped {
+                source: inner.source,
+                has_optional: if removes_optional {
+                    false
+                } else {
+                    has_optional || inner.has_optional
+                },
+                has_readonly: if removes_readonly {
+                    false
+                } else {
+                    has_readonly || inner.has_readonly
+                },
+            });
+        }
+
+    // Base case: source object is not a mapped type
+    Some(FlattenedMapped {
+        source: obj,
+        has_optional,
+        has_readonly,
+    })
 }

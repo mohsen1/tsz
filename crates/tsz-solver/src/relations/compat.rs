@@ -762,14 +762,47 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         s_mapped_id: crate::types::MappedTypeId,
         t_mapped_id: crate::types::MappedTypeId,
     ) -> Option<bool> {
+        use super::subtype::rules::generics::flatten_mapped_chain;
         use crate::types::MappedModifier;
         use crate::visitor::mapped_type_id;
 
+        // Try the flattened chain approach first: this handles nested homomorphic
+        // mapped types like Partial<Readonly<T>> vs Readonly<Partial<T>>.
+        if let (Some(s_flat), Some(t_flat)) = (
+            flatten_mapped_chain(self.interner, s_mapped_id),
+            flatten_mapped_chain(self.interner, t_mapped_id),
+        ) {
+            let sources_match = if s_flat.source == t_flat.source {
+                true
+            } else {
+                self.configure_subtype(self.strict_function_types);
+                self.subtype.is_subtype_of(s_flat.source, t_flat.source)
+            };
+
+            if sources_match {
+                // Source has optional but target doesn't → reject
+                if s_flat.has_optional && !t_flat.has_optional {
+                    return Some(false);
+                }
+                return Some(true);
+            }
+        }
+
+        // Fallback: single-level mapped type comparison
         let s_mapped = self.interner.mapped_type(s_mapped_id);
         let t_mapped = self.interner.mapped_type(t_mapped_id);
 
-        // Both must have the same constraint (e.g., both `keyof T`)
-        if s_mapped.constraint != t_mapped.constraint {
+        // Both must have the same constraint (e.g., both `keyof T`).
+        // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
+        let constraints_match = if s_mapped.constraint == t_mapped.constraint {
+            true
+        } else {
+            let s_eval = self.subtype.evaluate_type(s_mapped.constraint);
+            let t_eval = self.subtype.evaluate_type(t_mapped.constraint);
+            s_eval == t_eval
+        };
+
+        if !constraints_match {
             return None;
         }
 
