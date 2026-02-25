@@ -751,8 +751,10 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    if is_ambient || is_const {
+                    if (is_ambient || is_const) && !self.ctx.is_declaration_file() {
                         // TS7005: Ambient and const declarations always emit at the declaration site.
+                        // tsc suppresses noImplicitAny diagnostics for .d.ts files since
+                        // declaration files inherently have ambient declarations.
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
                             var_decl.name,
