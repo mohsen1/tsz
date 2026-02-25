@@ -19,6 +19,7 @@
 //! - `functions.rs` - Function emission helpers
 //! - `types.rs` - Type emission helpers
 //! - `jsx.rs` - JSX emission helpers
+//! - `comments/` - Comment data types, parsing, and emission helpers
 //! - `module_emission/` - Module emission (imports, exports, CommonJS/ES6)
 //! - `es5/` - ES5 downlevel binding/destructuring helpers
 //!
@@ -26,7 +27,6 @@
 //! submodules to access Printer internals.
 
 mod binding_patterns;
-mod comment_helpers;
 mod comments;
 mod core;
 mod declarations;

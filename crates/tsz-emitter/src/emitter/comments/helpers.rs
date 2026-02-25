@@ -1,4 +1,4 @@
-use super::Printer;
+use crate::emitter::Printer;
 use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
@@ -13,14 +13,14 @@ impl<'a> Printer<'a> {
     /// Uses `all_comments` exclusively (not dynamic source scanning) to avoid
     /// duplicate emission when the leading comment scanner has already advanced
     /// `comment_emit_idx` past a comment.
-    pub(super) fn emit_trailing_comments(&mut self, end_pos: u32) {
+    pub(in crate::emitter) fn emit_trailing_comments(&mut self, end_pos: u32) {
         self.emit_trailing_comments_impl(end_pos, u32::MAX);
     }
 
     /// Like `emit_trailing_comments` but only emit comments whose start position
     /// is before `max_pos`. Used to prevent a statement inside a block from
     /// consuming comments that belong on the block's closing line.
-    pub(super) fn emit_trailing_comments_before(&mut self, end_pos: u32, max_pos: u32) {
+    pub(in crate::emitter) fn emit_trailing_comments_before(&mut self, end_pos: u32, max_pos: u32) {
         self.emit_trailing_comments_impl(end_pos, max_pos);
     }
 
@@ -88,7 +88,11 @@ impl<'a> Printer<'a> {
     /// Advance `comment_emit_idx` past same-line trailing comments after `end_pos`
     /// without emitting them. Used to suppress comments on function body opening
     /// braces — tsc drops these but preserves them on control-flow blocks.
-    pub(super) fn skip_trailing_same_line_comments(&mut self, end_pos: u32, max_pos: u32) {
+    pub(in crate::emitter) fn skip_trailing_same_line_comments(
+        &mut self,
+        end_pos: u32,
+        max_pos: u32,
+    ) {
         let Some(text) = self.source_text else {
             return;
         };
@@ -136,7 +140,7 @@ impl<'a> Printer<'a> {
     ///
     /// Uses forward scanning with brace depth tracking to find the correct
     /// closing `}` at depth 0, avoiding confusion with parent scope braces.
-    pub(super) fn find_token_end_before_trivia(&self, pos: u32, end: u32) -> u32 {
+    pub(in crate::emitter) fn find_token_end_before_trivia(&self, pos: u32, end: u32) -> u32 {
         let Some(text) = self.source_text else {
             return end;
         };
@@ -259,7 +263,7 @@ impl<'a> Printer<'a> {
     /// Emit all pending comments from `all_comments` whose end position is before `pos`.
     /// Uses the `comment_emit_idx` cursor to advance through comments.
     /// Similar to the top-level statement comment emission logic.
-    pub(super) fn emit_comments_before_pos(&mut self, pos: u32) {
+    pub(in crate::emitter) fn emit_comments_before_pos(&mut self, pos: u32) {
         if self.ctx.options.remove_comments {
             return;
         }
@@ -296,7 +300,7 @@ impl<'a> Printer<'a> {
     ///
     /// Returns:
     /// (`did_emit_comment`, `last_comment_end_pos`, `last_comment_had_trailing_newline`)
-    pub(super) fn emit_comments_in_range(
+    pub(in crate::emitter) fn emit_comments_in_range(
         &mut self,
         start_pos: u32,
         end_pos: u32,
@@ -458,7 +462,7 @@ impl<'a> Printer<'a> {
 
     /// Write comment text, trimming trailing whitespace from each line of multi-line comments.
     /// TypeScript strips trailing whitespace from multi-line comment lines in its emitter.
-    pub(super) fn write_comment(&mut self, text: &str) {
+    pub(in crate::emitter) fn write_comment(&mut self, text: &str) {
         self.write_comment_with_reindent(text, None);
     }
 
@@ -466,7 +470,11 @@ impl<'a> Printer<'a> {
     /// When `source_pos` is provided, computes the source column of the comment and
     /// reindents continuation lines to match the current output indentation level,
     /// matching tsc's behavior of adjusting multi-line comment indentation.
-    pub(super) fn write_comment_with_reindent(&mut self, text: &str, source_pos: Option<u32>) {
+    pub(in crate::emitter) fn write_comment_with_reindent(
+        &mut self,
+        text: &str,
+        source_pos: Option<u32>,
+    ) {
         if text.contains('\n') {
             // Multi-line comment: reindent continuation lines.
             // tsc computes the indent of the line containing the opening /*, then
@@ -501,7 +509,7 @@ impl<'a> Printer<'a> {
     /// Returns (text, `source_pos`) tuples for comments whose end is before `pos`
     /// and that haven't been emitted yet.
     /// Does NOT advance the comment index — use this before `skip_comments_for_erased_node`.
-    pub(super) fn collect_leading_comments(&self, pos: u32) -> Vec<(String, u32)> {
+    pub(in crate::emitter) fn collect_leading_comments(&self, pos: u32) -> Vec<(String, u32)> {
         if self.ctx.options.remove_comments {
             return Vec::new();
         }
@@ -531,7 +539,7 @@ impl<'a> Printer<'a> {
     /// parser's `node.end` extends past trailing trivia into the next token's
     /// position. Without narrowing, comments in the trailing trivia (which logically
     /// belong to the next statement) would be consumed.
-    pub(super) fn skip_comments_in_range(&mut self, start: u32, end: u32) {
+    pub(in crate::emitter) fn skip_comments_in_range(&mut self, start: u32, end: u32) {
         let actual_end = self.find_token_end_before_trivia(start, end);
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
@@ -552,7 +560,7 @@ impl<'a> Printer<'a> {
     /// `foo: string;`, the `// error` comment belongs to the closing `}`, not to the
     /// erased member. We detect this by checking whether any non-whitespace code token
     /// exists between the erased node's end and the comment start.
-    pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
+    pub(in crate::emitter) fn skip_comments_for_erased_node(&mut self, node: &Node) {
         // Find the actual end of the node's code content, excluding trailing trivia.
         let actual_end = self.find_token_end_before_trivia(node.pos, node.end);
 
