@@ -7,6 +7,8 @@ to show which areas (parser, salsa, types/tuple, etc.) need the most attention.
 
 import sys
 import re
+import json
+import argparse
 from collections import defaultdict
 
 
@@ -84,18 +86,17 @@ def pass_rate_color(rate):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: analyze-conformance-areas.py <raw-output-file> [depth] [min-tests] [drilldown-area]")
-        print()
-        print("  depth          Grouping depth (1=top-level, 2=sub-areas) [default: 1]")
-        print("  min-tests      Minimum tests in area to show [default: 5]")
-        print("  drilldown-area Drill into a specific area (e.g., 'types')")
-        sys.exit(1)
-
-    tmpfile = sys.argv[1]
-    depth = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else 1
-    min_tests = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else 5
-    drilldown = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
+    parser = argparse.ArgumentParser(description='Analyze conformance by test area')
+    parser.add_argument('input_file', help='Conformance runner output file')
+    parser.add_argument('--depth', type=int, default=1, help='Grouping depth (1=top-level, 2=sub-areas)')
+    parser.add_argument('--min-tests', type=int, default=5, help='Minimum tests in area to show')
+    parser.add_argument('--drilldown', default='', help='Drill into a specific area')
+    parser.add_argument('--json-output', default='', help='Write structured JSON to this path')
+    args = parser.parse_args()
+    tmpfile = args.input_file
+    depth = args.depth
+    min_tests = args.min_tests
+    drilldown = args.drilldown
 
     results = parse_results(tmpfile)
     if not results:
@@ -229,6 +230,21 @@ def main():
                 f"{rate_color}{s['rate']:>5.1f}% pass{NC}"
             )
         print()
+
+    if args.json_output:
+        json_areas = [
+            {
+                "area": s["area"],
+                "total": s["total"],
+                "passed": s["pass"],
+                "failed": s["opportunity"],
+                "pass_rate": round(s["rate"], 2),
+            }
+            for s in sorted(area_stats, key=lambda x: x["rate"])
+        ]
+        data = {"areas": json_areas}
+        with open(args.json_output, 'w') as f:
+            json.dump(data, f, indent=2)
 
     # Suggest drilldown for large areas
     if not drilldown:

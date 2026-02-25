@@ -3,18 +3,22 @@
 
 import sys
 import re
+import json
+import argparse
 from collections import defaultdict, Counter
 from itertools import combinations
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: analyze-conformance.py <raw-output-file> [category] [top_n]")
-        sys.exit(1)
-
-    tmpfile = sys.argv[1]
-    category_filter = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else ""
-    top_n = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else 20
+    parser = argparse.ArgumentParser(description='Analyze conformance test failures')
+    parser.add_argument('input_file', help='Conformance runner output file')
+    parser.add_argument('--category', default='', help='Filter by category')
+    parser.add_argument('--top', type=int, default=20, help='Top N items per section')
+    parser.add_argument('--json-output', default='', help='Write structured JSON to this path')
+    args = parser.parse_args()
+    tmpfile = args.input_file
+    category_filter = args.category
+    top_n = args.top
 
     tests = []
     current = None
@@ -299,8 +303,8 @@ def main():
     # ============================================================================
     
     single_code_tests = [t for t in all_missing if len(t["missing_codes"]) == 1]
+    single_code_freq = defaultdict(int)
     if single_code_tests:
-        single_code_freq = defaultdict(int)
         for t in single_code_tests:
             code = t["missing_codes"][0]
             single_code_freq[code] += 1
@@ -338,6 +342,31 @@ def main():
         print_section(
             "WRONG CODES -- both have errors but codes differ", wrong_code, show_wrong
         )
+
+    if args.json_output:
+        data = {
+            "summary": {
+                "total_failing": total,
+                "false_positives": len(false_positives),
+                "all_missing": len(all_missing),
+                "wrong_code": len(wrong_code),
+                "close": len(close),
+            },
+            "not_implemented_codes": [
+                {"code": code, "count": count}
+                for code, count in sorted(missing_code_impact.items(), key=lambda x: -x[1])[:20]
+            ] if missing_code_impact else [],
+            "partial_codes": [
+                {"code": code, "count": count}
+                for code, count in sorted(partially_missing_impact.items(), key=lambda x: -x[1])[:20]
+            ] if partially_missing_impact else [],
+            "quick_wins": [
+                {"code": code, "count": count}
+                for code, count in sorted(single_code_freq.items(), key=lambda x: -x[1])[:20]
+            ] if single_code_tests else [],
+        }
+        with open(args.json_output, 'w') as f:
+            json.dump(data, f, indent=2)
 
     print()
 
