@@ -175,7 +175,9 @@ impl<'a> CheckerState<'a> {
             || query::is_type_parameter_like(self.ctx.types, expr_type)
             || query::is_object_like_type(self.ctx.types, expr_type)
             // Also allow union types that contain valid types
-            || self.for_in_expr_type_is_valid_union(expr_type);
+            || self.for_in_expr_type_is_valid_union(expr_type)
+            // Intersection types like `object & T`: valid if ANY member is valid
+            || self.for_in_expr_type_is_valid_intersection(expr_type);
 
         if !is_valid {
             let type_str = self.format_type(expr_type);
@@ -202,6 +204,26 @@ impl<'a> CheckerState<'a> {
                 }
                 // Recursively check nested unions
                 if self.for_in_expr_type_is_valid_union(member) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Helper for TS2407: Check if an intersection type contains at least one valid for-in member.
+    /// `object & T` is valid because it contains `object`.
+    fn for_in_expr_type_is_valid_intersection(&mut self, expr_type: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if let Some(members) = query::intersection_members(self.ctx.types, expr_type) {
+            for &member in &members {
+                if member == TypeId::ANY
+                    || member == TypeId::UNKNOWN
+                    || member == TypeId::OBJECT
+                    || query::is_type_parameter_like(self.ctx.types, member)
+                    || query::is_object_like_type(self.ctx.types, member)
+                {
                     return true;
                 }
             }
