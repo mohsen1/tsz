@@ -5,7 +5,7 @@ use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
-use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use crate::state::CheckerState;
 use std::rc::Rc;
 use tsz_binder::{SymbolId, flow_flags};
 use tsz_parser::parser::NodeIndex;
@@ -86,17 +86,12 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Rule #42 only applies inside closures. Avoid symbol resolution work
-        // on the common non-closure path.
-        if self.is_inside_closure()
-            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
-            && self.is_captured_variable(sym_id, idx)
-            && self.is_mutable_binding(sym_id)
-        {
-            // Rule #42: Reset narrowing for captured mutable bindings in closures
-            // (const variables preserve narrowing, let/var reset to declared type)
-            return declared_type;
-        }
+        // Rule #42 for captured mutable variables in closures is handled at
+        // the flow-graph level: check_flow() returns initial_type when it
+        // reaches a START node for a captured mutable variable (core.rs).
+        // We must NOT bail out here because local narrowing within the
+        // closure (e.g. `typeof x === "string" && x.length`) still applies —
+        // the flow walk will encounter CONDITION nodes before hitting START.
 
         // Skip narrowing for `never` — it's the bottom type, nothing to narrow.
         // All other types (unions, objects, callables, type params, primitives, etc.)
@@ -540,142 +535,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
     }
 
-    /// Check if we're currently inside a closure (function expression or arrow function).
-    ///
-    /// This is used to apply Rule #42: CFA Invalidation in Closures.
-    ///
-    /// Returns true if inside a function expression, arrow function, or method expression.
-    const fn is_inside_closure(&self) -> bool {
-        self.ctx.inside_closure_depth > 0
-    }
-
-    /// Check if a symbol is a mutable binding (let or var) vs immutable (const).
-    ///
-    /// This is used to implement TypeScript's Rule #42 for type narrowing in closures:
-    /// - const variables preserve narrowing through closures (immutable)
-    /// - let/var variables lose narrowing when accessed from closures (mutable)
-    ///
-    /// Implementation checks:
-    /// 1. Get the symbol's value declaration
-    /// 2. Check if it's a `VariableDeclaration`
-    /// 3. Look at the parent `VariableDeclarationList`'s `NodeFlags`
-    /// 4. If CONST flag is set → const (immutable)
-    /// 5. Otherwise → let/var (mutable)
-    ///
-    /// Returns true for let/var (mutable), false for const (immutable).
-    fn is_mutable_binding(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(sym) => sym,
-            None => return true, // Assume mutable if we can't determine
-        };
-
-        let decl_idx = symbol.value_declaration;
-        if decl_idx.is_none() {
-            return true; // Assume mutable if no declaration
-        }
-
-        !self.ctx.arena.is_const_variable_declaration(decl_idx)
-    }
-
-    /// Check if a variable is captured from an outer scope (vs declared locally).
-    ///
-    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
-    /// - Variables declared INSIDE the closure should narrow normally
-    /// - Variables captured from OUTER scope reset narrowing (for let/var)
-    ///
-    /// This is determined by checking if the variable's declaration is in an ancestor scope.
-    fn is_captured_variable(&self, sym_id: SymbolId, reference: NodeIndex) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(sym) => sym,
-            None => return false,
-        };
-
-        let decl_idx = symbol.value_declaration;
-        if decl_idx.is_none() {
-            return false;
-        }
-
-        // Find the enclosing scope of the declaration
-        let decl_scope_id = match self
-            .ctx
-            .binder
-            .find_enclosing_scope(self.ctx.arena, decl_idx)
-        {
-            Some(scope_id) => scope_id,
-            None => return false,
-        };
-
-        // Find the enclosing scope of the usage site (where the variable is accessed).
-        let usage_scope_id = match self
-            .ctx
-            .binder
-            .find_enclosing_scope(self.ctx.arena, reference)
-        {
-            Some(scope_id) => scope_id,
-            None => return false,
-        };
-
-        // If declared and used in the same scope, not captured
-        if decl_scope_id == usage_scope_id {
-            return false;
-        }
-
-        // A variable is "captured" only if it crosses a function boundary.
-        // Block scopes (if, while, for) within the same function don't count.
-        // We walk up from the declaration scope and usage scope to find
-        // their enclosing function/source-file scopes, then compare those.
-        let decl_fn_scope = self.find_enclosing_function_scope(decl_scope_id);
-        let usage_fn_scope = self.find_enclosing_function_scope(usage_scope_id);
-
-        // If both are in the same function scope, the variable is NOT captured
-        if decl_fn_scope == usage_fn_scope {
-            return false;
-        }
-
-        // The declaration's function scope must be an ancestor of the usage's function scope
-        // for the variable to be considered captured
-        let mut scope_id = usage_fn_scope;
-        let mut iterations = 0;
-        while scope_id.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
-            if scope_id == decl_fn_scope {
-                return true;
-            }
-
-            scope_id = self
-                .ctx
-                .binder
-                .scopes
-                .get(scope_id.0 as usize)
-                .map_or(tsz_binder::ScopeId::NONE, |scope| scope.parent);
-
-            iterations += 1;
-        }
-
-        false
-    }
-
-    /// Walk up the scope chain to find the nearest function/source-file/module scope.
-    /// Block scopes are skipped.
-    fn find_enclosing_function_scope(&self, scope_id: tsz_binder::ScopeId) -> tsz_binder::ScopeId {
-        use tsz_binder::ContainerKind;
-
-        let mut current = scope_id;
-        let mut iterations = 0;
-        while current.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
-            if let Some(scope) = self.ctx.binder.scopes.get(current.0 as usize) {
-                match scope.kind {
-                    ContainerKind::Function | ContainerKind::SourceFile | ContainerKind::Module => {
-                        return current;
-                    }
-                    _ => {
-                        current = scope.parent;
-                    }
-                }
-            } else {
-                break;
-            }
-            iterations += 1;
-        }
-        current
-    }
+    // NOTE: Rule #42 captured-variable methods (is_inside_closure, is_mutable_binding,
+    // is_captured_variable, find_enclosing_function_scope) were removed. Rule #42 is now
+    // enforced at the flow-graph level in check_flow() (core.rs START node handling).
 }

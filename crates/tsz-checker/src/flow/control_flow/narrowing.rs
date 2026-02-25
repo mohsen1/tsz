@@ -524,6 +524,94 @@ impl<'a> FlowAnalyzer<'a> {
             );
         }
 
+        // For plain VARIABLE symbols (e.g., `declare var C: CConstructor`),
+        // resolve the variable's type annotation to find the constructor type,
+        // then extract the instance type from its construct signatures or prototype.
+        if (symbol.flags & symbol_flags::VARIABLE) != 0 {
+            // Strategy 1: Try type environment lookup for the variable
+            if let Some(env) = &self.type_environment {
+                let env_borrow = env.borrow();
+                if let Some(constructor_type) = env_borrow.get(symbol_ref)
+                    && let Some(instance_type) =
+                        crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                            self.interner,
+                            constructor_type,
+                        )
+                {
+                    return Some(instance_type);
+                }
+            }
+
+            // Strategy 2: Follow the variable's type annotation to find the
+            // constructor interface/class type, then look THAT up in the env.
+            // For `declare var C: CConstructor`, we need to find the `CConstructor`
+            // symbol from the type annotation and resolve its type.
+            if let Some(instance_type) = self.instance_type_from_variable_annotation(symbol) {
+                return Some(instance_type);
+            }
+        }
+
+        None
+    }
+
+    /// For VARIABLE symbols, follow the type annotation on the variable
+    /// declaration to find the constructor type, then extract the instance type.
+    ///
+    /// Example: `declare var C: CConstructor;` — find `CConstructor` from
+    /// the type annotation, look it up in the type environment, and extract
+    /// the instance type from its construct signatures or prototype property.
+    fn instance_type_from_variable_annotation(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<TypeId> {
+        // Get the variable's first declaration
+        let decl_idx = symbol.declarations.first().copied()?;
+        let decl_node = self.arena.get(decl_idx)?;
+
+        // Get the VariableDeclaration data to access the type annotation
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        if var_decl.type_annotation == tsz_parser::NodeIndex::NONE {
+            return None;
+        }
+
+        // The type annotation is a TypeReference node; find its identifier
+        let type_ref_node = self.arena.get(var_decl.type_annotation)?;
+        let type_name_idx = if let Some(type_ref) = self.arena.get_type_ref(type_ref_node) {
+            type_ref.type_name
+        } else {
+            return None;
+        };
+
+        // Resolve the type name identifier to a symbol
+        let type_sym_id = self.binder.resolve_identifier(self.arena, type_name_idx)?;
+        let type_symbol_ref = tsz_solver::SymbolRef(type_sym_id.0);
+
+        // Look up the constructor type in the type environment
+        if let Some(env) = &self.type_environment {
+            let env_borrow = env.borrow();
+            if let Some(constructor_type) = env_borrow.get(type_symbol_ref)
+                && let Some(instance_type) =
+                    crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                        self.interner,
+                        constructor_type,
+                    )
+            {
+                return Some(instance_type);
+            }
+        }
+
+        // Fallback: create a lazy reference to the type annotation's symbol
+        // and try to extract the instance type from it
+        if let Some(lazy_type) = self.resolve_symbol_to_lazy(type_symbol_ref)
+            && let Some(instance_type) =
+                crate::query_boundaries::flow_analysis::instance_type_from_constructor(
+                    self.interner,
+                    lazy_type,
+                )
+        {
+            return Some(instance_type);
+        }
+
         None
     }
 
