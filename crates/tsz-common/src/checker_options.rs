@@ -85,8 +85,15 @@ pub struct CheckerOptions {
     pub no_implicit_override: bool,
     /// JSX factory function (e.g. `React.createElement`)
     pub jsx_factory: String,
+    /// Whether `jsxFactory` was explicitly set via compiler options.
+    /// When true, tsc 6.0 skips the factory-in-scope check (no TS2874).
+    /// When false, the factory name comes from `reactNamespace` or the default `React.createElement`,
+    /// and tsc 6.0 checks scope and emits TS2874 if not found.
+    pub jsx_factory_from_config: bool,
     /// JSX fragment factory function (e.g. `React.Fragment`)
     pub jsx_fragment_factory: String,
+    /// Whether `jsxFragmentFactory` was explicitly set via compiler options.
+    pub jsx_fragment_factory_from_config: bool,
     /// JSX emit mode (preserve, react, react-jsx, react-jsxdev, react-native).
     /// Only "react" (classic transform) requires the factory to be in scope.
     pub jsx_mode: JsxMode,
@@ -164,7 +171,9 @@ impl Default for CheckerOptions {
             no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
             jsx_mode: JsxMode::None,
             module_explicitly_set: false,
             suppress_excess_property_errors: false,

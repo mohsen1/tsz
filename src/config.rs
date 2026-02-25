@@ -545,11 +545,13 @@ pub fn resolve_compiler_options(
 
     if let Some(factory) = options.jsx_factory.as_deref() {
         resolved.checker.jsx_factory = factory.to_string();
+        resolved.checker.jsx_factory_from_config = true;
     } else if let Some(ns) = options.react_namespace.as_deref() {
         resolved.checker.jsx_factory = format!("{ns}.createElement");
     }
     if let Some(frag) = options.jsx_fragment_factory.as_deref() {
         resolved.checker.jsx_fragment_factory = frag.to_string();
+        resolved.checker.jsx_fragment_factory_from_config = true;
     }
 
     if let Some(jsx) = options.jsx.as_deref() {

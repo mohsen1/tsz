@@ -601,7 +601,9 @@ impl CompilerOptions {
             target: self.resolve_target(),
             module: self.resolve_module(),
             jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
 
             es_module_interop: false,
             allow_synthetic_default_imports: false,
