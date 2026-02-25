@@ -190,6 +190,282 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for TS2729 in static block statements.
+    ///
+    /// Static blocks can reference static properties via `this.X` or `ClassName.X`.
+    /// We report TS2729 when the referenced property is declared after the static block.
+    pub(crate) fn check_static_block_initialization_order(&mut self, block_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        // Get class info to access member order
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return;
+        };
+
+        // Find position of this static block in the member list
+        let Some(block_pos) = class_info
+            .member_nodes
+            .iter()
+            .position(|&idx| idx == block_idx)
+        else {
+            return;
+        };
+
+        // Get block statements
+        let Some(node) = self.ctx.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.ctx.arena.get_block(node) else {
+            return;
+        };
+
+        // Collect both `this.X` and `ClassName.X` accesses from all statements
+        let class_name = class_info.name.clone();
+        let stmt_indices: Vec<NodeIndex> = block.statements.nodes.clone();
+        let mut accesses = Vec::new();
+        for &stmt_idx in &stmt_indices {
+            self.collect_static_block_accesses_recursive(stmt_idx, &class_name, &mut accesses);
+        }
+
+        // Check each access against static properties declared after the block
+        for (member_name, access_node_idx) in accesses {
+            for (target_pos, &target_idx) in class_info.member_nodes.iter().enumerate() {
+                if let Some(found_name) = self.get_member_name(target_idx)
+                    && found_name == member_name
+                {
+                    if self.is_static_property(target_idx) && target_pos > block_pos {
+                        self.error_at_node(
+                            access_node_idx,
+                            &format!("Property '{member_name}' is used before its initialization."),
+                            diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Recursive helper to collect both `this.X` and `ClassName.X` accesses
+    /// in a static block context. Stops at ALL function/class boundaries
+    /// (including arrow functions) since those accesses are deferred.
+    fn collect_static_block_accesses_recursive(
+        &self,
+        node_idx: NodeIndex,
+        class_name: &str,
+        accesses: &mut Vec<(String, NodeIndex)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        // Stop at all function and class boundaries — accesses inside are deferred
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::METHOD_DECLARATION
+        {
+            return;
+        }
+
+        // Check for property access: this.X or ClassName.X
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node)
+                && let Some(expr_node) = self.ctx.arena.get(access.expression)
+            {
+                // Check `this.X` (in static blocks, `this` = class constructor)
+                if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+                    if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        accesses.push((ident.escaped_text.clone(), access.name_or_argument));
+                    }
+                    return;
+                }
+                // Check `ClassName.X`
+                if expr_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                    && ident.escaped_text == class_name
+                {
+                    if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                        && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        accesses.push((prop_ident.escaped_text.clone(), access.name_or_argument));
+                    }
+                    return;
+                }
+                // Recurse into expression part for chained access
+                self.collect_static_block_accesses_recursive(
+                    access.expression,
+                    class_name,
+                    accesses,
+                );
+            }
+            return;
+        }
+
+        // Recurse into children based on node type
+        match node.kind {
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+                    self.collect_static_block_accesses_recursive(
+                        expr_stmt.expression,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                    self.collect_static_block_accesses_recursive(binary.left, class_name, accesses);
+                    self.collect_static_block_accesses_recursive(
+                        binary.right,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.collect_static_block_accesses_recursive(
+                        call.expression,
+                        class_name,
+                        accesses,
+                    );
+                    if let Some(ref args) = call.arguments {
+                        for &arg in &args.nodes {
+                            self.collect_static_block_accesses_recursive(arg, class_name, accesses);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.collect_static_block_accesses_recursive(
+                        paren.expression,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.collect_static_block_accesses_recursive(
+                        cond.condition,
+                        class_name,
+                        accesses,
+                    );
+                    self.collect_static_block_accesses_recursive(
+                        cond.when_true,
+                        class_name,
+                        accesses,
+                    );
+                    self.collect_static_block_accesses_recursive(
+                        cond.when_false,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                // Variable statements: VARIABLE_STATEMENT → VARIABLE_DECLARATION_LIST → VARIABLE_DECLARATION
+                if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                    for &list_idx in &var_stmt.declarations.nodes {
+                        if let Some(list_node) = self.ctx.arena.get(list_idx)
+                            && let Some(var_list) = self.ctx.arena.get_variable(list_node)
+                        {
+                            for &decl_idx in &var_list.declarations.nodes {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    && decl.initializer.is_some()
+                                {
+                                    self.collect_static_block_accesses_recursive(
+                                        decl.initializer,
+                                        class_name,
+                                        accesses,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_static_block_accesses_recursive(
+                        if_stmt.expression,
+                        class_name,
+                        accesses,
+                    );
+                    self.collect_static_block_accesses_recursive(
+                        if_stmt.then_statement,
+                        class_name,
+                        accesses,
+                    );
+                    if if_stmt.else_statement.is_some() {
+                        self.collect_static_block_accesses_recursive(
+                            if_stmt.else_statement,
+                            class_name,
+                            accesses,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.collect_static_block_accesses_recursive(
+                            stmt_idx, class_name, accesses,
+                        );
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(ret) = self.ctx.arena.get_return_statement(node)
+                    && ret.expression.is_some()
+                {
+                    self.collect_static_block_accesses_recursive(
+                        ret.expression,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+            {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.collect_static_block_accesses_recursive(
+                        unary.operand,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                if let Some(tmpl) = self.ctx.arena.get_template_expr(node) {
+                    for &span_idx in &tmpl.template_spans.nodes {
+                        if let Some(span_node) = self.ctx.arena.get(span_idx)
+                            && let Some(span) = self.ctx.arena.get_template_span(span_node)
+                        {
+                            self.collect_static_block_accesses_recursive(
+                                span.expression,
+                                class_name,
+                                accesses,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For unhandled node types, don't recurse to stay safe
+            }
+        }
+    }
+
     /// Collect `ClassName.member` accesses in an AST node.
     fn collect_static_member_accesses(
         &self,
