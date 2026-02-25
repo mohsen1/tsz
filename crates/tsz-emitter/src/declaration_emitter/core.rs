@@ -1007,10 +1007,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write("constructor(");
-        // Set flag to strip accessibility modifiers from constructor parameters
-        self.in_constructor_params = true;
-        self.emit_parameters(&ctor.parameters);
-        self.in_constructor_params = false;
+        // tsc strips parameters from private constructors in .d.ts output
+        let is_private = ctor.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateKeyword as u16)
+            })
+        });
+        if !is_private {
+            // Set flag to strip accessibility modifiers from constructor parameters
+            self.in_constructor_params = true;
+            self.emit_parameters(&ctor.parameters);
+            self.in_constructor_params = false;
+        }
         self.write(");");
         self.write_line();
     }
