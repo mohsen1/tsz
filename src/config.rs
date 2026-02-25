@@ -2999,10 +2999,10 @@ mod tests {
             codes.contains(&5102),
             "Should emit TS5102 even with ignoreDeprecations '6.0' (option is past removal), got: {codes:?}"
         );
-        // ignoreDeprecations: "6.0" is valid, so TS5103 should NOT be emitted
+        // ignoreDeprecations: "6.0" is NOT a valid value (only "5.0" is), so TS5103 fires too
         assert!(
-            !codes.contains(&5103),
-            "Should NOT emit TS5103 for valid ignoreDeprecations '6.0', got: {codes:?}"
+            codes.contains(&5103),
+            "Should emit TS5103 for invalid ignoreDeprecations '6.0', got: {codes:?}"
         );
     }
 

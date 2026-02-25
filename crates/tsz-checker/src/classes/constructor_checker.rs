@@ -5,7 +5,7 @@
 //! This module extends `CheckerState` with utilities for constructor-related
 //! type checking operations.
 
-use crate::query_boundaries::constructor_checker::{
+use crate::query_boundaries::checkers::constructor::{
     AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
     classify_for_constructor_access, classify_for_constructor_return_merge,
     classify_for_instance_type, has_construct_signatures, resolve_abstract_constructor_anchor,

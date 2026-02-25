@@ -1,6 +1,6 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::common::{lazy_def_id, union_members};
+pub(crate) use super::super::common::{lazy_def_id, union_members};
 pub(crate) use tsz_solver::type_queries::PromiseTypeKind;
 
 pub(crate) fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {

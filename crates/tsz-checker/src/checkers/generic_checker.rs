@@ -1,6 +1,6 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
-use crate::query_boundaries::generic_checker as query;
+use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;

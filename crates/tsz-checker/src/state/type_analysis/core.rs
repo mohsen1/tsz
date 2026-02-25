@@ -1019,11 +1019,11 @@ impl<'a> CheckerState<'a> {
                 // Validate that default satisfies constraint if present
                 if let Some(constraint_type) = constraint
                     && default_type != TypeId::ERROR
-                    && !crate::query_boundaries::generic_checker::contains_type_parameters(
+                    && !crate::query_boundaries::checkers::generic::contains_type_parameters(
                         self.ctx.types,
                         constraint_type,
                     )
-                    && !crate::query_boundaries::generic_checker::contains_type_parameters(
+                    && !crate::query_boundaries::checkers::generic::contains_type_parameters(
                         self.ctx.types,
                         default_type,
                     )

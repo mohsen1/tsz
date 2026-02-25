@@ -1,6 +1,6 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
-use crate::query_boundaries::property_checker as query;
+use crate::query_boundaries::checkers::property as query;
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
 use tsz_parser::parser::NodeIndex;
