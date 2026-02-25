@@ -1,0 +1,7 @@
+# Conformance snapshot is regenerated each session.
+# The "ours" merge driver keeps the current version on conflict.
+# During normal merge: "ours" = the branch you're ON (your work).
+# During rebase: "ours" = upstream (the branch being rebased onto).
+# Either way the session regenerates the snapshot after its fix, so
+# whichever version "wins" is immediately replaced.
+scripts/conformance-snapshot.json merge=ours

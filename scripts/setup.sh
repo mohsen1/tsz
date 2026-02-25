@@ -169,6 +169,15 @@ fi
 # Ensure all managed hooks are executable, including newly added ones.
 chmod +x "$ROOT_DIR/scripts/githooks"/* 2>/dev/null || true
 
+# Register "ours" merge driver for auto-resolving snapshot conflicts.
+# Without this, the merge=ours attribute in .gitattributes has no effect.
+if git config merge.ours.driver >/dev/null 2>&1; then
+  skip "Merge driver 'ours' already registered."
+else
+  git config merge.ours.driver true
+  echo "  $(green "Registered 'ours' merge driver for snapshot conflict resolution.")"
+fi
+
 # ── 6. Cargo check ──────────────────────────────────────────────────────────
 if [ "$QUICK" = true ]; then
   step "Cargo check"
