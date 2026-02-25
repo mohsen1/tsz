@@ -105,3 +105,74 @@ let f1: Foo<"true", {}>;
         "Type instantiation is excessively deep and possibly infinite."
     );
 }
+
+/// Regression test for react16.d.ts infinite loop.
+///
+/// Deeply-nested generic types with cross-referencing interfaces and type
+/// aliases (like React's `InferProps`, `RequiredKeys`, Validator chains) used to
+/// cause `evaluate_application_type` to recurse unboundedly because:
+/// - Per-context `instantiation_depth` resets on cross-arena delegation
+/// - The worklist in `ensure_application_symbols_resolved` expanded transitively
+///
+/// This test creates a simplified version of the pathological pattern and
+/// verifies it completes within a reasonable time (< 5 seconds).
+#[test]
+fn deeply_nested_generics_do_not_hang() {
+    use std::time::Instant;
+
+    // This pattern mimics react16.d.ts: multiple generic interfaces that
+    // cross-reference each other through type parameters, creating a deep
+    // expansion graph when types are eagerly resolved.
+    let source = r#"
+interface Validator<T> {
+    validate(props: T): Error | null;
+}
+
+type ValidationMap<T> = { [K in keyof T]?: Validator<T[K]> };
+
+type InferType<V> = V extends Validator<infer T> ? T : any;
+
+type InferProps<V extends ValidationMap<any>> = {
+    [K in keyof V]: InferType<V[K]>;
+};
+
+type RequiredKeys<V extends ValidationMap<any>> = {
+    [K in keyof V]: V[K] extends Validator<infer T> ? K : never;
+}[keyof V];
+
+interface Requireable<T> extends Validator<T | undefined | null> {
+    isRequired: Validator<T>;
+}
+
+interface ReactPropTypes {
+    any: Requireable<any>;
+    array: Requireable<any[]>;
+    bool: Requireable<boolean>;
+    func: Requireable<(...args: any[]) => any>;
+    number: Requireable<number>;
+    object: Requireable<object>;
+    string: Requireable<string>;
+    node: Requireable<any>;
+    element: Requireable<any>;
+}
+
+declare const PropTypes: ReactPropTypes;
+
+type MyProps = InferProps<{
+    name: typeof PropTypes.string;
+    count: typeof PropTypes.number;
+    items: typeof PropTypes.array;
+}>;
+
+let p: MyProps;
+"#;
+
+    let start = Instant::now();
+    let _diags = get_diagnostics(source);
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 5,
+        "Deeply nested generics took {elapsed:?} — should complete in < 5s (was hanging before fix)"
+    );
+}
