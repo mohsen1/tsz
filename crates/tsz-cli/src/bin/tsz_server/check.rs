@@ -834,6 +834,7 @@ impl Server {
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
             allow_importing_ts_extensions: false,
+            implied_classic_resolution: false,
         }
     }
 }

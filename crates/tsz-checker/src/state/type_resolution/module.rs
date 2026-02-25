@@ -631,48 +631,23 @@ impl<'a> CheckerState<'a> {
             let mut error_message = error.message.clone();
             if error_code
                 == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                && self.ctx.compiler_options.implied_classic_resolution
             {
-                let module_kind_prefers_2792 = matches!(
-                    self.ctx.compiler_options.module,
-                    tsz_common::common::ModuleKind::System
-                        | tsz_common::common::ModuleKind::AMD
-                        | tsz_common::common::ModuleKind::UMD
-                        | tsz_common::common::ModuleKind::ES2015
-                        | tsz_common::common::ModuleKind::ES2020
-                        | tsz_common::common::ModuleKind::ES2022
-                        | tsz_common::common::ModuleKind::ESNext
-                        | tsz_common::common::ModuleKind::Preserve
-                );
-                if module_kind_prefers_2792 {
-                    let fallback_message = format_message(
+                let fallback_message = format_message(
                         diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
                         &[module_specifier],
                     );
-                    error_code = diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O;
-                    error_message = fallback_message;
-                }
+                error_code = diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O;
+                error_message = fallback_message;
             }
             self.error(start, length, error_message, error_code);
             return;
         }
 
-        // Use TS2792 when module resolution is "classic"-like (non-Node module kinds),
-        // otherwise TS2307.
+        // Use TS2792 when effective module resolution is Classic, otherwise TS2307.
         use crate::diagnostics::{diagnostic_messages, format_message};
-        use tsz_common::common::ModuleKind;
 
-        let module_kind_prefers_2792 = matches!(
-            self.ctx.compiler_options.module,
-            ModuleKind::System
-                | ModuleKind::AMD
-                | ModuleKind::UMD
-                | ModuleKind::ES2015
-                | ModuleKind::ES2020
-                | ModuleKind::ES2022
-                | ModuleKind::ESNext
-                | ModuleKind::Preserve
-        );
-        let use_2792 = module_kind_prefers_2792;
+        let use_2792 = self.ctx.compiler_options.implied_classic_resolution;
 
         if use_2792 {
             let message = format_message(

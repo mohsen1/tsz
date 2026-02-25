@@ -459,6 +459,8 @@ pub fn resolve_compiler_options(
         }
     }
     let effective_resolution = resolved.effective_module_resolution();
+    resolved.checker.implied_classic_resolution =
+        matches!(effective_resolution, ModuleResolutionKind::Classic);
     resolved.resolve_package_json_exports = options.resolve_package_json_exports.unwrap_or({
         matches!(
             effective_resolution,
@@ -3669,6 +3671,66 @@ mod tests {
         assert!(
             !codes.contains(&5071),
             "Should NOT emit TS5071 for bundler+esnext, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_implied_classic_resolution_es2015_module() {
+        // module: es2015 without explicit moduleResolution → Classic resolution
+        let json = r#"{"compilerOptions":{"module":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.implied_classic_resolution,
+            "ES2015 module without explicit moduleResolution should imply Classic resolution"
+        );
+    }
+
+    #[test]
+    fn test_implied_classic_resolution_explicit_node_override() {
+        // module: es2015 + moduleResolution: node10 → NOT Classic
+        let json = r#"{"compilerOptions":{"module":"es2015","moduleResolution":"node10"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.implied_classic_resolution,
+            "Explicit moduleResolution: node10 should override Classic inference"
+        );
+    }
+
+    #[test]
+    fn test_implied_classic_resolution_commonjs_module() {
+        // module: commonjs → effective resolution is Node10, NOT Classic
+        let json = r#"{"compilerOptions":{"module":"commonjs"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.implied_classic_resolution,
+            "CommonJS module should not imply Classic resolution"
+        );
+    }
+
+    #[test]
+    fn test_implied_classic_resolution_nodenext_module() {
+        // module: nodenext → effective resolution is NodeNext, NOT Classic
+        let json = r#"{"compilerOptions":{"module":"nodenext"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.implied_classic_resolution,
+            "NodeNext module should not imply Classic resolution"
+        );
+    }
+
+    #[test]
+    fn test_implied_classic_resolution_explicit_bundler() {
+        // module: esnext + moduleResolution: bundler → NOT Classic
+        let json = r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.implied_classic_resolution,
+            "Explicit moduleResolution: bundler should override Classic inference"
         );
     }
 }
