@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T09:48:24Z",
-  "git_sha": "de42184df39740af3aa35af4250cc1034594aeba",
+  "timestamp": "2026-02-25T10:33:51Z",
+  "git_sha": "7aa402a66a1cdb92201ffed5b0975b265aec51b2",
   "summary": {
     "total_tests": 12574,
-    "passed": 6530,
-    "failed": 6044,
-    "pass_rate": 51.9
+    "passed": 6589,
+    "failed": 5985,
+    "pass_rate": 52.4
   },
   "areas_by_pass_rate": [
     {
@@ -72,13 +72,6 @@
       "pass_rate": 25.0
     },
     {
-      "area": "es6/arrowFunction",
-      "total": 47,
-      "passed": 12,
-      "failed": 35,
-      "pass_rate": 25.53
-    },
-    {
       "area": "types/mapped",
       "total": 26,
       "passed": 7,
@@ -95,9 +88,9 @@
     {
       "area": "parser/ecmascript5",
       "total": 687,
-      "passed": 202,
-      "failed": 485,
-      "pass_rate": 29.4
+      "passed": 208,
+      "failed": 479,
+      "pass_rate": 30.28
     },
     {
       "area": "types/nonPrimitive",
@@ -472,10 +465,10 @@
     },
     {
       "area": "compiler",
-      "total": 6470,
-      "passed": 3491,
-      "failed": 2979,
-      "pass_rate": 53.96
+      "total": 6469,
+      "passed": 3506,
+      "failed": 2963,
+      "pass_rate": 54.2
     },
     {
       "area": "async/es6",
@@ -499,13 +492,6 @@
       "pass_rate": 55.93
     },
     {
-      "area": "async/es5",
-      "total": 64,
-      "passed": 36,
-      "failed": 28,
-      "pass_rate": 56.25
-    },
-    {
       "area": "classes/classStaticBlock",
       "total": 33,
       "passed": 19,
@@ -518,6 +504,13 @@
       "passed": 23,
       "failed": 16,
       "pass_rate": 58.97
+    },
+    {
+      "area": "async/es5",
+      "total": 64,
+      "passed": 38,
+      "failed": 26,
+      "pass_rate": 59.38
     },
     {
       "area": "expressions/commaOperator",
@@ -557,9 +550,9 @@
     {
       "area": "salsa",
       "total": 191,
-      "passed": 124,
-      "failed": 67,
-      "pass_rate": 64.92
+      "passed": 125,
+      "failed": 66,
+      "pass_rate": 65.45
     },
     {
       "area": "es6/templates",
@@ -676,9 +669,9 @@
     {
       "area": "dynamicImport",
       "total": 71,
-      "passed": 59,
-      "failed": 12,
-      "pass_rate": 83.1
+      "passed": 60,
+      "failed": 11,
+      "pass_rate": 84.51
     },
     {
       "area": "externalModules/es6",
@@ -693,6 +686,13 @@
       "passed": 13,
       "failed": 2,
       "pass_rate": 86.67
+    },
+    {
+      "area": "es6/arrowFunction",
+      "total": 47,
+      "passed": 46,
+      "failed": 1,
+      "pass_rate": 97.87
     },
     {
       "area": "es6/decorators",
