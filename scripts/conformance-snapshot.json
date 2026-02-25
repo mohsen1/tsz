@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-25T12:34:31Z",
-  "git_sha": "767e1d94ef341b8b5ffce4f38d9fdaf4f8d76348",
+  "timestamp": "2026-02-25T12:39:52Z",
+  "git_sha": "b18c9d0f27756b2707ee6a855a57c0867ef32bba",
   "summary": {
     "total_tests": 12565,
-    "passed": 6911,
-    "failed": 5654,
+    "passed": 6912,
+    "failed": 5653,
     "pass_rate": 55.0
   },
   "areas_by_pass_rate": [
@@ -93,13 +93,6 @@
       "pass_rate": 32.31
     },
     {
-      "area": "classes/constructorDeclarations",
-      "total": 39,
-      "passed": 13,
-      "failed": 26,
-      "pass_rate": 33.33
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 8,
@@ -154,6 +147,13 @@
       "passed": 11,
       "failed": 20,
       "pass_rate": 35.48
+    },
+    {
+      "area": "classes/constructorDeclarations",
+      "total": 39,
+      "passed": 14,
+      "failed": 25,
+      "pass_rate": 35.9
     },
     {
       "area": "types/spread",

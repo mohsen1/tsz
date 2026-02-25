@@ -664,21 +664,9 @@ pub fn resolve_compiler_options(
         }
     }
 
-    // When `strict` is not explicitly set, TypeScript defaults all strict-family
-    // options to false. Only an explicit `strict: true` enables them.
-    // This overrides the CheckerOptions::default() values (which use strict=true).
-    if options.strict.is_none() {
-        resolved.checker.strict = false;
-        resolved.checker.no_implicit_any = false;
-        resolved.checker.strict_null_checks = false;
-        resolved.checker.strict_function_types = false;
-        resolved.checker.strict_bind_call_apply = false;
-        resolved.checker.strict_property_initialization = false;
-        resolved.checker.no_implicit_this = false;
-        resolved.checker.use_unknown_in_catch_variables = false;
-        resolved.checker.always_strict = false;
-        resolved.printer.always_strict = false;
-    }
+    // tsc 6.0: strict-family options default to true when not explicitly set.
+    // CheckerOptions::default() already reflects this (strict=true, all sub-flags=true).
+    // No override needed — the defaults propagate from CheckerOptions::default().
 
     // Individual strict-family options (override strict if set explicitly)
     if let Some(v) = options.no_implicit_any {
@@ -3893,6 +3881,76 @@ mod tests {
                 .iter()
                 .map(|d| d.code)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_strict_family_defaults_true_when_strict_not_set() {
+        // tsc 6.0: strict-family options default to true when not explicitly set.
+        // When a tsconfig has no `strict` option, all strict sub-flags should be true.
+        let json = r#"{"compilerOptions":{"target":"es2015"}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.strict_null_checks,
+            "strictNullChecks should default to true when strict is not set"
+        );
+        assert!(
+            resolved.checker.strict_function_types,
+            "strictFunctionTypes should default to true when strict is not set"
+        );
+        assert!(
+            resolved.checker.no_implicit_any,
+            "noImplicitAny should default to true when strict is not set"
+        );
+        assert!(
+            resolved.checker.strict_property_initialization,
+            "strictPropertyInitialization should default to true when strict is not set"
+        );
+        assert!(
+            resolved.checker.no_implicit_this,
+            "noImplicitThis should default to true when strict is not set"
+        );
+        assert!(
+            resolved.checker.use_unknown_in_catch_variables,
+            "useUnknownInCatchVariables should default to true when strict is not set"
+        );
+    }
+
+    #[test]
+    fn test_strict_false_disables_strict_family() {
+        // When strict: false is explicitly set, all strict sub-flags should be false.
+        let json = r#"{"compilerOptions":{"strict":false}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.strict_null_checks,
+            "strictNullChecks should be false when strict: false"
+        );
+        assert!(
+            !resolved.checker.no_implicit_any,
+            "noImplicitAny should be false when strict: false"
+        );
+        assert!(
+            !resolved.checker.strict_property_initialization,
+            "strictPropertyInitialization should be false when strict: false"
+        );
+    }
+
+    #[test]
+    fn test_individual_strict_option_overrides_default() {
+        // Individual strict-family options should override the default.
+        let json = r#"{"compilerOptions":{"strictNullChecks":false}}"#;
+        let config: TsConfig = serde_json::from_str(json).unwrap();
+        let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.strict_null_checks,
+            "strictNullChecks should be false when explicitly set to false"
+        );
+        // Other strict-family options should still be true (from defaults)
+        assert!(
+            resolved.checker.no_implicit_any,
+            "noImplicitAny should remain true when only strictNullChecks is overridden"
         );
     }
 }
