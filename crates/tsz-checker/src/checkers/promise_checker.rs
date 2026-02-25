@@ -1,6 +1,6 @@
 //! Promise/async type checking (detection, type argument extraction, return types).
 
-use crate::query_boundaries::promise_checker as query;
+use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;

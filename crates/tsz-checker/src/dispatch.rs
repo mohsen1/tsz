@@ -4,8 +4,8 @@
 //! of type computation requests to appropriate specialized methods based on
 //! the syntax node kind.
 
+use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
-use crate::query_boundaries::generic_checker as generic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;

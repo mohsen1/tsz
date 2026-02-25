@@ -5,7 +5,7 @@
 //! and performing two-pass generic inference when needed.
 
 use super::complex::is_contextually_sensitive;
-use crate::query_boundaries::call_checker;
+use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
     pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::query_boundaries::iterable_checker::{
+        use crate::query_boundaries::checkers::iterable::{
             call_signatures_for_type, function_shape_for_type,
         };
         use tsz_solver::instantiate_type;

@@ -1,7 +1,7 @@
 //! Iterable/iterator protocol checking and for-of element type computation.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use crate::query_boundaries::iterable_checker::{
+use crate::query_boundaries::checkers::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
     classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
     function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_tuple_type,

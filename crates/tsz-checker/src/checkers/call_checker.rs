@@ -1,6 +1,6 @@
 //! Call expression checking (overload resolution, contextual typing, signature instantiation).
 
-use crate::query_boundaries::call_checker::{
+use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,
     resolve_new, tuple_elements_for_type,
 };

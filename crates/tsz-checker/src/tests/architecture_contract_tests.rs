@@ -919,8 +919,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "call_checker should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
     );
 
-    let call_boundary_src = fs::read_to_string("src/query_boundaries/call_checker.rs")
-        .expect("failed to read src/query_boundaries/call_checker.rs");
+    let call_boundary_src = fs::read_to_string("src/query_boundaries/checkers/call.rs")
+        .expect("failed to read src/query_boundaries/checkers/call.rs");
     assert!(
         !call_boundary_src.contains("CompatChecker::with_resolver("),
         "query_boundaries/call_checker should not construct CompatChecker directly; use solver operations helper"

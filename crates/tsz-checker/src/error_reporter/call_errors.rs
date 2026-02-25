@@ -458,7 +458,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn should_suppress_concat_overload_error(&mut self, idx: NodeIndex) -> bool {
-        use crate::query_boundaries::call_checker::array_element_type_for_type;
+        use crate::query_boundaries::checkers::call::array_element_type_for_type;
         use crate::query_boundaries::common::contains_type_parameters;
 
         let Some(node) = self.ctx.arena.get(idx) else {

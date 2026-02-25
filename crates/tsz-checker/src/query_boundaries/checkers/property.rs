@@ -5,5 +5,5 @@ pub(crate) fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: Ty
 }
 
 #[cfg(test)]
-#[path = "../../tests/property_checker_boundaries.rs"]
+#[path = "../../../tests/property_checker_boundaries.rs"]
 mod tests;
