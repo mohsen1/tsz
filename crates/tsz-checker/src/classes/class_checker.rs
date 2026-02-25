@@ -751,6 +751,7 @@ impl<'a> CheckerState<'a> {
                 is_accessor,
                 has_override,
                 has_dynamic_name,
+                is_abstract,
             ) = (
                 info.name,
                 info.type_id,
@@ -761,6 +762,7 @@ impl<'a> CheckerState<'a> {
                 info.is_accessor,
                 info.has_override,
                 info.has_dynamic_name,
+                info.is_abstract,
             );
 
             // Skip override checking for private identifiers (#foo)
@@ -836,6 +838,16 @@ impl<'a> CheckerState<'a> {
                         .and_then(|n| self.ctx.arena.get_property_decl(n))
                         .is_some_and(|prop| self.has_declare_modifier(&prop.modifiers));
                 if is_declare_property {
+                    continue;
+                }
+                // tsc does not require `override` when a concrete member implements an
+                // abstract base method. Abstract members MUST be implemented, so
+                // providing a concrete implementation is not an "accidental" override —
+                // only abstract-to-abstract re-declarations require the `override` keyword.
+                let base_is_abstract_method = base_info
+                    .as_ref()
+                    .is_some_and(|base| base.is_abstract && base.is_method);
+                if !is_abstract && base_is_abstract_method {
                     continue;
                 }
                 if base_info
