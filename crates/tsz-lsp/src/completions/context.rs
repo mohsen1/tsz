@@ -31,7 +31,8 @@ impl<'a> Completions<'a> {
 
         let node_idx = self.find_completions_node(root, offset);
 
-        // Check if inside a class/interface body at a member declaration position
+        // Check if inside a class/interface/object-literal/type-literal/enum body
+        // at a member declaration position
         if let Some(node) = self.arena.get(node_idx) {
             let k = node.kind;
 
@@ -44,7 +45,7 @@ impl<'a> Completions<'a> {
                 return true;
             }
 
-            // Inside class/interface body at member position (after `{`)
+            // Inside class/interface body at member position (after `{` or `;`)
             if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::INTERFACE_DECLARATION
@@ -57,12 +58,58 @@ impl<'a> Completions<'a> {
                 }
             }
 
-            // TODO: More AST-based checks needed for:
-            // - Object literal with index signatures
-            // - Type literal positions
-            // - Function call argument positions
-            // - Array literal positions
-            // These require careful type-checking context that we don't have yet.
+            // Inside object literal expression - new property names are valid
+            if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return true;
+            }
+
+            // Inside type literal - new member names are valid
+            if k == syntax_kind_ext::TYPE_LITERAL {
+                return true;
+            }
+
+            // Inside enum declaration body - new member names are valid
+            if k == syntax_kind_ext::ENUM_DECLARATION {
+                let text_before = &self.source_text[..offset as usize];
+                let in_decl_text = &text_before[node.pos as usize..];
+                let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
+                if matches!(last_non_ws, Some(b'{') | Some(b',') | Some(b';')) {
+                    return true;
+                }
+            }
+        }
+
+        // Also check ancestor nodes - the cursor node might be a child
+        // (e.g. an identifier being typed) inside an object literal or class body.
+        {
+            let mut current = node_idx;
+            while current.is_some() {
+                if let Some(node) = self.arena.get(current) {
+                    let k = node.kind;
+                    // If we're directly inside a class/interface body at a member position
+                    if k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                        || k == syntax_kind_ext::INTERFACE_DECLARATION
+                        || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || k == syntax_kind_ext::TYPE_LITERAL
+                    {
+                        return true;
+                    }
+                    // Stop walking at block/function boundaries - these are NOT
+                    // new identifier locations
+                    if k == syntax_kind_ext::BLOCK
+                        || k == syntax_kind_ext::SOURCE_FILE
+                        || k == syntax_kind_ext::MODULE_BLOCK
+                    {
+                        break;
+                    }
+                }
+                if let Some(ext) = self.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            }
         }
 
         // Text-based heuristic for the context token
@@ -101,6 +148,9 @@ impl<'a> Completions<'a> {
         // These match TypeScript's isNewIdentifierDefinitionLocation logic for tokens
         // that indicate the user may type a new expression (variable initializer,
         // function argument, array element, etc.).
+        // NOTE: `{` is NOT included here because it requires AST context to distinguish
+        // block statements (false) from object literals/class bodies (true).
+        // The AST-based checks above handle `{` in the right contexts.
         let last_char = trimmed.as_bytes().last().copied();
         match last_char {
             // After `=` in variable declarations and property assignments,
@@ -117,8 +167,9 @@ impl<'a> Completions<'a> {
                 }
             }
             // After these characters, a new identifier/expression may start.
-            Some(b'(') | Some(b',') | Some(b'[') | Some(b'{') | Some(b'<') | Some(b'?')
-            | Some(b'|') | Some(b'&') | Some(b'!') => return true,
+            // `{` is intentionally excluded - handled by AST checks above.
+            Some(b'(') | Some(b',') | Some(b'[') | Some(b'<') | Some(b'?') | Some(b'|')
+            | Some(b'&') | Some(b'!') => return true,
             _ => {}
         }
 
@@ -174,22 +225,10 @@ impl<'a> Completions<'a> {
             if prev_sig == '.' {
                 return false;
             }
+            // `{` is intentionally excluded - handled by AST checks above.
             return matches!(
                 prev_sig,
-                '=' | '('
-                    | ','
-                    | '['
-                    | '{'
-                    | '<'
-                    | '?'
-                    | '|'
-                    | '&'
-                    | '!'
-                    | '+'
-                    | '-'
-                    | '*'
-                    | '/'
-                    | '%'
+                '=' | '(' | ',' | '[' | '<' | '?' | '|' | '&' | '!' | '+' | '-' | '*' | '/' | '%'
             );
         }
 
