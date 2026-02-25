@@ -772,9 +772,10 @@ impl<'a> CheckerState<'a> {
             };
             if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
                 && let Some(be) = self.ctx.arena.get_binding_element(elem_node)
-                    && be.dot_dot_dot_token {
-                        return true;
-                    }
+                && be.dot_dot_dot_token
+            {
+                return true;
+            }
         }
         false
     }
