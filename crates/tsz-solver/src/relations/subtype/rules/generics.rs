@@ -586,12 +586,84 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(expanded) => self.check_subtype(expanded, target),
             None => {
                 if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
-                    self.check_subtype(expanded, target)
+                    let result = self.check_subtype(expanded, target);
+                    if result.is_true() {
+                        return result;
+                    }
+                }
+
+                // Reverse homomorphic mapped type check:
+                // { [K in keyof T]+?: T[K] } (Partial<T>, Readonly<T>, etc.) is
+                // assignable to T. In tsc 6.0, homomorphic mapped types are
+                // bidirectionally assignable to their source type parameter.
+                if self.check_homomorphic_mapped_to_target(mapped_id, target) {
+                    SubtypeResult::True
                 } else {
                     SubtypeResult::False
                 }
             }
         }
+    }
+
+    /// Check if a homomorphic mapped type is assignable to a type parameter target.
+    ///
+    /// `{ [K in keyof T]: T[K] }` (with any readonly/optional modifiers) is assignable
+    /// to `T` because homomorphic mapped types preserve the shape of T.
+    /// This is the reverse direction of `is_assignable_to_homomorphic_mapped`.
+    pub(crate) fn check_homomorphic_mapped_to_target(
+        &mut self,
+        mapped_id: MappedTypeId,
+        target: TypeId,
+    ) -> bool {
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        // Must not have name remapping (as clause) — remapping can change keys
+        if mapped.name_type.is_some() {
+            return false;
+        }
+
+        // Constraint must be keyof(S) for some S
+        let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+            return false;
+        };
+
+        // Template must be S[K] where K is the iteration parameter (homomorphic form)
+        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
+        else {
+            return false;
+        };
+        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
+            return false;
+        };
+        if idx_param.name != mapped.type_param.name {
+            return false;
+        }
+        if template_obj != constraint_source {
+            return false;
+        }
+
+        // The target must be the same type parameter as the constraint source,
+        // or assignable to it.
+        if constraint_source == target {
+            return true;
+        }
+        if let Some(target_param) = type_param_info(self.interner, target) {
+            if let Some(source_param) = type_param_info(self.interner, constraint_source)
+                && source_param.name == target_param.name {
+                    return true;
+                }
+            // Also check if the target's constraint makes it related
+            if let Some(target_constraint) = target_param.constraint {
+                return self
+                    .check_subtype(target_constraint, constraint_source)
+                    .is_true()
+                    || self
+                        .check_subtype(constraint_source, target_constraint)
+                        .is_true();
+            }
+        }
+
+        false
     }
 
     /// Check source to Mapped expansion (one-sided Mapped case).
@@ -645,10 +717,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Must not remove optional
-        if mapped.optional_modifier == Some(MappedModifier::Remove) {
-            return false;
-        }
+        // In tsc 6.0, all homomorphic mapped types are bidirectionally assignable
+        // to their source type parameter, regardless of modifier direction.
+        // T <: Required<T> is allowed because at the generic level, the concrete
+        // effect of -? depends on what T actually is.
 
         // Constraint must be keyof(S) for some S
         let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {

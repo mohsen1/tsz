@@ -8,9 +8,7 @@
 
 use crate::TypeDatabase;
 use crate::type_queries::data::get_object_shape_id;
-use crate::types::{
-    MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
-};
+use crate::types::{MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo};
 use crate::visitor::{
     index_access_parts, is_identity_comparable_type, is_literal_type, keyof_inner_type,
     mapped_type_id, type_param_info, union_list_id,
@@ -127,11 +125,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // Must not remove optional (-?) — removing optional makes target
-        // more restrictive than source (Required<T> is not a supertype of T)
-        if mapped.optional_modifier == Some(MappedModifier::Remove) {
-            return false;
-        }
+        // In tsc 6.0, all homomorphic mapped types are bidirectionally assignable
+        // to their source type parameter, regardless of modifier direction.
+        // T <: Required<T> is allowed because at the generic level, the concrete
+        // effect of -? depends on what T actually is.
 
         // Constraint must be keyof(S) for some S
         let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {

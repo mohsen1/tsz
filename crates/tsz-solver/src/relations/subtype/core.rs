@@ -22,8 +22,8 @@ use crate::types::{
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
-    enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
-    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    enum_components, function_shape_id, intersection_list_id, intrinsic_kind,
+    is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, template_literal_id, tuple_list_id,
     type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
@@ -593,6 +593,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::True;
                     }
                 }
+            }
+
+            // Reverse homomorphic mapped type check:
+            // { [K in keyof T]: T[K] } (with any readonly/optional modifiers) is
+            // assignable to T. This handles Readonly<T> → T, Partial<T> → T, etc.
+            // In tsc 6.0, homomorphic mapped types are bidirectionally assignable
+            // to their source type parameter.
+            if self.check_homomorphic_mapped_source_to_type_param(source, target) {
+                return SubtypeResult::True;
             }
 
             // A concrete type is never a subtype of an opaque type parameter.
@@ -1381,6 +1390,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         result
+    }
+
+    /// Check if a source type is a homomorphic mapped type that is assignable
+    /// to a type parameter target.
+    ///
+    /// In tsc 6.0, homomorphic mapped types like `Readonly<T>`, `Partial<T>`,
+    /// `Required<T>`, and identity mapped types `{ [K in keyof T]: T[K] }` are
+    /// bidirectionally assignable to their source type parameter T.
+    ///
+    /// This handles the case where source is:
+    /// - A raw Mapped type: `{ readonly [K in keyof T]: T[K] }`
+    /// - An Application that expands to a Mapped type: `Readonly<T>`, `Partial<T>`
+    fn check_homomorphic_mapped_source_to_type_param(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        // Try raw mapped type first
+        if let Some(mapped_id) = mapped_type_id(self.interner, source) {
+            return self.check_homomorphic_mapped_to_target(mapped_id, target);
+        }
+
+        // Try application that resolves to a mapped type (e.g., Readonly<T>, Partial<T>)
+        if let Some(app_id) = application_id(self.interner, source)
+            && let Some(expanded) = self.try_expand_application(app_id)
+                && let Some(mapped_id) = mapped_type_id(self.interner, expanded) {
+                    return self.check_homomorphic_mapped_to_target(mapped_id, target);
+                }
+
+        false
     }
 
     /// Check if a deferred keyof type is a subtype of string | number | symbol.

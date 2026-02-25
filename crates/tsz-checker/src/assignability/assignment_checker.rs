@@ -1,6 +1,6 @@
 //! Assignment expression checking (simple, compound, logical, readonly).
 
-use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -498,10 +498,7 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        let blocked_generic_index_write =
-            !is_const && !is_readonly && self.check_generic_indexed_write_restriction(left_idx);
-
-        if !is_const && !is_readonly && !blocked_generic_index_write && left_type != TypeId::ANY {
+        if !is_const && !is_readonly && left_type != TypeId::ANY {
             let mut check_assignability = !is_array_destructuring;
 
             if check_assignability {
@@ -550,97 +547,6 @@ impl<'a> CheckerState<'a> {
         }
 
         right_type
-    }
-
-    fn check_generic_indexed_write_restriction(&mut self, left_idx: NodeIndex) -> bool {
-        let Some(left_node) = self.ctx.arena.get(left_idx) else {
-            return false;
-        };
-        if left_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            return false;
-        }
-        let Some(access) = self.ctx.arena.get_access_expr(left_node) else {
-            return false;
-        };
-        if self
-            .get_literal_index_from_node(access.name_or_argument)
-            .is_some()
-        {
-            return false;
-        }
-
-        let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-        self.ctx.skip_flow_narrowing = true;
-        let object_type_raw = self.get_type_of_node(access.expression);
-        let object_type = self.resolve_type_query_type(object_type_raw);
-        self.ctx.skip_flow_narrowing = prev_skip_narrowing;
-
-        if object_type == TypeId::ERROR || object_type == TypeId::ANY {
-            return false;
-        }
-        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, object_type) {
-            return false;
-        }
-
-        let evaluated_object = tsz_solver::evaluate_type(self.ctx.types, object_type);
-
-        // In TypeScript, assigning to a generic mapped type (like `Record<K, V>`) is safe
-        // if the index is constrained correctly, and the solver handles the assignability.
-        // We skip the generic write restriction for mapped types (and applications of aliases
-        // that aren't pure type parameters) so it falls through to normal property checking.
-
-        // If it's an intersection or union, it might contain a type parameter.
-        // Let's approximate TS2862 by only blocking if the evaluated type is an uninstantiated
-        // type parameter directly, or an intersection of them.
-        if !tsz_solver::type_queries::is_uninstantiated_type_parameter(
-            self.ctx.types,
-            evaluated_object,
-        ) {
-            return false;
-        }
-
-        if self.index_expression_constrained_to_object_keys(object_type, access.name_or_argument) {
-            return false;
-        }
-
-        let object_type_str = self.format_type(object_type);
-        let message = format_message(
-            diagnostic_messages::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
-            &[&object_type_str],
-        );
-        self.error_at_node(
-            left_idx,
-            &message,
-            diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
-        );
-        true
-    }
-
-    fn index_expression_constrained_to_object_keys(
-        &mut self,
-        object_type: TypeId,
-        index_expr: NodeIndex,
-    ) -> bool {
-        use tsz_solver::type_queries::{get_keyof_type, get_type_parameter_constraint};
-
-        let index_type = self.get_type_of_node(index_expr);
-        if index_type == TypeId::ERROR {
-            return false;
-        }
-
-        let Some(index_constraint) = get_type_parameter_constraint(self.ctx.types, index_type)
-        else {
-            return false;
-        };
-
-        let Some(constraint_source) = get_keyof_type(self.ctx.types, index_constraint) else {
-            return false;
-        };
-
-        // Allow indexed writes when the constraint is `keyof <source>` and
-        // the source type is compatible with the generic object being written to.
-        self.is_subtype_of(constraint_source, object_type)
-            || self.is_subtype_of(object_type, constraint_source)
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
