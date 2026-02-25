@@ -148,21 +148,26 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        // Fall back to checking file_locals in the target binder
-        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return record_and_return(sym_id);
-        }
-
-        // Follow re-export chains (wildcard and named re-exports)
+        // Follow re-export chains (wildcard and named re-exports) BEFORE
+        // falling back to file_locals. file_locals may contain merged globals
+        // that shadow the actual re-exported symbols.
         let mut visited = rustc_hash::FxHashSet::default();
-        let result = self.resolve_export_in_file(target_file_idx, export_name, &mut visited);
-        if let Some((sym_id, actual_file_idx)) = result {
+        if let Some((sym_id, actual_file_idx)) =
+            self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
+        {
             self.ctx
                 .cross_file_symbol_targets
                 .borrow_mut()
                 .insert(sym_id, actual_file_idx);
             return Some(sym_id);
         }
+
+        // Last resort: check file_locals (for script files or binding edge cases
+        // where module_exports wasn't populated).
+        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
+            return record_and_return(sym_id);
+        }
+
         None
     }
 
@@ -260,7 +265,7 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
-        // Check direct exports
+        // Check direct exports (module_exports)
         if let Some(exports) = target_binder.module_exports.get(&target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports, export_name)
@@ -268,12 +273,8 @@ impl<'a> CheckerState<'a> {
             return Some((sym_id, file_idx));
         }
 
-        // Check file_locals
-        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return Some((sym_id, file_idx));
-        }
-
-        // Check named re-exports
+        // Check named re-exports before file_locals so that
+        // `export { X } from './other'` is resolved through the chain.
         if let Some(reexports) = target_binder.reexports.get(&target_file_name)
             && let Some((source_module, original_name)) = reexports.get(export_name)
         {
@@ -287,7 +288,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check wildcard re-exports
+        // Check wildcard re-exports before file_locals so that
+        // `export * from './other'` is followed to the actual declaring file.
+        // file_locals may contain merged globals that shadow re-exported symbols.
         if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
             let source_modules = source_modules.clone();
             for source_module in &source_modules {
@@ -300,6 +303,12 @@ impl<'a> CheckerState<'a> {
                     return Some(result);
                 }
             }
+        }
+
+        // Last resort: check file_locals (for script files or binding edge cases
+        // where module_exports wasn't populated).
+        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
+            return Some((sym_id, file_idx));
         }
 
         None
@@ -330,8 +339,13 @@ impl<'a> CheckerState<'a> {
         };
 
         // Try to find exports in the target binder's module_exports.
-        // Prefer canonical file key first.
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+        // Prefer canonical file key first, then module specifier fallback.
+        let direct_exports = target_binder
+            .module_exports
+            .get(&target_file_name)
+            .or_else(|| target_binder.module_exports.get(module_specifier));
+
+        if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
@@ -340,17 +354,23 @@ impl<'a> CheckerState<'a> {
             return Some(combined);
         }
 
-        // Fallback to module specifier key.
-        if let Some(exports) = target_binder.module_exports.get(module_specifier) {
-            let mut combined = exports.clone();
-            self.merge_export_equals_members(target_binder, exports, &mut combined);
+        // No direct exports found, but the module may still re-export symbols
+        // via `export * from './other'` or `export { X } from './other'`.
+        // Collect re-exported symbols even when there are no direct exports.
+        let has_reexports = target_binder
+            .wildcard_reexports
+            .contains_key(&target_file_name)
+            || target_binder.reexports.contains_key(&target_file_name);
+        if has_reexports {
+            let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            record_symbols(&combined);
-            return Some(combined);
+            if !combined.is_empty() {
+                record_symbols(&combined);
+                return Some(combined);
+            }
         }
 
-        // No target-driven export surface found for this module specifier.
         None
     }
 
