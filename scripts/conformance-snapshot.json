@@ -1,11 +1,33 @@
 {
-  "timestamp": "2026-02-25T08:55:27Z",
-  "git_sha": "c2093c2bfd7bc4a89ef3882ed5cfa3b0c55ab990",
+  "timestamp": "2026-02-25T09:31:42Z",
+  "git_sha": "4fc07b1db9e73a86fe509ecbb7f170992d601f9f",
   "summary": {
     "total_tests": 12574,
-    "passed": 6515,
-    "failed": 6059,
-    "pass_rate": 51.8
+    "passed": 6521,
+    "failed": 6053,
+    "pass_rate": 51.9
+  },
+  "analysis": {
+    "summary": {
+      "total_failing": 5991,
+      "false_positives": 5985,
+      "all_missing": 4,
+      "wrong_code": 2,
+      "close": 2
+    },
+    "not_implemented_codes": [
+      {
+        "code": "TS5110",
+        "count": 6
+      }
+    ],
+    "partial_codes": [],
+    "quick_wins": [
+      {
+        "code": "TS5110",
+        "count": 4
+      }
+    ]
   },
   "areas_by_pass_rate": [
     {
@@ -14,13 +36,6 @@
       "passed": 1,
       "failed": 13,
       "pass_rate": 7.14
-    },
-    {
-      "area": "expressions/functionCalls",
-      "total": 24,
-      "passed": 3,
-      "failed": 21,
-      "pass_rate": 12.5
     },
     {
       "area": "expressions/unaryOperators",
@@ -69,6 +84,13 @@
       "total": 84,
       "passed": 21,
       "failed": 63,
+      "pass_rate": 25.0
+    },
+    {
+      "area": "expressions/functionCalls",
+      "total": 24,
+      "passed": 6,
+      "failed": 18,
       "pass_rate": 25.0
     },
     {
@@ -472,10 +494,10 @@
     },
     {
       "area": "compiler",
-      "total": 6471,
-      "passed": 3488,
-      "failed": 2983,
-      "pass_rate": 53.9
+      "total": 6470,
+      "passed": 3491,
+      "failed": 2979,
+      "pass_rate": 53.96
     },
     {
       "area": "async/es6",
@@ -715,18 +737,5 @@
       "failed": 0,
       "pass_rate": 100.0
     }
-  ],
-  "top_failures": [
-    {
-      "code": "TS5110",
-      "count": 4
-    }
-  ],
-  "not_implemented_codes": [
-    {
-      "code": "TS5110",
-      "count": 6
-    }
-  ],
-  "partial_codes": []
+  ]
 }
