@@ -1,9 +1,9 @@
-use super::Printer;
+use super::super::Printer;
 use tsz_parser::parser::{NodeIndex, node::Node, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_call_expression(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_call_expression(&mut self, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };

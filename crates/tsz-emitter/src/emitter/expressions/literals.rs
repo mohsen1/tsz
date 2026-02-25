@@ -3,10 +3,10 @@
 //! Handles array literals, object literals (including single-line detection,
 //! method bodies, accessor emission), property assignments, and shorthand properties.
 
-use super::*;
+use super::super::*;
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_array_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_array_literal(&mut self, node: &Node) {
         let Some(array) = self.arena.get_literal_expr(node) else {
             return;
         };
@@ -339,7 +339,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_object_literal(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_object_literal(&mut self, node: &Node) {
         let Some(obj) = self.arena.get_literal_expr(node) else {
             return;
         };
@@ -353,7 +353,7 @@ impl<'a> Printer<'a> {
         // For ES2015-ES2017 targets, object spread must be lowered to Object.assign().
         // (ES2018+ supports native object spread syntax.)
         {
-            use super::ScriptTarget;
+            use super::super::ScriptTarget;
             let has_spread = obj.elements.nodes.iter().any(|&idx| {
                 self.arena
                     .get(idx)
@@ -632,7 +632,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_property_assignment(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_property_assignment(&mut self, node: &Node) {
         let Some(prop) = self.arena.get_property_assignment(node) else {
             return;
         };
@@ -662,7 +662,7 @@ impl<'a> Printer<'a> {
         self.emit_expression(prop.initializer);
     }
 
-    pub(super) fn emit_shorthand_property(&mut self, node: &Node) {
+    pub(in crate::emitter) fn emit_shorthand_property(&mut self, node: &Node) {
         let Some(shorthand) = self.arena.get_shorthand_property(node) else {
             // Fallback: try to get identifier data directly
             if let Some(ident) = self.arena.get_identifier(node) {

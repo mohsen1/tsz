@@ -1,4 +1,4 @@
-use super::Printer;
+use super::super::Printer;
 use tsz_parser::parser::{
     NodeIndex,
     node::{AccessExprData, BinaryExprData, Node},
@@ -14,7 +14,7 @@ impl<'a> Printer<'a> {
     // and nullish coalescing (??) lowering for older targets.
     // =========================================================================
 
-    pub(super) fn emit_exponentiation_expression(&mut self, binary: &BinaryExprData) {
+    pub(in crate::emitter) fn emit_exponentiation_expression(&mut self, binary: &BinaryExprData) {
         if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
             self.emit(binary.left);
             self.write(" = Math.pow(");
@@ -31,7 +31,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_logical_assignment_expression(&mut self, binary: &BinaryExprData) {
+    pub(in crate::emitter) fn emit_logical_assignment_expression(
+        &mut self,
+        binary: &BinaryExprData,
+    ) {
         let is_nullish = binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16;
         let is_and = binary.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16;
         let left = self.unwrap_parenthesized_logical_assignment_left(binary.left);
@@ -428,7 +431,10 @@ impl<'a> Printer<'a> {
         self.emit(binary.right);
     }
 
-    pub(super) fn emit_nullish_coalescing_expression(&mut self, binary: &BinaryExprData) {
+    pub(in crate::emitter) fn emit_nullish_coalescing_expression(
+        &mut self,
+        binary: &BinaryExprData,
+    ) {
         // When the lowered ternary appears inside a binary operand, conditional
         // condition, or unary expression, wrap in parens to preserve precedence.
         // e.g., `(a ?? b) || c` → `(a !== null && a !== void 0 ? a : b) || c`
@@ -535,7 +541,7 @@ impl<'a> Printer<'a> {
             || node.kind == SyntaxKind::NumericLiteral as u16
     }
 
-    pub(super) fn is_simple_nullish_expression(&self, node_idx: NodeIndex) -> bool {
+    pub(in crate::emitter) fn is_simple_nullish_expression(&self, node_idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(node_idx) else {
             return false;
         };
