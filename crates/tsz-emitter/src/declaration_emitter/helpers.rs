@@ -561,32 +561,52 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         } else {
-            // No usage tracking - count everything as used, but still elide
-            // imports with explicitly empty bindings (e.g., `import {} from "..."`)
+            // No usage tracking available (e.g., --noCheck --noLib mode).
+            // In this mode, tsc would have type info to decide which imports are needed,
+            // but we don't. Apply conservative heuristics:
+            // - Type-only imports: keep (likely needed for type references)
+            // - Named imports with specifiers: keep (may reference types)
+            // - Namespace imports (import * as ns): skip (almost always value-level)
+            // - Empty imports (import {}): skip
             if import.import_clause.is_some()
                 && let Some(clause_node) = self.arena.get(import.import_clause)
                 && let Some(clause) = self.arena.get_import_clause(clause_node)
             {
-                // Default import
-                default_count = usize::from(clause.name.is_some());
+                // Type-only imports are likely needed for type references
+                let is_type_only = clause.is_type_only;
+
+                // Default import - keep for type-only, skip otherwise without tracking
+                default_count = if is_type_only {
+                    usize::from(clause.name.is_some())
+                } else {
+                    0
+                };
 
                 // Named bindings: check if there are actually any specifiers
                 if clause.named_bindings.is_some() {
                     if let Some(bindings_node) = self.arena.get(clause.named_bindings)
                         && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                     {
-                        named_count = bindings.elements.nodes.len();
-                        // Namespace imports (import * as ns) always count as used
                         if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
-                            named_count = 1;
+                            // Namespace import (import * as ns): skip in fallback mode
+                            // These are almost exclusively for value-level code (ns.method())
+                            // and rarely needed in .d.ts output
+                            named_count = 0;
+                        } else if is_type_only {
+                            // Type-only named imports - keep all
+                            named_count = bindings.elements.nodes.len();
+                        } else {
+                            // Regular named imports - keep (may be type references)
+                            named_count = bindings.elements.nodes.len();
                         }
                     } else {
-                        named_count = 1; // Can't introspect - assume used
+                        named_count = if is_type_only { 1 } else { 0 };
                     }
                 }
             } else {
-                default_count = usize::from(import.import_clause.is_some());
-                named_count = 1;
+                // No import clause - side-effect import handled elsewhere
+                default_count = 0;
+                named_count = 0;
             }
         }
 

@@ -1008,6 +1008,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Elide non-exported import equals declarations that are not used by the public API
         if !is_exported && !already_exported {
+            // When no usage tracking is available, non-exported `import = require(...)`
+            // declarations are almost always value-level and not needed in .d.ts output.
+            if self.used_symbols.is_none() {
+                return;
+            }
             if !self.should_emit_public_api_dependency(import_eq.import_clause) {
                 return;
             }
