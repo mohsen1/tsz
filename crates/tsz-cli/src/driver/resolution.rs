@@ -110,20 +110,26 @@ pub(crate) fn resolve_type_reference_from_node_modules(
         .map(String::from)
         .unwrap_or_else(|| implied_resolution_mode_for_file(from_file, base_dir));
 
+    // Generate all candidate package names (original + @types mangled form)
+    let candidates = type_package_candidates(name);
+
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
-        let package_root = current.join("node_modules").join(name);
-        if package_root.is_dir() {
-            let resolved =
-                resolve_type_package_entry_with_mode(&package_root, &effective_mode, options);
-            if resolved.is_some() {
-                return resolved;
-            }
-            // Fall back to non-conditional resolution (types/typings/main/index)
-            let resolved = resolve_type_package_entry(&package_root, options);
-            if resolved.is_some() {
-                return resolved;
+        let node_modules = current.join("node_modules");
+        for candidate in &candidates {
+            let package_root = node_modules.join(candidate);
+            if package_root.is_dir() {
+                let resolved =
+                    resolve_type_package_entry_with_mode(&package_root, &effective_mode, options);
+                if resolved.is_some() {
+                    return resolved;
+                }
+                // Fall back to non-conditional resolution (types/typings/main/index)
+                let resolved = resolve_type_package_entry(&package_root, options);
+                if resolved.is_some() {
+                    return resolved;
+                }
             }
         }
 
@@ -201,6 +207,20 @@ fn type_package_candidates(name: &str) -> Vec<String> {
         && !stripped.is_empty()
     {
         candidates.push(stripped.to_string());
+    }
+
+    // Scoped package mangling: @scope/name → @types/scope__name
+    // tsc resolves `/// <reference types="@scope/name" />` by checking both
+    // the original scoped path and the @types-mangled equivalent.
+    if let Some(stripped) = normalized.strip_prefix('@')
+        && !normalized.starts_with("@types/")
+    {
+        if let Some((scope, pkg)) = stripped.split_once('/') {
+            if !scope.is_empty() && !pkg.is_empty() {
+                let mangled = format!("@types/{scope}__{pkg}");
+                candidates.push(mangled);
+            }
+        }
     }
 
     if !candidates.iter().any(|value| value == &normalized) {

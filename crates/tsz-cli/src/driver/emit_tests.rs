@@ -78,15 +78,20 @@ fn test_normalize_type_roots_keeps_existing_absolute_root() {
 }
 
 #[test]
-fn test_normalize_type_roots_maps_missing_absolute_root_to_base_dir() {
+fn test_normalize_type_roots_skips_missing_absolute_root() {
     let temp = tempdir().unwrap();
     let base_dir = canonicalize_or_owned(temp.path());
-    let types_dir = base_dir.join("types");
-    std::fs::create_dir_all(&types_dir).unwrap();
-    let expected = canonicalize_or_owned(&types_dir);
+    // Even though <base_dir>/types/ exists, an absolute "/types" that doesn't
+    // exist on disk should NOT fall back to the base_dir-relative path.
+    // tsc treats absolute typeRoots as-is; if they don't exist, they're skipped.
+    let _types_dir = base_dir.join("types");
+    std::fs::create_dir_all(&_types_dir).unwrap();
 
     let normalized =
         normalize_type_roots(&base_dir, Some(vec![Path::new("/types").to_path_buf()])).unwrap();
 
-    assert_eq!(normalized, vec![expected]);
+    assert!(
+        normalized.is_empty(),
+        "absolute /types should be skipped when it doesn't exist on disk"
+    );
 }

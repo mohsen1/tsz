@@ -886,12 +886,12 @@ fn compile_inner(
 
     // Separate binary files from regular sources - binary files get TS1490
     let mut type_file_diagnostics: Vec<Diagnostic> = Vec::new();
-    for (path, type_name) in type_reference_errors {
+    for (path, type_name, types_offset, types_len) in type_reference_errors {
         let file_name = path.to_string_lossy().into_owned();
         type_file_diagnostics.push(Diagnostic::error(
             file_name,
-            0,
-            0,
+            types_offset as u32,
+            types_len as u32,
             format!("Cannot find type definition file for '{type_name}'."),
             diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR,
         ));
