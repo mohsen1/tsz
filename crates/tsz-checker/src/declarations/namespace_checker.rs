@@ -90,8 +90,12 @@ impl<'a> CheckerState<'a> {
             if props.contains_key(&name_atom) || is_implicit_class_prototype {
                 // Get the namespace export symbol to report error at its location
                 if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                    let error_node = export_symbol.value_declaration;
-                    if error_node != NodeIndex::NONE {
+                    let decl_node = export_symbol.value_declaration;
+                    if decl_node != NodeIndex::NONE {
+                        // Point to the identifier name, not the full declaration
+                        let error_node = self
+                            .get_declaration_name_node(decl_node)
+                            .unwrap_or(decl_node);
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
                             error_node,
@@ -212,8 +216,12 @@ impl<'a> CheckerState<'a> {
             if props.contains_key(&name_atom) {
                 // Get the namespace export symbol to report error at its location
                 if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
-                    let error_node = export_symbol.value_declaration;
-                    if error_node != NodeIndex::NONE {
+                    let decl_node = export_symbol.value_declaration;
+                    if decl_node != NodeIndex::NONE {
+                        // Point to the identifier name, not the full declaration
+                        let error_node = self
+                            .get_declaration_name_node(decl_node)
+                            .unwrap_or(decl_node);
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
                             error_node,

@@ -1084,10 +1084,20 @@ impl<'a> CheckerState<'a> {
 
         // TS2300: Check for duplicate export assignments
         // TypeScript emits TS2300 on ALL export assignments if there are 2+
+        // tsc points the error at the expression (e.g., `x` in `export = x;`),
+        // not at the `export` keyword.
         if export_assignment_indices.len() > 1 {
             for &export_idx in &export_assignment_indices {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get(export_idx)
+                    .and_then(|node| self.ctx.arena.get_export_assignment(node))
+                    .map(|data| data.expression)
+                    .filter(|idx| idx.is_some())
+                    .unwrap_or(export_idx);
                 self.error_at_node(
-                    export_idx,
+                    error_node,
                     "Duplicate identifier 'export='.",
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                 );
