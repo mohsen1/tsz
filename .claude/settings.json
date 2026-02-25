@@ -1,4 +1,63 @@
 {
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Bash(cargo *)",
+      "Bash(git *)",
+      "Bash(./scripts/*)",
+      "Bash(python3 *)",
+      "Bash(node *)",
+      "Bash(npx *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(sort *)",
+      "Bash(diff *)",
+      "Bash(jq *)",
+      "Bash(date *)",
+      "Bash(echo *)",
+      "Bash(curl *)",
+      "Bash(stat *)",
+      "Bash(test *)",
+      "Bash(flock *)",
+      "Bash(cd *)",
+      "Bash(gh *)",
+      "Bash(chmod *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(tee *)",
+      "Bash(xargs *)",
+      "Bash(touch *)",
+      "Bash(realpath *)",
+      "Bash(dirname *)",
+      "Bash(basename *)",
+      "Bash(pwd)",
+      "Bash(env *)",
+      "Bash(which *)",
+      "Bash(rm *)",
+      "Task(**)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo *)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  },
   "hooks": {
     "SessionStart": [
       {
