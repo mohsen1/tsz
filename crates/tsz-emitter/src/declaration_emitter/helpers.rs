@@ -561,9 +561,33 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         } else {
-            // No usage tracking - count everything as used
-            default_count = usize::from(import.import_clause.is_some());
-            named_count = 1; // At least one if present
+            // No usage tracking - count everything as used, but still elide
+            // imports with explicitly empty bindings (e.g., `import {} from "..."`)
+            if import.import_clause.is_some()
+                && let Some(clause_node) = self.arena.get(import.import_clause)
+                && let Some(clause) = self.arena.get_import_clause(clause_node)
+            {
+                // Default import
+                default_count = usize::from(clause.name.is_some());
+
+                // Named bindings: check if there are actually any specifiers
+                if clause.named_bindings.is_some() {
+                    if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                        && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+                    {
+                        named_count = bindings.elements.nodes.len();
+                        // Namespace imports (import * as ns) always count as used
+                        if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                            named_count = 1;
+                        }
+                    } else {
+                        named_count = 1; // Can't introspect - assume used
+                    }
+                }
+            } else {
+                default_count = usize::from(import.import_clause.is_some());
+                named_count = 1;
+            }
         }
 
         (default_count, named_count)
