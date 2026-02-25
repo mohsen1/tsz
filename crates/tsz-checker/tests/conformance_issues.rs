@@ -26,7 +26,15 @@ fn compile_and_get_diagnostics_with_options(
     source: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    compile_and_get_diagnostics_named("test.ts", source, options)
+}
+
+fn compile_and_get_diagnostics_named(
+    file_name: &str,
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -37,7 +45,7 @@ fn compile_and_get_diagnostics_with_options(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
+        file_name.to_string(),
         options,
     );
 
@@ -2968,5 +2976,71 @@ let x = 2;
         codes.len() == 2,
         "Expected 2 diagnostics (one per declaration), got {}",
         codes.len()
+    );
+}
+
+// =============================================================================
+// JSX Intrinsic Element Resolution (TS2339)
+// =============================================================================
+
+#[test]
+fn test_jsx_intrinsic_element_ts2339_for_unknown_tag() {
+    // Mirrors tsxElementResolution1.tsx: <span /> should error when only <div> is declared
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        div: any
+    }
+}
+<div />;
+<span />;
+"#;
+    let diagnostics =
+        compile_and_get_diagnostics_named("test.tsx", source, CheckerOptions::default());
+    let ts2339_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339_diags.len() == 1,
+        "Expected exactly 1 TS2339 for <span />, got {}: {ts2339_diags:?}",
+        ts2339_diags.len()
+    );
+    assert!(
+        ts2339_diags[0].1.contains("span"),
+        "Expected TS2339 to mention 'span', got: {}",
+        ts2339_diags[0].1
+    );
+    assert!(
+        ts2339_diags[0].1.contains("JSX.IntrinsicElements"),
+        "Expected TS2339 to mention 'JSX.IntrinsicElements', got: {}",
+        ts2339_diags[0].1
+    );
+}
+
+#[test]
+fn test_jsx_intrinsic_element_no_error_for_known_tag() {
+    // Declared tags should not produce TS2339
+    let source = r#"
+declare namespace JSX {
+    interface Element { }
+    interface IntrinsicElements {
+        div: { text?: string; };
+        span: any;
+    }
+}
+<div />;
+<span />;
+"#;
+    let diagnostics =
+        compile_and_get_diagnostics_named("test.tsx", source, CheckerOptions::default());
+    let ts2339_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339_diags.is_empty(),
+        "Expected no TS2339 when all tags are declared, got: {ts2339_diags:?}"
     );
 }

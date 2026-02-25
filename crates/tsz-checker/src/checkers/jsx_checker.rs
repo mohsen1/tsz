@@ -59,37 +59,62 @@ impl<'a> CheckerState<'a> {
 
         if is_intrinsic {
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
-            // Try to resolve JSX.IntrinsicElements and create an indexed access type
             if let Some(tag) = tag_name
                 && let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type()
             {
-                // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
+                // Evaluate IntrinsicElements from Lazy(DefId) to its concrete Object form.
+                // The solver's PropertyAccessEvaluator can't resolve Lazy types without
+                // the checker's type environment, so we must evaluate before property access.
+                let evaluated_ie = self.evaluate_type_with_env(intrinsic_elements_type);
+
                 let tag_atom = self.ctx.types.intern_string(tag);
                 let cache_key = (intrinsic_elements_type, tag_atom);
 
-                // Use cached evaluated props type if available, otherwise evaluate
-                let evaluated_props =
-                    if let Some(&cached) = self.ctx.jsx_intrinsic_props_cache.get(&cache_key) {
-                        cached
-                    } else {
-                        let factory = self.ctx.types.factory();
-                        let tag_literal = factory.literal_string(tag);
-                        let props_type = factory.index_access(intrinsic_elements_type, tag_literal);
-                        let evaluated = self.evaluate_type_with_env(props_type);
-                        self.ctx
-                            .jsx_intrinsic_props_cache
-                            .insert(cache_key, evaluated);
-                        evaluated
+                // Use cached result if available
+                let evaluated_props = if let Some(&cached) =
+                    self.ctx.jsx_intrinsic_props_cache.get(&cache_key)
+                {
+                    cached
+                } else {
+                    // Resolve the tag name as a property on the evaluated IntrinsicElements
+                    use tsz_solver::operations::property::PropertyAccessResult;
+                    let result = self.resolve_property_access_with_env(evaluated_ie, tag);
+                    let props = match result {
+                        PropertyAccessResult::Success { type_id, .. } => type_id,
+                        PropertyAccessResult::PropertyNotFound { .. } => {
+                            // TS2339: Property 'span' does not exist on type
+                            // 'JSX.IntrinsicElements'.
+                            // Use `idx` (the JSX element node) for the span — tsc
+                            // points at `<tagName .../>`, not just the identifier.
+                            // Format the type as "JSX.IntrinsicElements" (qualified name).
+                            if let Some(loc) = self.get_source_location(idx) {
+                                use crate::diagnostics::Diagnostic;
+                                use tsz_common::diagnostics::diagnostic_codes;
+                                let message = format!(
+                                    "Property '{tag}' does not exist on type 'JSX.IntrinsicElements'."
+                                );
+                                self.ctx.push_diagnostic(Diagnostic::error(
+                                    &self.ctx.file_name,
+                                    loc.start,
+                                    loc.length(),
+                                    message,
+                                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                                ));
+                            }
+                            TypeId::ERROR
+                        }
+                        _ => TypeId::ANY,
                     };
+                    self.ctx.jsx_intrinsic_props_cache.insert(cache_key, props);
+                    props
+                };
+
+                // Check JSX attributes against the resolved props type
+                self.check_jsx_attributes_against_props(jsx_opening.attributes, evaluated_props);
 
                 let factory = self.ctx.types.factory();
                 let tag_literal = factory.literal_string(tag);
-                let props_type = factory.index_access(intrinsic_elements_type, tag_literal);
-
-                // Check JSX attributes against the already-evaluated props type
-                self.check_jsx_attributes_against_props(jsx_opening.attributes, evaluated_props);
-
-                return props_type;
+                return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
             // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
