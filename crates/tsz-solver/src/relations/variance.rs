@@ -27,7 +27,6 @@
 //! Also supports lazy type resolution, recursive variance composition,
 //! and Ref(SymbolRef) type handling.
 
-use crate::TypeVisitor;
 use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
 use crate::types::{
@@ -36,6 +35,7 @@ use crate::types::{
     TypeApplicationId, TypeId, TypeListId, TypeParamInfo, Variance,
 };
 use crate::visitor::lazy_def_id;
+use crate::visitors::visitor::TypeVisitor;
 
 use std::sync::Arc;
 use tsz_common::interner::Atom;

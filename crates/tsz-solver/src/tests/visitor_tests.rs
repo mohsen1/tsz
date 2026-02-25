@@ -1,5 +1,6 @@
 //! Tests for the Type Visitor Pattern implementation.
 
+use super::visitor::*;
 use super::*;
 
 // =============================================================================
