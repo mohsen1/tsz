@@ -440,7 +440,10 @@ impl<'a> CheckerState<'a> {
 
         use tsz_solver::PendingDiagnostic;
 
-        let Some(loc) = self.get_source_location(idx) else {
+        // tsc reports TS2769 at the first argument position, not the call expression.
+        // Fall back to the call expression itself if there are no arguments.
+        let report_idx = self.ts2769_first_arg_or_call(idx);
+        let Some(loc) = self.get_source_location(report_idx) else {
             return;
         };
 
@@ -478,6 +481,23 @@ impl<'a> CheckerState<'a> {
             length: loc.length(),
             related_information: related,
         });
+    }
+
+    /// tsc reports TS2769 at the first argument node rather than the full call
+    /// expression. This returns the first argument's `NodeIndex`, or falls back
+    /// to the call expression itself when there are no arguments.
+    fn ts2769_first_arg_or_call(&self, call_idx: NodeIndex) -> NodeIndex {
+        let Some(node) = self.ctx.arena.get(call_idx) else {
+            return call_idx;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return call_idx;
+        };
+        if let Some(args) = &call.arguments
+            && let Some(&first) = args.nodes.first() {
+                return first;
+            }
+        call_idx
     }
 
     fn should_suppress_concat_overload_error(&mut self, idx: NodeIndex) -> bool {
