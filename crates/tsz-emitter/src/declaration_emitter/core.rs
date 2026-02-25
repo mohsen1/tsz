@@ -638,6 +638,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type
+        let func_body = func.body;
+        let func_name = func.name;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -647,14 +649,19 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&func_idx.0)
                 .copied()
-                .or_else(|| self.get_node_type_or_names(&[func.name]));
+                .or_else(|| self.get_node_type_or_names(&[func_name]));
 
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
+            } else if func_body.is_some() && self.body_returns_void(func_body) {
+                self.write(": void");
             }
+        } else if func_body.is_some() && self.body_returns_void(func_body) {
+            // No type cache available, but we can check the body
+            self.write(": void");
         }
 
         self.write(";");
@@ -717,6 +724,13 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        // Emit `#private;` if any member has a private identifier name (e.g., #foo)
+        if self.class_has_private_identifier_member(&class.members) {
+            self.write_indent();
+            self.write("#private;");
+            self.write_line();
+        }
+
         // Members
         for &member_idx in &class.members.nodes {
             self.emit_class_member(member_idx);
@@ -732,6 +746,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(member_node) = self.arena.get(member_idx) else {
             return;
         };
+
+        // Skip members with private identifier names (#foo) - these are replaced by `#private;`
+        if self.member_has_private_identifier_name(member_idx) {
+            return;
+        }
 
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -754,6 +773,28 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Check if a member has a private identifier (#foo) name.
+    fn member_has_private_identifier_name(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let name_idx = if let Some(prop) = self.arena.get_property_decl(member_node) {
+            Some(prop.name)
+        } else if let Some(method) = self.arena.get_method_decl(member_node) {
+            Some(method.name)
+        } else if let Some(accessor) = self.arena.get_accessor(member_node) {
+            Some(accessor.name)
+        } else {
+            None
+        };
+        if let Some(name_idx) = name_idx
+            && let Some(name_node) = self.arena.get(name_idx)
+        {
+            return name_node.kind == SyntaxKind::PrivateIdentifier as u16;
+        }
+        false
     }
 
     fn emit_property_declaration(&mut self, prop_idx: NodeIndex) {
@@ -822,20 +863,39 @@ impl<'a> DeclarationEmitter<'a> {
         let is_overload = method.body.is_none();
         let is_implementation = !is_overload;
 
+        // Check if private
+        let is_private = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
+
         // Method overload handling:
         // - If this is an overload, emit it and mark that this method has overloads
         // - If this is an implementation and the method already has overloads, skip it
         // - If this is an implementation with no overloads, emit it
+        // SPECIAL: For private methods with overloads, emit just `private foo;`
         if is_overload {
             // Mark that this method name has overload signatures
             if let Some(ref name) = method_name {
                 self.method_names_with_overloads.insert(name.clone());
+            }
+            // For private methods, skip all overload signatures
+            // (will emit single `private foo;` at implementation)
+            if is_private {
+                return;
             }
         } else if is_implementation {
             // This is an implementation - check if we've seen overloads for this name
             if let Some(ref name) = method_name
                 && self.method_names_with_overloads.contains(name)
             {
+                if is_private {
+                    // Private method with overloads: emit just `private foo;`
+                    self.write_indent();
+                    self.write("private ");
+                    self.emit_node(method.name);
+                    self.write(";");
+                    self.write_line();
+                }
                 // Skip implementation signature when overloads exist
                 return;
             }
@@ -843,16 +903,18 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
 
-        // Check if private
-        let is_private = self
-            .arena
-            .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
-
         // Modifiers
         self.emit_member_modifiers(&method.modifiers);
 
         // Name
         self.emit_node(method.name);
+
+        // For private methods (no overloads), emit just the name without signature
+        if is_private {
+            self.write(";");
+            self.write_line();
+            return;
+        }
 
         // Type parameters
         if let Some(ref type_params) = method.type_parameters
@@ -867,6 +929,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type - SPECIAL CASE: For private methods, TypeScript omits return type in .d.ts
+        let method_body = method.body;
+        let method_name = method.name;
         if method.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
@@ -877,7 +941,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
-                .or_else(|| self.get_node_type_or_names(&[method.name]));
+                .or_else(|| self.get_node_type_or_names(&[method_name]));
 
             if let Some(method_type_id) = method_type_id
                 && let Some(return_type_id) =
@@ -885,7 +949,11 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
+            } else if method_body.is_some() && self.body_returns_void(method_body) {
+                self.write(": void");
             }
+        } else if !is_private && method_body.is_some() && self.body_returns_void(method_body) {
+            self.write(": void");
         }
 
         self.write(";");
@@ -920,6 +988,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
+
+        // Emit visibility modifiers (private, protected) on the constructor
+        if let Some(ref mods) = ctor.modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.arena.get(mod_idx) {
+                    match mod_node.kind {
+                        k if k == SyntaxKind::PrivateKeyword as u16 => self.write("private "),
+                        k if k == SyntaxKind::ProtectedKeyword as u16 => self.write("protected "),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         self.write("constructor(");
         // Set flag to strip accessibility modifiers from constructor parameters
         self.in_constructor_params = true;
@@ -1176,10 +1258,12 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
-        if is_exported {
-            self.write("export ");
+        if !self.inside_declare_namespace {
+            if is_exported {
+                self.write("export ");
+            }
+            self.write("declare ");
         }
-        self.write("declare ");
         if is_const {
             self.write("const ");
         }
@@ -1201,13 +1285,20 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // Always emit the evaluated value to match TypeScript behavior
-                self.write(" = ");
                 let member_name = self.get_enum_member_name(member.name);
                 if let Some(value) = member_values.get(&member_name) {
-                    self.emit_enum_value(value);
+                    match value {
+                        crate::enums::evaluator::EnumValue::Computed => {
+                            // Computed values: no initializer in .d.ts
+                        }
+                        _ => {
+                            self.write(" = ");
+                            self.emit_enum_value(value);
+                        }
+                    }
                 } else {
                     // Fallback to index if evaluation failed
+                    self.write(" = ");
                     self.write(&i.to_string());
                 }
             }
@@ -1266,6 +1357,132 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    /// Check if a PrefixUnaryExpression node is a negative numeric/bigint literal (e.g., `-123`, `-12n`)
+    pub(super) fn is_negative_literal(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        if let Some(unary) = self.arena.get_unary_expr(node) {
+            if unary.operator == SyntaxKind::MinusToken as u16 {
+                if let Some(operand_node) = self.arena.get(unary.operand) {
+                    let k = operand_node.kind;
+                    return k == SyntaxKind::NumericLiteral as u16
+                        || k == SyntaxKind::BigIntLiteral as u16;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a class has any member with a `#private` identifier name.
+    /// TypeScript collapses all private-name members into a single `#private;` field.
+    pub(super) fn class_has_private_identifier_member(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            // Check property declarations
+            if let Some(prop) = self.arena.get_property_decl(member_node) {
+                if let Some(name_node) = self.arena.get(prop.name) {
+                    if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
+                }
+            }
+            // Check method declarations
+            if let Some(method) = self.arena.get_method_decl(member_node) {
+                if let Some(name_node) = self.arena.get(method.name) {
+                    if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
+                }
+            }
+            // Check accessors
+            if let Some(accessor) = self.arena.get_accessor(member_node) {
+                if let Some(name_node) = self.arena.get(accessor.name) {
+                    if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a function body has any return statements with value expressions.
+    /// Returns true if all returns are bare `return;` or there are no return statements,
+    /// meaning the function effectively returns void.
+    pub(super) fn body_returns_void(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return true;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return true;
+        };
+        self.block_returns_void(&block.statements)
+    }
+
+    fn block_returns_void(&self, statements: &tsz_parser::parser::NodeList) -> bool {
+        for &stmt_idx in &statements.nodes {
+            if !self.stmt_returns_void(stmt_idx) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn stmt_returns_void(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                // Return with expression → non-void
+                if let Some(ret) = self.arena.get_return_statement(stmt_node) {
+                    return !ret.expression.is_some();
+                }
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.arena.get_block(stmt_node) {
+                    self.block_returns_void(&block.statements)
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.arena.get_if_statement(stmt_node) {
+                    self.stmt_returns_void(if_data.then_statement)
+                        && (!if_data.else_statement.is_some()
+                            || self.stmt_returns_void(if_data.else_statement))
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.arena.get_try(stmt_node) {
+                    self.stmt_returns_void(try_data.try_block)
+                        && (!try_data.catch_clause.is_some()
+                            || self.stmt_returns_void(try_data.catch_clause))
+                        && (!try_data.finally_block.is_some()
+                            || self.stmt_returns_void(try_data.finally_block))
+                } else {
+                    true
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(stmt_node) {
+                    self.block_returns_void(&clause.statements)
+                } else {
+                    true
+                }
+            }
+            // For other compound statements (loops, switch, catch, etc.),
+            // conservatively assume they don't contain return-with-value.
+            _ => true,
+        }
     }
 
     fn emit_variable_declaration_statement(&mut self, stmt_idx: NodeIndex) {
@@ -1329,7 +1546,6 @@ impl<'a> DeclarationEmitter<'a> {
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
                     self.write_indent();
-                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
                     if !self.inside_declare_namespace {
                         if is_exported {
                             self.write("export ");
@@ -1405,7 +1621,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// must be flattened into individual declarations:
     /// `export declare const a: Type;`
     /// `export declare const b: Type;`
-    fn emit_flattened_variable_declaration(
+    pub(super) fn emit_flattened_variable_declaration(
         &mut self,
         pattern_idx: NodeIndex,
         keyword: &str,
@@ -1416,7 +1632,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         for ident_idx in bindings {
             self.write_indent();
-            // Don't emit 'export' or 'declare' keywords inside a declare namespace
             if !self.inside_declare_namespace {
                 if is_exported {
                     self.write("export ");
