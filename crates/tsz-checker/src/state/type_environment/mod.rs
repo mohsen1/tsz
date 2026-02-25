@@ -3,7 +3,7 @@
 
 pub(crate) mod lazy;
 
-use crate::query_boundaries::state_type_environment as query;
+use crate::query_boundaries::state::type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};

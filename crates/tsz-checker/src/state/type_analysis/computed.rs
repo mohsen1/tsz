@@ -1,7 +1,7 @@
 //! Computed symbol type analysis: `compute_type_of_symbol`, contextual literal types,
 //! and private property access checking.
 
-use crate::query_boundaries::state_type_environment;
+use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -89,7 +89,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         declarations: &[NodeIndex],
     ) -> TypeId {
-        use crate::query_boundaries::state_type_analysis::{
+        use crate::query_boundaries::state::type_analysis::{
             call_signatures_for_type, callable_shape_for_type,
         };
 
@@ -585,8 +585,7 @@ impl<'a> CheckerState<'a> {
                 // Preserve diagnostic formatting for canonical lib interfaces
                 // by recording the resolved object shape on this symbol's DefId.
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                if let Some(shape) = state_type_environment::object_shape(self.ctx.types, lib_type)
-                {
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, lib_type) {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
                 }
 
@@ -634,8 +633,7 @@ impl<'a> CheckerState<'a> {
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
                 let interface_type =
                     self.merge_interface_heritage_types(&declarations, interface_type);
-                if let Some(shape) =
-                    state_type_environment::object_shape(self.ctx.types, interface_type)
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, interface_type)
                 {
                     self.ctx
                         .definition_store
@@ -731,9 +729,7 @@ impl<'a> CheckerState<'a> {
                 // Register the object shape so diagnostics can display the type alias
                 // name (e.g., "Square") instead of the structural type (e.g.,
                 // "{ size: number; kind: \"sq\" }"). Mirrors the interface path above.
-                if let Some(shape) =
-                    state_type_environment::object_shape(self.ctx.types, alias_type)
-                {
+                if let Some(shape) = type_environment::object_shape(self.ctx.types, alias_type) {
                     self.ctx.definition_store.set_instance_shape(def_id, shape);
                 }
 

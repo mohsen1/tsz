@@ -4,7 +4,7 @@
 //! Extracted from `type_resolution/module.rs` to keep files focused and
 //! under the 2 000-line architectural limit.
 
-use crate::query_boundaries::state_type_resolution as query;
+use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};

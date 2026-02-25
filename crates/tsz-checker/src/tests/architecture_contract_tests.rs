@@ -702,7 +702,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
     assert!(
         !state_property_checking_src.contains("tsz_solver::type_queries::"),
-        "state_property_checking should route solver type-query access through query_boundaries::state_checking"
+        "state_property_checking should route solver type-query access through query_boundaries::state::checking"
     );
     let state_variable_checking_destructuring_src = fs::read_to_string(
         "src/state/variable_checking/destructuring.rs",
@@ -720,15 +720,15 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         .expect("failed to read src/checkers/property_checker.rs for architecture guard");
     assert!(
         state_variable_checking_src.contains("query::array_element_type("),
-        "state_variable_checking array element checks should route through query_boundaries::state_checking"
+        "state_variable_checking array element checks should route through query_boundaries::state::checking"
     );
     assert!(
         state_variable_checking_src.contains("query::is_only_null_or_undefined("),
-        "state_variable_checking null/undefined checks should route through query_boundaries::state_checking"
+        "state_variable_checking null/undefined checks should route through query_boundaries::state::checking"
     );
     assert!(
         state_variable_checking_src.contains("query::has_type_query_for_symbol("),
-        "state_variable_checking symbol type-query checks should route through query_boundaries::state_checking"
+        "state_variable_checking symbol type-query checks should route through query_boundaries::state::checking"
     );
     assert!(
         !state_variable_checking_src.contains("tsz_solver::type_queries::"),
@@ -736,7 +736,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     );
     assert!(
         state_variable_checking_destructuring_src.contains("query::is_only_null_or_undefined("),
-        "state_variable_checking_destructuring null/undefined checks should route through query_boundaries::state_checking"
+        "state_variable_checking_destructuring null/undefined checks should route through query_boundaries::state::checking"
     );
     assert!(
         !state_variable_checking_destructuring_src.contains("tsz_solver::type_queries::"),

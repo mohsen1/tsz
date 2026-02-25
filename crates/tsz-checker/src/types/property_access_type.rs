@@ -1490,7 +1490,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::operations::property::PropertyAccessResult;
 
         let Some(members) =
-            crate::query_boundaries::state_checking::union_members(self.ctx.types, object_type)
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, object_type)
         else {
             return false;
         };

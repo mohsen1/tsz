@@ -166,7 +166,7 @@ impl<'a> CheckerState<'a> {
         params: &[NodeIndex],
         param_types: &[Option<TypeId>],
     ) {
-        use crate::query_boundaries::state_checking as query;
+        use crate::query_boundaries::state::checking as query;
 
         for (i, &param_idx) in params.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {

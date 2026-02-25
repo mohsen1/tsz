@@ -1,7 +1,7 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use super::common::lazy_def_id as get_lazy_def_id;
-pub(crate) use super::common::{callable_shape_for_type, is_type_parameter_like};
+pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
+pub(crate) use super::super::common::{callable_shape_for_type, is_type_parameter_like};
 pub(crate) use tsz_solver::type_queries::{
     BaseInstanceMergeKind, ConstructorTypeKind, SignatureTypeKind, StaticPropertySource,
 };
@@ -43,5 +43,5 @@ pub(crate) fn get_application_info(
 }
 
 #[cfg(test)]
-#[path = "../../tests/state_type_resolution.rs"]
+#[path = "../../../tests/state_type_resolution.rs"]
 mod tests;
