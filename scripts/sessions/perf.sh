@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # timeout: 10800
-cat <<'PROMPT'
-You are working in /Users/mohsenazimi/code/tsz.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cat <<PROMPT
+You are working in $REPO_ROOT.
 Goal: make tsz 2x faster than tsgo across all benchmarks — WITHOUT breaking
 tests, conformance, or code maintainability.
 
