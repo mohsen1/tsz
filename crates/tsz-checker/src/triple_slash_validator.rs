@@ -60,13 +60,16 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
 
 /// Extract `/// <reference types="..." />` directives from source text.
 ///
-/// Returns a vector of (`type_name`, `resolution_mode`, `line_number`) tuples.
-/// `resolution_mode` is `Some("import")` or `Some("require")` if specified.
-pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usize)> {
+/// Returns a vector of (`type_name`, `resolution_mode`, `types_value_byte_offset`, `types_value_length`) tuples.
+/// `resolution_mode` is `Some(value)` when a `resolution-mode` attribute is present.
+/// `types_value_byte_offset` and `types_value_length` locate the `types` attribute value in the
+/// source text (used for TS1453 diagnostics, which tsc anchors at the `types` value span).
+pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usize, usize)> {
     let mut references = Vec::new();
     let mut in_block_comment = false;
+    let mut byte_offset = 0usize;
 
-    for (line_num, line) in source.lines().enumerate() {
+    for line in source.lines() {
         let trimmed = line.trim();
 
         // Track block comment state
@@ -74,27 +77,31 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
             if trimmed.contains("*/") {
                 in_block_comment = false;
             }
+            // +1 for the newline character
+            byte_offset += line.len() + 1;
             continue;
         }
         if trimmed.starts_with("/*") {
             if !trimmed.contains("*/") {
                 in_block_comment = true;
             }
+            byte_offset += line.len() + 1;
             continue;
         }
 
-        if !trimmed.starts_with("///") {
-            continue;
-        }
-
-        if !trimmed.contains("<reference") || !trimmed.contains("types=") {
-            continue;
-        }
-
-        if let Some(name) = extract_quoted_attr(trimmed, "types") {
+        if trimmed.starts_with("///")
+            && trimmed.contains("<reference")
+            && trimmed.contains("types=")
+            && let Some((name, value_offset_in_line)) =
+                extract_quoted_attr_with_offset(line, "types")
+        {
             let resolution_mode = extract_quoted_attr(trimmed, "resolution-mode");
-            references.push((name, resolution_mode, line_num));
+            let types_byte_offset = byte_offset + value_offset_in_line;
+            let types_value_length = name.len();
+            references.push((name, resolution_mode, types_byte_offset, types_value_length));
         }
+
+        byte_offset += line.len() + 1;
     }
 
     references

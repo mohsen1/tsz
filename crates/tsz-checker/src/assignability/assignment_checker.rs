@@ -173,38 +173,6 @@ impl<'a> CheckerState<'a> {
             .then_some(name)
     }
 
-    /// Emit TS1100 when assigning to strict-mode reserved identifiers.
-    ///
-    /// `arguments` and `eval` are disallowed in strict mode for assignments.
-    /// This mirrors existing declaration-site checks and keeps diagnostics in
-    /// parity with TypeScript's behavior for strict-mode built-ins.
-    fn check_strict_assignment_target(&mut self, target_idx: NodeIndex) {
-        let inner = self.ctx.arena.skip_parenthesized(target_idx);
-        if !self.is_strict_mode_for_node(inner) {
-            return;
-        }
-        let Some(node) = self.ctx.arena.get(inner) else {
-            return;
-        };
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return;
-        }
-
-        let Some(id_data) = self.ctx.arena.get_identifier(node) else {
-            return;
-        };
-        if id_data.escaped_text != "arguments" && id_data.escaped_text != "eval" {
-            return;
-        }
-
-        let code = if self.ctx.enclosing_class.is_some() {
-            diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
-        } else {
-            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
-        };
-        self.error_at_node_msg(inner, code, &[&id_data.escaped_text]);
-    }
-
     /// Strip wrappers that preserve assignment target identity for symbol checks.
     ///
     /// Examples:
@@ -449,8 +417,6 @@ impl<'a> CheckerState<'a> {
         // TS2630: Cannot assign to 'x' because it is a function.
         // This check must come after valid assignment target check but before type checking.
         let is_function_assignment = self.check_function_assignment(left_idx);
-
-        self.check_strict_assignment_target(left_idx);
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
@@ -833,8 +799,6 @@ impl<'a> CheckerState<'a> {
 
         // TS2629/TS2628/TS2630: Cannot assign to class/enum/function.
         let is_function_assignment = self.check_function_assignment(left_idx);
-
-        self.check_strict_assignment_target(left_idx);
 
         // Compound assignments read the LHS before writing, so the LHS identifier
         // must go through definite assignment analysis (TS2454). Without this,

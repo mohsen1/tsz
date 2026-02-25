@@ -867,6 +867,7 @@ fn compile_inner(
         sources: all_sources,
         dependencies,
         type_reference_errors,
+        resolution_mode_errors,
     } = {
         read_source_files(
             &file_paths,
@@ -893,6 +894,17 @@ fn compile_inner(
             0,
             format!("Cannot find type definition file for '{type_name}'."),
             diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR,
+        ));
+    }
+    // TS1453: Invalid resolution-mode values in triple-slash directives
+    for (path, start, length) in resolution_mode_errors {
+        let file_name = path.to_string_lossy().into_owned();
+        type_file_diagnostics.push(Diagnostic::error(
+            file_name,
+            start as u32,
+            length as u32,
+            "`resolution-mode` should be either `require` or `import`.".to_string(),
+            diagnostic_codes::RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
         ));
     }
     // Emit TS2688 for unresolved entries in tsconfig `types` array

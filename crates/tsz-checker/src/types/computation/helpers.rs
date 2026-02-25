@@ -535,32 +535,13 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
-                // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
-                // Must come before TS2356 to match TSC's diagnostic priority.
-                let mut emitted_strict = false;
-                if let Some(operand_node) = self.ctx.arena.get(unary.operand)
-                    && operand_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(id_data) = self.ctx.arena.get_identifier(operand_node)
-                    && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
-                    && self.is_strict_mode_for_node(unary.operand)
-                {
-                    use crate::diagnostics::diagnostic_codes;
-                    let code = if self.ctx.enclosing_class.is_some() {
-                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
-                    } else {
-                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
-                    };
-                    self.error_at_node_msg(unary.operand, code, &[&id_data.escaped_text]);
-                    emitted_strict = true;
-                }
-
                 // Get operand type for validation.
                 // TSC checks arithmetic type BEFORE lvalue — if the type check
                 // fails (TS2356), the lvalue check (TS2357) is skipped.
                 let operand_type = self.get_type_of_node(unary.operand);
                 let mut arithmetic_ok = true;
 
-                if !emitted_strict {
+                {
                     use tsz_solver::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
                     // When strictNullChecks is off, null/undefined are silently

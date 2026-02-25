@@ -68,7 +68,6 @@ impl<'a> CheckerState<'a> {
 
         let name = &ident.escaped_text;
 
-        // TS2496: 'arguments' cannot be referenced in an arrow function in ES5
         if name == "arguments" {
             // Track that this function body uses `arguments` (for JS implicit rest params)
             self.ctx.js_body_uses_arguments = true;
@@ -86,95 +85,52 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            use tsz_common::common::ScriptTarget;
-            let is_es5_or_lower = matches!(
-                self.ctx.compiler_options.target,
-                ScriptTarget::ES3 | ScriptTarget::ES5
-            );
-            if is_es5_or_lower && self.is_arguments_in_arrow_function(idx) {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
-                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
-                );
-                // Return ERROR to prevent fallthrough to normal resolution which would emit TS2304
-                return TypeId::ERROR;
-            }
-            if is_es5_or_lower && self.is_arguments_in_async_non_arrow_function(idx) {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
-                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
-                );
-                return TypeId::ERROR;
-            }
-
-            // Inside a regular (non-arrow) function body, `arguments` is the implicit
-            // IArguments object, overriding any outer `arguments` declaration.
-            // EXCEPT: if there's a LOCAL variable named "arguments" in the current function,
-            // that shadows the built-in IArguments (e.g., `const arguments = this.arguments;`).
-            if self.is_in_regular_function_body(idx) {
-                // Check if there's a local "arguments" variable in the current function scope.
-                // This handles shadowing: `const arguments = ...` takes precedence over IArguments.
+            // Check if there's a local variable named "arguments" that shadows the built-in.
+            // If so, fall through to normal resolution.
+            let has_local_shadow = if self.is_in_regular_function_body(idx) {
                 if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
-                    // Found a symbol named "arguments". Check if it's declared locally
-                    // in the current function (not in an outer scope).
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         && !symbol.declarations.is_empty()
                     {
                         let decl_node = symbol.declarations[0];
-                        // Find the enclosing function for both the reference and the declaration
-                        if let Some(current_fn) = self.find_enclosing_function(idx) {
-                            if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
-                                // If the declaration is in the same function scope, it shadows IArguments
-                                if current_fn == decl_fn {
-                                    trace!(
-                                        name = name,
-                                        idx = ?idx,
-                                        sym_id = ?sym_id,
-                                        "get_type_of_identifier: local 'arguments' variable shadows built-in IArguments"
-                                    );
-                                    // Fall through to normal resolution below - use the local variable
-                                } else {
-                                    // Declaration is in an outer scope - use built-in IArguments
-                                    let lib_binders = self.get_lib_binders();
-                                    if let Some(iargs_sym) = self
-                                        .ctx
-                                        .binder
-                                        .get_global_type_with_libs("IArguments", &lib_binders)
-                                    {
-                                        return self.type_reference_symbol_type(iargs_sym);
-                                    }
-                                    return TypeId::ANY;
-                                }
-                            } else {
-                                // Declaration not in a function (global) - use built-in IArguments
-                                let lib_binders = self.get_lib_binders();
-                                if let Some(iargs_sym) = self
-                                    .ctx
-                                    .binder
-                                    .get_global_type_with_libs("IArguments", &lib_binders)
-                                {
-                                    return self.type_reference_symbol_type(iargs_sym);
-                                }
-                                return TypeId::ANY;
-                            }
+                        if let Some(current_fn) = self.find_enclosing_function(idx)
+                            && let Some(decl_fn) = self.find_enclosing_function(decl_node)
+                            && current_fn == decl_fn
+                        {
+                            trace!(
+                                name = name,
+                                idx = ?idx,
+                                sym_id = ?sym_id,
+                                "get_type_of_identifier: local 'arguments' variable shadows built-in IArguments"
+                            );
+                            true
+                        } else {
+                            false
                         }
+                    } else {
+                        false
                     }
                 } else {
-                    // No symbol found at all - use built-in IArguments
-                    let lib_binders = self.get_lib_binders();
-                    if let Some(sym_id) = self
-                        .ctx
-                        .binder
-                        .get_global_type_with_libs("IArguments", &lib_binders)
-                    {
-                        return self.type_reference_symbol_type(sym_id);
-                    }
-                    return TypeId::ANY;
+                    false
                 }
+            } else {
+                false
+            };
+
+            // If not shadowed by a local variable, resolve to the built-in IArguments type.
+            // This handles both regular functions and arrow functions (which are transparent
+            // for `arguments` — they capture from the enclosing scope). tsc does not error
+            // on `arguments` in arrow functions, even at the global level.
+            if !has_local_shadow {
+                let lib_binders = self.get_lib_binders();
+                if let Some(iargs_sym) = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs("IArguments", &lib_binders)
+                {
+                    return self.type_reference_symbol_type(iargs_sym);
+                }
+                return TypeId::ANY;
             }
         }
 
