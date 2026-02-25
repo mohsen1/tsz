@@ -1315,6 +1315,23 @@ impl ParserState {
         }
     }
 
+    /// Error: TS1389 - '{0}' is not allowed as a variable declaration name.
+    /// Emitted when a reserved word appears as the binding name of a var/let/const/using declaration.
+    pub(crate) fn error_reserved_word_in_variable_declaration(&mut self) {
+        if self.should_report_error() {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let word = self.current_keyword_text();
+            let msg = diagnostic_messages::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME
+                .replace("{0}", word);
+            self.parse_error_at_current_token(
+                &msg,
+                diagnostic_codes::IS_NOT_ALLOWED_AS_A_VARIABLE_DECLARATION_NAME,
+            );
+            // Consume the reserved word token to prevent cascading errors
+            self.next_token();
+        }
+    }
+
     /// Error: TS1359 - Identifier expected. '{0}' is a reserved word that cannot be used here.
     pub(crate) fn error_reserved_word_identifier(&mut self) {
         // Use centralized error suppression heuristic

@@ -77,3 +77,59 @@ fn parse_index_signature_rest_param_emits_ts1017() {
         "Should NOT emit TS1109, got codes: {codes:?}"
     );
 }
+
+#[test]
+fn parse_reserved_word_as_var_name_emits_ts1389() {
+    // TS1389: '{0}' is not allowed as a variable declaration name.
+    // tsc emits TS1389 (not TS1359) when a reserved word is used as a var declaration name.
+    let (parser, _root) = parse_source("var export;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1389),
+        "Expected TS1389 for 'var export;', got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1359),
+        "Should NOT emit TS1359 (generic reserved word), got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn parse_reserved_word_as_const_name_emits_ts1389() {
+    let (parser, _root) = parse_source("const class = 1;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1389),
+        "Expected TS1389 for 'const class = 1;', got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn parse_reserved_word_as_let_name_emits_ts1389() {
+    let (parser, _root) = parse_source("let typeof = 10;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1389),
+        "Expected TS1389 for 'let typeof = 10;', got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn parse_contextual_keyword_as_var_name_no_ts1389() {
+    // Contextual keywords (type, interface, etc.) should NOT trigger TS1389
+    // — they're valid as variable names.
+    let (parser, _root) = parse_source("var type = 1;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1389),
+        "Contextual keyword 'type' should NOT trigger TS1389, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1359),
+        "Contextual keyword 'type' should NOT trigger TS1359, got codes: {codes:?}"
+    );
+}

@@ -188,8 +188,14 @@
 
 #### Run note (2026-02-25, session 3)
 - **Fixed**: TS2469 — "The '{0}' operator cannot be applied to type 'symbol'." Was using wrong diagnostic constant (TS2736 generic operator error instead of TS2469 symbol-specific). Also added missing unary +/-/~ and compound += symbol checks. Fixed solver `evaluate_plus_chain` fast-path bypassing symbol errors, and added relational operator pre-check in binary.rs. Net improvement: +5 tests (4432 failing, down from 4437).
-- **Investigated but deferred**: TS1389 — "'{0}' is not allowed as a variable declaration name." Partially implemented for strict mode. Needs expanded reserved keyword list. LOW-MEDIUM effort.
+- ~~**Investigated but deferred**: TS1389~~ RESOLVED in session 5.
 - **Investigated but deferred**: TS1181 — "Array element destructuring pattern expected." Parser-level issue. MEDIUM effort.
+
+#### Run note (2026-02-25, session 4)
+- **Fixed**: TS2661 — "Cannot export '{0}'. Only local declarations can be exported from a module." Rewrote locality check in `module_checker.rs` to use `decl_file_idx` for multi-file mode and scope-table lookup for `declare module "m"` contexts. Key insight: `file_locals` includes merged globals from all files via `create_binder_from_bound_file`, so a simple `file_locals.get()` check was insufficient (+7 tests, 4082→4089).
+
+#### Run note (2026-02-25, session 5)
+- **Fixed**: TS1389 — "'{0}' is not allowed as a variable declaration name." Parser now emits TS1389 instead of generic TS1359 when a reserved word appears as a var/let/const/using declaration name. Added `error_reserved_word_in_variable_declaration()` and intercept in `parse_variable_declaration_name()` (+2 tests, 4089→4091).
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
@@ -294,10 +300,9 @@
   via namespace member lookup (emitting TS2694) instead of the type-as-namespace path
 - **Difficulty**: MEDIUM
 
-### TS2661 — Cross-file re-export (4 tests)
-- "Cannot export '{0}'. Only local declarations can be exported from a module."
-- Requires cross-file symbol resolution for re-exports
-- **Difficulty**: MEDIUM
+### ~~TS2661 — Cross-file re-export~~ RESOLVED
+- Fixed: non-local export specifier detection using `decl_file_idx` for multi-file and scope-table check for `declare module "m"` contexts
+- See "Completed Work" table below
 
 ---
 
@@ -448,3 +453,5 @@ All items below have been validated against the codebase (implementations + test
 | TS5071 | Bundler-implied resolveJsonModule with none/system/umd module | +1 test |
 | TS5102 | Remove incorrect ignoreDeprecations suppression of TS5102 for removed options | +1 test |
 | TS2469 | Symbol operator errors: wrong constant (TS2736→TS2469), unary +/-/~, compound +=, solver fast-path fix | +5 tests |
+| TS2661 | Non-local export specifier detection (decl_file_idx + module scope table) | +7 tests |
+| TS1389 | Reserved word as variable declaration name (TS1389 instead of generic TS1359) | +2 tests |
