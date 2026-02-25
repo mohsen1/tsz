@@ -61,6 +61,21 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
+        // Mark the class member symbol as referenced for unused-variable tracking.
+        // Property accesses like `this.x` go through the solver's property resolution
+        // pipeline, which never marks binder symbols. Without this, private members
+        // accessed via `this.x` would be falsely reported as unused (TS6133).
+        if let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+            && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+            && let Some(ref members) = class_symbol.members
+            && let Some(member_sym_id) = members.get(property_name)
+        {
+            self.ctx
+                .referenced_symbols
+                .borrow_mut()
+                .insert(member_sym_id);
+        }
+
         if self.is_super_expression(object_expr)
             && let Some(false) =
                 self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
