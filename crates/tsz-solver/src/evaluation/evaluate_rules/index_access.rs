@@ -12,7 +12,8 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::{
-    TypeVisitor, array_element_type, literal_number, literal_string, tuple_list_id, union_list_id,
+    TypeVisitor, array_element_type, keyof_inner_type, literal_number, literal_string,
+    tuple_list_id, union_list_id,
 };
 use crate::{ApparentMemberKind, TypeDatabase};
 
@@ -325,7 +326,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // over K, without needing to expand the mapped type (which fails for TypeParameter K).
 
         // Only apply if no name remapping (as clause)
-        if mapped.name_type.is_none() && mapped.constraint == self.index_type {
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        // Direct match: index type exactly equals the constraint
+        let can_substitute = mapped.constraint == self.index_type
+            // Implicit index signature: when the constraint is `keyof T`,
+            // string/number are valid key types because keyof T always
+            // includes string | number | symbol for any T.
+            // This handles for-in loops: `for (let k in obj) { result[k] = ... }`
+            // where `k: string` and `result: { [K in keyof T]: V }`.
+            || (matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
+                && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some());
+
+        if can_substitute {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, self.index_type);
 

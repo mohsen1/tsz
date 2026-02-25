@@ -518,7 +518,10 @@ pub enum ElementIndexableKind {
 
 /// Classify a type for element indexing capability.
 pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> ElementIndexableKind {
-    match db.lookup(type_id) {
+    // Evaluate the type first to resolve Lazy/Application/Conditional wrappers
+    // to their underlying structural form (e.g., Application(Boxified, [T]) → Mapped).
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+    match db.lookup(evaluated) {
         Some(TypeData::Array(_)) => ElementIndexableKind::Array,
         Some(TypeData::Tuple(_)) => ElementIndexableKind::Tuple,
         Some(TypeData::ObjectWithIndex(shape_id)) => {
@@ -539,10 +542,22 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
             ElementIndexableKind::StringLike
         }
         // Enums support reverse mapping: E[value] returns the name, E["name"] returns the value.
-        // Treat them as having both string and number index signatures.
-        Some(TypeData::Enum(_, _)) => ElementIndexableKind::ObjectWithIndex {
+        // Type parameters represent unknown types whose index signatures are deferred —
+        // tsc creates T[K] types rather than reporting TS7053.
+        // Treat both as having string and number index signatures.
+        Some(TypeData::Enum(_, _)) | Some(TypeData::TypeParameter(_)) => {
+            ElementIndexableKind::ObjectWithIndex {
+                has_string: true,
+                has_number: true,
+            }
+        }
+        // Generic mapped types (e.g. `{ [K in keyof T]: V }`) act as having an implicit
+        // string index signature in tsc. When the constraint can't be fully resolved (generic),
+        // the mapped type remains unevaluated and should be treated as string-indexable
+        // to avoid false positive TS7053 errors.
+        Some(TypeData::Mapped(_)) => ElementIndexableKind::ObjectWithIndex {
             has_string: true,
-            has_number: true,
+            has_number: false,
         },
         _ => ElementIndexableKind::Other,
     }
