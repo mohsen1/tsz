@@ -957,6 +957,10 @@ impl<'a> CheckerState<'a> {
                             if name == "export=" {
                                 continue;
                             }
+                            // Skip type-only exports (same filter as namespace import path)
+                            if self.is_type_only_export_symbol(sym_id) {
+                                continue;
+                            }
                             let mut prop_type = self.get_type_of_symbol(sym_id);
                             prop_type =
                                 self.apply_module_augmentations(&module_specifier, name, prop_type);
@@ -1058,9 +1062,11 @@ impl<'a> CheckerState<'a> {
                     return (TypeId::ANY, Vec::new());
                 }
 
-                // Check if this is a namespace import (import * as ns)
-                // Namespace imports have import_name set to None and should return all exports as an object
-                if import_name.is_none() {
+                // Check if this is a namespace import (import * as ns) or
+                // namespace re-export (export * as ns from 'mod').
+                // Namespace imports have import_name = None, namespace
+                // re-exports have import_name = Some("*").
+                if import_name.is_none() || import_name.as_deref() == Some("*") {
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
 
@@ -1081,6 +1087,14 @@ impl<'a> CheckerState<'a> {
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {
                             if name == "export=" {
+                                continue;
+                            }
+                            // Skip type-only exports: `export type { A }` marks A as
+                            // type-only. Such exports should not appear as value properties
+                            // on the namespace object — they are only accessible in type
+                            // position (e.g., `let x: ns.A`), which uses symbol-based
+                            // resolution rather than object property lookup.
+                            if self.is_type_only_export_symbol(export_sym_id) {
                                 continue;
                             }
                             let mut prop_type = self.get_type_of_symbol(export_sym_id);
