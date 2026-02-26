@@ -1405,12 +1405,14 @@ impl ParserState {
     }
 
     /// Error: Unterminated template literal (TS1160)
-    pub(crate) fn error_unterminated_template_literal_at(&mut self, start: u32, end: u32) {
+    ///
+    /// tsc reports this error at the END of the template content (where EOF was hit),
+    /// not at the start (the backtick). We match that behavior.
+    pub(crate) fn error_unterminated_template_literal_at(&mut self, _start: u32, end: u32) {
         use tsz_common::diagnostics::diagnostic_codes;
-        let length = end.saturating_sub(start).max(1);
         self.parse_error_at(
-            start,
-            length,
+            end,
+            1,
             "Unterminated template literal.",
             diagnostic_codes::UNTERMINATED_TEMPLATE_LITERAL,
         );

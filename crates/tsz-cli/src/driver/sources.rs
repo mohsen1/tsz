@@ -368,15 +368,21 @@ pub(super) fn collect_type_root_files(
 
     let mut files = std::collections::BTreeSet::new();
     if let Some(types) = options.types.as_ref() {
-        let mut unresolved = Vec::new();
-        for name in types {
-            if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
-                files.insert(entry);
-            } else {
-                unresolved.push(name.clone());
+        // Filter out "*" wildcard — it means "include all type packages"
+        // rather than a literal package name. When present, fall through
+        // to the auto-discovery path below.
+        let has_wildcard = types.iter().any(|t| t == "*");
+        if !has_wildcard {
+            let mut unresolved = Vec::new();
+            for name in types {
+                if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
+                    files.insert(entry);
+                } else {
+                    unresolved.push(name.clone());
+                }
             }
+            return (files.into_iter().collect(), unresolved);
         }
-        return (files.into_iter().collect(), unresolved);
     }
 
     for root in roots {
