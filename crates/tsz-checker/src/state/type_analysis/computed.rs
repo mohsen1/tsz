@@ -1070,6 +1070,21 @@ impl<'a> CheckerState<'a> {
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
 
+                    // Guard: if we're already computing this module's namespace type,
+                    // we've hit a circular module import (e.g. prop-types <-> react).
+                    // Return `any` to break the cycle, matching tsc's behavior for
+                    // circular module references.
+                    if self
+                        .ctx
+                        .module_namespace_resolution_set
+                        .contains(module_name)
+                    {
+                        return (TypeId::ANY, Vec::new());
+                    }
+                    self.ctx
+                        .module_namespace_resolution_set
+                        .insert(module_name.to_string());
+
                     let exports_table = self.resolve_effective_module_exports(module_name);
 
                     if let Some(exports_table) = exports_table {
@@ -1144,6 +1159,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let namespace_type = factory.object(props);
+                        self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
                                 return (export_equals_type, Vec::new());
@@ -1158,6 +1174,7 @@ impl<'a> CheckerState<'a> {
                     }
                     // Module not found - emit TS2307 error and return ANY
                     // TypeScript treats unresolved imports as `any` to avoid cascading errors
+                    self.ctx.module_namespace_resolution_set.remove(module_name);
                     self.emit_module_not_found_error(module_name, value_decl);
                     return (TypeId::ANY, Vec::new());
                 }
@@ -1269,6 +1286,18 @@ impl<'a> CheckerState<'a> {
                         // For default imports without a default export:
                         // If allowSyntheticDefaultImports is enabled, return namespace type
                         if self.ctx.allow_synthetic_default_imports() {
+                            // Same circular module guard as namespace imports above
+                            if self
+                                .ctx
+                                .module_namespace_resolution_set
+                                .contains(module_name)
+                            {
+                                return (TypeId::ANY, Vec::new());
+                            }
+                            self.ctx
+                                .module_namespace_resolution_set
+                                .insert(module_name.to_string());
+
                             // Create a namespace type from all module exports
                             let exports_table = self.resolve_effective_module_exports(module_name);
 
@@ -1290,8 +1319,10 @@ impl<'a> CheckerState<'a> {
                                     });
                                 }
                                 let module_type = factory.object(props);
+                                self.ctx.module_namespace_resolution_set.remove(module_name);
                                 return (module_type, Vec::new());
                             }
+                            self.ctx.module_namespace_resolution_set.remove(module_name);
                         }
                         // TS1192: Module '{0}' has no default export.
                         self.emit_no_default_export_error(module_name, value_decl);
