@@ -43,6 +43,14 @@ impl<'a> CheckerState<'a> {
                     use_class_strict_message,
                 );
             }
+            // TS1100: `eval` or `arguments` used as parameter name in strict mode.
+            // In class contexts (`use_class_strict_message=true`), `arguments` is
+            // reported as TS1210 instead, so only emit TS1100 for `eval` there.
+            if crate::state_checking::is_eval_or_arguments(&ident.escaped_text)
+                && (!use_class_strict_message || ident.escaped_text == "eval")
+            {
+                self.emit_eval_or_arguments_strict_mode_error(param.name, &ident.escaped_text);
+            }
         }
     }
 

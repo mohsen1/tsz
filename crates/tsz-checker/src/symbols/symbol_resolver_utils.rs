@@ -805,6 +805,12 @@ impl<'a> CheckerState<'a> {
         );
         opts.always_strict =
             Self::resolve_bool_option(text, "@alwaysstrict", false, defaults.always_strict);
+        opts.no_implicit_use_strict = Self::resolve_bool_option(
+            text,
+            "@noimplicitusestrict",
+            false,
+            defaults.no_implicit_use_strict,
+        );
         // Option<bool> variant
         opts.allow_unreachable_code = Self::parse_test_option_bool(text, "@allowunreachablecode")
             .map(Some)

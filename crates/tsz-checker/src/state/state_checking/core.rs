@@ -28,6 +28,12 @@ pub(crate) fn is_strict_mode_reserved_name(name: &str) -> bool {
     )
 }
 
+/// Check if a name is `eval` or `arguments`.
+/// These identifiers have restricted use in strict mode (TS1100).
+pub(crate) fn is_eval_or_arguments(name: &str) -> bool {
+    name == "eval" || name == "arguments"
+}
+
 impl<'a> CheckerState<'a> {
     fn needs_boxed_type_registration(&self) -> bool {
         for idx in 0..self.ctx.arena.len() {
@@ -127,6 +133,24 @@ impl<'a> CheckerState<'a> {
             name_idx,
             &message,
             diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+        );
+    }
+
+    /// Emit TS1100 for `eval` or `arguments` used as a binding name in strict mode.
+    ///
+    /// In strict mode, using `eval` or `arguments` as a variable name, parameter name,
+    /// function name, or any other binding is a syntax error (TS1100).
+    pub(crate) fn emit_eval_or_arguments_strict_mode_error(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+        name: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let message = format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]);
+        self.error_at_node(
+            name_idx,
+            &message,
+            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
         );
     }
 

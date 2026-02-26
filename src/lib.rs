@@ -623,6 +623,7 @@ impl CompilerOptions {
             module_explicitly_set: self.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
+            no_implicit_use_strict: false,
             allow_importing_ts_extensions: false,
             implied_classic_resolution: false,
         }
