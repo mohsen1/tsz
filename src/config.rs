@@ -1183,9 +1183,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             | "nodenext"
                     )
                 } else {
-                    // module not set — default is commonjs (for ES3/ES5 targets) or
-                    // es2015/esnext for higher targets. Since commonjs is a valid pairing
-                    // with bundler, all default-module scenarios are OK.
+                    // module not set — default depends on target.
+                    // ES2015+ targets default to es2015 (compatible), lower targets
+                    // default to commonjs which is also compatible with bundler in tsc 6.0.
                     true
                 };
                 if !module_ok {
@@ -3205,15 +3205,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5095_bundler_with_commonjs() {
-        // commonjs IS a valid module setting with moduleResolution=bundler.
-        // tsc message: "can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later"
+    fn test_ts5095_not_emitted_for_bundler_with_commonjs() {
+        // tsc 6.0 allows moduleResolution: bundler with module: commonjs
         let source = r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"bundler"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5095),
-            "TS5095 should NOT be emitted for bundler+commonjs (commonjs is valid): {codes:?}"
+            "Should NOT emit TS5095 for bundler+commonjs, got: {codes:?}"
         );
     }
 
