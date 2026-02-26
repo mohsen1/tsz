@@ -794,6 +794,8 @@ impl Server {
     ) -> &'static str {
         match kind {
             tsz::lsp::completions::CompletionItemKind::Variable => "var",
+            tsz::lsp::completions::CompletionItemKind::Const => "const",
+            tsz::lsp::completions::CompletionItemKind::Let => "let",
             tsz::lsp::completions::CompletionItemKind::Function => "function",
             tsz::lsp::completions::CompletionItemKind::Class => "class",
             tsz::lsp::completions::CompletionItemKind::Method => "method",
@@ -806,6 +808,7 @@ impl Server {
             tsz::lsp::completions::CompletionItemKind::Module => "module",
             tsz::lsp::completions::CompletionItemKind::TypeParameter => "type parameter",
             tsz::lsp::completions::CompletionItemKind::Constructor => "constructor",
+            tsz::lsp::completions::CompletionItemKind::Alias => "alias",
         }
     }
 
