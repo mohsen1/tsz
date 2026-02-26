@@ -70,6 +70,10 @@ pub struct CheckerOptions {
     pub no_unused_parameters: bool,
     /// When true, parse in strict mode and emit "use strict" for each source file.
     pub always_strict: bool,
+    /// When true, do not add "use strict" to emitted output even with `alwaysStrict`.
+    /// Also suppresses strict-mode checking rules that stem solely from `alwaysStrict`
+    /// (e.g. TS1100 for `var arguments`), matching tsc behaviour.
+    pub no_implicit_use_strict: bool,
     /// When true, allows importing JSON files with `.json` extension.
     /// When false, importing JSON files emits TS2732 suggesting to enable this flag.
     pub resolve_json_module: bool,
@@ -165,6 +169,7 @@ impl Default for CheckerOptions {
             // TSC 6.0 defaults: `alwaysStrict !== false` → true when not explicitly set.
             // This matches TypeScript's behavior where alwaysStrict is true by default.
             always_strict: true,
+            no_implicit_use_strict: false,
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,

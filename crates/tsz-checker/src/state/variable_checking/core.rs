@@ -327,6 +327,17 @@ impl<'a> CheckerState<'a> {
         {
             self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
         }
+        // TS1100: `eval` or `arguments` used as a variable name in strict mode.
+        // In class bodies, `arguments` is reported as TS1210 instead, so only
+        // emit TS1100 for `eval` there (not `arguments`).
+        if !is_ambient
+            && self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
+            && crate::state_checking::is_eval_or_arguments(name)
+            && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
+        {
+            self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
+        }
 
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
         if let Some(ref name) = var_name

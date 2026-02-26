@@ -281,6 +281,7 @@ pub(crate) struct LoadedConfig {
     pub diagnostics: Vec<Diagnostic>,
     pub suppress_excess_property_errors: bool,
     pub suppress_implicit_any_index_errors: bool,
+    pub no_implicit_use_strict: bool,
 }
 
 pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<LoadedConfig> {
@@ -290,6 +291,7 @@ pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<Loaded
             diagnostics: Vec::new(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
+            no_implicit_use_strict: false,
         });
     };
 
@@ -299,6 +301,7 @@ pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<Loaded
         diagnostics: parsed.diagnostics,
         suppress_excess_property_errors: parsed.suppress_excess_property_errors,
         suppress_implicit_any_index_errors: parsed.suppress_implicit_any_index_errors,
+        no_implicit_use_strict: parsed.no_implicit_use_strict,
     })
 }
 

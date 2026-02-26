@@ -831,6 +831,10 @@ pub struct ParsedTsConfig {
     /// Captured from removed option `suppressImplicitAnyIndexErrors` before stripping.
     /// tsc still honors its effect even after removal (TS5102).
     pub suppress_implicit_any_index_errors: bool,
+    /// Captured from removed option `noImplicitUseStrict` before stripping.
+    /// tsc still honors its effect even after removal (TS5102): when true,
+    /// `alwaysStrict` does not enforce strict-mode checking rules.
+    pub no_implicit_use_strict: bool,
 }
 
 /// Parse tsconfig.json source and collect diagnostics for unknown compiler options.
@@ -848,6 +852,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     let mut diagnostics = Vec::new();
     let mut suppress_excess = false;
     let mut suppress_any_index = false;
+    let mut no_implicit_use_strict = false;
 
     // Check compiler options for unknown/miscased keys
     if let Some(obj) = raw.as_object_mut()
@@ -938,6 +943,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         );
         suppress_any_index = matches!(
             compiler_opts.get("suppressImplicitAnyIndexErrors"),
+            Some(serde_json::Value::Bool(true))
+        );
+        // noImplicitUseStrict: when true, alwaysStrict does not enforce strict-mode
+        // checking rules (e.g. TS1100). tsc still honors this even though the option
+        // was removed in TS 5.5 (TS5102 is emitted but the semantic effect is kept).
+        no_implicit_use_strict = matches!(
+            compiler_opts.get("noImplicitUseStrict"),
             Some(serde_json::Value::Bool(true))
         );
 
@@ -1559,6 +1571,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         diagnostics,
         suppress_excess_property_errors: suppress_excess,
         suppress_implicit_any_index_errors: suppress_any_index,
+        no_implicit_use_strict,
     })
 }
 

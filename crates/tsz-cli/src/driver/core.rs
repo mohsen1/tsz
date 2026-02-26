@@ -746,6 +746,9 @@ fn compile_inner(
     if loaded.suppress_implicit_any_index_errors {
         resolved.checker.suppress_implicit_any_index_errors = true;
     }
+    if loaded.no_implicit_use_strict {
+        resolved.checker.no_implicit_use_strict = true;
+    }
     if resolved.allow_importing_ts_extensions {
         resolved.checker.allow_importing_ts_extensions = true;
     }
@@ -1739,6 +1742,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_implicit_override {
         options.checker.no_implicit_override = true;
+    }
+    if args.no_implicit_use_strict {
+        options.checker.no_implicit_use_strict = true;
     }
     if args.es_module_interop {
         options.es_module_interop = true;
