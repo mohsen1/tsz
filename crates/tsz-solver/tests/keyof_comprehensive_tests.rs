@@ -8,7 +8,7 @@
 use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
-use crate::types::{IndexSignature, ObjectFlags, ObjectShape, TypeData};
+use crate::types::{CallableShape, IndexSignature, ObjectFlags, ObjectShape, TypeData};
 
 /// Helper to check if a type is a union containing specific literals
 fn union_contains_literals(interner: &TypeInterner, type_id: TypeId, expected: &[&str]) -> bool {
@@ -560,4 +560,214 @@ fn test_keyof_nested_object() {
             interner.lookup(result)
         );
     }
+}
+
+// =============================================================================
+// keyof on Callable Types (static index signatures on class constructors)
+// =============================================================================
+
+#[test]
+fn test_keyof_callable_with_string_index_includes_string_and_number() {
+    let interner = TypeInterner::new();
+    // Simulates: class B { static [s: string]: number; }
+    // typeof B is a Callable with string index signature
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let keyof_callable = interner.keyof(callable);
+    let result = evaluate_type(&interner, keyof_callable);
+
+    // keyof typeof B should include string and number
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
+        let member_list = interner.type_list(members);
+        assert!(
+            member_list.contains(&TypeId::STRING),
+            "keyof callable with string index should include string"
+        );
+        assert!(
+            member_list.contains(&TypeId::NUMBER),
+            "keyof callable with string index should include number"
+        );
+    } else {
+        panic!(
+            "Expected union for keyof callable with string index, got {:?}",
+            interner.lookup(result)
+        );
+    }
+}
+
+#[test]
+fn test_keyof_callable_with_number_index_includes_number() {
+    let interner = TypeInterner::new();
+    // Simulates: class B { static [s: number]: 42 | 233; }
+    let num_value = interner.union2(
+        interner.literal_number(42.0),
+        interner.literal_number(233.0),
+    );
+    let callable = interner.callable(CallableShape {
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: num_value,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let keyof_callable = interner.keyof(callable);
+    let result = evaluate_type(&interner, keyof_callable);
+
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "keyof callable with only number index should be number"
+    );
+}
+
+#[test]
+fn test_keyof_callable_with_properties_and_index() {
+    let interner = TypeInterner::new();
+    // Simulates: class B { static x: string; static [s: string]: number; }
+    let callable = interner.callable(CallableShape {
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::STRING,
+        )],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        ..CallableShape::default()
+    });
+
+    let keyof_callable = interner.keyof(callable);
+    let result = evaluate_type(&interner, keyof_callable);
+
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
+        let member_list = interner.type_list(members);
+        assert!(
+            member_list.contains(&TypeId::STRING),
+            "keyof should include string from string index"
+        );
+    } else {
+        panic!("Expected union, got {:?}", interner.lookup(result));
+    }
+}
+
+// =============================================================================
+// Index Access on Callable Types (type-level (typeof B)["foo"])
+// =============================================================================
+
+#[test]
+fn test_index_access_callable_string_literal_via_string_index() {
+    let interner = TypeInterner::new();
+    // Simulates: (typeof B)["foo"] where B has static [s: string]: number
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let index_access = interner.index_access(callable, interner.literal_string("foo"));
+    let result = evaluate_type(&interner, index_access);
+
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "(typeof B)[\"foo\"] should resolve to number via string index"
+    );
+}
+
+#[test]
+fn test_index_access_callable_number_literal_via_number_index() {
+    let interner = TypeInterner::new();
+    // Simulates: (typeof B)[42] where B has static [s: number]: 42 | 233
+    let num_value = interner.union2(
+        interner.literal_number(42.0),
+        interner.literal_number(233.0),
+    );
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: num_value,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let index_access = interner.index_access(callable, interner.literal_number(42.0));
+    let result = evaluate_type(&interner, index_access);
+
+    assert_eq!(
+        result, num_value,
+        "(typeof B)[42] should resolve to 42 | 233 via number index"
+    );
+}
+
+#[test]
+fn test_index_access_callable_string_intrinsic() {
+    let interner = TypeInterner::new();
+    // Simulates: (typeof B)[string] where B has static [s: string]: number
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let index_access = interner.index_access(callable, TypeId::STRING);
+    let result = evaluate_type(&interner, index_access);
+
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "(typeof B)[string] should resolve to number"
+    );
+}
+
+#[test]
+fn test_index_access_callable_number_intrinsic() {
+    let interner = TypeInterner::new();
+    // Simulates: (typeof B)[number] where B has static [s: number]: 42 | 233
+    let num_value = interner.union2(
+        interner.literal_number(42.0),
+        interner.literal_number(233.0),
+    );
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: num_value,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let index_access = interner.index_access(callable, TypeId::NUMBER);
+    let result = evaluate_type(&interner, index_access);
+
+    assert_eq!(
+        result, num_value,
+        "(typeof B)[number] should resolve to 42 | 233 via number index"
+    );
 }

@@ -178,6 +178,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().union(key_types)
                     }
                 }
+                TypeData::Callable(shape_id) => {
+                    let shape = self.interner().callable_shape(shape_id);
+                    let mut key_types: Vec<TypeId> = shape
+                        .properties
+                        .iter()
+                        .map(|p| self.interner().literal_string_atom(p.name))
+                        .collect();
+
+                    if shape.string_index.is_some() {
+                        key_types.push(TypeId::STRING);
+                        key_types.push(TypeId::NUMBER);
+                    } else if shape.number_index.is_some() {
+                        key_types.push(TypeId::NUMBER);
+                    }
+
+                    if key_types.is_empty() {
+                        TypeId::NEVER
+                    } else {
+                        self.interner().union(key_types)
+                    }
+                }
                 TypeData::Array(_) => self.interner().union(self.array_keyof_keys()),
                 TypeData::Tuple(elements) => {
                     let elements = self.interner().tuple_list(elements);

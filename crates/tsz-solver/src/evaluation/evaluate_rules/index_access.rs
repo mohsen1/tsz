@@ -6,9 +6,9 @@
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId, ObjectShape, ObjectShapeId,
-    PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData, TypeId, TypeListId,
-    TypeParamInfo,
+    CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId,
+    ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData,
+    TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
 use crate::visitor::{
@@ -184,6 +184,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluate_object_with_index(&shape, self.index_type);
 
         // CRITICAL FIX: Same deferral logic for objects with index signatures
+        if result == TypeId::UNDEFINED && self.is_generic_index() {
+            return None;
+        }
+
+        Some(result)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self
+            .evaluator
+            .interner()
+            .callable_shape(CallableShapeId(shape_id));
+
+        let result = self
+            .evaluator
+            .evaluate_callable_index(&shape, self.index_type);
+
         if result == TypeId::UNDEFINED && self.is_generic_index() {
             return None;
         }
@@ -820,6 +837,84 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // If index is a literal string, look up the property first, then fallback to string index.
+        if let Some(name) = literal_string(self.interner(), index_type) {
+            for prop in &shape.properties {
+                if prop.name == name {
+                    return self.optional_property_type(prop);
+                }
+            }
+            if utils::is_numeric_property_name(self.interner(), name)
+                && let Some(number_index) = shape.number_index.as_ref()
+            {
+                return self.add_undefined_if_unchecked(number_index.value_type);
+            }
+            if let Some(string_index) = shape.string_index.as_ref() {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::UNDEFINED;
+        }
+
+        // If index is a literal number, prefer number index, then string index.
+        if literal_number(self.interner(), index_type).is_some() {
+            if let Some(number_index) = shape.number_index.as_ref() {
+                return self.add_undefined_if_unchecked(number_index.value_type);
+            }
+            if let Some(string_index) = shape.string_index.as_ref() {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::UNDEFINED;
+        }
+
+        if index_type == TypeId::STRING {
+            let result = if let Some(string_index) = shape.string_index.as_ref() {
+                string_index.value_type
+            } else {
+                self.union_property_types(&shape.properties)
+            };
+            return self.add_undefined_if_unchecked(result);
+        }
+
+        if index_type == TypeId::NUMBER {
+            let result = if let Some(number_index) = shape.number_index.as_ref() {
+                number_index.value_type
+            } else if let Some(string_index) = shape.string_index.as_ref() {
+                string_index.value_type
+            } else {
+                self.union_property_types(&shape.properties)
+            };
+            return self.add_undefined_if_unchecked(result);
+        }
+
+        TypeId::UNDEFINED
+    }
+
+    /// Evaluate index access on a callable type (class constructor / `typeof ClassName`).
+    ///
+    /// Callable types have static properties and index signatures, analogous to
+    /// `ObjectWithIndex`. This resolves type-level indexed access like
+    /// `(typeof B)["foo"]` or `(typeof B)[number]`.
+    pub(crate) fn evaluate_callable_index(
+        &self,
+        shape: &CallableShape,
+        index_type: TypeId,
+    ) -> TypeId {
+        // If index is a union, evaluate each member
+        if let Some(members) = union_list_id(self.interner(), index_type) {
+            let members = self.interner().type_list(members);
+            let mut results = Vec::new();
+            for &member in members.iter() {
+                let result = self.evaluate_callable_index(shape, member);
+                if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access() {
+                    results.push(result);
+                }
+            }
+            if results.is_empty() {
+                return TypeId::UNDEFINED;
+            }
+            return self.interner().union(results);
+        }
+
+        // If index is a literal string, look up properties first, then fallback to index sigs.
         if let Some(name) = literal_string(self.interner(), index_type) {
             for prop in &shape.properties {
                 if prop.name == name {
