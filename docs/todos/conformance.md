@@ -1,7 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9232/12570 (73.4%) — full suite, fingerprint level (new framework)
+**Current score**: ~9235/12570 (73.5%) — full suite, fingerprint level (new framework)
 > Note: `noUncheckedSideEffectImports` default changed to `true` (matching tsc 6.0)
 > causes TS2882 on many tests with side-effect imports, dropping from ~9210 to ~7116.
 > Score recovered after fixing TS2882 regression.
@@ -9,6 +9,28 @@
 ---
 
 ## High Impact — Core Type System
+
+### override — Modifier ordering (TS1029) and ambient context (TS1040) — DONE (Session 2026-02-26)
+- **Area**: override (23/31 → 26/31 = 83.9%)
+- **Root cause 1**: Parser modifier ordering had `override` and `readonly` positions swapped.
+  The `readonly` check condition included `seen_override`, treating `override readonly p: any`
+  (correct order in tsc) as an error. This emitted spurious TS1029 "'readonly' modifier must
+  precede 'async' modifier." with wrong message text.
+- **Root cause 2**: Missing TS1040 "'override' modifier cannot be used in an ambient context"
+  for `override declare` (and `declare override`) on class member properties. The parser only
+  checked TS1040 for `async` in ambient context, not for `override`.
+- **Fix**: (1) Removed `seen_override` from readonly ordering condition. (2) Added `seen_declare`
+  tracking and TS1040 checks in both `DeclareKeyword` and `OverrideKeyword` handlers.
+- **Files**: `crates/tsz-parser/src/parser/state_statements_class_members.rs` (~20 lines changed)
+- **Tests**: 9 new unit tests in `crates/tsz-parser/tests/modifier_ordering_tests.rs`
+- **Conformance**: +3 tests (override5, override7, overrideKeywordOrder)
+- **Remaining override gaps** (5 tests):
+  - **override19, override20**: Mixin/complex `extends` expressions (e.g. `CreateMixin(Context, A)`)
+    not resolved — emits TS4112 "class doesn't extend" instead of TS4113/TS4117. SOLVER gap.
+  - **overrideParameterProperty**: Missing TS2369 "parameter property in non-constructor". CHECKER gap.
+  - **override_js3**: Missing TS8009 "override only in TypeScript files". CHECKER gap (JS-specific).
+  - **override_js4**: Should emit TS4123 (JSDoc @override variant) not TS4117. CHECKER gap.
+
 
 ### jsx — Global augmentation namespace resolution (Session 2026-02-26) — DONE
 - **Area**: jsx (46.15% → ~46.8% at error-code level in JSX; +24 tests overall)
