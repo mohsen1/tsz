@@ -10,7 +10,8 @@
 
 use super::{TypeInterner, TypeListBuffer};
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TypeData, TypeId,
+    FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, ParamInfo,
+    PropertyInfo, TypeData, TypeId,
 };
 use crate::visitor::is_literal_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -433,8 +434,18 @@ impl TypeInterner {
     /// This is safe for use during normalization because it only uses `lookup()` and
     /// never calls `intern()` or `evaluate()`.
     fn is_subtype_shallow(&self, source: TypeId, target: TypeId) -> bool {
+        self.is_subtype_shallow_depth(source, target, 3)
+    }
+
+    /// Depth-limited shallow subtype check. Handles primitives, literals, objects,
+    /// and function types. The depth parameter limits recursion through object
+    /// properties (each level allows one more structural comparison).
+    fn is_subtype_shallow_depth(&self, source: TypeId, target: TypeId, depth: u32) -> bool {
         if source == target {
             return true;
+        }
+        if depth == 0 {
+            return false;
         }
 
         // Skip reduction for type parameters and lazy types
@@ -476,7 +487,7 @@ impl TypeInterner {
                 let members = self.type_list(members);
                 // A literal is a subtype of a union if it's a subtype of ANY member
                 for &member in members.iter() {
-                    if self.is_subtype_shallow(source, member) {
+                    if self.is_subtype_shallow_depth(source, member, depth) {
                         return true;
                     }
                 }
@@ -492,40 +503,54 @@ impl TypeInterner {
             }
         }
 
-        // Handle Objects (Shallow structural check)
-        // Uses TypeId equality for properties to avoid recursion.
-        // Supports width subtyping (source can have extra properties).
-        // Skips index signatures (too complex for shallow check).
+        // Handle source as member of target union (for built-in/primitive types only).
+        // This is safe for primitives but not for complex types (functions, objects)
+        // where aggressive union matching could cause incorrect reductions.
+        if self.is_builtin_type(source)
+            && let Some(TypeData::Union(members)) = self.lookup(target) {
+                let members = self.type_list(members);
+                return members.contains(&source);
+            }
+
+        // Handle structural type comparisons
         let s_key = self.lookup(source);
         let t_key = self.lookup(target);
         match (s_key, t_key) {
+            // Object <: Object (width subtyping, TypeId equality for property types)
             (
                 Some(TypeData::Object(s_id) | TypeData::ObjectWithIndex(s_id)),
                 Some(TypeData::Object(t_id) | TypeData::ObjectWithIndex(t_id)),
-            ) => self.is_object_shape_subtype_shallow(s_id, t_id),
+            ) => self.is_object_shape_subtype_shallow_depth(s_id, t_id, 0),
+            // Function <: Function (callback param compat, optional/required handling)
+            (Some(TypeData::Function(s_id)), Some(TypeData::Function(t_id))) => {
+                self.is_function_subtype_shallow(s_id, t_id, depth)
+            }
             _ => false,
         }
     }
 
-    /// Shallow object shape subtype check.
+    /// Shallow object shape subtype check with depth-limited property comparison.
     ///
-    /// Compares properties using `TypeId` equality (no recursion) to enable
-    /// safe object reduction in unions/intersections without infinite recursion.
+    /// At depth > 0, property types are compared using `is_subtype_shallow_depth`,
+    /// enabling reduction of objects whose properties differ structurally
+    /// (e.g., `{ f(): void } | { f(x?: string): void }`).
+    /// At depth 0, falls back to `TypeId` equality for properties.
     ///
     /// ## Subtyping Rules:
     /// - **Width subtyping**: Source can have extra properties
-    /// - **Type Identity**: Common properties must have identical `TypeIds` (no deep check)
+    /// - **Type comparison**: TypeId equality first, then depth-limited structural check
     /// - **Optional**: Required <: Optional is true, Optional <: Required is false
     /// - **Readonly**: Mutable <: Readonly is true, Readonly <: Mutable is false
     /// - **Nominal**: If target has a symbol, source must have the same symbol
     /// - **Index Signatures**: Skipped (too complex for shallow check)
     ///
-    /// ## Example Reductions:
-    /// - `{a: 1} | {a: 1, b: 2}` → `{a: 1}` (a absorbs a, b)
-    /// - `{a: 1, b: 2} & {a: 1}` → `{a: 1, b: 2}` (keeps more specific)
-    ///
     /// Uses O(N+M) two-pointer scan since properties are sorted by Atom.
-    fn is_object_shape_subtype_shallow(&self, s_id: ObjectShapeId, t_id: ObjectShapeId) -> bool {
+    fn is_object_shape_subtype_shallow_depth(
+        &self,
+        s_id: ObjectShapeId,
+        t_id: ObjectShapeId,
+        depth: u32,
+    ) -> bool {
         if s_id == t_id {
             return true;
         }
@@ -562,8 +587,10 @@ impl TypeInterner {
                 let sp = &s_props[s_idx];
                 has_any_overlap = true;
 
-                // Rule: Type Identity (no recursion)
-                if sp.type_id != t_prop.type_id {
+                // Type comparison: try TypeId equality first, then depth-limited structural check
+                if sp.type_id != t_prop.type_id
+                    && !self.is_subtype_shallow_depth(sp.type_id, t_prop.type_id, depth)
+                {
                     return false;
                 }
 
@@ -589,6 +616,162 @@ impl TypeInterner {
         // Disjoint properties check: must have at least one overlapping property
         // (matching tsc's reduction logic for unrelated object types).
         has_any_overlap
+    }
+
+    /// Shallow function subtype check for union reduction.
+    ///
+    /// Implements TypeScript's function subtyping rules:
+    /// - Source can have fewer params than target (callback parameter compatibility)
+    /// - Extra source params must be optional (otherwise source requires more args)
+    /// - Parameters are checked contravariantly (target param type <: source param type)
+    /// - Return type is checked covariantly (source return type <: target return type)
+    /// - Handles optional vs required params with `| undefined` equivalence
+    /// - Skips generic functions (too complex for shallow check)
+    fn is_function_subtype_shallow(
+        &self,
+        s_id: FunctionShapeId,
+        t_id: FunctionShapeId,
+        depth: u32,
+    ) -> bool {
+        if s_id == t_id {
+            return true;
+        }
+
+        let s = self.function_shape(s_id);
+        let t = self.function_shape(t_id);
+
+        // Skip generic functions
+        if !s.type_params.is_empty() || !t.type_params.is_empty() {
+            return false;
+        }
+
+        // this-type must match (different `this` types = different function types)
+        if s.this_type != t.this_type {
+            return false;
+        }
+
+        // Return type: covariant (source return <: target return)
+        if s.return_type != t.return_type
+            && !self.is_subtype_shallow_depth(s.return_type, t.return_type, depth)
+        {
+            return false;
+        }
+
+        // Check params in the shared range contravariantly
+        let min_len = s.params.len().min(t.params.len());
+        for i in 0..min_len {
+            if !self.param_contravariant_shallow(&t.params[i], &s.params[i], depth) {
+                return false;
+            }
+        }
+
+        // Source cannot have more total params than target (even optional ones).
+        // In tsc's subtype relation, `(x?: string) => void` is NOT a subtype
+        // of `() => void` — having extra params (even optional) prevents subtyping.
+        // But source with FEWER params IS a subtype (callback compatibility).
+        if s.params.len() > t.params.len() {
+            return false;
+        }
+
+        // Conservative guard for overload-like function pairs:
+        // If all overlapping params have identical TypeIds, the functions look like
+        // overload variants of the same method (e.g., `reduce(cb)` vs `reduce(cb, init)`).
+        // Don't reduce these — even though one is technically a subtype, removing it
+        // can break contextual typing and overload resolution.
+        //
+        // This guard allows reduction when param types actually differ, which is the
+        // pattern in unionTypeReduction2: `(x: string|undefined) => void <: (x?: string) => void`
+        // where the param TypeIds differ (string|undefined vs string).
+        if min_len > 0 {
+            let all_params_identical =
+                (0..min_len).all(|i| s.params[i].type_id == t.params[i].type_id);
+            if all_params_identical {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check contravariant parameter compatibility for function subtyping.
+    ///
+    /// For `S <: T`, parameters are checked contravariantly: `T_param <: S_param`.
+    /// Handles the optional/required distinction where `x?: T` has effective type
+    /// `T | undefined` and `x: T | undefined` is equivalent.
+    fn param_contravariant_shallow(
+        &self,
+        t_param: &ParamInfo,
+        s_param: &ParamInfo,
+        depth: u32,
+    ) -> bool {
+        let t_type = t_param.type_id;
+        let s_type = s_param.type_id;
+
+        if t_type == s_type {
+            // Same base types. Check optional/required compatibility.
+            if t_param.optional && !s_param.optional {
+                // t_effective = type | undefined, s_effective = type
+                // Need: type | undefined <: type — only if type contains undefined
+                return self.type_contains_undefined(s_type);
+            }
+            return true;
+        }
+
+        // Types differ. Check effective type subtyping based on optionality.
+        match (t_param.optional, s_param.optional) {
+            (false, false) => {
+                // Both required: t_type <: s_type
+                self.is_subtype_shallow_depth(t_type, s_type, depth)
+            }
+            (true, true) => {
+                // Both optional: t_type | undef <: s_type | undef
+                // Reduces to: t_type <: s_type | undef, which holds if t_type <: s_type
+                self.is_subtype_shallow_depth(t_type, s_type, depth) || t_type == TypeId::UNDEFINED
+            }
+            (false, true) => {
+                // t required, s optional: t_type <: s_type | undef
+                // Holds if t_type <: s_type (since s_type ⊂ s_type | undef)
+                self.is_subtype_shallow_depth(t_type, s_type, depth)
+            }
+            (true, false) => {
+                // t optional, s required: t_type | undef <: s_type
+                // Need both: t_type <: s_type AND undefined <: s_type
+                self.type_contains_undefined(s_type)
+                    && self.is_subtype_shallow_depth(t_type, s_type, depth)
+            }
+        }
+    }
+
+    /// Check if a type is a built-in primitive (string, number, boolean, etc.).
+    /// These are safe to check against union targets without risk of cascading
+    /// reductions that affect complex type inference.
+    const fn is_builtin_type(&self, id: TypeId) -> bool {
+        matches!(
+            id,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::VOID
+                | TypeId::UNDEFINED
+                | TypeId::NULL
+                | TypeId::BOOLEAN_TRUE
+                | TypeId::BOOLEAN_FALSE
+        )
+    }
+
+    /// Check if a type contains `undefined` (either is `undefined` or is a
+    /// union containing `undefined`). Uses only `lookup()`, safe during normalization.
+    fn type_contains_undefined(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::UNDEFINED {
+            return true;
+        }
+        if let Some(TypeData::Union(members)) = self.lookup(type_id) {
+            let members = self.type_list(members);
+            return members.contains(&TypeId::UNDEFINED);
+        }
+        false
     }
 
     /// Check if a literal domain matches a primitive class.
