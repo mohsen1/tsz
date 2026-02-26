@@ -708,6 +708,14 @@ fn compile_inner(
         });
     }
 
+    // Track whether TS5107/TS5101 deprecation diagnostics exist for handling below.
+    let has_deprecation_diagnostics = config_diagnostics.iter().any(|d| {
+        d.code
+            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+            || d.code
+                == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+    });
+
     let mut resolved = match resolve_compiler_options(
         config
             .as_ref()
@@ -1043,14 +1051,20 @@ fn compile_inner(
     if !binary_file_names.is_empty() {
         diagnostics.retain(|d| !binary_file_names.contains(&d.file));
     }
-    // tsc suppresses options-level deprecation diagnostics (TS5107/TS5101) when there
-    // are syntactic errors. See TypeScript's emitFilesAndReportErrors() in watch.ts:
-    // options diagnostics are only collected when getSyntacticDiagnostics() returns nothing.
+    // tsc 6.0 deprecation diagnostic handling:
+    // - When syntactic errors present: suppress TS5107/TS5101 (tsc reports parse errors first)
+    // - When no syntactic errors and TS5107/TS5101 present: fatal — discard semantic errors
     let has_syntactic_errors = diagnostics.iter().any(|d| (1000..2000).contains(&d.code));
     if has_syntactic_errors {
         config_diagnostics.retain(|d| {
             d.code != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
                 && d.code != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        });
+    } else if has_deprecation_diagnostics {
+        // TS5107/TS5101 are fatal in tsc 6.0 when no syntactic errors exist:
+        // discard per-file semantic diagnostics, keep config-level and global diagnostics.
+        diagnostics.retain(|d| {
+            (5000..6000).contains(&d.code) || d.code >= 18000 || d.file.is_empty() || d.start == 0
         });
     }
     diagnostics.extend(config_diagnostics);
