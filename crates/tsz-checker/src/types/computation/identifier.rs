@@ -72,6 +72,20 @@ impl<'a> CheckerState<'a> {
             // Track that this function body uses `arguments` (for JS implicit rest params)
             self.ctx.js_body_uses_arguments = true;
 
+            // TS2496: 'arguments' cannot be referenced in an arrow function in ES5.
+            // Fires when `arguments` is inside an arrow that captures it from an outer
+            // scope. Does NOT fire when `arguments` is a parameter of the immediate arrow
+            // (e.g., `(arguments) => arguments`). tsc emits this and continues.
+            if self.ctx.compiler_options.target.is_es5() && self.is_arguments_captured_by_arrow(idx)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
+                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
+                );
+            }
+
             // TS2815: 'arguments' cannot be referenced in property initializers
             // or class static initialization blocks. Must check BEFORE regular
             // function body check because arrow functions are transparent.

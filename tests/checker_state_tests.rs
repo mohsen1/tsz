@@ -3792,6 +3792,138 @@ class C {
 }
 
 #[test]
+fn test_ts2496_arguments_in_arrow_function_es5() {
+    use crate::parser::ParserState;
+
+    // TS2496: arguments cannot be referenced in an arrow function in ES5.
+    let source = r#"
+function f() {
+    var a = () => arguments;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::checker::context::CheckerOptions {
+        target: tsz_common::common::ScriptTarget::ES5,
+        strict: false,
+        always_strict: false,
+        ..Default::default()
+    };
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2496),
+        "Expected TS2496 for 'arguments' in arrow function at ES5 target, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_ts2496_not_emitted_for_es2015_target() {
+    use crate::parser::ParserState;
+
+    // TS2496 should NOT fire when target is ES2015+ (arrow functions are native).
+    let source = r#"
+function f() {
+    var a = () => arguments;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::checker::context::CheckerOptions {
+        target: tsz_common::common::ScriptTarget::ES2015,
+        strict: false,
+        always_strict: false,
+        ..Default::default()
+    };
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2496),
+        "TS2496 should not fire for ES2015 target, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_ts1100_arguments_in_strict_mode() {
+    use crate::parser::ParserState;
+
+    // TS1100: 'arguments' used as variable name in strict mode.
+    let source = r#"
+var arguments;
+var a = () => arguments;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::checker::context::CheckerOptions {
+        target: tsz_common::common::ScriptTarget::ES5,
+        strict: false,
+        always_strict: true,
+        ..Default::default()
+    };
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1100),
+        "Expected TS1100 for 'var arguments' in strict mode, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2496),
+        "Expected TS2496 for 'arguments' in arrow at ES5 target, got: {codes:?}"
+    );
+}
+
+#[test]
 fn test_signature_type_params_no_2304() {
     use crate::parser::ParserState;
 
