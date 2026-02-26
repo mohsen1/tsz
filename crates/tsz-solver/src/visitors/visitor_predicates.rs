@@ -504,6 +504,7 @@ impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         match types.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
+            Some(TypeData::Enum(_, structural_type)) => Self::check(types, structural_type),
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
             }

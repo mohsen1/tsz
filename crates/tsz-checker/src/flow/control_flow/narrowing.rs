@@ -794,11 +794,67 @@ impl<'a> FlowAnalyzer<'a> {
                 // Fallback: look up the already-computed type for this expression.
                 // This handles enum member access (e.g., Types.Str), const enum members,
                 // and other expressions that evaluate to literal or enum types.
-                let node_types = self.node_types?;
-                let &type_id = node_types.get(&idx.0)?;
-                is_narrowing_literal(self.interner, type_id)
+                if let Some(node_types) = self.node_types
+                    && let Some(&type_id) = node_types.get(&idx.0)
+                {
+                    return is_narrowing_literal(self.interner, type_id);
+                }
+
+                // Second fallback: resolve enum member accesses through the type
+                // environment when node_types is unavailable (e.g., during call
+                // argument collection where node_types is temporarily cleared).
+                if let Some(type_id) = self.resolve_enum_member_via_env(idx, node) {
+                    return is_narrowing_literal(self.interner, type_id);
+                }
+
+                None
             }
         }
+    }
+
+    /// Resolve an enum member property access (e.g., `AnimalType.cat`) to its
+    /// type via the type environment, bypassing `node_types`.
+    ///
+    /// During call argument collection, `node_types` is temporarily cleared for
+    /// overload resolution. This method resolves the enum member by:
+    /// 1. Parsing the property access to get base + member name
+    /// 2. Resolving the base to the enum symbol via the binder
+    /// 3. Looking up the member in the enum's exports to get its SymbolId
+    /// 4. Looking up the member's type via `SymbolRef` in the type environment
+    fn resolve_enum_member_via_env(
+        &self,
+        _idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<TypeId> {
+        let access = self.arena.get_access_expr(node)?;
+        let base_expr = access.expression;
+        let member_name_node = access.name_or_argument;
+
+        // Get the member name
+        let member_ident = self.arena.get_identifier_at(member_name_node)?;
+        let member_name = &member_ident.escaped_text;
+
+        // Resolve the base expression to the enum symbol
+        let base_sym_id = self
+            .binder
+            .resolve_identifier(self.arena, base_expr)
+            .or_else(|| self.binder.get_node_symbol(base_expr))?;
+        let base_sym = self.binder.get_symbol(base_sym_id)?;
+
+        // Check that the base is an enum
+        if base_sym.flags & symbol_flags::ENUM == 0 {
+            return None;
+        }
+
+        // Look up the member in the enum's exports
+        let exports = base_sym.exports.as_ref()?;
+        let member_sym_id = exports.get(member_name)?;
+
+        // Look up the member's type through the type environment
+        let type_env = self.type_environment.as_ref()?;
+        let env = type_env.borrow();
+        let sym_ref = tsz_solver::SymbolRef(member_sym_id.0);
+        env.get(sym_ref)
     }
 
     pub(crate) fn nullish_literal_type(&self, idx: NodeIndex) -> Option<TypeId> {
