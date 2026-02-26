@@ -1578,6 +1578,8 @@ impl ParserState {
             end_pos,
             ImportDeclData {
                 modifiers: None,
+                // For regular imports, type-only lives in ImportClauseData, not here.
+                is_type_only: false,
                 import_clause,
                 module_specifier,
                 attributes,
