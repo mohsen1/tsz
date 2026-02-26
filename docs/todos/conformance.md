@@ -6,6 +6,37 @@
 
 ---
 
+## JSX Component Attribute Type Checking — Session 2026-02-26
+- **Area**: jsx (47.8% → 49.5%, +5 tests at error-code level)
+- **Commit**: `b82bec1af` (feat commit + snapshot)
+- **Root cause**: Component JSX elements (uppercase tags like `<MyComponent>`)
+  had ZERO attribute type checking — the else branch at line 146 only resolved
+  the tag as a variable but never called `check_jsx_attributes_against_props()`.
+- **Implementation**:
+  1. **SFC props extraction**: Added `get_sfc_props_type()` — extracts first
+     parameter type from non-generic, single call signatures.
+  2. **Class component props**: Added `get_class_component_props_type()` — uses
+     construct signatures + `JSX.ElementAttributesProperty` to find instance
+     property holding props.
+  3. **Conservative guards** (prevent false positives):
+     - G1: Skip when file has parse errors (error recovery → false positives)
+     - G2: Skip class components when no ElementAttributesProperty (no JSX infra)
+     - G3: Skip generic class components (need full generic inference)
+     - G4: Skip overloaded SFCs (need JSX overload resolution)
+     - G5: Skip union-typed props (need contextual narrowing)
+     - Skip spread assignability (need spread+attribute merging)
+  4. **Hyphenated attributes** bypass type checking (data-*, aria-*, etc.) —
+     matching TSC behavior where only JS identifiers are checked against props.
+- **Files changed**:
+  - `crates/tsz-checker/src/checkers/jsx_checker.rs` (+266 lines)
+  - `crates/tsz-checker/tests/jsx_component_attribute_tests.rs` (new, 10 tests)
+  - `crates/tsz-checker/src/lib.rs` (test module registration)
+- **Tests fixed** (5 improvements, 0 regressions):
+  - tsxAttributeResolution9, tsxAttributeResolution10, tsxAttributeResolution14
+  - tsxUnionElementType1, tsxUnionElementType2
+- **Future work**: Generic inference for JSX, overload resolution, union
+  contextual narrowing, spread+attribute merging, children prop synthesis.
+
 ## Override Checking Fixes — Session 2026-02-26
 - **Area**: override (87.1% → 93.9% area, +2 tests at error-code level)
 - **Commit**: `e5bc49028` (rebased as `fe464fbc5` after snapshot)
