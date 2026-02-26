@@ -453,6 +453,20 @@
 - **Conformance gain**: +3 tests (classStaticBlock3, classStaticBlock4, classStaticBlock9). Net: 7698→7706 after rebase (61.2%→61.3%)
 - **Remaining TS2729 gaps**: Instance property tests (initializationOrdering1, redefinedPararameterProperty, assignParameterPropertyToPropertyDeclarationESNext/ES2022, privateNameCircularReference) need the same pattern extended to instance contexts.
 
+#### Run note (2026-02-26) — TS2515 abstract member satisfaction via declaration merging
+- **Fixed**: False TS2515 ("Non-abstract class does not implement inherited abstract member") when a merged interface declaration provides the abstract member.
+- **Root cause**: `check_abstract_member_implementations` in `class_implements_checker.rs` only collected members from the class body's own AST members. It didn't consider members provided by merged interface declarations (class + interface with same name in same scope).
+- **Fix**: After collecting own class members, look up the class symbol's declarations for merged interfaces. For each merged interface, collect members (both own and inherited via extends clauses using the solver's object shape).
+- **Tests added**: 2 new tests — TS2515 suppressed with merged interface, TS2515 emitted without merged interface.
+- **Note**: Cannot verify conformance improvement due to upstream regression from `beaf4f9fc6` (binding pattern contextual typing) which dropped the full suite from ~9260 to ~7129 tests.
+
+#### UPSTREAM REGRESSION (beaf4f9fc6) — binding pattern contextual typing
+- **Commit**: `beaf4f9fc6 fix(checker): set contextual type for arrow/function initializers in binding patterns`
+- **Impact**: Full suite dropped from 9260/12570 (73.7%) to 7129/12570 (56.7%), ~2131 test regression
+- **Unit tests**: 182 pre-existing test failures across binder, checker, and ASI test modules
+- **Symptoms**: TS2428, TS2564, TS2454 and many other diagnostics missing in conformance tests
+- **Root cause**: Changes to `types/queries/binding.rs` array binding pattern handling restructured iteration logic. Need investigation.
+
 #### Run note (2026-02-26) — interfaces/declarationMerging area (TS2411/TS2413)
 - **Area**: interfaces/declarationMerging (24/28 → 25/28, 85.7% → 89.3%)
 - **Net gain**: +1 test (mergedInterfacesWithIndexers2)
