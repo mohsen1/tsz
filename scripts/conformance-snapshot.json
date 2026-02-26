@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T03:03:23Z",
-  "git_sha": "97b862e747cb1b90d6409280286bce34528c57ea",
+  "timestamp": "2026-02-26T03:12:20Z",
+  "git_sha": "670827bb998f9f991a010c1e85601040fe911899",
   "summary": {
     "total_tests": 12570,
-    "passed": 8728,
-    "failed": 3842,
-    "pass_rate": 69.4
+    "passed": 8732,
+    "failed": 3838,
+    "pass_rate": 69.5
   },
   "areas_by_pass_rate": [
     {
@@ -198,13 +198,6 @@
       "pass_rate": 54.55
     },
     {
-      "area": "externalModules",
-      "total": 126,
-      "passed": 70,
-      "failed": 56,
-      "pass_rate": 55.56
-    },
-    {
       "area": "types/rest",
       "total": 18,
       "passed": 10,
@@ -224,6 +217,13 @@
       "passed": 9,
       "failed": 7,
       "pass_rate": 56.25
+    },
+    {
+      "area": "externalModules",
+      "total": 126,
+      "passed": 71,
+      "failed": 55,
+      "pass_rate": 56.35
     },
     {
       "area": "types/literal",
@@ -247,13 +247,6 @@
       "pass_rate": 57.58
     },
     {
-      "area": "classes/classDeclarations",
-      "total": 67,
-      "passed": 39,
-      "failed": 28,
-      "pass_rate": 58.21
-    },
-    {
       "area": "jsdoc",
       "total": 249,
       "passed": 145,
@@ -268,18 +261,18 @@
       "pass_rate": 58.33
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 17,
-      "failed": 12,
-      "pass_rate": 58.62
-    },
-    {
       "area": "expressions/contextualTyping",
       "total": 17,
       "passed": 10,
       "failed": 7,
       "pass_rate": 58.82
+    },
+    {
+      "area": "classes/classDeclarations",
+      "total": 67,
+      "passed": 40,
+      "failed": 27,
+      "pass_rate": 59.7
     },
     {
       "area": "types/thisType",
@@ -324,11 +317,11 @@
       "pass_rate": 61.76
     },
     {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 123,
-      "failed": 75,
-      "pass_rate": 62.12
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
     },
     {
       "area": "expressions/functionCalls",
@@ -336,6 +329,13 @@
       "passed": 15,
       "failed": 9,
       "pass_rate": 62.5
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 124,
+      "failed": 74,
+      "pass_rate": 62.63
     },
     {
       "area": "types/typeRelationships",
@@ -451,10 +451,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
+      "total": 6508,
       "passed": 4684,
-      "failed": 1826,
-      "pass_rate": 71.95
+      "failed": 1824,
+      "pass_rate": 71.97
     },
     {
       "area": "interfaces/declarationMerging",
@@ -719,7 +719,7 @@
   "top_failures": [
     {
       "code": "TS2322",
-      "count": 61
+      "count": 60
     },
     {
       "code": "TS2339",
@@ -887,7 +887,7 @@
     },
     {
       "code": "TS2322",
-      "count": 184
+      "count": 183
     },
     {
       "code": "TS2339",
