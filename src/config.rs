@@ -999,7 +999,19 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     msg,
                     diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
                 ));
-                bad_keys.push(key.clone());
+                // For boolean options with string values like "true"/"false", tsc emits
+                // TS5024 but still applies the coerced value. Our deserialize_bool_or_string
+                // handles this coercion, so don't remove these keys — only remove truly
+                // unrecoverable mismatches.
+                let is_coercible_bool_string = expected_type == "boolean"
+                    && value.is_string()
+                    && matches!(
+                        value.as_str().unwrap_or("").trim().to_lowercase().as_str(),
+                        "true" | "false"
+                    );
+                if !is_coercible_bool_string {
+                    bad_keys.push(key.clone());
+                }
             }
         }
         // Remove invalid values so serde defaults them to None
@@ -3981,6 +3993,32 @@ mod tests {
         assert!(
             resolved.checker.no_implicit_any,
             "noImplicitAny should remain true when only strictNullChecks is overridden"
+        );
+    }
+
+    #[test]
+    fn test_ts5024_coercible_boolean_string_still_applied() {
+        // When alwaysStrict is a string "true" (not boolean true), tsc emits TS5024
+        // but still applies the value. Our config must do the same: emit TS5024 but
+        // keep the value so deserialize_bool_or_string can coerce it.
+        let source = r#"{
+  "compilerOptions": {
+    "strict": false,
+    "alwaysStrict": "true"
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        // TS5024 should be emitted for the string-typed boolean
+        let has_ts5024 = parsed.diagnostics.iter().any(|d| d.code == 5024);
+        assert!(
+            has_ts5024,
+            "Should emit TS5024 for string 'true' on boolean option"
+        );
+        // But the value should still be applied (coerced from string "true" to bool true)
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.always_strict,
+            "alwaysStrict should be true despite TS5024 — tsc coerces string to boolean"
         );
     }
 }

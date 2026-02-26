@@ -274,6 +274,68 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true if the given `arguments` reference is inside an arrow function
+    /// that captures `arguments` from an outer scope (i.e., the nearest enclosing
+    /// arrow does NOT have its own parameter named `arguments`).
+    ///
+    /// Used for TS2496: `arguments` cannot be referenced in an arrow function in ES5.
+    /// When an arrow has `(arguments) => arguments`, the body reference resolves to
+    /// the parameter, not the implicit `arguments` object, so TS2496 should not fire.
+    pub(crate) fn is_arguments_captured_by_arrow(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    k if k == ARROW_FUNCTION => {
+                        // Check if this arrow has a parameter named "arguments".
+                        // If so, the reference resolves to the parameter, not the
+                        // implicit arguments object — TS2496 should not fire.
+                        if let Some(func) = self.ctx.arena.get_function(node) {
+                            for &param_idx in &func.parameters.nodes {
+                                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                    && let Some(name_node) = self.ctx.arena.get(param.name)
+                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                    && ident.escaped_text == "arguments"
+                                {
+                                    return false;
+                                }
+                            }
+                        }
+                        return true;
+                    }
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR =>
+                    {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Returns true when `func_idx` is the executor callback passed to
     /// `new Promise(...)` (first argument, function/arrow expression).
     pub(crate) fn is_promise_executor_function(&self, func_idx: NodeIndex) -> bool {
