@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7723/12570 (61.4%) — full suite, fingerprint level (new framework)
-> Previously ~7729/12570 (61.5%) at snapshot, ~7719 at baseline after pull.
+**Current score**: ~8687/12570 (69.1%) — full suite, fingerprint level (new framework)
+> Previously ~8683/12570 baseline after rebase.
 
 ---
 
@@ -31,6 +31,19 @@
 - **Fix needed**: `should_check_definite_assignment` in `usage.rs` may need to be adjusted for
   global-scope `var` declarations without initializers under strictNullChecks
 - **Affected tests**: ~26 missing TS2454, ~23 missing TS2322, ~12 missing TS2564
+
+### Union call signatures — combined signature computation PARTIALLY RESOLVED
+- **Fixed**: `resolve_union_call` now computes combined signature for unions where all members
+  have exactly one non-generic call signature. Uses hybrid approach:
+  - Combined signature for argument count validation (max required across members)
+  - Per-member resolution for argument type checking (avoids over-constraining)
+  - Handles rest params by extracting array element types
+- **Impact**: Eliminated false TS2349 ("not callable") for unions with different param counts/types (+5 tests)
+- **Remaining gaps**:
+  - Multi-overload unions (member with 2 sigs vs member with 1 sig) still fall through to old path
+  - Union type reduction (e.g., `() => void | (x?: string) => void` → `(x?: string) => void`) not implemented
+  - Fingerprint-level mismatches remain (line offsets, TS2555 vs TS2554 for rest param arity)
+- **Files**: `crates/tsz-solver/src/operations/core.rs` — `resolve_union_call`, `try_compute_combined_union_signature`
 
 ### ~~TS2353 — Intersection freshness false positives~~ RESOLVED
 - Fixed: intersection merging now uses AND logic for FRESH_LITERAL propagation
