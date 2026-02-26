@@ -365,6 +365,7 @@ fn compile_resolves_paths_mappings() {
           "compilerOptions": {
             "outDir": "dist",
             "baseUrl": ".",
+            "ignoreDeprecations": "6.0",
             "paths": {
               "@lib/*": ["src/lib/*"]
             }
@@ -515,6 +516,7 @@ fn compile_resolves_node_modules_exports_subpath() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "moduleResolution": "node16",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1501,6 +1503,7 @@ fn compile_resolves_package_imports_prefers_import_condition_for_esm() {
           "compilerOptions": {
             "outDir": "dist",
             "module": "esnext",
+            "moduleResolution": "bundler",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]

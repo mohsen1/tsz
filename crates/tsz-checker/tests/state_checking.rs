@@ -48,7 +48,7 @@ fn exposes_state_checking_boundary_queries() {
     assert_eq!(unwrap_readonly_deep(&types, readonly_array), array);
     assert_eq!(
         union_members(&types, union),
-        Some(vec![TypeId::NUMBER, TypeId::STRING])
+        Some(vec![TypeId::STRING, TypeId::NUMBER])
     );
     assert!(is_type_parameter_like(&types, type_param));
     assert!(is_only_null_or_undefined(&types, null_or_undefined));

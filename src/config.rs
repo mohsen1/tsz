@@ -430,11 +430,17 @@ pub fn resolve_compiler_options(
     } else {
         // Match tsc: when --module is omitted, default depends on target.
         // ES2015+ targets default to ES2015 modules; lower targets default to CommonJS.
-        let default_module = if resolved.printer.target.supports_es2015() {
-            ModuleKind::ES2015
-        } else {
-            ModuleKind::CommonJS
-        };
+        // IMPORTANT: When target is not explicitly set in tsconfig, tsc defaults the
+        // target to ES3 (which is pre-ES2015), so the module defaults to CommonJS.
+        // tsz's PrinterOptions::default().target is ESNext (for emitting modern code),
+        // but that should NOT influence the module/resolution default when target was
+        // omitted from the tsconfig — in that case we must use CommonJS to match tsc.
+        let default_module =
+            if options.target.is_some() && resolved.printer.target.supports_es2015() {
+                ModuleKind::ES2015
+            } else {
+                ModuleKind::CommonJS
+            };
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;
     }

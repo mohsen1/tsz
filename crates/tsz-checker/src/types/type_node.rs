@@ -432,8 +432,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && index_value.fract() == 0.0
                 && index_value < 0.0
             {
-                let object_for_tuple_check =
-                    crate::query_boundaries::common::unwrap_readonly(self.ctx.types, object_type);
+                let object_for_tuple_check = {
+                    let unwrapped = crate::query_boundaries::common::unwrap_readonly(
+                        self.ctx.types,
+                        object_type,
+                    );
+                    // Type aliases resolve to Lazy(DefId) from lowering; follow the lazy
+                    // ref so that `type T = [1,2]; T[-1]` correctly detects the tuple.
+                    if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, unwrapped) {
+                        let resolved = self
+                            .ctx
+                            .type_env
+                            .try_borrow()
+                            .ok()
+                            .and_then(|env| env.get_def(def_id))
+                            .or_else(|| self.ctx.definition_store.get_body(def_id))
+                            .unwrap_or(unwrapped);
+                        crate::query_boundaries::common::unwrap_readonly(self.ctx.types, resolved)
+                    } else {
+                        unwrapped
+                    }
+                };
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
                     let message = crate::diagnostics::diagnostic_messages::
                         A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE

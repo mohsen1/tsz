@@ -245,9 +245,16 @@ impl<'a> CheckerState<'a> {
             && index_value.fract() == 0.0
             && index_value < 0.0
         {
+            let object_for_tuple_check = {
+                let unwrapped = crate::query_boundaries::common::unwrap_readonly(
+                    self.ctx.types,
+                    object_type_for_access,
+                );
+                self.resolve_lazy_type(unwrapped)
+            };
             let object_for_tuple_check = crate::query_boundaries::common::unwrap_readonly(
                 self.ctx.types,
-                object_type_for_access,
+                object_for_tuple_check,
             );
             if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
                 self.error_at_node(
@@ -971,9 +978,11 @@ mod tests {
 
     #[test]
     fn tuple_expression_negative_index_emits_t2514() {
+        // `as const` makes the literal a readonly tuple — without it, `["a", 1]`
+        // is inferred as `(string | number)[]` (an array) and TS2514 is not expected.
         let diags = check_source_with_default_libs(
             r#"
-const tuple = ["a", 1];
+const tuple = ["a", 1] as const;
 const bad = tuple[-1];
 "#,
         );
