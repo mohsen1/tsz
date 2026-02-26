@@ -444,6 +444,9 @@ pub struct CheckerContext<'a> {
     /// Stack of contextual yield types for generator functions.
     /// Used to contextually type yield expressions (prevents false TS7006).
     pub yield_type_stack: Vec<Option<TypeId>>,
+    /// Collected yield operand types during body check for unannotated generators.
+    /// After body check, the union determines the inferred yield type for TS7055/TS7025 vs TS7057.
+    pub generator_yield_operand_types: Vec<TypeId>,
     /// Stack of current `this` types for class member bodies.
     pub this_type_stack: Vec<TypeId>,
 
