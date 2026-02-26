@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T11:56:36Z",
-  "git_sha": "64f9b9cae81ae4e1744a60698768c9cfb6324d73",
+  "timestamp": "2026-02-26T11:36:19Z",
+  "git_sha": "e343a12e5a2095500bde09b86ea3a614a1c464ac",
   "summary": {
     "total_tests": 12570,
-    "passed": 9138,
-    "failed": 3432,
+    "passed": 9144,
+    "failed": 3426,
     "pass_rate": 72.7
   },
   "areas_by_pass_rate": [
@@ -23,13 +23,6 @@
       "pass_rate": 44.0
     },
     {
-      "area": "jsx",
-      "total": 195,
-      "passed": 90,
-      "failed": 105,
-      "pass_rate": 46.15
-    },
-    {
       "area": "types/mapped",
       "total": 26,
       "passed": 12,
@@ -42,6 +35,13 @@
       "passed": 7,
       "failed": 8,
       "pass_rate": 46.67
+    },
+    {
+      "area": "jsx",
+      "total": 192,
+      "passed": 90,
+      "failed": 102,
+      "pass_rate": 46.88
     },
     {
       "area": "types/contextualTypes",
@@ -107,13 +107,6 @@
       "pass_rate": 53.33
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 13,
-      "failed": 11,
-      "pass_rate": 54.17
-    },
-    {
       "area": "transpile",
       "total": 22,
       "passed": 12,
@@ -177,6 +170,13 @@
       "pass_rate": 57.14
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
+    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -219,13 +219,6 @@
       "pass_rate": 61.29
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -248,10 +241,10 @@
     },
     {
       "area": "types/typeRelationships",
-      "total": 264,
+      "total": 263,
       "passed": 168,
-      "failed": 96,
-      "pass_rate": 63.64
+      "failed": 95,
+      "pass_rate": 63.88
     },
     {
       "area": "classes/classDeclarations",
@@ -322,6 +315,13 @@
       "passed": 24,
       "failed": 11,
       "pass_rate": 68.57
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 20,
+      "failed": 9,
+      "pass_rate": 68.97
     },
     {
       "area": "es6/shorthandPropertyAssignment",
@@ -403,9 +403,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4820,
-      "failed": 1690,
-      "pass_rate": 74.04
+      "passed": 4823,
+      "failed": 1687,
+      "pass_rate": 74.09
     },
     {
       "area": "override",
@@ -816,10 +816,6 @@
       "count": 7
     },
     {
-      "code": "TS2875",
-      "count": 7
-    },
-    {
       "code": "TS7017",
       "count": 6
     },
@@ -877,6 +873,10 @@
     },
     {
       "code": "TS2833",
+      "count": 4
+    },
+    {
+      "code": "TS9007",
       "count": 4
     }
   ],
