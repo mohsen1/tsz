@@ -290,12 +290,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
                         }
                         IntrinsicKind::Never => {
-                            let prop_atom_inner = prop_atom
-                                .unwrap_or_else(|| self.interner().intern_string(prop_name));
-                            Some(PropertyAccessResult::PropertyNotFound {
-                                type_id: obj_type,
-                                property_name: prop_atom_inner,
-                            })
+                            // never is the bottom type — all property accesses are valid
+                            // and return never (the code is unreachable).
+                            Some(PropertyAccessResult::simple(TypeId::NEVER))
                         }
                         _ => None,
                     }
