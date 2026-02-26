@@ -346,10 +346,27 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
 
-        // Create contextual context from callee type with type arguments applied
+        // Resolve Lazy/Application types before creating the contextual context.
+        // This ensures that when the callee is an interface type (stored as Lazy(DefId))
+        // or a generic interface application (Application(Lazy, args)), the contextual
+        // type context can properly extract parameter types from the resolved Callable shape.
+        //
+        // Without this resolution, ContextualTypeContext's get_parameter_type_for_call
+        // calls evaluate_type (with NoopResolver) on the Lazy type, which returns the
+        // Lazy type unchanged (NoopResolver.resolve_lazy returns None). The extractor
+        // then falls back to default None output because visit_lazy is not overridden.
+        // This causes false TS7006 emissions for callbacks passed to interface-typed callees.
+        //
+        // Examples that were wrongly emitting TS7006:
+        //   interface Fn { (fn: (x: number) => void): void }
+        //   declare const fn: Fn;
+        //   fn(x => {});  // x was typed as any (false positive)
+        let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
+        let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        // Create contextual context from resolved callee type
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
-            callee_type_for_resolution,
+            callee_type_for_context,
             self.ctx.compiler_options.no_implicit_any,
         );
         let check_excess_properties = overload_signatures.is_none();
