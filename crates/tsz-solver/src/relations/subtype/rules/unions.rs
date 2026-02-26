@@ -8,7 +8,9 @@
 
 use crate::TypeDatabase;
 use crate::type_queries::data::get_object_shape_id;
-use crate::types::{MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo};
+use crate::types::{
+    MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
+};
 use crate::visitor::{
     index_access_parts, is_identity_comparable_type, is_literal_type, keyof_inner_type,
     mapped_type_id, type_param_info, union_list_id,
@@ -108,10 +110,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// when T is related to S and the mapped type doesn't remove optionality (-?).
     ///
     /// This covers:
-    /// - `T <: Partial<T>` (adds optional)
-    /// - `T <: Readonly<T>` (adds readonly)
-    /// - `T <: { [K in keyof T]: T[K] }` (identity)
+    /// - `T <: Partial<T>` (adds optional) — YES, T satisfies optional requirements
+    /// - `T <: Readonly<T>` (adds readonly) — YES, readonly doesn't affect assignment
+    /// - `T <: { [K in keyof T]: T[K] }` (identity) — YES, identity preserves shape
     /// - `U extends T => U <: Partial<T>` (constraint-based)
+    ///
+    /// Does NOT cover:
+    /// - `T <: Required<T>` — NO, T may have optional properties that Required demands
     fn is_assignable_to_homomorphic_mapped(
         &mut self,
         source_name: Atom,
@@ -125,10 +130,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // In tsc 6.0, all homomorphic mapped types are bidirectionally assignable
-        // to their source type parameter, regardless of modifier direction.
-        // T <: Required<T> is allowed because at the generic level, the concrete
-        // effect of -? depends on what T actually is.
+        // Mapped types that REMOVE optionality (-?) like Required<T> are NARROWER
+        // than the source type parameter. T may have optional properties that
+        // Required<T> demands be present, so T → Required<T> fails.
+        if mapped.optional_modifier == Some(MappedModifier::Remove) {
+            return false;
+        }
 
         // Constraint must be keyof(S) for some S
         let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {

@@ -900,3 +900,128 @@ fn test_t_subtype_of_partial_t_with_constraint() {
         "T extends {{[key: string]: number}} should be subtype of Partial<T>"
     );
 }
+
+#[test]
+fn test_required_t_subtype_of_t() {
+    // Required<T> → T should succeed: Required is narrower, assignable to broader T
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let required_t = make_homomorphic_mapped(
+        &interner,
+        t_param,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(required_t, t_param).is_true(),
+        "Required<T> SHOULD be subtype of T (narrower to broader)"
+    );
+}
+
+#[test]
+fn test_t_subtype_of_partial_t() {
+    // T → Partial<T> should succeed: T satisfies all optional requirements
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, partial_t).is_true(),
+        "T SHOULD be subtype of Partial<T> (original satisfies optional)"
+    );
+}
+
+#[test]
+fn test_readonly_t_bidirectional_with_t() {
+    // Readonly<T> ↔ T should work both ways (readonly doesn't affect assignability)
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let readonly_t =
+        make_homomorphic_mapped(&interner, t_param, None, Some(crate::MappedModifier::Add));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(readonly_t, t_param).is_true(),
+        "Readonly<T> SHOULD be subtype of T"
+    );
+    assert!(
+        checker.check_subtype(t_param, readonly_t).is_true(),
+        "T SHOULD be subtype of Readonly<T>"
+    );
+}
+
+#[test]
+fn test_required_t_subtype_of_partial_t() {
+    // Required<T> → Partial<T> should succeed: narrower to wider
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let required_t = make_homomorphic_mapped(
+        &interner,
+        t_param,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(required_t, partial_t).is_true(),
+        "Required<T> SHOULD be subtype of Partial<T> (narrower to wider)"
+    );
+}
+
+#[test]
+fn test_partial_t_not_subtype_of_required_t() {
+    // Partial<T> → Required<T> should fail: wider to narrower
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let partial_t =
+        make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
+    let required_t = make_homomorphic_mapped(
+        &interner,
+        t_param,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(partial_t, required_t).is_true(),
+        "Partial<T> should NOT be subtype of Required<T> (wider to narrower)"
+    );
+}
