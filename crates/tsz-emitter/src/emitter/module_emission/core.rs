@@ -138,13 +138,25 @@ impl<'a> Printer<'a> {
         node: &Node,
         idx: NodeIndex,
     ) {
-        // Set temporary override name for anonymous default declarations
+        // For anonymous default function/class declarations, tsc assigns a
+        // synthetic name (`default_1`) and hoists `exports.default = default_1;`
+        // BEFORE the declaration. This works because function declarations are
+        // hoisted in JS.
+        let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
         let prev = self.anonymous_default_export_name.take();
         self.anonymous_default_export_name = Some("default_1".to_string());
-        self.emit_node_default(node, idx);
+        if is_function {
+            // Function: exports.default before declaration (functions hoist)
+            self.write("exports.default = default_1;");
+            self.write_line();
+            self.emit_node_default(node, idx);
+        } else {
+            // Class/other: declaration first, then exports.default
+            self.emit_node_default(node, idx);
+            self.write_line();
+            self.write("exports.default = default_1;");
+        }
         self.anonymous_default_export_name = prev;
-        self.write_line();
-        self.write("exports.default = default_1;");
     }
 
     pub(in crate::emitter) fn emit_commonjs_default_export_assignment<F>(
