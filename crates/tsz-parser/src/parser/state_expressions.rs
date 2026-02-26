@@ -860,6 +860,7 @@ impl ParserState {
         start_pos: u32,
     ) -> NodeIndex {
         let is_satisfies = self.is_token(SyntaxKind::SatisfiesKeyword);
+        let keyword_pos = self.token_pos();
         self.next_token(); // consume 'as' or 'satisfies'
 
         // Handle 'as const' - const assertion
@@ -886,6 +887,7 @@ impl ParserState {
             crate::parser::node::TypeAssertionData {
                 expression,
                 type_node,
+                keyword_pos,
             },
         );
 

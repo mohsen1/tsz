@@ -501,6 +501,7 @@ impl ParserState {
             node::TypeAssertionData {
                 expression,
                 type_node,
+                keyword_pos: start_pos,
             },
         )
     }

@@ -34,9 +34,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
         idx: NodeIndex,
+        keyword_pos: Option<u32>,
     ) {
-        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
-
         if self.should_suppress_assignability_diagnostic(source, target) {
             return;
         }
@@ -44,6 +43,14 @@ impl<'a> CheckerState<'a> {
         let reason = self
             .analyze_assignability_failure(source, target)
             .failure_reason;
+
+        // For TS1360, point the diagnostic at the `satisfies` keyword position
+        // when available, rather than walking up to the enclosing statement.
+        let anchor_idx = if keyword_pos.is_some() {
+            idx
+        } else {
+            self.assignment_diagnostic_anchor_idx(idx)
+        };
 
         let mut base_diag = match reason {
             Some(reason) => self.render_failure_reason(&reason, source, target, anchor_idx, 0),
@@ -91,6 +98,14 @@ impl<'a> CheckerState<'a> {
             base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
             base_diag.message_text = msg;
             base_diag.related_information = new_related;
+        }
+
+        // Override the diagnostic start position to the `satisfies` keyword
+        // when available. tsc points TS1360 at the keyword, not the expression.
+        if let Some(kw_pos) = keyword_pos {
+            base_diag.start = kw_pos;
+            // "satisfies" is 9 characters long
+            base_diag.length = 9;
         }
 
         self.ctx.diagnostics.push(base_diag);
