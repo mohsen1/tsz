@@ -333,9 +333,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let base_name_raw = self
-                .heritage_name_text(expr_idx)
-                .unwrap_or_else(|| base_symbol.escaped_name.clone());
+            // Use the resolved symbol name (not the heritage expression text) for error
+            // messages.  TSC uses `typeToString(baseType)` which resolves to the short
+            // symbol name, e.g. "Mover" rather than "MoversAndShakers.Mover".
+            let base_name_raw = base_symbol.escaped_name.clone();
             // Include type arguments in the base name for error messages, e.g. "A<string>"
             let base_name = if let Some(args) = type_arguments {
                 let arg_strs: Vec<String> = args
@@ -564,9 +565,8 @@ impl<'a> CheckerState<'a> {
                 self.pop_type_parameters(level_type_param_updates);
             }
 
-            // If the base is not an interface, check if it's a class with private/protected members (TS2430)
+            // If the base is not an interface, check if it's a class
             if base_iface_indices.is_empty() {
-                // Check if the base is a class
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
@@ -590,6 +590,36 @@ impl<'a> CheckerState<'a> {
                     && let Some(class_node) = self.ctx.arena.get(class_idx)
                     && let Some(class_data) = self.ctx.arena.get_class(class_node)
                 {
+                    // Build type parameter substitution for generic class bases
+                    // e.g. `extends C<string>` where `class C<T> { a: T; }` → a: string
+                    let (class_type_params, class_type_param_updates) =
+                        self.push_type_parameters(&class_data.type_parameters);
+                    let mut class_subst_args: Vec<TypeId> = type_arguments
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if class_subst_args.len() < class_type_params.len() {
+                        for param in class_type_params.iter().skip(class_subst_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            class_subst_args.push(fallback);
+                        }
+                    }
+                    if class_subst_args.len() > class_type_params.len() {
+                        class_subst_args.truncate(class_type_params.len());
+                    }
+                    let class_substitution = TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &class_type_params,
+                        &class_subst_args,
+                    );
+
                     // Check if any interface member redeclares a private/protected class member
                     for (member_name, _, derived_member_idx, _) in &derived_members {
                         for &class_member_idx in &class_data.members.nodes {
@@ -671,8 +701,11 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // TS2320: Interface cannot extend two classes that each contribute a
-                    // private/protected member with the same name.
+                    // TS2320: Collect ALL class members and check for cross-base conflicts.
+                    // This handles:
+                    //  - public member type conflicts between class bases or class+interface bases
+                    //  - visibility conflicts (public vs private/protected) between bases
+                    //  - private/protected member name conflicts between different class bases
                     for &class_member_idx in &class_data.members.nodes {
                         let Some(member_info) =
                             self.extract_class_member_info(class_member_idx, false)
@@ -680,9 +713,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
 
-                        if member_info.is_static
-                            || member_info.visibility == MemberVisibility::Public
-                        {
+                        if member_info.is_static {
                             continue;
                         }
 
@@ -690,24 +721,97 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        if let Some(prev_base_name) =
-                            inherited_non_public_class_member_sources.get(&member_info.name)
-                        {
-                            if prev_base_name != &base_name {
-                                self.error_at_node(
+                        let member_type = instantiate_type(
+                            self.ctx.types,
+                            member_info.type_id,
+                            &class_substitution,
+                        );
+
+                        if member_info.visibility != MemberVisibility::Public {
+                            // Non-public: check against other non-public class members
+                            if let Some(prev_base_name) =
+                                inherited_non_public_class_member_sources.get(&member_info.name)
+                            {
+                                if prev_base_name != &base_name {
+                                    self.error_at_node(
+                                        iface_data.name,
+                                        &format!(
+                                            "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
+                                        ),
+                                        diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                    );
+                                    self.pop_type_parameters(class_type_param_updates);
+                                    return;
+                                }
+                            } else {
+                                inherited_non_public_class_member_sources
+                                    .insert(member_info.name.clone(), base_name.clone());
+                            }
+
+                            // Also check visibility conflict: non-public here vs public from
+                            // another base stored in inherited_member_sources
+                            if let Some((prev_heritage_idx, prev_base_name, _, _)) =
+                                inherited_member_sources.get(&member_info.name)
+                                && *prev_heritage_idx != type_idx {
+                                    self.error_at_node(
+                                        iface_data.name,
+                                        &format!(
+                                            "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
+                                        ),
+                                        diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                    );
+                                    self.pop_type_parameters(class_type_param_updates);
+                                    return;
+                                }
+                        } else {
+                            // Public member: check type conflicts against inherited_member_sources
+                            // (which contains members from previous interface AND class bases)
+                            if let Some((
+                                prev_heritage_idx,
+                                prev_base_name,
+                                prev_member_type,
+                                _prev_optional,
+                            )) = inherited_member_sources.get(&member_info.name)
+                            {
+                                if *prev_heritage_idx != type_idx {
+                                    let type_incompatible = !self
+                                        .are_mutually_assignable(member_type, *prev_member_type);
+                                    if type_incompatible {
+                                        self.error_at_node(
                                             iface_data.name,
                                             &format!(
                                                 "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                         );
-                                return;
+                                        self.pop_type_parameters(class_type_param_updates);
+                                        return;
+                                    }
+                                }
+                            } else {
+                                // Also check: public member vs non-public from another class base
+                                if let Some(prev_base_name) =
+                                    inherited_non_public_class_member_sources.get(&member_info.name)
+                                    && prev_base_name != &base_name {
+                                        self.error_at_node(
+                                            iface_data.name,
+                                            &format!(
+                                                "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
+                                            ),
+                                            diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                        );
+                                        self.pop_type_parameters(class_type_param_updates);
+                                        return;
+                                    }
+                                inherited_member_sources.insert(
+                                    member_info.name.clone(),
+                                    (type_idx, base_name.clone(), member_type, false),
+                                );
                             }
-                        } else {
-                            inherited_non_public_class_member_sources
-                                .insert(member_info.name, base_name.clone());
                         }
                     }
+
+                    self.pop_type_parameters(class_type_param_updates);
                 }
 
                 continue;

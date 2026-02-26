@@ -228,3 +228,89 @@ interface E extends B, D {
         "Should not get TS2320 when derived interface overrides the conflicting member"
     );
 }
+
+#[test]
+fn ts2320_class_bases_public_member_conflict() {
+    // Two class bases with incompatible public properties
+    let source = r#"
+class D2 { a!: number; }
+class E2 { a!: string; }
+interface F2 extends E2, D2 { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for class bases with conflicting public member types"
+    );
+}
+
+#[test]
+fn ts2320_class_bases_compatible_no_error() {
+    // Two class bases with compatible public properties — no error
+    let source = r#"
+class A { x!: number; }
+class B { x!: number; }
+interface C extends A, B { }
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Should not get TS2320 when class bases have compatible member types"
+    );
+}
+
+#[test]
+fn ts2320_class_bases_visibility_conflict() {
+    // One class has public x, another has private x — visibility conflict
+    let source = r#"
+class C {
+    public x!: number;
+}
+class C2 {
+    private x!: number;
+}
+interface A extends C, C2 {
+    y: string;
+}
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for visibility conflict (public vs private)"
+    );
+}
+
+#[test]
+fn ts2320_generic_class_bases_conflict() {
+    // Generic class bases with different type args causing member conflict
+    let source = r#"
+class C<T> { a!: T; }
+class C3<T> { c!: T; }
+class C4<T> { d!: T; }
+interface A<T> extends C<string>, C3<string> {
+    y: T;
+}
+interface A<T> extends C<number>, C4<string> {
+    z: T;
+}
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for generic class bases C<string> vs C<number>"
+    );
+}
+
+#[test]
+fn ts2320_class_and_interface_base_conflict() {
+    // One class base and one interface base with conflicting members
+    let source = r#"
+class Mover {
+    getStatus(): { speed: number; } { return { speed: 0 }; }
+}
+interface Shaker {
+    getStatus(): { frequency: number; };
+}
+interface MoverShaker extends Mover, Shaker { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for class + interface bases with conflicting members"
+    );
+}
