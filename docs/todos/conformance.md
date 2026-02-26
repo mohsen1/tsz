@@ -1,8 +1,9 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8725/12570 (69.4%) — full suite, fingerprint level (new framework)
-> Previously ~8687/12570 (69.1%) baseline.
+**Current score**: ~8765/12570 (69.7%) — full suite, fingerprint level (new framework)
+> Note: Fresh re-run of conformance shows 7057/12570 (56.1%) due to possible TSC cache refresh or test suite update. Investigating.
+> Previously ~8725/12570 (69.4%) baseline.
 
 ---
 
@@ -113,6 +114,24 @@
 
 ### TS17019 — Resolving expression in computed property (6 tests)
 - **Difficulty**: MEDIUM
+
+### externalModules/typeOnly — type-only import/export handling PARTIALLY RESOLVED
+- **Area**: externalModules/typeOnly (44.1% → 45.6%, +1 in-area, +4 net suite)
+- **Fixed** (3 changes):
+  1. **Heritage clause distinction** (scope_finder.rs): Non-ambient `class extends` is value context →
+     TS1361/TS2693 should NOT be suppressed. `interface extends` and `declare class extends` are type-only
+     contexts where suppression is correct. Fixes extendsClause.ts.
+  2. **Cross-file fallback type-only guard** (property_access_type.rs, queries/lib.rs): Skip type-only members
+     in cross-file symbol resolution fallback, preventing `export type { A }` from leaking into value resolution.
+  3. **ModuleNamespace type-only error code** (type_only.rs): `import * as ns` with type-only exports
+     should emit TS2339 ("property doesn't exist") not TS2693, matching tsc.
+- **Remaining blockers**:
+  - `import * as types from './a'` resolves to `TypeId::ANY` in multi-file mode (deep module resolution
+    infrastructure issue). This prevents property access checks from running at all for namespace imports,
+    blocking ~15+ typeOnly tests. Needs multi-file module resolution improvements.
+  - Missing TS1362 ("exported using export type") — separate from TS1361 ("imported using import type")
+  - Missing TS2303 (circular import alias) diagnostics
+- **Unit tests**: 3 tests in `heritage_type_only_tests.rs` covering class/interface/ambient-class heritage
 
 ---
 
