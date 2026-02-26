@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-25T22:25:41Z",
-  "git_sha": "c11a2554306f3d42c59e77f66b2139e7376fc6b1",
+  "timestamp": "2026-02-26T00:05:51Z",
+  "git_sha": "3a3b99d3c4f7e92910b90af8757126d2fe108d66",
   "summary": {
     "total_tests": 12570,
-    "passed": 7729,
-    "failed": 4841,
-    "pass_rate": 61.5
+    "passed": 7723,
+    "failed": 4847,
+    "pass_rate": 61.4
   },
   "areas_by_pass_rate": [
     {
@@ -154,6 +154,13 @@
       "passed": 13,
       "failed": 14,
       "pass_rate": 48.15
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 14,
+      "failed": 15,
+      "pass_rate": 48.28
     },
     {
       "area": "override",
@@ -324,13 +331,6 @@
       "pass_rate": 54.62
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 16,
-      "failed": 13,
-      "pass_rate": 55.17
-    },
-    {
       "area": "types/typeRelationships",
       "total": 264,
       "passed": 147,
@@ -472,10 +472,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4170,
-      "failed": 2340,
-      "pass_rate": 64.06
+      "total": 6507,
+      "passed": 4166,
+      "failed": 2341,
+      "pass_rate": 64.02
     },
     {
       "area": "async/es5",
@@ -887,7 +887,7 @@
     },
     {
       "code": "TS2322",
-      "count": 183
+      "count": 184
     },
     {
       "code": "TS2339",
