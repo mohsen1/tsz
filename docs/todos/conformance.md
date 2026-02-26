@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9236/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
-> Previously ~9234/12570 (73.5%) baseline.
+**Current score**: ~9238/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
+> Previously ~9236/12570 (73.5%) baseline.
 
 ---
 
@@ -148,8 +148,8 @@
 - **Difficulty**: MEDIUM
 
 ### externalModules/typeOnly — type-only import/export handling PARTIALLY RESOLVED
-- **Area**: externalModules/typeOnly (44.1% → 45.6%, +1 in-area, +4 net suite)
-- **Fixed** (3 changes):
+- **Area**: externalModules/typeOnly (49.2% → 50.8%, +1 in-area, +2 net suite)
+- **Fixed** (4 changes across 2 sessions):
   1. **Heritage clause distinction** (scope_finder.rs): Non-ambient `class extends` is value context →
      TS1361/TS2693 should NOT be suppressed. `interface extends` and `declare class extends` are type-only
      contexts where suppression is correct. Fixes extendsClause.ts.
@@ -157,13 +157,19 @@
      in cross-file symbol resolution fallback, preventing `export type { A }` from leaking into value resolution.
   3. **ModuleNamespace type-only error code** (type_only.rs): `import * as ns` with type-only exports
      should emit TS2339 ("property doesn't exist") not TS2693, matching tsc.
+  4. **Double heritage suppression fix** (type_value.rs, identifier.rs): `error_type_only_value_at()`
+     had its own `is_direct_heritage_type_reference()` check that suppressed TS1361 even after the
+     caller correctly determined it should fire. Added `is_heritage_type_only_context()` which uses
+     `is_in_ambient_context()` to properly handle `declare namespace` cascading ambient status.
+     Fixes extendsClause.ts (3 tests) and ambient.ts.
 - **Remaining blockers**:
   - `import * as types from './a'` resolves to `TypeId::ANY` in multi-file mode (deep module resolution
     infrastructure issue). This prevents property access checks from running at all for namespace imports,
     blocking ~15+ typeOnly tests. Needs multi-file module resolution improvements.
   - Missing TS1362 ("exported using export type") — separate from TS1361 ("imported using import type")
   - Missing TS2303 (circular import alias) diagnostics
-- **Unit tests**: 3 tests in `heritage_type_only_tests.rs` covering class/interface/ambient-class heritage
+- **Unit tests**: 6 tests in `heritage_type_only_tests.rs` covering class/interface/ambient-class heritage
+  with both local interfaces and type-only imports
 
 ---
 
