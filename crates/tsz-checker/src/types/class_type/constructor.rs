@@ -146,10 +146,31 @@ impl<'a> CheckerState<'a> {
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = true;
                         }
+                        // When the class expression has a contextual type (e.g., from a
+                        // function return type), set the per-property contextual type so
+                        // arrow/function expression initializers get parameter inference.
+                        // Without this, `(arg) => {}` initializers would see the whole
+                        // interface as contextual type instead of the specific member type.
+                        let prev_ctx = self.ctx.contextual_type;
+                        if let Some(ctx_type) = self.ctx.contextual_type {
+                            let resolved = self.evaluate_type_for_assignability(ctx_type);
+                            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
+                                self.ctx.types,
+                                resolved,
+                            );
+                            if let Some(member_type) = ctx_helper.get_property_type(&name)
+                                && member_type != TypeId::ANY
+                                && !self.type_contains_error(member_type)
+                            {
+                                self.ctx.contextual_type = Some(member_type);
+                                self.clear_type_cache_recursive(prop.initializer);
+                            }
+                        }
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
                         let init_type = self.get_type_of_node(prop.initializer);
                         self.ctx.preserve_literal_types = prev;
+                        self.ctx.contextual_type = prev_ctx;
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = false;
                         }
