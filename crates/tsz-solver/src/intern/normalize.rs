@@ -507,10 +507,11 @@ impl TypeInterner {
         // This is safe for primitives but not for complex types (functions, objects)
         // where aggressive union matching could cause incorrect reductions.
         if self.is_builtin_type(source)
-            && let Some(TypeData::Union(members)) = self.lookup(target) {
-                let members = self.type_list(members);
-                return members.contains(&source);
-            }
+            && let Some(TypeData::Union(members)) = self.lookup(target)
+        {
+            let members = self.type_list(members);
+            return members.contains(&source);
+        }
 
         // Handle structural type comparisons
         let s_key = self.lookup(source);
