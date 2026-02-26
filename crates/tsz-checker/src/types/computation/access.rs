@@ -96,8 +96,14 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = literal_string.as_deref()
             && self.is_global_this_expression(access.expression)
         {
-            let property_type =
-                self.resolve_global_this_property_type(name, access.name_or_argument);
+            // For element access (globalThis['y']), tsc reports TS2339 at the full
+            // expression span. For property access (globalThis.y), at the property name.
+            let error_node = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                idx
+            } else {
+                access.name_or_argument
+            };
+            let property_type = self.resolve_global_this_property_type(name, error_node);
             if property_type == TypeId::ERROR {
                 return TypeId::ERROR;
             }

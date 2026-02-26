@@ -448,6 +448,37 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            // Special case: `(typeof globalThis)['key']` where key is a block-scoped
+            // variable (let/const). Since typeof globalThis resolves to ANY, the solver
+            // would return ANY without error. But tsc rejects block-scoped access through
+            // typeof globalThis, so we intercept here.
+            if object_type == TypeId::ANY
+                && is_typeof_global_this_type_node(self.ctx.arena, indexed_access.object_type)
+            {
+                // In type position, the index is a LiteralType wrapping a string literal
+                if let Some(key) =
+                    get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)
+                    && let Some(sym_id) = self.ctx.binder.file_locals.get(key.as_str())
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && symbol.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                        && symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
+                    {
+                        if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
+                            let message = crate::diagnostics::format_message(
+                                crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                                &[key.as_str(), "typeof globalThis"],
+                            );
+                            self.ctx.error(
+                                idx_node.pos,
+                                idx_node.end - idx_node.pos,
+                                message,
+                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            );
+                        }
+                        return TypeId::ERROR;
+                    }
+            }
+
             factory.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
@@ -1416,6 +1447,56 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 #[cfg(test)]
 #[path = "../../tests/type_node.rs"]
 mod tests;
+
+/// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
+/// In type position, the index is a `LiteralType` node wrapping a string literal.
+fn get_string_literal_from_type_index(
+    arena: &tsz_parser::parser::NodeArena,
+    idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(idx)?;
+    // Try direct literal first (for expression-like contexts)
+    if let Some(lit) = arena.get_literal(node) {
+        return Some(lit.text.to_string());
+    }
+    // In type position, the index is a LiteralType wrapping an inner literal
+    if let Some(lit_type) = arena.get_literal_type(node) {
+        let inner = arena.get(lit_type.literal)?;
+        let lit = arena.get_literal(inner)?;
+        return Some(lit.text.to_string());
+    }
+    None
+}
+
+/// Check if a type node is `typeof globalThis`, possibly wrapped in parentheses.
+/// Used to detect `(typeof globalThis)['key']` patterns in indexed access types.
+fn is_typeof_global_this_type_node(
+    arena: &tsz_parser::parser::NodeArena,
+    mut node_idx: NodeIndex,
+) -> bool {
+    // Unwrap parenthesized types: (typeof globalThis) → typeof globalThis
+    loop {
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            if let Some(wrapped) = arena.get_wrapped_type(node) {
+                node_idx = wrapped.type_node;
+                continue;
+            }
+            return false;
+        }
+        // Check if we reached a TYPE_QUERY with "globalThis" as expr_name
+        if node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(tq) = arena.get_type_query(node)
+                && let Some(ident_node) = arena.get(tq.expr_name)
+                && let Some(ident) = arena.get_identifier(ident_node)
+            {
+                return ident.escaped_text == "globalThis";
+            }
+        return false;
+    }
+}
 
 // Check duplicate parameters from a TypeNodeChecker context.
 pub(crate) fn check_duplicate_parameters_in_type(
