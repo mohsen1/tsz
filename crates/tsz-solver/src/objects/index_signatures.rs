@@ -267,6 +267,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 key_type: TypeId::NUMBER,
                 value_type: elem,
                 readonly: false,
+                param_name: None,
             }),
         }
     }
@@ -278,6 +279,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 key_type: TypeId::NUMBER,
                 value_type: TypeId::UNKNOWN,
                 readonly: false,
+                param_name: None,
             }),
         }
     }

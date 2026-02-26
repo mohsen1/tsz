@@ -241,6 +241,7 @@ fn test_interface_with_string_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -266,6 +267,7 @@ fn test_interface_with_number_index() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 

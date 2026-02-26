@@ -11773,6 +11773,7 @@ fn test_index_signature_at_solver_level() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     };

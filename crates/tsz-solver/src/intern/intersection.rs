@@ -323,6 +323,7 @@ impl TypeInterner {
                                     .intersect_types_raw2(existing.value_type, idx.value_type),
                                 // Intersection: readonly only if ALL constituents are readonly
                                 readonly: existing.readonly && idx.readonly,
+                                param_name: None,
                             });
                         }
                         _ => {}
@@ -336,6 +337,7 @@ impl TypeInterner {
                                     .intersect_types_raw2(existing.value_type, idx.value_type),
                                 // Intersection: readonly only if ALL constituents are readonly
                                 readonly: existing.readonly && idx.readonly,
+                                param_name: None,
                             });
                         }
                         _ => {}
@@ -442,6 +444,7 @@ impl TypeInterner {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
                         readonly: idx.readonly,
+                        param_name: None,
                     });
                 }
                 (Some(idx), Some(existing)) => {
@@ -450,6 +453,7 @@ impl TypeInterner {
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
                         // Intersection: readonly only if ALL constituents are readonly
                         readonly: existing.readonly && idx.readonly,
+                        param_name: None,
                     });
                 }
                 _ => {}
@@ -461,6 +465,7 @@ impl TypeInterner {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
                         readonly: idx.readonly,
+                        param_name: None,
                     });
                 }
                 (Some(idx), Some(existing)) => {
@@ -469,6 +474,7 @@ impl TypeInterner {
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
                         // Intersection: readonly only if ALL constituents are readonly
                         readonly: existing.readonly && idx.readonly,
+                        param_name: None,
                     });
                 }
                 _ => {}

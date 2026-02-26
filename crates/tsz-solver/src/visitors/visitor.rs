@@ -1219,6 +1219,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                             key_type: idx.key_type,
                             value_type: self.apply_const_assertion(idx.value_type),
                             readonly: true,
+                            param_name: idx.param_name,
                         });
 
                 let number_index =
@@ -1229,6 +1230,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                             key_type: idx.key_type,
                             value_type: self.apply_const_assertion(idx.value_type),
                             readonly: true,
+                            param_name: idx.param_name,
                         });
 
                 let mut new_shape = (*shape).clone();

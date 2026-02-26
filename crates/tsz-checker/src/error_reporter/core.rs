@@ -123,18 +123,29 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(0)
                     };
                 if type_param_count > 0 && shape.properties.len() >= type_param_count {
-                    let args: Vec<String> = shape
+                    // Collect non-brand properties with their names for stable sorting.
+                    // FxHashMap iteration order is non-deterministic; adding __private_brand
+                    // can shift hash bucket positions and reorder other properties.
+                    // Sort alphabetically so that `ClassPrivate<T,U>` produces consistent
+                    // type args regardless of whether private brands are present.
+                    // Note: `__private_brand_` sorts before lowercase names (ASCII '_' < 'a').
+                    let mut candidates: Vec<(String, TypeId)> = shape
                         .properties
                         .iter()
-                        .filter(|prop| {
-                            !self
-                                .ctx
-                                .types
-                                .resolve_atom_ref(prop.name)
-                                .starts_with("__private_brand_")
+                        .filter_map(|prop| {
+                            let name = self.ctx.types.resolve_atom_ref(prop.name).to_string();
+                            if name.starts_with("__private_brand_") {
+                                None
+                            } else {
+                                Some((name, prop.type_id))
+                            }
                         })
+                        .collect();
+                    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+                    let args: Vec<String> = candidates
+                        .iter()
                         .take(type_param_count)
-                        .map(|prop| self.format_type(prop.type_id))
+                        .map(|(_, type_id)| self.format_type(*type_id))
                         .collect();
                     if args.len() == type_param_count {
                         formatted = format!("{}<{}>", symbol_name, args.join(", "));

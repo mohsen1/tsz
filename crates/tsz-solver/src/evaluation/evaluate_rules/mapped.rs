@@ -413,6 +413,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         key_type,
                         value_type,
                         readonly: idx_readonly,
+                        param_name: None,
                     })
                 }
                 Ok(None) => None,
@@ -449,6 +450,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         key_type,
                         value_type,
                         readonly: idx_readonly,
+                        param_name: None,
                     })
                 }
                 Ok(None) => None,

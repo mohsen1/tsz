@@ -167,6 +167,7 @@ impl<'a> InferSubstitutor<'a> {
                         key_type,
                         value_type,
                         readonly: index.readonly,
+                        param_name: index.param_name,
                     }
                 });
                 let number_index = shape.number_index.as_ref().map(|index| {
@@ -179,6 +180,7 @@ impl<'a> InferSubstitutor<'a> {
                         key_type,
                         value_type,
                         readonly: index.readonly,
+                        param_name: index.param_name,
                     }
                 });
                 if changed {
@@ -444,6 +446,7 @@ impl<'a> InferSubstitutor<'a> {
                         key_type,
                         value_type,
                         readonly: idx.readonly,
+                        param_name: idx.param_name,
                     }
                 });
 
@@ -457,6 +460,7 @@ impl<'a> InferSubstitutor<'a> {
                         key_type,
                         value_type,
                         readonly: idx.readonly,
+                        param_name: idx.param_name,
                     }
                 });
 

@@ -321,10 +321,12 @@ impl<'a> CheckerState<'a> {
                 // user-facing diagnostics — emit TS2322 instead of TS2741.
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 if prop_name.starts_with("__private_brand") {
-                    let src_str = self.format_type(*source_type);
+                    let src_str = self.format_type_for_assignability_message(*source_type);
+                    let tgt_str_with_args =
+                        self.format_type_for_assignability_message(*target_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&src_str, &tgt_str],
+                        &[&src_str, &tgt_str_with_args],
                     );
                     return Diagnostic::error(
                         file_name,
@@ -716,6 +718,25 @@ impl<'a> CheckerState<'a> {
                 source_value_type,
                 target_value_type,
             } => {
+                // At depth 0, tsc emits the top-level "Type 'X' is not assignable to type 'Y'"
+                // message as the primary diagnostic. The index-signature detail is only shown
+                // as secondary/related information (not captured in conformance fingerprints).
+                // At depth > 0 (nested reasons), emit the specific detail message.
+                if depth == 0 {
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
                 let source_str = self.format_type(*source_value_type);
                 let target_str = self.format_type(*target_value_type);
                 let message = format!(

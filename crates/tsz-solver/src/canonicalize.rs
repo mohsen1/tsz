@@ -439,6 +439,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             key_type: self.canonicalize(idx.key_type),
             value_type: self.canonicalize(idx.value_type),
             readonly: idx.readonly,
+            param_name: idx.param_name,
         })
     }
 

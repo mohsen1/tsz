@@ -751,6 +751,7 @@ impl QueryDatabase for TypeInterner {
                         key_type: TypeId::NUMBER,
                         value_type: element,
                         readonly: false,
+                        param_name: None,
                     }),
                 }
             }
@@ -771,6 +772,7 @@ impl QueryDatabase for TypeInterner {
                         key_type: TypeId::NUMBER,
                         value_type,
                         readonly: false,
+                        param_name: None,
                     }),
                 }
             }
@@ -799,6 +801,7 @@ impl QueryDatabase for TypeInterner {
                         value_type: self
                             .union(string_indices.iter().map(|s| s.value_type).collect()),
                         readonly: string_indices.iter().all(|s| s.readonly),
+                        param_name: None,
                     })
                 };
 
@@ -810,6 +813,7 @@ impl QueryDatabase for TypeInterner {
                         value_type: self
                             .union(number_indices.iter().map(|s| s.value_type).collect()),
                         readonly: number_indices.iter().all(|s| s.readonly),
+                        param_name: None,
                     })
                 };
 

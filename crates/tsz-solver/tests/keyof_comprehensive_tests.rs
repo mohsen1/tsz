@@ -398,6 +398,7 @@ fn test_keyof_object_with_string_index_includes_string_and_number() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -433,6 +434,7 @@ fn test_keyof_object_with_number_index_includes_number() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -576,6 +578,7 @@ fn test_keyof_callable_with_string_index_includes_string_and_number() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -615,6 +618,7 @@ fn test_keyof_callable_with_number_index_includes_number() {
             key_type: TypeId::NUMBER,
             value_type: num_value,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -642,6 +646,7 @@ fn test_keyof_callable_with_properties_and_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -673,6 +678,7 @@ fn test_index_access_callable_string_literal_via_string_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -700,11 +706,13 @@ fn test_index_access_callable_number_literal_via_number_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: num_value,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -727,6 +735,7 @@ fn test_index_access_callable_string_intrinsic() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });
@@ -754,11 +763,13 @@ fn test_index_access_callable_number_intrinsic() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: num_value,
             readonly: true,
+            param_name: None,
         }),
         ..CallableShape::default()
     });

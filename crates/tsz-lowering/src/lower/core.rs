@@ -1658,10 +1658,17 @@ impl<'a> TypeLowering<'a> {
             .arena
             .has_modifier(&sig.modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword);
 
+        let param_name = self
+            .arena
+            .get(param_data.name)
+            .and_then(|name_node| self.arena.get_identifier(name_node))
+            .map(|name_ident| self.interner.intern_string(&name_ident.escaped_text));
+
         Some(IndexSignature {
             key_type,
             value_type,
             readonly,
+            param_name,
         })
     }
 

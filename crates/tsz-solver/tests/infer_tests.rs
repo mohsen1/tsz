@@ -1087,6 +1087,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1099,6 +1100,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1126,6 +1128,7 @@ fn test_resolve_bounds_string_index_property_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1162,6 +1165,7 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1197,6 +1201,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1209,6 +1214,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1242,6 +1248,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1254,6 +1261,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1282,6 +1290,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1317,6 +1326,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1359,6 +1369,7 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1394,6 +1405,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1406,6 +1418,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
     });
 
@@ -1439,6 +1452,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: true,
+            param_name: None,
         }),
     });
 
@@ -1451,6 +1465,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1478,6 +1493,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1522,6 +1538,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1573,6 +1590,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1624,6 +1642,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1675,6 +1694,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1726,6 +1746,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1770,6 +1791,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1808,6 +1830,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1859,6 +1882,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1910,6 +1934,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1954,6 +1979,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -1998,6 +2024,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2042,6 +2069,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2086,6 +2114,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2130,6 +2159,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2174,6 +2204,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2218,6 +2249,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2262,6 +2294,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2306,6 +2339,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2350,6 +2384,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2394,6 +2429,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2438,6 +2474,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2482,6 +2519,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2526,6 +2564,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2570,6 +2609,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2614,6 +2654,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2658,6 +2699,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2702,6 +2744,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2746,6 +2789,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2790,6 +2834,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2834,6 +2879,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2878,6 +2924,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2922,6 +2969,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2966,6 +3014,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3010,6 +3059,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3054,6 +3104,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3098,6 +3149,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3142,6 +3194,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3186,6 +3239,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3230,6 +3284,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3274,6 +3329,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3318,6 +3374,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3362,6 +3419,7 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3406,6 +3464,7 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3450,6 +3509,7 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3494,6 +3554,7 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3538,6 +3599,7 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3582,6 +3644,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3626,6 +3689,7 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3670,6 +3734,7 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3714,6 +3779,7 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3758,6 +3824,7 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3802,6 +3869,7 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3846,6 +3914,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3890,6 +3959,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3934,6 +4004,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -3978,6 +4049,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4022,6 +4094,7 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4066,6 +4139,7 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4110,6 +4184,7 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4161,6 +4236,7 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4205,6 +4281,7 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4249,6 +4326,7 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4291,6 +4369,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -4303,11 +4382,13 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -4340,6 +4421,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -4352,6 +4434,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

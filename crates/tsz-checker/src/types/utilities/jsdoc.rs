@@ -384,6 +384,7 @@ impl<'a> CheckerState<'a> {
                                 key_type,
                                 value_type,
                                 readonly: false,
+                                param_name: None,
                             });
                             return Some(factory.object_with_index(shape));
                         } else if key_type == TypeId::NUMBER {
@@ -391,6 +392,7 @@ impl<'a> CheckerState<'a> {
                                 key_type,
                                 value_type,
                                 readonly: false,
+                                param_name: None,
                             });
                             return Some(factory.object_with_index(shape));
                         }

@@ -604,6 +604,7 @@ fn test_union_to_object_with_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -677,6 +678,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
             key_type: TypeId::STRING,
             value_type: lazy_a,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -689,6 +691,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
             key_type: TypeId::STRING,
             value_type: lazy_b,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

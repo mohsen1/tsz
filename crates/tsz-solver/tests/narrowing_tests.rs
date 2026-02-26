@@ -1260,6 +1260,7 @@ fn test_narrow_by_typeof_object_with_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
         symbol: None,

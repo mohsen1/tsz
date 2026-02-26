@@ -385,6 +385,7 @@ pub fn apparent_primitive_shape(
         key_type: TypeId::NUMBER,
         value_type: TypeId::STRING,
         readonly: false,
+        param_name: None,
     });
 
     ObjectShape {

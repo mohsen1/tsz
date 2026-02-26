@@ -873,10 +873,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     &index_sig.modifiers,
                     tsz_scanner::SyntaxKind::ReadonlyKeyword,
                 );
+                let param_name = self
+                    .ctx
+                    .arena
+                    .get(param_data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
                 let info = IndexSignature {
                     key_type,
                     value_type,
                     readonly,
+                    param_name,
                 };
                 if key_type == TypeId::NUMBER {
                     number_index = Some(info);
