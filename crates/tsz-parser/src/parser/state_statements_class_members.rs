@@ -28,6 +28,7 @@ impl ParserState {
         let mut seen_override = false;
         let mut seen_accessor = false;
         let mut seen_async = false;
+        let mut seen_declare = false;
 
         loop {
             if self.should_stop_class_member_modifier() {
@@ -155,7 +156,7 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
-                if seen_override || seen_accessor || seen_async {
+                if seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let other = if seen_accessor { "accessor" } else { "async" };
                     self.parse_error_at_current_token(
@@ -171,6 +172,15 @@ impl ParserState {
                     self.parse_error_at_current_token(
                         "'override' modifier already seen.",
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                    );
+                }
+                // TS1040: 'override' modifier cannot be used in an ambient context
+                // Handles `declare override` ordering (override after declare on same member)
+                if seen_declare {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "'override' modifier cannot be used in an ambient context.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                     );
                 }
                 if seen_accessor || seen_async || seen_readonly {
@@ -267,6 +277,16 @@ impl ParserState {
                         .create_modifier(SyntaxKind::AsyncKeyword, start_pos)
                 }
                 SyntaxKind::DeclareKeyword => {
+                    // TS1040: 'override' modifier cannot be used in an ambient context
+                    // When `override` precedes `declare`, report at `declare` position
+                    if seen_override {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'override' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
+                    seen_declare = true;
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::DeclareKeyword, start_pos)
