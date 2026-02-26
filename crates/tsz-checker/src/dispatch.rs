@@ -378,8 +378,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
         // TypeScript models `yield` result type as the value received by `.next(...)` (TNext).
         // Extract TNext from Generator<TYield, TReturn, TNext> or AsyncGenerator<TYield, TReturn, TNext>.
+        // First try the checker-side extraction which handles heritage resolution
+        // (e.g., `interface I1 extends Iterator<0, 1, 2> {}` → TNext = 2).
         if let Some(generator_type) = self.get_expected_generator_type(idx) {
-            // Use contextual helper to extract TNext (argument index 2)
+            if let Some(next_type) = self
+                .checker
+                .get_generator_next_type_argument(generator_type)
+            {
+                return next_type;
+            }
+            // Fallback to solver's contextual extraction for direct Application types
             let ctx = tsz_solver::ContextualTypeContext::with_expected(
                 self.checker.ctx.types,
                 generator_type,
