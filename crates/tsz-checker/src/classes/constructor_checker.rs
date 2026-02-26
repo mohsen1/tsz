@@ -8,7 +8,8 @@
 use crate::query_boundaries::checkers::constructor::{
     AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
     classify_for_constructor_access, classify_for_constructor_return_merge,
-    classify_for_instance_type, has_construct_signatures, resolve_abstract_constructor_anchor,
+    classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
+    resolve_abstract_constructor_anchor,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -170,6 +171,71 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
     // Instance Type Extraction
     // =========================================================================
+
+    /// Compute a display name for an intersection base class that preserves the
+    /// original member names (e.g., "I1 & I2" instead of "{ m1: ...; m2: ... }").
+    ///
+    /// When a constructor type is an intersection (e.g., `C1 & C2` from
+    /// `const Foo: C1 & C2`), the instance type gets eagerly merged into a flat
+    /// object by the solver's intersection normalization. This loses the original
+    /// intersection identity. This method recovers it by:
+    /// 1. Getting the constructor type (from cache)
+    /// 2. If it's an intersection, extracting each member's raw construct return type
+    /// 3. Formatting each return type individually (preserving Lazy → named display)
+    /// 4. Joining with " & "
+    ///
+    /// Returns `None` if the constructor type is not an intersection or if any
+    /// member doesn't have construct signatures.
+    pub(crate) fn intersection_instance_display_name(
+        &mut self,
+        expr_idx: NodeIndex,
+        type_arguments: Option<&tsz_parser::NodeList>,
+    ) -> Option<String> {
+        let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
+
+        // Only applies to intersection constructor types
+        let members = match classify_for_instance_type(self.ctx.types, ctor_type) {
+            InstanceTypeKind::Intersection(members) if members.len() >= 2 => members,
+            _ => return None,
+        };
+
+        let mut names = Vec::with_capacity(members.len());
+        for member in &members {
+            // Resolve Lazy to see the actual constructor type's shape
+            let resolved = self.resolve_lazy_type(*member);
+            // Get raw construct return type (without resolve_type_for_property_access)
+            if let Some(return_type) = construct_return_type_for_display(self.ctx.types, resolved) {
+                // For Lazy return types (named interfaces/classes), format directly
+                // to preserve the name (e.g., "I1" instead of "{ m1: () => void }").
+                // For structural types (objects with unevaluated Application
+                // properties like InstanceType<T>), resolve nested types first.
+                let is_lazy = matches!(
+                    crate::query_boundaries::type_computation::complex::classify_for_lazy_resolution(
+                        self.ctx.types,
+                        return_type,
+                    ),
+                    tsz_solver::type_queries::LazyTypeKind::Lazy(_)
+                );
+                let display_type = if is_lazy {
+                    return_type
+                } else {
+                    self.resolve_type_for_property_access(return_type)
+                };
+                names.push(self.format_type(display_type));
+            } else {
+                return None;
+            }
+        }
+
+        // Sort names to approximate source order. The solver's intersection
+        // normalization sorts members by TypeId for canonicalization, which may
+        // not match the original declaration order. Alphabetical sort produces
+        // consistent output matching tsc for common cases (named types come
+        // before structural types: "I1 & I2", "A & { ... }").
+        names.sort();
+
+        Some(names.join(" & "))
+    }
 
     pub(crate) fn instance_type_from_constructor_type(
         &mut self,

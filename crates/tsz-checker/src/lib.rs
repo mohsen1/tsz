@@ -110,6 +110,9 @@ mod no_filename_based_behavior_tests;
 #[path = "../tests/overload_modifier_tests.rs"]
 mod overload_modifier_tests;
 #[cfg(test)]
+#[path = "../tests/override_intersection_display_tests.rs"]
+mod override_intersection_display_tests;
+#[cfg(test)]
 #[path = "../tests/rest_parameter_tests.rs"]
 mod rest_parameter_tests;
 #[cfg(test)]
