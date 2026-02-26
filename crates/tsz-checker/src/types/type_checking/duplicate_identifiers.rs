@@ -1158,9 +1158,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut declarations_by_scope: FxHashMap<NodeIndex, Vec<NodeIndex>> = FxHashMap::default();
+        // Group by SymbolId (not NodeIndex) so separate `namespace M {}` blocks with
+        // the same name are treated as one scope — matching the TS2428 grouping fix.
+        let mut declarations_by_scope: FxHashMap<tsz_binder::SymbolId, Vec<NodeIndex>> =
+            FxHashMap::default();
         for &decl_idx in declarations {
-            let scope = self.get_enclosing_namespace(decl_idx);
+            let scope = self.get_enclosing_namespace_symbol(decl_idx);
             declarations_by_scope
                 .entry(scope)
                 .or_default()
