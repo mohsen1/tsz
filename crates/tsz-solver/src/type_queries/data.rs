@@ -183,6 +183,8 @@ pub fn map_compound_members_if_changed(
 pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::Array(element_type)) => Some(element_type),
+        // `readonly T[]` wraps the array in ReadonlyType — unwrap and retry.
+        Some(TypeData::ReadonlyType(inner)) => get_array_element_type(db, inner),
         _ => None,
     }
 }
@@ -200,6 +202,8 @@ pub fn get_tuple_elements(
             let elements = db.tuple_list(list_id);
             Some(elements.to_vec())
         }
+        // `readonly [A, B]` is wrapped in ReadonlyType — unwrap and retry.
+        Some(TypeData::ReadonlyType(inner)) => get_tuple_elements(db, inner),
         _ => None,
     }
 }
@@ -260,12 +264,13 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
+        // `readonly T[]` and `readonly [A, B]` are wrapped in ReadonlyType — unwrap and retry.
+        Some(TypeData::ReadonlyType(inner)) => get_array_applicable_type(db, inner),
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             let applicable: Vec<TypeId> = members
                 .iter()
-                .filter(|&&m| matches!(db.lookup(m), Some(TypeData::Tuple(_) | TypeData::Array(_))))
-                .copied()
+                .filter_map(|&m| get_array_applicable_type(db, m))
                 .collect();
             match applicable.len() {
                 0 => None,
