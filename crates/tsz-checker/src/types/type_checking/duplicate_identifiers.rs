@@ -506,10 +506,11 @@ impl<'a> CheckerState<'a> {
                 .map(|(decl_idx, _, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {
-                let mut interface_decls_by_scope: FxHashMap<NodeIndex, Vec<NodeIndex>> =
+                use tsz_binder::SymbolId;
+                let mut interface_decls_by_scope: FxHashMap<SymbolId, Vec<NodeIndex>> =
                     FxHashMap::default();
                 for &decl_idx in &interface_decls {
-                    let scope = self.get_enclosing_namespace(decl_idx);
+                    let scope = self.get_enclosing_namespace_symbol(decl_idx);
                     interface_decls_by_scope
                         .entry(scope)
                         .or_default()
@@ -997,6 +998,25 @@ impl<'a> CheckerState<'a> {
             }
             current = parent;
         }
+    }
+
+    /// Get the SymbolId of the enclosing namespace for a declaration.
+    /// Returns `SymbolId::NONE` for file/global scope declarations.
+    /// Unlike `get_enclosing_namespace` (which returns a `NodeIndex`), this resolves
+    /// to the namespace's symbol, ensuring that separate `namespace M { }` blocks
+    /// with the same name map to the same key.
+    fn get_enclosing_namespace_symbol(&self, decl_idx: NodeIndex) -> tsz_binder::SymbolId {
+        let ns_node = self.get_enclosing_namespace(decl_idx);
+        if ns_node.is_none() {
+            return tsz_binder::SymbolId::NONE;
+        }
+        // Look up the symbol for this MODULE_DECLARATION node
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&ns_node.0)
+            .copied()
+            .unwrap_or(tsz_binder::SymbolId::NONE)
     }
 
     /// Get the `NodeIndex` of the nearest enclosing block scope for a declaration.
