@@ -1,9 +1,34 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7129/12570 (56.7%) — full suite, error-code level
-> Note: Regression from ~9264 to ~7129 caused by upstream TS2430 feature commit.
-> TS5107 fix added +5 tests (9261→9266) before upstream regression landed.
+**Current score**: ~9267/12570 (73.7%) — full suite, error-code level
+> Recovered from TS2430 regression. Previous dip was ~7129.
+
+---
+
+## KeyOf Normalization Fix — Session 2026-02-26
+- **Area**: types/mapped (46.2% → 46.2% area, +1 test: mappedTypeModifiers.ts)
+- **Root cause**: `normalize_assignability_operand()` in the solver's compat checker
+  did not evaluate `TypeData::KeyOf` before comparing types for redeclaration identity
+  (TS2403). This caused `keyof T` (where T is a concrete type alias like
+  `{ a: number, b: string }`) to remain as symbolic `KeyOf(...)` instead of reducing
+  to `"a" | "b"`, producing spurious TS2403 errors on subsequent var declarations.
+- **Fix**: Added `TypeData::KeyOf(_)` to the evaluation arm in
+  `normalize_assignability_operand()` alongside `Mapped` and `Application`.
+- **Files**: `crates/tsz-solver/src/relations/compat.rs`
+- **Test**: `redeclaration_identity_evaluates_keyof_to_literal_union` in
+  `crates/tsz-solver/tests/relation_queries_tests.rs`
+- **Net result**: +1 conformance test (mappedTypeModifiers.ts)
+
+### Known remaining mapped type gaps
+- **Partial<T> → T not rejected**: Documented known gap. Fixing this requires `& {}`
+  intersection stripping. Previous attempt reverted due to massive regression.
+- **Denullified<T> → T wrongly rejected**: Template type check in
+  `check_homomorphic_mapped_to_target()` requires `S[K]` but `NonNullable<T[P]>` is
+  a conditional type. Needs template subtype checking, not just identity.
+- **Mapped type display uses wrong variable name**: Our type printer uses `K` where
+  tsc uses `P` for the iteration variable in mapped type display.
+- **TS2542 (readonly index) missing**: Index signature readonly checking not implemented.
 
 ---
 
