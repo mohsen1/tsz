@@ -9,7 +9,7 @@
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use crate::def::DefId;
-use crate::types::{MappedModifier, Visibility};
+use crate::types::{MappedModifier, MappedType, TypeData, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, is_empty_object_type, keyof_inner_type, lazy_def_id,
@@ -779,10 +779,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> bool {
         let mapped = self.interner.mapped_type(mapped_id);
 
-        // Must not have name remapping (as clause)
-        if mapped.name_type.is_some() {
-            return false;
-        }
+        // If there's an as-clause (name_type), it must be a filtering conditional
+        // (produces only P or never) for this optimization to apply.
+        // Renaming as-clauses (e.g., `as \`bool${P}\``) change property keys,
+        // so T is not necessarily assignable to the result type.
+        if let Some(name_type) = mapped.name_type
+            && !is_filtering_name_type(self.interner, name_type, &mapped) {
+                return false;
+            }
 
         // Mapped types that REMOVE optionality (-?) like Required<T> are NARROWER
         // than T. The source (which may have optional properties) cannot satisfy
@@ -816,7 +820,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{MappedType, TypeData, TypeSubstitution, instantiate_type};
+        use crate::{TypeSubstitution, instantiate_type};
         let mapped = self.interner.mapped_type(mapped_id);
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
@@ -1101,4 +1105,49 @@ pub(crate) fn flatten_mapped_chain(
         has_optional,
         has_readonly,
     })
+}
+
+/// Check if a mapped type's `name_type` (as-clause) is a "filtering" conditional.
+///
+/// A filtering as-clause only produces either the iteration parameter P or `never`,
+/// meaning it can only REMOVE keys from the source type, never rename them.
+/// Example: `{ [P in keyof T as T[P] extends Function ? P : never]: T[P] }`
+///
+/// This is used by `check_source_to_homomorphic_mapped` to allow T to be assignable
+/// to mapped types that filter keys via as-clauses, since all properties in the
+/// result type are also properties of T with the same types.
+pub(crate) fn is_filtering_name_type(
+    interner: &dyn crate::TypeDatabase,
+    name_type: TypeId,
+    mapped: &MappedType,
+) -> bool {
+    // The name_type must be a conditional type (C extends D ? X : Y)
+    let Some(TypeData::Conditional(cond_id)) = interner.lookup(name_type) else {
+        return false;
+    };
+    let cond = interner.conditional_type(cond_id);
+
+    // One branch must be the iteration parameter P and the other must be `never`.
+    // Pattern 1: C extends D ? P : never (filter-in pattern)
+    // Pattern 2: C extends D ? never : P (filter-out/invert pattern)
+    let iter_param_name = mapped.type_param.name;
+
+    let true_is_param = is_type_param_with_name(interner, cond.true_type, iter_param_name);
+    let false_is_param = is_type_param_with_name(interner, cond.false_type, iter_param_name);
+    let true_is_never = cond.true_type == TypeId::NEVER;
+    let false_is_never = cond.false_type == TypeId::NEVER;
+
+    (true_is_param && false_is_never) || (false_is_param && true_is_never)
+}
+
+/// Check if a type is a type parameter with the given name.
+fn is_type_param_with_name(
+    interner: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+    name: tsz_common::interner::Atom,
+) -> bool {
+    matches!(
+        type_param_info(interner, type_id),
+        Some(info) if info.name == name
+    )
 }
