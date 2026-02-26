@@ -1025,3 +1025,143 @@ fn test_partial_t_not_subtype_of_required_t() {
         "Partial<T> should NOT be subtype of Required<T> (wider to narrower)"
     );
 }
+
+// ─── Filtering as-clause mapped type tests ───────────────────────────────────
+
+/// Helper to create a homomorphic mapped type with a filtering as-clause:
+/// { [K in keyof source as source[K] extends `check_type` ? K : never]<modifiers>: source[K] }
+fn make_filtering_mapped(
+    interner: &TypeInterner,
+    source: TypeId,
+    check_type: TypeId,
+    optional: Option<crate::MappedModifier>,
+    readonly: Option<crate::MappedModifier>,
+) -> TypeId {
+    let k_name = interner.intern_string("K");
+    let k_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let template = interner.intern(TypeData::IndexAccess(source, k_param));
+    let constraint = interner.intern(TypeData::KeyOf(source));
+
+    // Build the conditional: source[K] extends check_type ? K : never
+    let check = interner.intern(TypeData::IndexAccess(source, k_param));
+    let name_type = interner.conditional(crate::ConditionalType {
+        check_type: check,
+        extends_type: check_type,
+        true_type: k_param,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    interner.mapped(crate::MappedType {
+        type_param: crate::TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: Some(name_type),
+        template,
+        optional_modifier: optional,
+        readonly_modifier: readonly,
+    })
+}
+
+#[test]
+fn test_t_subtype_of_filter_t_no_modifier() {
+    // T → Filter<T> (filtering as-clause, no modifier change) should succeed.
+    // Filter<T> = { [K in keyof T as T[K] extends Function ? K : never]: T[K] }
+    // All keys in Filter<T> are also keys of T with the same types.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("Function"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let filter_t = make_filtering_mapped(&interner, t_param, function_type, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, filter_t).is_true(),
+        "T SHOULD be subtype of Filter<T> (filtering as-clause preserves keys)"
+    );
+}
+
+#[test]
+fn test_t_subtype_of_filter_t_with_optional() {
+    // T → FilterInclOpt<T> (filtering + add optional) should succeed.
+    // Adding optional makes the target wider, so T is still assignable.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("Function"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let filter_opt_t = make_filtering_mapped(
+        &interner,
+        t_param,
+        function_type,
+        Some(crate::MappedModifier::Add),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(t_param, filter_opt_t).is_true(),
+        "T SHOULD be subtype of FilterInclOpt<T> (filtering + optional widens)"
+    );
+}
+
+#[test]
+fn test_t_not_subtype_of_filter_t_remove_optional() {
+    // T → FilterExclOpt<T> (filtering + remove optional) should FAIL.
+    // Removing optional means required properties that T might have as optional.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let function_type = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("Function"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let filter_required_t = make_filtering_mapped(
+        &interner,
+        t_param,
+        function_type,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(t_param, filter_required_t).is_true(),
+        "T should NOT be subtype of FilterExclOpt<T> (-? makes target narrower)"
+    );
+}
