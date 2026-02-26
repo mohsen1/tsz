@@ -597,7 +597,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Get the operand of a typeof expression.
-    fn get_typeof_operand(&self, node: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn get_typeof_operand(&self, node: NodeIndex) -> Option<NodeIndex> {
         let node_data = self.arena.get(node)?;
         if node_data.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
             return None;
