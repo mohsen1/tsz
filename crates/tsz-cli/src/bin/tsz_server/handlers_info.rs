@@ -24,6 +24,36 @@ pub(super) struct ParsedFileContext<'a> {
     pub(super) file: &'a str,
 }
 
+/// Map a `DocumentSymbol`'s kind + kind_modifiers to the tsserver ScriptElementKind string.
+fn symbol_kind_to_tsserver(
+    kind: tsz::lsp::symbols::document_symbols::SymbolKind,
+    kind_modifiers: &str,
+) -> &'static str {
+    use tsz::lsp::symbols::document_symbols::SymbolKind;
+    match kind {
+        SymbolKind::Module => "module",
+        SymbolKind::Class => "class",
+        SymbolKind::Method => "method",
+        SymbolKind::Property | SymbolKind::Field => "property",
+        SymbolKind::Constructor => "constructor",
+        SymbolKind::Enum => "enum",
+        SymbolKind::Interface => "interface",
+        SymbolKind::Function => "function",
+        SymbolKind::Variable => {
+            if kind_modifiers.contains("let") {
+                "let"
+            } else {
+                "var"
+            }
+        }
+        SymbolKind::Constant => "const",
+        SymbolKind::EnumMember => "enum member",
+        SymbolKind::TypeParameter => "type parameter",
+        SymbolKind::Struct => "type",
+        _ => "unknown",
+    }
+}
+
 impl Server {
     fn build_project_for_file(&self, file_name: &str) -> Option<Project> {
         let mut files = self.open_files.clone();
@@ -1523,33 +1553,20 @@ impl Server {
             fn symbol_to_navtree(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
             ) -> serde_json::Value {
-                let kind = match sym.kind {
+                let kind = if matches!(
+                    sym.kind,
                     tsz::lsp::symbols::document_symbols::SymbolKind::File
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                    _ => "unknown",
+                        | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace
+                ) {
+                    "module"
+                } else {
+                    symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers)
                 };
                 let children: Vec<serde_json::Value> =
                     sym.children.iter().map(symbol_to_navtree).collect();
-                serde_json::json!({
+                let mut obj = serde_json::json!({
                     "text": sym.name,
                     "kind": kind,
-                    "childItems": children,
                     "spans": [{
                         "start": {
                             "line": sym.range.start.line + 1,
@@ -1560,7 +1577,21 @@ impl Server {
                             "offset": sym.range.end.character + 1,
                         },
                     }],
-                })
+                });
+                if !children.is_empty() {
+                    obj["childItems"] = serde_json::json!(children);
+                }
+                // Filter out internal "let" modifier
+                let kind_mods = sym
+                    .kind_modifiers
+                    .split(',')
+                    .filter(|m| !m.is_empty() && *m != "let")
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !kind_mods.is_empty() {
+                    obj["kindModifiers"] = serde_json::json!(kind_mods);
+                }
+                obj
             }
 
             let child_items: Vec<serde_json::Value> =
@@ -1600,69 +1631,78 @@ impl Server {
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
             let symbols = provider.get_document_symbols(root);
 
+            /// Check if a symbol should appear as its own entry in the primary
+            /// navigation bar menu (matching TypeScript's shouldAppearInPrimaryNavBarMenu).
+            fn should_appear_in_primary_navbar(
+                sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
+            ) -> bool {
+                use tsz::lsp::symbols::document_symbols::SymbolKind;
+                // Items with children always appear
+                if !sym.children.is_empty() {
+                    return true;
+                }
+                // Container-like declarations always appear
+                matches!(
+                    sym.kind,
+                    SymbolKind::Class
+                        | SymbolKind::Enum
+                        | SymbolKind::Interface
+                        | SymbolKind::Module
+                        | SymbolKind::Namespace
+                        | SymbolKind::File
+                        | SymbolKind::Struct // type alias
+                        | SymbolKind::Function
+                )
+            }
+
+            fn navbar_child_item(
+                c: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
+            ) -> serde_json::Value {
+                let mut item = serde_json::json!({
+                    "text": c.name,
+                    "kind": symbol_kind_to_tsserver(c.kind, &c.kind_modifiers),
+                    "spans": [{
+                        "start": {
+                            "line": c.range.start.line + 1,
+                            "offset": c.range.start.character + 1,
+                        },
+                        "end": {
+                            "line": c.range.end.line + 1,
+                            "offset": c.range.end.character + 1,
+                        },
+                    }],
+                });
+                let kind_mods = c
+                    .kind_modifiers
+                    .split(',')
+                    .filter(|m| !m.is_empty() && *m != "let")
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !kind_mods.is_empty() {
+                    item["kindModifiers"] = serde_json::json!(kind_mods);
+                }
+                item
+            }
+
             fn symbol_to_navbar_item(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
                 indent: usize,
                 items: &mut Vec<serde_json::Value>,
             ) {
-                let kind = match sym.kind {
+                let kind = if matches!(
+                    sym.kind,
                     tsz::lsp::symbols::document_symbols::SymbolKind::File
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                    _ => "unknown",
+                        | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace
+                ) {
+                    "module"
+                } else {
+                    symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers)
                 };
-                let child_items: Vec<serde_json::Value> = sym
-                    .children
-                    .iter()
-                    .map(|c| {
-                        serde_json::json!({
-                            "text": c.name,
-                            "kind": match c.kind {
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                                _ => "unknown",
-                            },
-                            "spans": [{
-                                "start": {
-                                    "line": c.range.start.line + 1,
-                                    "offset": c.range.start.character + 1,
-                                },
-                                "end": {
-                                    "line": c.range.end.line + 1,
-                                    "offset": c.range.end.character + 1,
-                                },
-                            }],
-                            "childItems": [],
-                        })
-                    })
-                    .collect();
-                items.push(serde_json::json!({
+                let child_items: Vec<serde_json::Value> =
+                    sym.children.iter().map(navbar_child_item).collect();
+                let mut parent_item = serde_json::json!({
                     "text": sym.name,
                     "kind": kind,
-                    "childItems": child_items,
                     "indent": indent,
                     "spans": [{
                         "start": {
@@ -1674,9 +1714,25 @@ impl Server {
                             "offset": sym.range.end.character + 1,
                         },
                     }],
-                }));
+                });
+                if !child_items.is_empty() {
+                    parent_item["childItems"] = serde_json::json!(child_items);
+                }
+                let kind_mods = sym
+                    .kind_modifiers
+                    .split(',')
+                    .filter(|m| !m.is_empty() && *m != "let")
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !kind_mods.is_empty() {
+                    parent_item["kindModifiers"] = serde_json::json!(kind_mods);
+                }
+                items.push(parent_item);
+                // Only recurse into children that should appear in the primary navbar
                 for child in &sym.children {
-                    symbol_to_navbar_item(child, indent + 1, items);
+                    if should_appear_in_primary_navbar(child) {
+                        symbol_to_navbar_item(child, indent + 1, items);
+                    }
                 }
             }
 
@@ -1684,47 +1740,23 @@ impl Server {
             // Root item
             let total_lines = source_text.lines().count();
             let last_line_len = source_text.lines().last().map_or(0, str::len);
-            let child_items: Vec<serde_json::Value> = symbols
-                .iter()
-                .map(|sym| {
-                    serde_json::json!({
-                        "text": sym.name,
-                        "kind": match sym.kind {
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                            _ => "unknown",
-                        },
-                        "spans": [{
-                            "start": {
-                                "line": sym.range.start.line + 1,
-                                "offset": sym.range.start.character + 1,
-                            },
-                            "end": {
-                                "line": sym.range.end.line + 1,
-                                "offset": sym.range.end.character + 1,
-                            },
-                        }],
-                        "childItems": [],
-                    })
-                })
-                .collect();
-            items.push(serde_json::json!({
+            let child_items: Vec<serde_json::Value> =
+                symbols.iter().map(navbar_child_item).collect();
+            let mut root = serde_json::json!({
                 "text": "<global>",
                 "kind": "script",
-                "childItems": child_items,
                 "indent": 0,
                 "spans": [{"start": {"line": 1, "offset": 1}, "end": {"line": total_lines, "offset": last_line_len + 1}}],
-            }));
-            // Flatten children
+            });
+            if !child_items.is_empty() {
+                root["childItems"] = serde_json::json!(child_items);
+            }
+            items.push(root);
+            // Only add top-level symbols that qualify as primary navbar items
             for sym in &symbols {
-                symbol_to_navbar_item(sym, 1, &mut items);
+                if should_appear_in_primary_navbar(sym) {
+                    symbol_to_navbar_item(sym, 1, &mut items);
+                }
             }
             Some(serde_json::json!(items))
         })();
@@ -1785,24 +1817,7 @@ impl Server {
             let name_lower = sym.name.to_lowercase();
             if name_lower.contains(search_lower) {
                 let is_case_sensitive = sym.name.contains(search_value);
-                let kind = match sym.kind {
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Module => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    _ => "unknown",
-                };
+                let kind = symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers);
                 let match_kind = if name_lower == *search_lower {
                     "exact"
                 } else if name_lower.starts_with(search_lower) {
@@ -1810,10 +1825,17 @@ impl Server {
                 } else {
                     "substring"
                 };
+                // Filter out internal "let" modifier from kind_modifiers
+                let kind_mods = sym
+                    .kind_modifiers
+                    .split(',')
+                    .filter(|m| !m.is_empty() && *m != "let")
+                    .collect::<Vec<_>>()
+                    .join(",");
                 result.push(serde_json::json!({
                     "name": sym.name,
                     "kind": kind,
-                    "kindModifiers": "",
+                    "kindModifiers": kind_mods,
                     "matchKind": match_kind,
                     "isCaseSensitive": is_case_sensitive,
                     "file": file_path,
