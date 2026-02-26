@@ -322,7 +322,7 @@
 - **Area**: types/mapped (26.9%, 7/26 → still 7/26 in this specific area, but +3 net across suite)
 - **Net gain**: +3 tests across full suite (rebased on 7525 baseline, exact count TBD after rebase)
 - **Fixed**: Remove dead TS2862 diagnostic — tsc 6.0 completely removed "Type is generic and can only be indexed for reading." Removed `check_generic_indexed_write_restriction` and `index_expression_constrained_to_object_keys` from assignment_checker.rs, and `is_uninstantiated_type_parameter` from solver type_queries.
-- **Fixed**: Reverse homomorphic mapped type assignability — Added `check_homomorphic_mapped_source_to_type_param` in core.rs and `check_homomorphic_mapped_to_target` in generics.rs. Detects identity-shaped mapped types (`{ [K in keyof S]: S[K] }`) and allows them to be assigned to their source type parameter (Readonly<T> <: T, Identity<T> <: T). Note: Partial<T> <: T was later corrected — see session 19.
+- **Fixed**: Reverse homomorphic mapped type assignability — Added `check_homomorphic_mapped_source_to_type_param` in core.rs and `check_homomorphic_mapped_to_target` in generics.rs. Detects identity-shaped mapped types (`{ [K in keyof S]: S[K] }`) and allows them to be assigned to their source type parameter (Readonly<T> <: T, Partial<T> <: T).
 - **Fixed**: Forward homomorphic mapped type with -? modifier — Removed MappedModifier::Remove restriction from both unions.rs (`is_assignable_to_homomorphic_mapped`) and generics.rs (`check_source_to_homomorphic_mapped`). T <: Required<T> now works at generic level.
 - **Remaining types/mapped failures**: 19/26 still fail. Dominant causes: TS2322 false positives from missing generic mapped type instantiation/evaluation (mappedTypes5/6, mappedTypeRelationships), TS7053 noImplicitAny gaps (isomorphicMappedTypeInference), TS2403/TS2536 property modifier enforcement gaps (mappedTypeModifiers, mappedTypeErrors2), parser issues in mappedTypeProperties (TS1005/TS1128).
 
@@ -415,15 +415,6 @@
   3. **Dynamic name detection** — `is_computed_expression_dynamic()` now resolves identifiers to check variable declarations. `let`/`var` variables → always dynamic (TS4127). `const` with explicit `symbol` type annotation → dynamic (non-unique symbol). `const` with string/number literal type → NOT dynamic (late-bindable). Handles both raw SymbolKeyword and TYPE_REFERENCE-wrapped keyword AST shapes (+3 tests: overrideDynamicName1, overrideLateBindableIndexSignature1, + fingerprint improvements).
 - **Remaining override failures**: 11 tests still fail. Dominant causes: missing TS1029 (modifier ordering), TS1089 (override on constructor), TS1040 (override in ambient context), TS4117 suggestion text differences (intersection type names), TS8009 (override in JS files), TS4123 (JSDoc @override). These are separate feature gaps requiring parser/checker work beyond override-specific checking.
 - **Note**: Code changes were independently implemented by a concurrent session and merged first. This session's identical changes were superseded during rebase. Only this documentation was committed from this session.
-
-#### Run note (2026-02-26, session 20) — types/mapped area (Partial<T> soundness fix)
-- **Area**: types/mapped — corrected unsound `Partial<T> <: T` acceptance
-- **Net gain**: 0 conformance tests (fix is semantically correct but conformance tests for mapped types emit zero errors — pre-existing pipeline issue)
-- **Fixed**: `check_homomorphic_mapped_to_target` in `generics.rs` unconditionally accepted ALL homomorphic mapped types as assignable to their source type parameter, including `Partial<T>`. This was unsound because `Partial<T>` adds optional modifiers (`+?`), making required properties in `T` optional in `Partial<T>`. Added `MappedModifier::Add` check to reject `Partial<T> <: T` while still accepting Identity, Readonly, and Required.
-- **Files**: `crates/tsz-solver/src/relations/subtype/rules/generics.rs` (solver fix), `crates/tsz-checker/tests/ts2322_tests.rs` (4 new integration tests)
-- **Tests added**: 4 checker integration tests (`test_ts2322_inline_partial_not_assignable_to_type_param`, `test_no_ts2322_identity_mapped_type_assignable_to_type_param`, `test_no_ts2322_readonly_mapped_type_assignable_to_type_param`, `test_no_ts2322_type_param_assignable_to_inline_partial`). Pre-existing solver test `test_partial_t_not_subtype_of_t` now also passes.
-- **Conformance note**: All 23 failing types/mapped conformance tests produce `actual=[]` (zero errors). This is NOT because of the solver fix — it's a pre-existing issue where the conformance runner + tsz binary doesn't produce diagnostics for these test files. Likely root cause: these tests use `Partial<T>`, `Readonly<T>`, `Required<T>` from lib.d.ts which require proper lib type loading. The 37 passing mapped tests pass because they expect zero errors (clean-compile tests).
-- **Remaining types/mapped work**: To move the needle on types/mapped conformance, the pipeline needs to correctly emit diagnostics for tests expecting errors. This requires investigating lib.d.ts loading in the conformance test runner or implementing inline evaluation of utility type semantics without lib types.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
@@ -745,7 +736,7 @@ All items below have been validated against the codebase (implementations + test
 | TS18050 | ~~Remove incorrect strictNullChecks gate on TS18050 emission~~ REVERSED: gate TS18050 binary ops on strictNullChecks (tsc DOES gate) | net +20 tests (prior), corrected |
 | strict defaults | Match tsc 6.0 strict-family defaults (all true when `strict` not set in tsconfig) | +613 tests |
 | TS2862 | Remove dead TS2862 diagnostic (tsc 6.0 never emits "generic indexed write restriction") | +1 test |
-| mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Identity<T> <: T, T <: Required<T>). Note: Partial<T> <: T was later corrected to be rejected (session 20). | +1 test |
+| mapped types (reverse) | Bidirectional homomorphic mapped type assignability (Readonly<T> <: T, Partial<T> <: T, T <: Required<T>) | +1 test |
 | TS18050/TS2365 snc gate | Gate TS18050 binary op errors on strictNullChecks; suppress TS2365 for nullish+nullish when snc off | +1 test (bitwiseNotOperatorWithAnyOtherType) |
 | TS2454/narrowing | Reorder check_flow_usage: apply narrowing before TS2454 to suppress false "used before assigned" in typeof guard branches | +2 tests |
 | JSX diagnostics | Anchor TS2322/TS2741 at attr name/tag name; boolean attr checking; excess property type display; `</` parser token; TS7005 .d.ts suppression | +5 tests |
