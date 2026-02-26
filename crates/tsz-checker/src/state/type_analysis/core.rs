@@ -764,7 +764,6 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
 
             if is_type_only_import {
-                
                 factory.type_query(SymbolRef(type_sym_id))
             } else {
                 let name = name_text.as_deref().unwrap_or("<unknown>");
