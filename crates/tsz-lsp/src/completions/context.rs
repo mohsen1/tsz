@@ -438,10 +438,30 @@ impl<'a> Completions<'a> {
     /// `"private"`, `"protected"`.
     pub(super) fn build_kind_modifiers(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
         use tsz_binder::symbol_flags;
+        use tsz_parser::parser::flags::node_flags;
 
         let mut mods = Vec::new();
         if symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
             mods.push("export");
+        }
+        // Check declaration node for ambient (declare) and deprecated
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied().unwrap_or_default()
+        };
+        if decl_idx.is_some() {
+            if let Some(decl_node) = self.arena.get(decl_idx) {
+                let nf = decl_node.flags as u32;
+                // Check for deprecated (set by JSDoc @deprecated tag during parsing)
+                if nf & node_flags::DEPRECATED != 0 {
+                    mods.push("deprecated");
+                }
+            }
+            // Check for declare by scanning children for DeclareKeyword
+            if self.has_declare_modifier(decl_idx) {
+                mods.push("declare");
+            }
         }
         if symbol.flags & symbol_flags::ABSTRACT != 0 {
             mods.push("abstract");
@@ -463,5 +483,47 @@ impl<'a> Completions<'a> {
         } else {
             Some(mods.join(","))
         }
+    }
+
+    /// Check if a declaration node has a `declare` modifier by looking at its
+    /// modifiers list for a `DeclareKeyword` node.
+    fn has_declare_modifier(&self, decl_idx: NodeIndex) -> bool {
+        let declare_kind = SyntaxKind::DeclareKeyword as u16;
+        // Check children of the declaration for DeclareKeyword
+        if self.has_declare_child(decl_idx, declare_kind) {
+            return true;
+        }
+        // For VariableDeclaration nodes, `declare` lives on the parent
+        // VariableStatement, so check the parent chain
+        if let Some(ext) = self.arena.get_extended(decl_idx) {
+            let parent = ext.parent;
+            if parent.is_some() {
+                if self.has_declare_child(parent, declare_kind) {
+                    return true;
+                }
+                // Also check grandparent (VariableDeclaration -> VariableDeclarationList -> VariableStatement)
+                if let Some(gext) = self.arena.get_extended(parent)
+                    && gext.parent.is_some() && self.has_declare_child(gext.parent, declare_kind) {
+                        return true;
+                    }
+            }
+        }
+        false
+    }
+
+    fn has_declare_child(&self, node_idx: NodeIndex, declare_kind: u16) -> bool {
+        if let Some(node) = self.arena.get(node_idx) {
+            for child_idx in self.arena.get_children(node_idx) {
+                if let Some(child) = self.arena.get(child_idx) {
+                    if child.kind == declare_kind {
+                        return true;
+                    }
+                    if child.pos >= node.pos + 20 {
+                        break;
+                    }
+                }
+            }
+        }
+        false
     }
 }
