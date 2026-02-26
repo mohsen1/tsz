@@ -708,10 +708,8 @@ impl Server {
             "isLocal": info.is_local,
             "isAmbient": info.is_ambient,
             "unverified": false,
+            "failedAliasResolution": false,
         });
-        if info.kind == "alias" {
-            result["failedAliasResolution"] = serde_json::json!(false);
-        }
         if let Some(ref ctx) = info.context_span {
             result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
             result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);

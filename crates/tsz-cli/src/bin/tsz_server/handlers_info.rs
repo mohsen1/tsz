@@ -1645,6 +1645,17 @@ impl Server {
                                 tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
                                 _ => "unknown",
                             },
+                            "spans": [{
+                                "start": {
+                                    "line": c.range.start.line + 1,
+                                    "offset": c.range.start.character + 1,
+                                },
+                                "end": {
+                                    "line": c.range.end.line + 1,
+                                    "offset": c.range.end.character + 1,
+                                },
+                            }],
+                            "childItems": [],
                         })
                     })
                     .collect();
@@ -1690,6 +1701,17 @@ impl Server {
                             tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
                             _ => "unknown",
                         },
+                        "spans": [{
+                            "start": {
+                                "line": sym.range.start.line + 1,
+                                "offset": sym.range.start.character + 1,
+                            },
+                            "end": {
+                                "line": sym.range.end.line + 1,
+                                "offset": sym.range.end.character + 1,
+                            },
+                        }],
+                        "childItems": [],
                     })
                 })
                 .collect();
