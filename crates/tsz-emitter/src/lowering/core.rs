@@ -299,8 +299,25 @@ impl<'a> LoweringPass<'a> {
             // compile to plain `require()` calls and default imports use
             // direct property access on the module object.
             if self.ctx.options.es_module_interop {
-                // Default import: import d from "mod" -> needs __importDefault
-                if clause.name.is_some() {
+                let has_default = clause.name.is_some();
+                let has_named_bindings = clause.named_bindings.is_some()
+                    && self.arena.get(clause.named_bindings).is_some_and(|n| {
+                        // Check for true named bindings (not namespace import)
+                        n.kind != syntax_kind_ext::NAMESPACE_IMPORT
+                            && self.arena.get_named_imports(n).is_some_and(|ni| {
+                                ni.name.is_none() || !ni.elements.nodes.is_empty()
+                            })
+                    });
+
+                // Combined default + named import (e.g., `import foo, {bar} from "mod"`)
+                // requires __importStar to wrap the require call so both .default
+                // and named exports are accessible.
+                if has_default && has_named_bindings {
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_star = true;
+                    helpers.create_binding = true;
+                } else if has_default {
+                    // Default-only import: import d from "mod" -> needs __importDefault
                     let helpers = self.transforms.helpers_mut();
                     helpers.import_default = true;
                 }
