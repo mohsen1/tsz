@@ -879,7 +879,19 @@ impl<'a> CheckerState<'a> {
             let eval_left = self.evaluate_type_for_binary_ops(left_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
 
-            let result = evaluator.evaluate(eval_left, eval_right, op_str);
+            // For relational operators, widen literal/enum types to their base types
+            // before comparison (matching tsc's getBaseTypeOfLiteralTypeForComparison).
+            // e.g., enum E { A, B } → number, "hello" → string
+            let (cmp_left, cmp_right) = if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                (
+                    tsz_solver::get_base_type_for_comparison(self.ctx.types, eval_left),
+                    tsz_solver::get_base_type_for_comparison(self.ctx.types, eval_right),
+                )
+            } else {
+                (eval_left, eval_right)
+            };
+
+            let result = evaluator.evaluate(cmp_left, cmp_right, op_str);
             let result_type = match result {
                 BinaryOpResult::Success(result_type) => result_type,
                 BinaryOpResult::TypeError { left, right, op } => {
@@ -913,23 +925,25 @@ impl<'a> CheckerState<'a> {
                         // For relational operators (<, >, <=, >=), tsc allows comparison
                         // if both are assignable to number/bigint, or if neither are, they must
                         // be comparable.
+                        // Use cmp_left/cmp_right which are widened for relational operators
+                        // (matching tsc's getBaseTypeOfLiteralTypeForComparison) and unchanged
+                        // for equality operators.
                         let is_comparable = if matches!(op_str, "==" | "!=" | "===" | "!==") {
-                            self.is_type_comparable_to(eval_left, eval_right)
+                            self.is_type_comparable_to(cmp_left, cmp_right)
                         } else if matches!(op_str, "<" | ">" | "<=" | ">=") {
-                            if eval_left == TypeId::ANY || eval_right == TypeId::ANY {
+                            if cmp_left == TypeId::ANY || cmp_right == TypeId::ANY {
                                 true
                             } else {
                                 let number_or_bigint =
                                     self.ctx.types.union(vec![TypeId::NUMBER, TypeId::BIGINT]);
-                                let left_to_num =
-                                    self.is_assignable_to(eval_left, number_or_bigint);
+                                let left_to_num = self.is_assignable_to(cmp_left, number_or_bigint);
                                 let right_to_num =
-                                    self.is_assignable_to(eval_right, number_or_bigint);
+                                    self.is_assignable_to(cmp_right, number_or_bigint);
 
                                 if left_to_num && right_to_num {
                                     true
                                 } else if !left_to_num && !right_to_num {
-                                    self.is_type_comparable_to(eval_left, eval_right)
+                                    self.is_type_comparable_to(cmp_left, cmp_right)
                                 } else {
                                     false
                                 }
@@ -943,13 +957,20 @@ impl<'a> CheckerState<'a> {
                         } else {
                             // Don't emit errors if either operand is ERROR - prevents cascading errors
                             if left != TypeId::ERROR && right != TypeId::ERROR {
-                                // Use original types for error messages (more informative)
+                                // For relational ops, use widened types in error messages
+                                // (matching tsc). For equality ops, use original types.
+                                let (err_left, err_right) =
+                                    if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                                        (cmp_left, cmp_right)
+                                    } else {
+                                        (left_type, right_type)
+                                    };
                                 self.emit_binary_operator_error(
                                     node_idx,
                                     left_idx,
                                     right_idx,
-                                    left_type,
-                                    right_type,
+                                    err_left,
+                                    err_right,
                                     op,
                                     emitted_nullish_error,
                                 );

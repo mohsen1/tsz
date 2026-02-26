@@ -1,5 +1,6 @@
 //! Enum helpers, type overlap checking, readonly properties, and class/function utility methods.
 
+use crate::query_boundaries::dispatch::is_type_parameter_like;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
@@ -509,28 +510,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For type parameters, check the constraint instead of the parameter itself
-        let effective_left =
-            match query::classify_for_type_parameter_constraint(self.ctx.types, left) {
-                query::TypeParameterConstraintKind::TypeParameter {
-                    constraint: Some(constraint),
-                } => {
-                    tracing::trace!(?constraint, "left is type param with constraint");
-                    constraint
-                }
-                _ => left,
-            };
+        // For type parameters, delegate to the comparability check which correctly handles:
+        // - T vs {} → comparable (overlap exists, return false)
+        // - T vs U (unrelated) → not comparable (no overlap, return true)
+        // - T extends X vs Y → uses constraint resolution
+        if is_type_parameter_like(self.ctx.types, left)
+            || is_type_parameter_like(self.ctx.types, right)
+        {
+            return !self.is_type_comparable_to(left, right);
+        }
 
-        let effective_right =
-            match query::classify_for_type_parameter_constraint(self.ctx.types, right) {
-                query::TypeParameterConstraintKind::TypeParameter {
-                    constraint: Some(constraint),
-                } => {
-                    tracing::trace!(?constraint, "right is type param with constraint");
-                    constraint
-                }
-                _ => right,
-            };
+        let effective_left = left;
+        let effective_right = right;
 
         tracing::trace!(
             ?effective_left,

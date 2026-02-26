@@ -99,6 +99,47 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     }
 }
 
+/// Get the base type of a literal type for comparison operators.
+///
+/// Matches TypeScript's `getBaseTypeOfLiteralTypeForComparison`:
+/// - String literals, template literals, string intrinsics → `string`
+/// - Number literals → `number`
+/// - `BigInt` literals → `bigint`
+/// - Boolean literals → `boolean`
+/// - Enum types → recursively widen their member union
+/// - Union types → recursively map each member
+/// - Everything else → unchanged
+///
+/// Used by relational operators (`<`, `>`, `<=`, `>=`) to normalize types
+/// before comparability checks. This is distinct from general widening because
+/// it also handles enum types and template literals.
+pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        // String/Number/Boolean/BigInt literals widen to their primitives
+        Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
+
+        // Enum types: recursively widen their member union
+        // (numeric enums → number, string enums → string)
+        Some(TypeData::Enum(_, member_type_id)) => get_base_type_for_comparison(db, member_type_id),
+
+        // Template literals and string intrinsics (Uppercase<T>, etc.) → string
+        Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. }) => TypeId::STRING,
+
+        // Unions: recursively map all members
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&m| get_base_type_for_comparison(db, m))
+                .collect();
+            db.union(mapped)
+        }
+
+        // Everything else unchanged
+        _ => type_id,
+    }
+}
+
 /// Apply `as const` assertion to a type.
 ///
 /// This function transforms a type to its const-asserted form:
