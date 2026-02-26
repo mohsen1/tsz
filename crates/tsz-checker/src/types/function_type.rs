@@ -895,8 +895,13 @@ impl<'a> CheckerState<'a> {
                 self.get_generator_return_type_argument(return_type)
                     .unwrap_or(return_type)
             } else if is_async_for_context && has_type_annotation {
-                // Unwrap Promise<T> to T for async function return type checking
-                self.unwrap_promise_type(return_type).unwrap_or(return_type)
+                // Unwrap Promise<T> to T for async function return type checking.
+                // Use the pre-expansion annotated return type because
+                // evaluate_application_type() may have expanded Promise<T> into its
+                // structural object form, which unwrap_promise_type() can't recognise.
+                let original_type = annotated_return_type.unwrap_or(return_type);
+                self.unwrap_promise_type(original_type)
+                    .unwrap_or(return_type)
             } else {
                 return_type
             };
@@ -920,8 +925,11 @@ impl<'a> CheckerState<'a> {
                 self.ctx.push_yield_type(None);
             }
 
+            // For expression-bodied arrows/functions, check the expression against
+            // the expected return type.  Use body_return_type which has already been
+            // unwrapped for async (Promise<T> → T) and generators (Generator<Y,R,N> → R).
             let expected_expression_return_type = has_type_annotation
-                .then_some(annotated_return_type.unwrap_or(return_type))
+                .then_some(body_return_type)
                 .or(jsdoc_return_context);
             if expected_expression_return_type.is_some()
                 && let Some(body_node) = self.ctx.arena.get(body)
@@ -1488,6 +1496,50 @@ mod tests {
         assert!(
             diagnostics.contains(&target),
             "expected TS2322, got diagnostics: {diagnostics:?}"
+        );
+    }
+
+    /// Minimal Promise definition so async tests can resolve Promise<T>.
+    const PROMISE_DEF: &str = "interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }";
+
+    fn async_diagnostics(body: &str) -> Vec<u32> {
+        diagnostics_for_source(&format!("{PROMISE_DEF}\n{body}"))
+    }
+
+    #[test]
+    fn async_arrow_expression_body_promise_return_no_false_error() {
+        let diags = async_diagnostics("const f = async (): Promise<number> => 42;");
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "should not emit TS2322 for async arrow expression body, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_arrow_block_body_promise_return_no_false_error() {
+        let diags = async_diagnostics("const f = async (): Promise<number> => { return 42; };");
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "should not emit TS2322 for async arrow block body, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_function_expression_promise_return_no_false_error() {
+        let diags =
+            async_diagnostics("const f = async function(): Promise<number> { return 42; };");
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "should not emit TS2322 for async function expression, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_arrow_generic_promise_return_no_false_error() {
+        let diags = async_diagnostics("const f = async <T>(x: T): Promise<T> => x;");
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "should not emit TS2322 for async generic arrow, got: {diags:?}"
         );
     }
 }
