@@ -619,7 +619,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// `{ [K in keyof T]: T[K] }` (with any readonly/optional modifiers) is assignable
     /// to `T` because homomorphic mapped types preserve the shape of T.
-    /// This is the reverse direction of `is_assignable_to_homomorphic_mapped`.
+    ///
+    /// NOTE: Ideally, Partial<T> (+? modifier) should NOT be assignable to T because
+    /// it widens properties to optional. However, rejecting this currently causes
+    /// regressions because downstream code (e.g., Partial<T>[K] & {}) relies on
+    /// this path, and our solver doesn't yet handle `& {}` intersection stripping
+    /// of null/undefined. The Partial direction will be fixed when `& {}` stripping
+    /// is implemented.
     pub(crate) fn check_homomorphic_mapped_to_target(
         &mut self,
         mapped_id: MappedTypeId,
@@ -762,9 +768,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if any source type is assignable to a homomorphic mapped type.
     ///
-    /// This is the general form of the type parameter check:
-    /// S <: { [K in keyof S]+?: S[K] } when S is the same as the constraint source
-    /// and the mapped type doesn't remove optional.
+    /// S <: { [K in keyof S]: S[K] } when S is the same as the constraint source
+    /// and the mapped type doesn't REMOVE optionality. Removing `-?` (Required)
+    /// makes the target NARROWER than the source, so S → Required<S> fails
+    /// because S may have optional properties that Required demands.
     fn check_source_to_homomorphic_mapped(
         &mut self,
         source: TypeId,
@@ -777,10 +784,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        // In tsc 6.0, all homomorphic mapped types are bidirectionally assignable
-        // to their source type parameter, regardless of modifier direction.
-        // T <: Required<T> is allowed because at the generic level, the concrete
-        // effect of -? depends on what T actually is.
+        // Mapped types that REMOVE optionality (-?) like Required<T> are NARROWER
+        // than T. The source (which may have optional properties) cannot satisfy
+        // the target which demands all properties be present.
+        if mapped.optional_modifier == Some(MappedModifier::Remove) {
+            return false;
+        }
 
         // Constraint must be keyof(S) for some S
         let Some(constraint_source) = keyof_inner_type(self.interner, mapped.constraint) else {
