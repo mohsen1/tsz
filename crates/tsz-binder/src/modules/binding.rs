@@ -172,6 +172,18 @@ impl BinderState {
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
                 module_symbol_id = self.declare_symbol(&name, flags, idx, is_exported);
+
+                // `declare global { namespace X { ... } }` makes X visible at the global
+                // scope level.  declare_symbol placed it in the current (module) scope, but
+                // file_locals is the gateway through which symbols propagate across files
+                // during the multi-file merge (parallel.rs).  Without this, namespace
+                // declarations like `JSX` inside global augmentation blocks are invisible
+                // to cross-file resolution and the checker cannot resolve
+                // JSX.IntrinsicElements, causing false-positive TS7026 diagnostics.
+                if self.in_global_augmentation {
+                    self.file_locals.set(name.clone(), module_symbol_id);
+                }
+
                 prior_exports = self
                     .symbols
                     .get(module_symbol_id)
