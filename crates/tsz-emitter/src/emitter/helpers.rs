@@ -758,9 +758,10 @@ impl<'a> Printer<'a> {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
                     self.arena
                         .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                        || self
+                        || (self
                             .arena
                             .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                            && !self.ctx.options.preserve_const_enums)
                 } else {
                     false
                 }

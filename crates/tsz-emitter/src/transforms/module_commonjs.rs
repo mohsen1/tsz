@@ -124,6 +124,14 @@ fn collect_export_name_from_declaration(
 ///
 /// Returns a list of exported names (e.g., ["foo", "bar"])
 pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<String> {
+    collect_export_names_with_options(arena, statements, false)
+}
+
+pub fn collect_export_names_with_options(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    preserve_const_enums: bool,
+) -> Vec<String> {
     let mut exports = Vec::new();
 
     for &stmt_idx in statements {
@@ -204,12 +212,13 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                     exports.push(name);
                 }
             }
-            // export enum E {}
+            // export enum E {} / export const enum E {} (when preserveConstEnums)
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
                     && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
                     && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                    && (preserve_const_enums
+                        || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
                     && let Some(name) = get_identifier_text(arena, enum_decl.name)
                 {
                     exports.push(name);
@@ -248,11 +257,12 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
 pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
+    preserve_const_enums: bool,
 ) -> (Vec<String>, Vec<String>, Option<String>) {
     let mut func_exports = Vec::new();
     let mut other_exports = Vec::new();
     let mut default_func_export: Option<String> = None;
-    let all = collect_export_names(arena, statements);
+    let all = collect_export_names_with_options(arena, statements, preserve_const_enums);
 
     // First pass: collect all function declaration names in the file (including
     // non-exported ones) so we can resolve `export { f }` specifiers.

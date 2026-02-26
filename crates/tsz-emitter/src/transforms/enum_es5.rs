@@ -635,6 +635,11 @@ impl<'a> EnumES5Emitter<'a> {
         self.transformer.set_source_text(text);
     }
 
+    /// Set whether const enums should be preserved (emitted instead of erased)
+    pub const fn set_preserve_const_enums(&mut self, value: bool) {
+        self.transformer.set_preserve_const_enums(value);
+    }
+
     /// Emit an enum declaration
     /// Returns empty string for const enums (they are erased)
     pub fn emit_enum(&mut self, enum_idx: NodeIndex) -> String {

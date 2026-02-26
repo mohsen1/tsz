@@ -57,6 +57,10 @@ impl<'a> Printer<'a> {
         if func.name.is_some() {
             self.write_space();
             self.emit_decl_name(func.name);
+        } else if let Some(override_name) = self.anonymous_default_export_name.clone() {
+            // Anonymous default export: use the override name (e.g. `default_1`)
+            self.write_space();
+            self.write(&override_name);
         } else {
             // Space before ( for anonymous functions: `function ()` not `function()`
             self.write(" ");

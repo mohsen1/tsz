@@ -98,8 +98,6 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_import_declaration_commonjs(&mut self, node: &Node) {
-        use crate::transforms::module_commonjs;
-
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
@@ -274,64 +272,35 @@ impl<'a> Printer<'a> {
         }
 
         let es_module_interop = self.ctx.options.es_module_interop;
-        let bindings =
-            module_commonjs::get_import_bindings(self.arena, node, &module_var, es_module_interop);
 
-        let is_default_only = bindings.len() == 1 && bindings[0].contains("__importDefault(");
+        // Detect combined default + named import: `import foo, {bar} from "mod"`
+        // With esModuleInterop, this requires __importStar to wrap the require call
+        // so both .default and named exports are accessible.
+        let has_default = clause.name.is_some();
+        let has_named_bindings = clause.named_bindings.is_some()
+            && self.arena.get(clause.named_bindings).is_some_and(|n| {
+                n.kind != syntax_kind_ext::NAMESPACE_IMPORT
+                    && self
+                        .arena
+                        .get_named_imports(n)
+                        .is_some_and(|ni| ni.name.is_none() || !ni.elements.nodes.is_empty())
+            });
+        let use_import_star = es_module_interop && has_default && has_named_bindings;
 
-        if is_default_only {
-            // Inline: var name = __importDefault(require("mod"));
-            let binding = &bindings[0];
-            if let Some(eq_pos) = binding.find(" = ") {
-                let var_name = &binding[4..eq_pos]; // Skip "var "
-                let rest = &binding[eq_pos + 3..]; // After " = "
-                // Check if it's using __importDefault
-                if rest.contains("__importDefault") {
-                    self.write_var_or_const();
-                    self.write(var_name);
-                    self.write(" = __importDefault(require(\"");
-                    self.write(&module_spec);
-                    self.write("\"));");
-                    self.write_line();
-                } else {
-                    self.write_var_or_const();
-                    self.write(&module_var);
-                    self.write(" = require(\"");
-                    self.write(&module_spec);
-                    self.write("\");");
-                    self.write_line();
-                    for binding in bindings {
-                        self.write(&binding);
-                        self.write_line();
-                    }
-                }
-            } else {
-                self.write_var_or_const();
-                self.write(&module_var);
-                self.write(" = require(\"");
-                self.write(&module_spec);
-                self.write("\");");
-                self.write_line();
-                for binding in bindings {
-                    self.write(&binding);
-                    self.write_line();
-                }
-            }
+        // Emit: const module_1 = __importStar(require("module"));
+        // OR:   const module_1 = require("module");
+        self.write_var_or_const();
+        self.write(&module_var);
+        if use_import_star {
+            self.write(" = __importStar(require(\"");
+            self.write(&module_spec);
+            self.write("\"));");
         } else {
-            // Emit: var module_1 = require("module");
-            self.write_var_or_const();
-            self.write(&module_var);
             self.write(" = require(\"");
             self.write(&module_spec);
             self.write("\");");
-            self.write_line();
-
-            // Emit bindings
-            for binding in bindings {
-                self.write(&binding);
-                self.write_line();
-            }
         }
+        self.write_line();
     }
 
     fn register_commonjs_named_import_substitutions(&mut self, node: &Node, module_var: &str) {
