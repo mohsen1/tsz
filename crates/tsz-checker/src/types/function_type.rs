@@ -1160,6 +1160,13 @@ impl<'a> CheckerState<'a> {
         // Unannotated async functions infer Promise<T>, where T is inferred from
         // return statements in the function body.
         if !has_type_annotation && function_is_async && !function_is_generator {
+            // Async functions implicitly await their return values. If the body
+            // returns Promise<T> (e.g., `async () => fetch(url)`), the runtime
+            // awaits it to get T, then the async wrapper produces Promise<T> —
+            // NOT Promise<Promise<T>>. Unwrap any existing Promise layer first.
+            if let Some(inner) = self.unwrap_promise_type(final_return_type) {
+                final_return_type = inner;
+            }
             // Resolve the real Promise type from lib files when available,
             // so that the return type is structurally compatible with PromiseLike<T>.
             // Fall back to synthetic PROMISE_BASE only without lib files.
@@ -1540,6 +1547,63 @@ mod tests {
         assert!(
             !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
             "should not emit TS2322 for async generic arrow, got: {diags:?}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Async return type unwrapping — unannotated async functions that
+    // return a Promise value should infer Promise<T>, not Promise<Promise<T>>.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn async_inferred_return_unwraps_promise() {
+        // `async () => load()` where load() returns Promise<boolean>
+        // should infer () => Promise<boolean>, not () => Promise<Promise<boolean>>
+        let diags = async_diagnostics(
+            "declare function load(): Promise<boolean>;
+             const cb: () => Promise<boolean> = async () => load();",
+        );
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "async returning Promise<T> should infer Promise<T>, not Promise<Promise<T>>: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_inferred_return_unwraps_promise_then_chain() {
+        // `async () => load().then(m => m)` should also infer () => Promise<boolean>
+        let diags = async_diagnostics(
+            "declare function load(): Promise<boolean>;
+             const cb: () => Promise<boolean> = async () => load().then(m => m);",
+        );
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "async returning .then() chain should infer correct Promise type: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_inferred_return_non_promise_wraps_once() {
+        // `async () => 42` should infer () => Promise<number>, wrapping once
+        let diags = async_diagnostics("const cb: () => Promise<number> = async () => 42;");
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "async returning non-Promise should wrap once: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn async_inferred_return_union_with_promise() {
+        // When expected type is a union containing Promise, async function
+        // returning Promise should be assignable
+        let diags = async_diagnostics(
+            "declare function load(): Promise<boolean>;
+             type LoadCallback = () => Promise<boolean> | string;
+             const cb: LoadCallback = async () => load();",
+        );
+        assert!(
+            !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "async returning Promise in union context should not double-wrap: {diags:?}"
         );
     }
 }
