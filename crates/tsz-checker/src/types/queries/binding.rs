@@ -61,13 +61,14 @@ impl<'a> CheckerState<'a> {
                         // Note: only set for arrow/function expressions to avoid JSX
                         // attribute regressions with array/string literal widening.
                         let prev_ctx = self.ctx.contextual_type;
-                        if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN
+                        if element_type != TypeId::ANY
+                            && element_type != TypeId::UNKNOWN
                             && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
-                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                {
-                                    self.ctx.contextual_type = Some(element_type);
-                                }
+                            && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                        {
+                            self.ctx.contextual_type = Some(element_type);
+                        }
                         let init_type = self.get_type_of_node(element_data.initializer);
                         self.ctx.contextual_type = prev_ctx;
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
@@ -126,13 +127,14 @@ impl<'a> CheckerState<'a> {
                     if element_data.initializer.is_some() {
                         // Set contextual type for function-like initializers
                         let prev_ctx = self.ctx.contextual_type;
-                        if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN
+                        if element_type != TypeId::ANY
+                            && element_type != TypeId::UNKNOWN
                             && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
-                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                {
-                                    self.ctx.contextual_type = Some(element_type);
-                                }
+                            && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                        {
+                            self.ctx.contextual_type = Some(element_type);
+                        }
                         let init_type = self.get_type_of_node(element_data.initializer);
                         self.ctx.contextual_type = prev_ctx;
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
