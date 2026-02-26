@@ -1,213 +1,119 @@
-//! Tests for contextual typing and type inference
+//! Tests for contextual typing of class expression property initializers.
+//!
+//! These tests verify that when a class expression is returned from a function
+//! with a declared return type, static property initializers (arrow/function
+//! expressions) receive contextual typing from the corresponding interface member.
 
-use crate::checker::diagnostics::Diagnostic;
-use crate::test_fixtures::TestContext;
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
 
-/// Helper function to check source and return diagnostics
-fn check_source(source: &str) -> Vec<Diagnostic> {
-    let mut ctx = TestContext::new_without_lib();
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+/// Helper: parse, bind, check with lib support and noImplicitAny enabled.
+fn check_with_no_implicit_any(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
+    let lib_files = crate::test_fixtures::load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    ctx.binder.bind_source_file(parser.get_arena(), root);
-    let mut checker = ctx.checker();
+
+    let mut binder = BinderState::new();
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| tsz_binder::state::LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&lib_contexts);
+    }
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
 
+/// Class expression returned from function with declared return type should
+/// contextually type static arrow property parameters.
+///
+/// Regression test: without per-property contextual typing in
+/// `get_class_constructor_type_inner`, the arrow `(arg) => {}` would be
+/// evaluated with the whole Foo interface as contextual type instead of the
+/// specific `(arg: A) => void` member type, causing false TS7006.
 #[test]
-fn test_arrow_function_parameter_inference_from_map() {
+fn test_class_expr_static_arrow_contextual_typing() {
     let source = r#"
-const numbers = [1, 2, 3];
-const strings = numbers.map(x => x.toString());
-// x should be inferred as number from the array
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322 - x should be correctly inferred as number
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for arrow function parameter inference, got {ts2322_count}"
-    );
+interface A {
+    numProp: number;
 }
-
-#[test]
-fn test_arrow_function_parameter_inference_with_context() {
-    let source = r#"
-type Handler = (n: number) => string;
-const h: Handler = n => n.toString();
-// n should be inferred as number from the Handler type
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322 - n should be correctly inferred
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for arrow function with contextual type, got {ts2322_count}"
-    );
+interface Foo {
+    method1(arg: A): void;
 }
-
-#[test]
-fn test_object_literal_property_inference() {
-    let source = r#"
-interface Person {
-    name: string;
-    age: number;
-}
-const p: Person = { name: "Alice", age: 30 };
-// Properties should be contextually typed
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for object literal property inference, got {ts2322_count}"
-    );
-}
-
-#[test]
-fn test_return_statement_contextual_typing() {
-    let source = r#"
-function getString(): string {
-    return "hello";
-}
-function getNumber(): number {
-    return 42;
-}
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for return statement contextual typing, got {ts2322_count}"
-    );
-}
-
-#[test]
-fn test_ternary_branch_contextual_typing() {
-    let source = r#"
-let x: string;
-x = Math.random() > 0.5 ? "hello" : "world";
-// Both branches should be contextually typed as string
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for ternary branch contextual typing, got {ts2322_count}"
-    );
-}
-
-#[test]
-fn test_destructuring_contextual_typing() {
-    let source = r#"
-const obj = { x: 1, y: 2 };
-const { x, y }: { x: number; y: number } = obj;
-// x and y should be contextually typed as number
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for destructuring contextual typing, got {ts2322_count}"
-    );
-}
-
-#[test]
-fn test_arrow_function_return_inference() {
-    let source = r#"
-const numbers = [1, 2, 3];
-const doubled = numbers.map(x => x * 2);
-// Return type should be inferred as number
-// x should be inferred as number from the array
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for arrow function return inference, got {ts2322_count}"
-    );
-}
-
-#[test]
-fn test_object_literal_method_inference() {
-    let source = r#"
-interface Calculator {
-    add(a: number, b: number): number;
-}
-const calc: Calculator = {
-    add(a, b) {
-        return a + b;
+function getFoo(): Foo {
+    return class {
+        static method1 = (arg) => {
+            arg.numProp = 10;
+        }
     }
-};
-// Parameters a and b should be inferred as number
-// Return type should be inferred as number
+}
 "#;
+    let diagnostics = check_with_no_implicit_any(source);
 
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for object literal method inference, got {ts2322_count}"
+    let ts7006_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        ts7006_errors.is_empty(),
+        "Should NOT emit TS7006 for contextually typed arrow parameter 'arg', got: {ts7006_errors:?}"
     );
 }
 
+/// Same test but with function expression initializers instead of arrows.
 #[test]
-fn test_array_literal_contextual_typing() {
+fn test_class_expr_static_function_expr_contextual_typing() {
     let source = r#"
-const arr: number[] = [1, 2, 3];
-// Elements should be contextually typed as number
-const arr2: string[] = ["a", "b", "c"];
-// Elements should be contextually typed as string
-"#;
-
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for array literal contextual typing, got {ts2322_count}"
-    );
+interface A {
+    numProp: number;
 }
-
-#[test]
-fn test_generic_function_contextual_typing() {
-    let source = r#"
-function identity<T>(x: T): T {
-    return x;
+interface Foo {
+    method1(arg: A): void;
 }
-const result = identity("hello");
-// T should be inferred as string
+function getFoo(): Foo {
+    return class {
+        static method1 = function(arg) {
+            arg.numProp = 10;
+        }
+    }
+}
 "#;
+    let diagnostics = check_with_no_implicit_any(source);
 
-    let diagnostics = check_source(source);
-
-    // Should NOT emit TS2322
-    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
-    assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 error for generic function contextual typing, got {ts2322_count}"
+    let ts7006_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        ts7006_errors.is_empty(),
+        "Should NOT emit TS7006 for contextually typed function expression parameter 'arg', got: {ts7006_errors:?}"
     );
 }

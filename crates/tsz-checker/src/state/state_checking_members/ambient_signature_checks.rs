@@ -215,8 +215,27 @@ impl<'a> CheckerState<'a> {
                 );
             }
         } else if prop.initializer.is_some() {
-            // Just check the initializer to catch errors within it
+            // When a class property has an initializer but no type annotation,
+            // and the class has a contextual type (e.g., from a function return type),
+            // look up the property's expected type from the contextual type and use it
+            // as contextual type for the initializer. This enables arrow/function
+            // expression initializers to get parameter types from the context.
+            let prev_context = self.ctx.contextual_type;
+            if let Some(ctx_type) = self.ctx.contextual_type
+                && let Some(prop_name) = self.get_property_name(prop.name)
+            {
+                let resolved_ctx = self.evaluate_type_for_assignability(ctx_type);
+                let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, resolved_ctx);
+                if let Some(member_type) = ctx_helper.get_property_type(&prop_name)
+                    && member_type != TypeId::ANY
+                    && !self.type_contains_error(member_type)
+                {
+                    self.ctx.contextual_type = Some(member_type);
+                    self.clear_type_cache_recursive(prop.initializer);
+                }
+            }
             self.get_type_of_node(prop.initializer);
+            self.ctx.contextual_type = prev_context;
         }
 
         // Error 2729: Property is used before its initialization
