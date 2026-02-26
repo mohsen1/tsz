@@ -29,6 +29,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
+                // tsc normalizes initializer string literals to double quotes
                 if let Some(lit) = self.arena.get_literal(expr_node) {
                     self.write("\"");
                     self.write(&lit.text);
@@ -103,9 +104,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    self.write("\"");
+                    let quote = self.original_quote_char(node);
+                    self.write(quote);
                     self.write(&lit.text);
-                    self.write("\"");
+                    self.write(quote);
                 }
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
@@ -312,11 +314,21 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    // Check for `export type { ... }` or `export type * from ...`
-                    if let Some(export) = self.arena.get_export_decl(stmt_node)
-                        && export.is_type_only
-                    {
-                        return true;
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        // `export type { ... }` or `export type * from ...`
+                        if export.is_type_only {
+                            return true;
+                        }
+                        // `export interface ...` / `export type X = ...` wrapped in EXPORT_DECLARATION
+                        if export.export_clause.is_some() {
+                            if let Some(clause_node) = self.arena.get(export.export_clause) {
+                                if clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                    || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -551,9 +563,53 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         } else {
-            // No usage tracking - count everything as used
-            default_count = usize::from(import.import_clause.is_some());
-            named_count = 1; // At least one if present
+            // No usage tracking available (e.g., --noCheck --noLib mode).
+            // In this mode, tsc would have type info to decide which imports are needed,
+            // but we don't. Apply conservative heuristics:
+            // - Type-only imports: keep (likely needed for type references)
+            // - Named imports with specifiers: keep (may reference types)
+            // - Namespace imports (import * as ns): skip (almost always value-level)
+            // - Empty imports (import {}): skip
+            if import.import_clause.is_some()
+                && let Some(clause_node) = self.arena.get(import.import_clause)
+                && let Some(clause) = self.arena.get_import_clause(clause_node)
+            {
+                // Type-only imports are likely needed for type references
+                let is_type_only = clause.is_type_only;
+
+                // Default import - keep for type-only, skip otherwise without tracking
+                default_count = if is_type_only {
+                    usize::from(clause.name.is_some())
+                } else {
+                    0
+                };
+
+                // Named bindings: check if there are actually any specifiers
+                if clause.named_bindings.is_some() {
+                    if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                        && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+                    {
+                        if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                            // Namespace import (import * as ns): skip in fallback mode
+                            // These are almost exclusively for value-level code (ns.method())
+                            // and rarely needed in .d.ts output
+                            named_count = 0;
+                        } else if is_type_only {
+                            // Type-only named imports - keep all
+                            named_count = bindings.elements.nodes.len();
+                        } else {
+                            // Regular named imports - keep (may be type references)
+                            named_count = bindings.elements.nodes.len();
+                        }
+                    } else {
+                        named_count = if is_type_only { 1 } else { 0 };
+                    }
+                }
+            } else {
+                // No import clause - side-effect import handled elsewhere
+                default_count = 0;
+                named_count = 0;
+            }
         }
 
         (default_count, named_count)
@@ -749,6 +805,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.pending_source_pos.take()
     }
 
+    /// Returns the quote character used for a string literal in the original source.
+    /// Falls back to double quote if source text is unavailable.
+    pub(crate) fn original_quote_char(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> &'static str {
+        if let Some(text) = self.source_file_text.as_ref() {
+            let pos = node.pos as usize;
+            if pos < text.len() {
+                let ch = text.as_bytes()[pos];
+                if ch == b'\'' {
+                    return "'";
+                }
+            }
+        }
+        "\""
+    }
+
     pub(crate) fn get_source_slice(&self, start: u32, end: u32) -> Option<String> {
         let text = self.source_file_text.as_ref()?;
         let start = start as usize;
@@ -919,7 +993,8 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ident.escaped_text.clone());
         }
         if let Some(literal) = self.arena.get_literal(node) {
-            return Some(format!("\"{}\"", literal.text));
+            let quote = self.original_quote_char(node);
+            return Some(format!("{}{}{}", quote, literal.text, quote));
         }
         self.get_source_slice(node.pos, node.end)
     }
@@ -1371,8 +1446,10 @@ impl<'a> DeclarationEmitter<'a> {
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
                 self.write(": ");
                 self.write(&type_text);
-            } else if keyword != "const" {
-                // For var/let without type info, default to `: any` to match tsc
+            } else if has_initializer || keyword != "const" {
+                // tsc always emits a type annotation in .d.ts output.
+                // For var/let without type info, and for const with an
+                // initializer but no resolved type, default to `: any`.
                 self.write(": any");
             }
         }
