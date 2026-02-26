@@ -165,3 +165,133 @@ function beastFoo(beast: Object) {
         panic!("Found TS2322 error (Narrowing failed): {relevant:?}");
     }
 }
+
+/// Regression test: type predicate narrowing must work for primitive types.
+///
+/// Previously, the flow analysis fast-path in `apply_flow_narrowing` would
+/// short-circuit for `TypeId::STRING` and `TypeId::NUMBER`, returning the
+/// declared type without applying any flow narrowing. This prevented
+/// user-defined type predicates from narrowing primitive types to literal
+/// subtypes (e.g., `value is "foo"` narrowing `string` to `"foo"`).
+#[test]
+fn test_type_predicate_narrows_string_to_literal() {
+    let source = r#"
+declare function isFoo(value: string): value is "foo";
+declare function doThis(value: "foo"): void;
+declare function doThat(value: string): void;
+
+function test(value: string) {
+    if (isFoo(value)) {
+        doThis(value);
+    } else {
+        doThat(value);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    // Filter out TS2318 (missing global types) — not relevant here.
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // TS2345 would mean the type predicate narrowing failed — value is still
+    // `string` instead of being narrowed to `"foo"`.
+    if relevant.iter().any(|(code, _)| *code == 2345) {
+        panic!(
+            "Found TS2345 error — type predicate narrowing to literal type failed: {relevant:?}"
+        );
+    }
+}
+
+/// Regression test: type predicate narrowing for literal type union.
+///
+/// Same issue as above but with `value is ("foo" | "bar")`.
+#[test]
+fn test_type_predicate_narrows_string_to_literal_union() {
+    let source = r#"
+declare function isFooOrBar(value: string): value is ("foo" | "bar");
+declare function doThis(value: "foo" | "bar"): void;
+
+function test(value: string) {
+    if (isFooOrBar(value)) {
+        doThis(value);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    if relevant.iter().any(|(code, _)| *code == 2345) {
+        panic!(
+            "Found TS2345 error — type predicate narrowing to literal union failed: {relevant:?}"
+        );
+    }
+}
