@@ -343,7 +343,13 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let type_id = if let Some(pattern_type) = element_type_from_pattern {
-                    if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
+                    if param.type_annotation.is_some() {
+                        // When there's an explicit type annotation (e.g. `{ name }: Robot`),
+                        // always use the annotation type for the function signature parameter.
+                        // Using the destructured pattern type would lose properties not
+                        // destructured, causing false TS2353 excess property errors at call sites.
+                        type_id
+                    } else if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
                         if self.is_assignable_to(type_id, pattern_type) {
                             pattern_type
                         } else {
