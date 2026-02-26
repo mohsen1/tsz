@@ -459,24 +459,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if let Some(key) =
                     get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)
                     && let Some(sym_id) = self.ctx.binder.file_locals.get(key.as_str())
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && symbol.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                        && symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
-                    {
-                        if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
-                            let message = crate::diagnostics::format_message(
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && symbol.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                    && symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
+                {
+                    if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
+                        let message = crate::diagnostics::format_message(
                                 crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                                 &[key.as_str(), "typeof globalThis"],
                             );
-                            self.ctx.error(
-                                idx_node.pos,
-                                idx_node.end - idx_node.pos,
-                                message,
-                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                            );
-                        }
-                        return TypeId::ERROR;
+                        self.ctx.error(
+                            idx_node.pos,
+                            idx_node.end - idx_node.pos,
+                            message,
+                            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
                     }
+                    return TypeId::ERROR;
+                }
             }
 
             factory.index_access(object_type, index_type)
@@ -1489,11 +1489,11 @@ fn is_typeof_global_this_type_node(
         // Check if we reached a TYPE_QUERY with "globalThis" as expr_name
         if node.kind == syntax_kind_ext::TYPE_QUERY
             && let Some(tq) = arena.get_type_query(node)
-                && let Some(ident_node) = arena.get(tq.expr_name)
-                && let Some(ident) = arena.get_identifier(ident_node)
-            {
-                return ident.escaped_text == "globalThis";
-            }
+            && let Some(ident_node) = arena.get(tq.expr_name)
+            && let Some(ident) = arena.get_identifier(ident_node)
+        {
+            return ident.escaped_text == "globalThis";
+        }
         return false;
     }
 }
