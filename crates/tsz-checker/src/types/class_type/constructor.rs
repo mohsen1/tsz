@@ -509,9 +509,9 @@ impl<'a> CheckerState<'a> {
                         self.resolve_param_type_annotation(base_sym_id)
                         && tsz_solver::visitor::type_param_info(self.ctx.types, annotation_type_id)
                             .is_some()
-                        {
-                            base_type_param = Some(annotation_type_id);
-                        }
+                    {
+                        base_type_param = Some(annotation_type_id);
+                    }
 
                     // Pop the temporary type parameters
                     if !enclosing_type_param_updates.is_empty() {
@@ -869,10 +869,11 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
             {
                 if let Some(func) = self.ctx.arena.get_function(parent_node)
-                    && func.type_parameters.is_some() {
-                        let (_, updates) = self.push_type_parameters(&func.type_parameters);
-                        return updates;
-                    }
+                    && func.type_parameters.is_some()
+                {
+                    let (_, updates) = self.push_type_parameters(&func.type_parameters);
+                    return updates;
+                }
                 return Vec::new();
             }
 
@@ -895,14 +896,16 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(value_decl)?;
         // Check if the declaration is a parameter with a type annotation
         if let Some(param) = self.ctx.arena.get_parameter(node)
-            && param.type_annotation.is_some() {
-                return Some(self.get_type_from_type_node(param.type_annotation));
-            }
+            && param.type_annotation.is_some()
+        {
+            return Some(self.get_type_from_type_node(param.type_annotation));
+        }
         // Also check variable declarations (e.g., const-declared parameter aliases)
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
-            && var_decl.type_annotation.is_some() {
-                return Some(self.get_type_from_type_node(var_decl.type_annotation));
-            }
+            && var_decl.type_annotation.is_some()
+        {
+            return Some(self.get_type_from_type_node(var_decl.type_annotation));
+        }
         None
     }
 }
