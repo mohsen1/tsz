@@ -21,6 +21,9 @@ pub(crate) struct ClassMemberInfo {
     pub(crate) is_accessor: bool,
     pub(crate) is_abstract: bool,
     pub(crate) has_override: bool,
+    /// True when `override` comes from a JSDoc `@override` tag (not the keyword).
+    /// Used to emit TS4118-4123 (JSDoc variants) instead of TS4112-4117.
+    pub(crate) is_jsdoc_override: bool,
     pub(crate) has_dynamic_name: bool,
     /// True when the member name is a computed property whose expression is NOT
     /// a direct string/number literal. tsc uses this (`isComputedNonLiteralName`)
@@ -194,6 +197,111 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect all property names from a type via the solver query boundary API.
+    /// Used for type-level override checking when the base class is a complex
+    /// expression (function call, intersection constructor).
+    fn collect_property_names_from_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> rustc_hash::FxHashSet<String> {
+        // Resolve Lazy types through the checker's type environment first
+        let resolved = self.resolve_lazy_type(type_id);
+        // Use the query boundary function which properly traverses Object/Intersection/Union
+        let atoms =
+            crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
+                self.ctx.types,
+                resolved,
+                5, // max_depth sufficient for class hierarchies
+            );
+        atoms
+            .into_iter()
+            .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
+            .collect()
+    }
+
+    /// Check override members against a type-level base class (when AST resolution fails).
+    /// Used for complex heritage expressions: function calls, intersection constructors, etc.
+    fn check_override_members_against_type(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        _derived_class_name: &str,
+        base_class_name: &str,
+        base_member_names: &rustc_hash::FxHashSet<String>,
+        no_implicit_override: bool,
+    ) {
+        for &member_idx in &class_data.members.nodes {
+            let Some(info) = self.extract_class_member_info(member_idx, false) else {
+                continue;
+            };
+
+            if info.name.starts_with('#') {
+                continue;
+            }
+
+            if info.has_dynamic_name {
+                if info.has_override {
+                    self.error_at_node(
+                        info.name_idx,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                            &[],
+                        ),
+                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                    );
+                }
+                continue;
+            }
+
+            if info.has_override {
+                if !base_member_names.contains(&info.name) {
+                    // Member not found in base — check for suggestion
+                    if let Some(suggestion) =
+                        self.find_override_name_suggestion(base_member_names, &info.name)
+                    {
+                        self.error_at_node(
+                            info.name_idx,
+                            &crate::diagnostics::format_message(
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                &[base_class_name, &suggestion],
+                            ),
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                        );
+                    } else {
+                        self.error_at_node(
+                            info.name_idx,
+                            &crate::diagnostics::format_message(
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                                &[base_class_name],
+                            ),
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                        );
+                    }
+                }
+            } else if no_implicit_override
+                && base_member_names.contains(&info.name)
+                && !info.has_computed_non_literal_name
+            {
+                self.error_at_node(
+                    info.name_idx,
+                    &crate::diagnostics::format_message(
+                        diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                        &[base_class_name],
+                    ),
+                    diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                );
+            }
+        }
+
+        // Also check constructor parameter properties
+        self.check_constructor_parameter_property_overrides(
+            class_data,
+            None,
+            base_class_name,
+            base_member_names,
+            no_implicit_override,
+        );
+    }
+
     /// Find a close member name from base class members for "Did you mean ...?".
     fn find_override_name_suggestion(
         &self,
@@ -324,8 +432,10 @@ impl<'a> CheckerState<'a> {
 
                 if has_override {
                     if base_class_idx.is_none() {
+                        // tsc points at the parameter declaration (starting at the
+                        // first modifier like 'public'), not just the identifier name.
                         self.error_at_node(
-                            param.name,
+                            param_idx,
                             &crate::diagnostics::format_message(
                                 diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
                                 &[base_class_name],
@@ -336,11 +446,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if base_member.is_none() {
+                        // tsc points at the parameter declaration (starting at the
+                        // first modifier like 'public'), not just the identifier name.
                         if let Some(suggestion) = self
                             .find_override_name_suggestion(base_instance_member_names, &param_name)
                         {
                             self.error_at_node(
-                                param.name,
+                                param_idx,
                                 &crate::diagnostics::format_message(
                                     diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
                                     &[base_class_name, &suggestion],
@@ -349,7 +461,7 @@ impl<'a> CheckerState<'a> {
                             );
                         } else {
                             self.error_at_node(
-                                param.name,
+                                param_idx,
                                 &crate::diagnostics::format_message(
                                     diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
                                     &[base_class_name],
@@ -422,6 +534,8 @@ impl<'a> CheckerState<'a> {
                     is_abstract,
                     has_override: self.has_override_modifier(&prop.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
+                    is_jsdoc_override: !self.has_override_modifier(&prop.modifiers)
+                        && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(prop.name),
                 })
@@ -464,6 +578,8 @@ impl<'a> CheckerState<'a> {
                     is_abstract,
                     has_override: self.has_override_modifier(&method.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
+                    is_jsdoc_override: !self.has_override_modifier(&method.modifiers)
+                        && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(method.name),
                 })
@@ -499,6 +615,8 @@ impl<'a> CheckerState<'a> {
                     is_abstract,
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
+                    is_jsdoc_override: !self.has_override_modifier(&accessor.modifiers)
+                        && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                 })
@@ -541,6 +659,8 @@ impl<'a> CheckerState<'a> {
                     is_abstract,
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
+                    is_jsdoc_override: !self.has_override_modifier(&accessor.modifiers)
+                        && self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                 })
@@ -624,6 +744,9 @@ impl<'a> CheckerState<'a> {
         let mut base_class_idx: Option<NodeIndex> = None;
         let mut base_class_name = String::new();
         let mut base_type_argument_nodes: Option<Vec<NodeIndex>> = None;
+        // Save heritage expression info for type-level fallback when AST resolution fails
+        let mut heritage_expr_idx: Option<NodeIndex> = None;
+        let mut heritage_type_idx: Option<NodeIndex> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -656,6 +779,8 @@ impl<'a> CheckerState<'a> {
                         // For simple identifiers without type arguments, the type_node itself is the identifier
                         (type_idx, None)
                     };
+                heritage_expr_idx = Some(expr_idx);
+                heritage_type_idx = Some(type_idx);
                 if let Some(args) = type_arguments {
                     base_type_argument_nodes = Some(args.nodes.clone());
                 }
@@ -740,7 +865,34 @@ impl<'a> CheckerState<'a> {
         let no_implicit_override = self.ctx.no_implicit_override() && !is_ambient_class;
 
         let Some(base_idx) = base_class_idx else {
-            // Even without a base class, explicit `override` is invalid.
+            // No AST-level class declaration found. Try type-level fallback for complex
+            // heritage expressions (function calls, intersection types, etc.).
+            if let Some(h_expr_idx) = heritage_expr_idx {
+                let type_arguments = heritage_type_idx.and_then(|tidx| {
+                    self.ctx
+                        .arena
+                        .get(tidx)
+                        .and_then(|n| self.ctx.arena.get_expr_type_args(n))
+                        .and_then(|e| e.type_arguments.as_ref())
+                });
+                if let Some(instance_type) =
+                    self.base_instance_type_from_expression(h_expr_idx, type_arguments)
+                {
+                    let type_base_name = self.format_type(instance_type);
+                    let base_member_names = self.collect_property_names_from_type(instance_type);
+
+                    self.check_override_members_against_type(
+                        class_data,
+                        &derived_class_name,
+                        &type_base_name,
+                        &base_member_names,
+                        no_implicit_override,
+                    );
+                    return;
+                }
+            }
+
+            // True fallback: no extends clause resolved at all — emit TS4112
             for &member_idx in &class_data.members.nodes {
                 let Some(info) = self.extract_class_member_info(member_idx, false) else {
                     continue;
@@ -783,12 +935,39 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Get the base class data
+        // Get the base class data. If the resolved node is not a class declaration
+        // (e.g., variable typed as intersection of constructors), use type-level fallback.
         let Some(base_node) = self.ctx.arena.get(base_idx) else {
             return;
         };
 
         let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+            // base_idx points to a non-class node (e.g., variable declaration).
+            // Fall back to type-level resolution via base_instance_type_from_expression.
+            if let Some(h_expr_idx) = heritage_expr_idx {
+                let type_arguments = heritage_type_idx.and_then(|tidx| {
+                    self.ctx
+                        .arena
+                        .get(tidx)
+                        .and_then(|n| self.ctx.arena.get_expr_type_args(n))
+                        .and_then(|e| e.type_arguments.as_ref())
+                });
+                if let Some(instance_type) =
+                    self.base_instance_type_from_expression(h_expr_idx, type_arguments)
+                {
+                    let type_base_name = self.format_type(instance_type);
+                    let base_member_names = self.collect_property_names_from_type(instance_type);
+
+                    self.check_override_members_against_type(
+                        class_data,
+                        &derived_class_name,
+                        &type_base_name,
+                        &base_member_names,
+                        no_implicit_override,
+                    );
+                    return;
+                }
+            }
             return;
         };
 
@@ -863,6 +1042,7 @@ impl<'a> CheckerState<'a> {
                 is_static,
                 is_accessor,
                 has_override,
+                is_jsdoc_override,
                 has_dynamic_name,
                 is_abstract,
                 has_computed_non_literal_name,
@@ -875,6 +1055,7 @@ impl<'a> CheckerState<'a> {
                 info.is_static,
                 info.is_accessor,
                 info.has_override,
+                info.is_jsdoc_override,
                 info.has_dynamic_name,
                 info.is_abstract,
                 info.has_computed_non_literal_name,
@@ -920,22 +1101,43 @@ impl<'a> CheckerState<'a> {
                     if let Some(suggestion) =
                         self.find_override_name_suggestion(suggestion_names, &member_name)
                     {
+                        // TS4117 (keyword) or TS4123 (JSDoc): "Did you mean ...?"
+                        let (msg, code) = if is_jsdoc_override {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D_2,
+                            )
+                        } else {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                            )
+                        };
                         self.error_at_node(
                             member_name_idx,
                             &crate::diagnostics::format_message(
-                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                msg,
                                 &[&base_class_name, &suggestion],
                             ),
-                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                            code,
                         );
                     } else {
+                        // TS4113 (keyword) or TS4122 (JSDoc): not declared in base
+                        let (msg, code) = if is_jsdoc_override {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_IT_IS_NOT_D,
+                            )
+                        } else {
+                            (
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                            )
+                        };
                         self.error_at_node(
                             member_name_idx,
-                            &crate::diagnostics::format_message(
-                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
-                                &[&base_class_name],
-                            ),
-                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                            &crate::diagnostics::format_message(msg, &[&base_class_name]),
+                            code,
                         );
                     }
                     continue;
