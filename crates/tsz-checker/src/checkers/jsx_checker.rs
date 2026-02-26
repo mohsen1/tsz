@@ -146,7 +146,19 @@ impl<'a> CheckerState<'a> {
         } else {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
-            self.compute_type_of_node(tag_name_idx)
+            let component_type = self.compute_type_of_node(tag_name_idx);
+            let evaluated = self.evaluate_type_with_env(component_type);
+
+            // Extract props type from the component and check attributes
+            if let Some(props_type) = self.get_jsx_props_type_for_component(evaluated) {
+                self.check_jsx_attributes_against_props(
+                    jsx_opening.attributes,
+                    props_type,
+                    jsx_opening.tag_name,
+                );
+            }
+
+            component_type
         }
     }
 
@@ -289,21 +301,227 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // JSX Component Props Extraction
+    // =========================================================================
+
+    /// Extract the props type from a JSX component type.
+    ///
+    /// TSC extracts props differently for function vs class components:
+    /// - **SFC (Stateless Function Component)**: first parameter type of call signature
+    /// - **Class component**: construct signature return type → property from
+    ///   `JSX.ElementAttributesProperty` (or the full instance type if empty)
+    fn get_jsx_props_type_for_component(&mut self, component_type: TypeId) -> Option<TypeId> {
+        if component_type == TypeId::ANY
+            || component_type == TypeId::ERROR
+            || component_type == TypeId::UNKNOWN
+        {
+            return None;
+        }
+
+        // G1: Skip component attribute checking when the file has parse errors.
+        // Parse errors can cause incorrect AST that leads to false-positive type
+        // errors. TSC similarly suppresses some JSX checking in error-recovery
+        // situations (e.g., tsxStatelessFunctionComponents1 with TS1005).
+        if self.ctx.has_parse_errors {
+            return None;
+        }
+
+        // Skip type parameters — we can't check attributes against unresolved generics
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+            return None;
+        }
+
+        // Try SFC first: get call signatures → first parameter is props type
+        if let Some(props) = self.get_sfc_props_type(component_type) {
+            // Don't check if the resolved props type is a type parameter
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
+                return None;
+            }
+            // G5: Skip union-typed props — we don't do contextual union narrowing
+            // for discriminated unions in JSX attribute checking
+            if tsz_solver::is_union_type(self.ctx.types, props) {
+                return None;
+            }
+            return Some(props);
+        }
+
+        // Try class component: get construct signatures → instance type → props
+        if let Some(props) = self.get_class_component_props_type(component_type) {
+            if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
+                return None;
+            }
+            if tsz_solver::is_union_type(self.ctx.types, props) {
+                return None;
+            }
+            return Some(props);
+        }
+
+        None
+    }
+
+    /// Extract props type from a Stateless Function Component (SFC).
+    ///
+    /// SFCs are functions where the first parameter is the props type:
+    /// `function Comp(props: { x: number }) { return <div/>; }`
+    fn get_sfc_props_type(&mut self, component_type: TypeId) -> Option<TypeId> {
+        // Check Function type (single signature)
+        if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            && !shape.is_constructor
+        {
+            // Skip generic SFCs — we can't infer type args without full inference
+            if !shape.type_params.is_empty() {
+                return None;
+            }
+            let props = shape
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let evaluated = self.evaluate_type_with_env(props);
+            return Some(evaluated);
+        }
+
+        // Check Callable type (overloaded signatures)
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+            && !sigs.is_empty()
+        {
+            // G4: Skip overloaded SFCs — we don't do JSX overload resolution.
+            // Picking the first non-generic overload would produce wrong errors
+            // when later overloads match the provided attributes.
+            let non_generic: Vec<_> = sigs.iter().filter(|s| s.type_params.is_empty()).collect();
+            if non_generic.len() != 1 {
+                return None;
+            }
+            let sig = non_generic[0];
+            let props = sig
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let evaluated = self.evaluate_type_with_env(props);
+            return Some(evaluated);
+        }
+
+        None
+    }
+
+    /// Extract props type from a class component via construct signatures.
+    ///
+    /// For class components, TSC:
+    /// 1. Gets the construct signature return type (the instance type)
+    /// 2. Looks up `JSX.ElementAttributesProperty` to find which instance
+    ///    property holds the props
+    /// 3. If `ElementAttributesProperty` is empty, the instance type IS the props
+    /// 4. If it has a member (e.g., `{ props: {} }`), accesses that property
+    fn get_class_component_props_type(&mut self, component_type: TypeId) -> Option<TypeId> {
+        let sigs =
+            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)?;
+        if sigs.is_empty() {
+            return None;
+        }
+
+        // Get instance type from the first construct signature
+        let sig = sigs.first()?;
+
+        // G3: Skip generic class components — we can't infer type arguments
+        // without full generic type inference for JSX elements
+        if !sig.type_params.is_empty() {
+            return None;
+        }
+
+        let instance_type = sig.return_type;
+        if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
+            return None;
+        }
+
+        // Look up ElementAttributesProperty to know which instance property is props
+        let prop_name = self.get_element_attributes_property_name();
+
+        match prop_name {
+            None => {
+                // G2: No ElementAttributesProperty → no JSX infrastructure.
+                // TSC skips attribute checking when JSX types aren't configured.
+                None
+            }
+            Some(ref name) if name.is_empty() => {
+                // Empty ElementAttributesProperty → instance type IS the props
+                let evaluated_instance = self.evaluate_type_with_env(instance_type);
+                Some(evaluated_instance)
+            }
+            Some(ref name) => {
+                // ElementAttributesProperty has a member → access that property on instance
+                let evaluated_instance = self.evaluate_type_with_env(instance_type);
+                use tsz_solver::operations::property::PropertyAccessResult;
+                match self.resolve_property_access_with_env(evaluated_instance, name) {
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        let evaluated = self.evaluate_type_with_env(type_id);
+                        Some(evaluated)
+                    }
+                    // If we can't resolve the attribute property, fall back to
+                    // first construct param (like SFC) rather than instance type
+                    _ => {
+                        let props = sig.params.first().map(|p| p.type_id)?;
+                        let evaluated = self.evaluate_type_with_env(props);
+                        Some(evaluated)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the property name from `JSX.ElementAttributesProperty`.
+    ///
+    /// Returns:
+    /// - `None` if `ElementAttributesProperty` doesn't exist
+    /// - `Some("")` if it exists but has no members (empty interface)
+    /// - `Some("props")` if it has a member (e.g., `{ props: {} }`)
+    fn get_element_attributes_property_name(&mut self) -> Option<String> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let eap_sym_id = exports.get("ElementAttributesProperty")?;
+
+        // Get the type of ElementAttributesProperty
+        let eap_type = self.type_reference_symbol_type(eap_sym_id);
+        let evaluated = self.evaluate_type_with_env(eap_type);
+
+        // Check if it has any properties
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated) {
+            if shape.properties.is_empty() {
+                return Some(String::new()); // Empty interface
+            }
+            // Return the name of the first (and typically only) property
+            if let Some(first_prop) = shape.properties.first() {
+                return Some(self.ctx.types.resolve_atom(first_prop.name));
+            }
+        }
+
+        Some(String::new()) // Default: empty (instance type is props)
+    }
+
+    // =========================================================================
     // JSX Attribute Type Checking
     // =========================================================================
 
-    /// Check if a string is a valid JavaScript identifier.
-    /// Used to avoid type-checking invalid JSX attribute names that should be parser errors.
+    /// Check if a string is a valid JS identifier (used to filter JSX attribute names).
+    ///
+    /// Hyphenated names (e.g., `data-foo`, `aria-label`) are valid JSX syntax but
+    /// TSC treats them as "extra" attributes that bypass type checking. Only standard
+    /// JS identifiers get checked against the props type.
     fn is_valid_js_identifier(s: &str) -> bool {
         let mut chars = s.chars();
         let Some(first) = chars.next() else {
             return false;
         };
-        // JavaScript identifiers must start with a letter, $, or _
         if !first.is_ascii_alphabetic() && first != '$' && first != '_' {
             return false;
         }
-        // Subsequent characters can also include digits
         chars.all(|c| c.is_ascii_alphanumeric() || c == '$' || c == '_')
     }
 
@@ -471,22 +689,11 @@ impl<'a> CheckerState<'a> {
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 has_spread = true;
-                // Spread attribute: {...obj}
-                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
-                    continue;
-                };
-
-                let spread_type = self.compute_type_of_node(spread_data.expression);
-
-                if spread_type != TypeId::ANY && spread_type != TypeId::ERROR {
-                    // tsc anchors spread attribute errors at the tag name
-                    self.check_assignable_or_report_at(
-                        spread_type,
-                        props_type,
-                        spread_data.expression,
-                        tag_name_idx,
-                    );
-                }
+                // Note: we skip spread assignability checking because TSC merges
+                // spread properties with explicit attributes before checking, and
+                // we don't implement that merge yet. Checking the raw spread type
+                // against the full props type would produce false positives when
+                // explicit attributes override or supplement spread properties.
             }
         }
 
@@ -518,6 +725,20 @@ impl<'a> CheckerState<'a> {
             }
 
             let prop_name = self.ctx.types.resolve_atom(prop.name);
+
+            // Skip 'children' — TSC synthesizes children from JSX element body,
+            // which we don't implement yet. Reporting 'children' as missing would
+            // produce false positives.
+            if prop_name == "children" {
+                continue;
+            }
+
+            // Skip 'key' and 'ref' — these come from IntrinsicAttributes/
+            // IntrinsicClassAttributes, not from component props directly
+            if prop_name == "key" || prop_name == "ref" {
+                continue;
+            }
+
             if provided_attrs.iter().any(|a| a == &prop_name) {
                 continue;
             }

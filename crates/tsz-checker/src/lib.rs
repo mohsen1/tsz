@@ -104,6 +104,9 @@ mod enum_merge_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "../tests/jsx_component_attribute_tests.rs"]
+mod jsx_component_attribute_tests;
+#[cfg(test)]
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
