@@ -86,6 +86,95 @@ impl<'a> Printer<'a> {
         self.write(");");
     }
 
+    /// Collect decorated class members and emit `__decorate` calls for them.
+    ///
+    /// For legacy (experimental) decorators, tsc emits `__decorate` calls after the
+    /// class body for each decorated member:
+    /// - Methods/accessors: `__decorate([...], ClassName.prototype, "name", null);`
+    /// - Properties: `__decorate([...], ClassName.prototype, "name", void 0);`
+    /// - Static members: `__decorate([...], ClassName, "name", ...);`
+    pub(in crate::emitter) fn emit_legacy_member_decorator_calls(
+        &mut self,
+        class_name: &str,
+        members: &[NodeIndex],
+    ) {
+        if class_name.is_empty() {
+            return;
+        }
+
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let (modifiers, name_idx, is_property) = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    (&method.modifiers, method.name, false)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    (&prop.modifiers, prop.name, true)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    (&accessor.modifiers, accessor.name, false)
+                }
+                _ => continue,
+            };
+
+            // Collect decorator nodes from modifiers
+            let decorators = self.collect_class_decorators(modifiers);
+            if decorators.is_empty() {
+                continue;
+            }
+
+            let is_static = self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::StaticKeyword);
+
+            let member_name = self.get_identifier_text_idx(name_idx);
+            if member_name.is_empty() {
+                // Computed property names are not supported for legacy decorator lowering
+                continue;
+            }
+
+            self.write("__decorate([");
+            self.write_line();
+            self.increase_indent();
+            for (i, &dec_idx) in decorators.iter().enumerate() {
+                if let Some(dec_node) = self.arena.get(dec_idx)
+                    && let Some(dec) = self.arena.get_decorator(dec_node)
+                {
+                    self.emit(dec.expression);
+                    if i + 1 != decorators.len() {
+                        self.write(",");
+                    }
+                    self.write_line();
+                }
+            }
+            self.decrease_indent();
+            self.write("], ");
+            self.write(class_name);
+            if !is_static {
+                self.write(".prototype");
+            }
+            self.write(", ");
+            self.emit_string_literal_text(&member_name);
+            if is_property {
+                self.write(", void 0);");
+            } else {
+                self.write(", null);");
+            }
+        }
+    }
+
     /// Emit a class declaration.
     pub(in crate::emitter) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(class) = self.arena.get_class(node) else {
@@ -109,7 +198,40 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        if !legacy_class_decorators.is_empty() {
+        // Check if any members have legacy decorators (method, property, accessor decorators)
+        let has_legacy_member_decorators = self.ctx.options.legacy_decorators
+            && class.members.nodes.iter().any(|&m_idx| {
+                let Some(m_node) = self.arena.get(m_idx) else {
+                    return false;
+                };
+                let mods = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(m_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(m_node)
+                        .and_then(|p| p.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(m_node)
+                            .and_then(|a| a.modifiers.as_ref())
+                    }
+                    _ => None,
+                };
+                mods.is_some_and(|m| {
+                    m.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                })
+            });
+
+        if !legacy_class_decorators.is_empty() || has_legacy_member_decorators {
             let class_name = if class.name.is_none() {
                 self.anonymous_default_export_name
                     .clone()
@@ -172,12 +294,29 @@ impl<'a> Printer<'a> {
                 return;
             }
 
-            self.emit_class_es6_with_options(node, idx, true, Some(("let", class_name.clone())));
+            // When there are class-level decorators, emit as `let Name = class { ... };`
+            // When only member decorators, emit as normal `class Name { ... }`
+            if !legacy_class_decorators.is_empty() {
+                self.emit_class_es6_with_options(
+                    node,
+                    idx,
+                    true,
+                    Some(("let", class_name.clone())),
+                );
+            } else {
+                self.emit_class_es6_with_options(node, idx, false, None);
+            }
             // Only write newline if not already at line start (class declarations
             // with lowered static fields already end with write_line()).
             if !self.writer.is_at_line_start() {
                 self.write_line();
             }
+
+            // Emit __decorate calls for member decorators (methods, properties, accessors)
+            if has_legacy_member_decorators {
+                self.emit_legacy_member_decorator_calls(&class_name, &class.members.nodes);
+            }
+
             let commonjs_exported = self.ctx.is_commonjs()
                 && self
                     .arena
