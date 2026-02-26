@@ -467,6 +467,17 @@
 - **Symptoms**: TS2428, TS2564, TS2454 and many other diagnostics missing in conformance tests
 - **Root cause**: Changes to `types/queries/binding.rs` array binding pattern handling restructured iteration logic. Need investigation.
 
+#### Run note (2026-02-26) — interfaces/interfaceDeclarations area (TS2430 type alias bases + error location)
+- **Area**: interfaces/interfaceDeclarations
+- **Changes**:
+  1. **TS2430 type alias base checking**: Added property compatibility checking when interface extends a type alias (e.g., `interface I extends T1 { ... }` where `type T1 = { a: number }`). Uses DefId-first resolution for generic aliases with type arguments. Supports intersection type alias bases by searching each intersection member.
+  2. **TS2430 error location fix**: Changed error location for private member conflicts from the conflicting member to the interface name (matching tsc behavior).
+- **Key implementation detail**: `get_type_of_interface_member` returns an ObjectShape wrapping the property, not the raw property type. When comparing derived member types against base property types from `find_property_in_type_by_str`, we must extract the raw property type from the ObjectShape using `find_property_in_type_by_str` on the derived member type too.
+- **Tests added**: 5 new unit tests (type alias incompatible, compatible, intersection incompatible, mapped type ignored, private member error location).
+- **Conformance gain**: +5 tests (interfaceWithPropertyThatIsPrivateInBaseType, interfaceWithPropertyThatIsPrivateInBaseType2, interfaceExtendingClassWithPrivates, interfaceExtendingClassWithProtecteds, typeofANonExportedType). Verified via test list diff (baseline 3311 fails → 3309 fails, +2 net after flaky test noise).
+- **Note**: Cannot see gain in FINAL RESULTS due to upstream regression (beaf4f9fc6).
+- **Remaining gaps**: Mapped type alias bases not yet evaluated in unit test environment. `typeof CX`/`typeof EX`/`typeof NX` base types use alias name instead of resolved type in error messages.
+
 #### Run note (2026-02-26) — interfaces/declarationMerging area (TS2411/TS2413)
 - **Area**: interfaces/declarationMerging (24/28 → 25/28, 85.7% → 89.3%)
 - **Net gain**: +1 test (mergedInterfacesWithIndexers2)
