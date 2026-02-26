@@ -122,8 +122,19 @@ impl<'a> CheckerState<'a> {
                 return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
-            // TypeScript gates this on noImplicitAny: the diagnostic name includes "implicitly has type 'any'".
-            if self.ctx.compiler_options.no_implicit_any {
+            // tsc emits this unconditionally (regardless of noImplicitAny) when JSX.IntrinsicElements is absent.
+            // The word "implicitly" in the message refers to the missing JSX infrastructure, not the noImplicitAny flag.
+            //
+            // Suppression rules (matching tsc behaviour):
+            // 1. ReactJsx/ReactJsxDev modes use jsxImportSource for element types; they do not rely on
+            //    the global JSX.IntrinsicElements, so TS7026 must not fire.
+            // 2. When the file has parser-level errors (e.g. malformed JSX attributes → TS1145),
+            //    tsc suppresses TS7026 to avoid double-reporting in error-recovery situations.
+            use tsz_common::checker_options::JsxMode;
+            let jsx_mode = self.ctx.compiler_options.jsx_mode;
+            let uses_import_source =
+                jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
+            if !uses_import_source && !self.ctx.has_parse_errors {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     idx,
@@ -171,9 +182,16 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
+        // Same suppression rules as the opening-element TS7026 check:
+        // - ReactJsx/ReactJsxDev use jsxImportSource (no global IntrinsicElements needed)
+        // - File has parse errors → suppress to avoid double-reporting
+        use tsz_common::checker_options::JsxMode;
+        let jsx_mode = self.ctx.compiler_options.jsx_mode;
+        let uses_import_source = jsx_mode == JsxMode::ReactJsx || jsx_mode == JsxMode::ReactJsxDev;
         if is_intrinsic
             && self.get_intrinsic_elements_type().is_none()
-            && self.ctx.compiler_options.no_implicit_any
+            && !uses_import_source
+            && !self.ctx.has_parse_errors
         {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
