@@ -878,7 +878,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
-                    let type_base_name = self.format_type(instance_type);
+                    // Use intersection display name if available (preserves "I1 & I2"
+                    // instead of showing merged "{ m1: ...; m2: ... }")
+                    let type_base_name = self
+                        .intersection_instance_display_name(h_expr_idx, type_arguments)
+                        .unwrap_or_else(|| self.format_type(instance_type));
                     let base_member_names = self.collect_property_names_from_type(instance_type);
 
                     self.check_override_members_against_type(
@@ -955,7 +959,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(instance_type) =
                     self.base_instance_type_from_expression(h_expr_idx, type_arguments)
                 {
-                    let type_base_name = self.format_type(instance_type);
+                    let type_base_name = self
+                        .intersection_instance_display_name(h_expr_idx, type_arguments)
+                        .unwrap_or_else(|| self.format_type(instance_type));
                     let base_member_names = self.collect_property_names_from_type(instance_type);
 
                     self.check_override_members_against_type(
