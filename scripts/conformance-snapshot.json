@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T16:33:47Z",
-  "git_sha": "71719ad78ae4c17544a2fe607c6af3d4b9687bae",
+  "timestamp": "2026-02-26T16:47:30Z",
+  "git_sha": "8c63178aad7860fb7b4286878566a20d27ab7aef",
   "summary": {
     "total_tests": 12570,
-    "passed": 9235,
-    "failed": 3335,
+    "passed": 9234,
+    "failed": 3336,
     "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
@@ -100,13 +100,6 @@
       "pass_rate": 52.0
     },
     {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 9,
-      "failed": 8,
-      "pass_rate": 52.94
-    },
-    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 16,
@@ -177,6 +170,13 @@
       "pass_rate": 58.33
     },
     {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 10,
+      "failed": 7,
+      "pass_rate": 58.82
+    },
+    {
       "area": "jsdoc",
       "total": 249,
       "passed": 147,
@@ -210,6 +210,13 @@
       "passed": 19,
       "failed": 12,
       "pass_rate": 61.29
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
     },
     {
       "area": "expressions/functionCalls",
@@ -310,13 +317,6 @@
       "pass_rate": 68.57
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 20,
-      "failed": 9,
-      "pass_rate": 68.97
-    },
-    {
       "area": "es6/shorthandPropertyAssignment",
       "total": 13,
       "passed": 9,
@@ -395,10 +395,10 @@
     },
     {
       "area": "compiler",
-      "total": 6507,
+      "total": 6510,
       "passed": 4843,
-      "failed": 1664,
-      "pass_rate": 74.43
+      "failed": 1667,
+      "pass_rate": 74.39
     },
     {
       "area": "es6/yieldExpressions",
