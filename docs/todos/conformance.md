@@ -1,13 +1,34 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7116/12570 (56.6%) — full suite, fingerprint level (new framework)
+**Current score**: ~9232/12570 (73.4%) — full suite, fingerprint level (new framework)
 > Note: `noUncheckedSideEffectImports` default changed to `true` (matching tsc 6.0)
 > causes TS2882 on many tests with side-effect imports, dropping from ~9210 to ~7116.
+> Score recovered after fixing TS2882 regression.
 
 ---
 
 ## High Impact — Core Type System
+
+### jsx — Global augmentation namespace resolution (Session 2026-02-26) — DONE
+- **Area**: jsx (46.15% → ~46.8% at error-code level in JSX; +24 tests overall)
+- **Root cause**: `declare global { namespace JSX { ... } }` inside `declare module "react"`
+  in react16.d.ts placed the JSX namespace symbol only in the module scope. The binder's
+  `declare_symbol()` only adds to `file_locals` when the current scope is `SourceFile`.
+  Since the global block is nested inside the react module, the scope is Module, not
+  SourceFile. `file_locals` is the gateway through which symbols propagate across files
+  during the multi-file merge in `parallel.rs`, so JSX was invisible to the checker.
+- **Fix**: After `declare_symbol` for namespace declarations inside `global { ... }` blocks,
+  also set the symbol in `file_locals`. This matches TypeScript's semantics where `declare
+  global` escapes the enclosing module scope.
+- **Files**: `crates/tsz-binder/src/modules/binding.rs` (3-line fix + comment),
+  `crates/tsz-binder/src/state/tests.rs` (1 new test)
+- **Conformance**: +24 tests net (9195 → 9219 on original base; 9232 on rebased base with
+  other session fixes merged). Eliminated ~23 false-positive TS7026 diagnostics in JSX tests.
+- **Remaining JSX gaps**: TS2322 missing=39, TS2786 (not implemented), TS2769 (not implemented),
+  TS2875 (not implemented), TS7026 extra=17 (remaining tests with legitimately missing
+  IntrinsicElements or tests using `@jsxImportSource` which may need separate namespace
+  resolution path)
 
 ### Async function expression/arrow return type unwrapping — RESOLVED (Session 2026-02-26)
 - **Fixed**: `arrowFunctionParsingGenericInObject` (+5 fingerprint-level tests)
