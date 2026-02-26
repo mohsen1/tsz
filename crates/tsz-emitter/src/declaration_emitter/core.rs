@@ -498,7 +498,14 @@ impl<'a> DeclarationEmitter<'a> {
                 // It generates needed type/lib references itself during declaration emit.
                 // Only preserve `<amd-module>` and `<amd-dependency>` directives.
                 if trimmed.starts_with("<amd-module") || trimmed.starts_with("<amd-dependency") {
-                    self.write(text);
+                    // Normalize: ensure space before /> (tsc normalizes this)
+                    let normalized = if text.ends_with("/>") && !text.ends_with(" />") {
+                        let base = &text[..text.len() - 2];
+                        format!("{base} />")
+                    } else {
+                        text.to_string()
+                    };
+                    self.write(&normalized);
                     self.write_line();
                 }
             }
