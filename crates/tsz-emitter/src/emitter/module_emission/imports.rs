@@ -278,14 +278,13 @@ impl<'a> Printer<'a> {
         // so both .default and named exports are accessible.
         let has_default = clause.name.is_some();
         let has_named_bindings = clause.named_bindings.is_some()
-            && self
-                .arena
-                .get(clause.named_bindings)
-                .and_then(|n| self.arena.get_named_imports(n))
-                .is_some_and(|ni| {
-                    // True named imports (not namespace import)
-                    ni.name.is_none() || !ni.elements.nodes.is_empty()
-                });
+            && self.arena.get(clause.named_bindings).is_some_and(|n| {
+                n.kind != syntax_kind_ext::NAMESPACE_IMPORT
+                    && self
+                        .arena
+                        .get_named_imports(n)
+                        .is_some_and(|ni| ni.name.is_none() || !ni.elements.nodes.is_empty())
+            });
         let use_import_star = es_module_interop && has_default && has_named_bindings;
 
         // Emit: const module_1 = __importStar(require("module"));
