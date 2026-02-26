@@ -677,11 +677,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
+    /// `keyword_pos` is the source position of the `satisfies` keyword for accurate TS1360 spans.
     pub(crate) fn check_satisfies_assignable_or_report(
         &mut self,
         source: TypeId,
         target: TypeId,
         source_idx: NodeIndex,
+        keyword_pos: Option<u32>,
     ) -> bool {
         let diag_idx = source_idx;
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
@@ -698,7 +700,12 @@ impl<'a> CheckerState<'a> {
             let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
             if !allowed_keys.contains(&str_lit) {
-                self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx);
+                self.error_type_does_not_satisfy_the_expected_type(
+                    source,
+                    target,
+                    diag_idx,
+                    keyword_pos,
+                );
                 return false;
             }
         }
@@ -714,8 +721,106 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx);
+
+        // Elaborate: for object literal sources, drill into property-level errors
+        // instead of reporting the generic TS1360. This matches tsc behavior where
+        // `{ s: "false" } satisfies { [key: string]: boolean }` reports TS2322 at
+        // the specific mismatching property rather than TS1360 on the whole expression.
+        if let Some(node) = self.ctx.arena.get(source_idx)
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            let elaborated =
+                self.elaborate_satisfies_object_literal(source, target, source_idx, keyword_pos);
+            if elaborated {
+                return false;
+            }
+        }
+
+        self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
         false
+    }
+
+    /// Elaborate a `satisfies` failure for object literal expressions by checking
+    /// each property against the target type's index signature or named properties.
+    /// Returns true if elaboration produced property-level diagnostics.
+    fn elaborate_satisfies_object_literal(
+        &mut self,
+        _source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        _keyword_pos: Option<u32>,
+    ) -> bool {
+        let resolved_target = self.resolve_type_for_property_access(target);
+        let target_shape = match object_shape_for_type(self.ctx.types, resolved_target) {
+            Some(shape) => shape,
+            None => return false,
+        };
+
+        // Get the index signature value type from the target
+        let index_value_type = target_shape.string_index.as_ref().map(|sig| sig.value_type);
+
+        let Some(index_value_type) = index_value_type else {
+            // No string index signature — try elaborating against named target properties.
+            // For targets with named properties (like interfaces), check if there are
+            // missing required properties (TS2741 elaboration) — handled elsewhere.
+            return false;
+        };
+
+        // Iterate over the object literal's AST properties and check each value
+        let Some(lit_data) = self.ctx.arena.get_literal_expr_at(source_idx) else {
+            return false;
+        };
+        let elements: Vec<NodeIndex> = lit_data.elements.nodes.to_vec();
+
+        let diag_count_before = self.ctx.diagnostics.len();
+
+        for &elem_idx in &elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop_data) = self.ctx.arena.get_property_assignment(elem_node) else {
+                continue;
+            };
+
+            // Get the type of the property value (the initializer)
+            let prop_value_type = self.get_type_of_node(prop_data.initializer);
+            self.ensure_relation_input_ready(prop_value_type);
+            self.ensure_relation_input_ready(index_value_type);
+
+            // Check nested object literal excess properties FIRST — tsc prioritizes
+            // excess property errors (TS2353) over assignability errors (TS2322).
+            // e.g., `{ r: 0, g: 0, d: 0 }` vs `Color` reports "d does not exist" (TS2353)
+            // rather than "missing b" (TS2322).
+            if let Some(val_node) = self.ctx.arena.get(prop_data.initializer)
+                && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                let diags_before = self.ctx.diagnostics.len();
+                self.check_object_literal_excess_properties(
+                    prop_value_type,
+                    index_value_type,
+                    prop_data.initializer,
+                );
+                if self.ctx.diagnostics.len() > diags_before {
+                    // Excess property errors were reported — skip assignability check
+                    continue;
+                }
+            }
+
+            if !self.is_assignable_to(prop_value_type, index_value_type) {
+                // Report TS2322 at the property name (use _with_anchor to avoid
+                // assignment_diagnostic_anchor_idx walking up to the variable declaration)
+                self.error_type_not_assignable_at_with_anchor(
+                    prop_value_type,
+                    index_value_type,
+                    prop_data.name,
+                );
+            }
+        }
+
+        self.ctx.diagnostics.len() > diag_count_before
     }
 
     ///

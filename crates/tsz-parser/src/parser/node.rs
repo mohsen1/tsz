@@ -304,6 +304,8 @@ pub struct UnaryExprDataEx {
 pub struct TypeAssertionData {
     pub expression: NodeIndex,
     pub type_node: NodeIndex,
+    /// Position of the `as` or `satisfies` keyword token (used for TS1360 diagnostic spans).
+    pub keyword_pos: u32,
 }
 
 /// Data for return/throw statements

@@ -834,6 +834,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             expr_type,
                             satisfies_type,
                             paren.expression,
+                            None,
                         );
                         expr_type
                     } else {
@@ -912,6 +913,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
 
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                            // TS8037: Type satisfaction expressions can only be used in TypeScript files
+                            if self.checker.is_js_file() {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.checker.error_at_position(
+                                    assertion.keyword_pos,
+                                    9, // "satisfies".len()
+                                    diagnostic_messages::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                    diagnostic_codes::TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                );
+                                return expr_type;
+                            }
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_relation_input_ready(expr_type);
@@ -921,6 +933,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     expr_type,
                                     asserted_type,
                                     assertion.expression,
+                                    Some(assertion.keyword_pos),
                                 );
                             }
                             expr_type
