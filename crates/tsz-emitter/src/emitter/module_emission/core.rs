@@ -138,13 +138,25 @@ impl<'a> Printer<'a> {
         node: &Node,
         idx: NodeIndex,
     ) {
-        // Set temporary override name for anonymous default declarations
+        // For anonymous default function/class declarations, tsc assigns a
+        // synthetic name (`default_1`) and hoists `exports.default = default_1;`
+        // BEFORE the declaration. This works because function declarations are
+        // hoisted in JS.
+        let is_function = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
         let prev = self.anonymous_default_export_name.take();
         self.anonymous_default_export_name = Some("default_1".to_string());
-        self.emit_node_default(node, idx);
+        if is_function {
+            // Function: exports.default before declaration (functions hoist)
+            self.write("exports.default = default_1;");
+            self.write_line();
+            self.emit_node_default(node, idx);
+        } else {
+            // Class/other: declaration first, then exports.default
+            self.emit_node_default(node, idx);
+            self.write_line();
+            self.write("exports.default = default_1;");
+        }
         self.anonymous_default_export_name = prev;
-        self.write_line();
-        self.write("exports.default = default_1;");
     }
 
     pub(in crate::emitter) fn emit_commonjs_default_export_assignment<F>(
@@ -583,7 +595,11 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
-        crate::transforms::emit_utils::export_clause_is_type_only(self.arena, clause_node)
+        crate::transforms::emit_utils::export_clause_is_type_only(
+            self.arena,
+            clause_node,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     /// Check if this declaration is a subsequent (merged) declaration whose name
@@ -976,7 +992,11 @@ impl<'a> Printer<'a> {
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
     ) -> bool {
-        crate::transforms::emit_utils::export_decl_has_runtime_value(self.arena, export_decl)
+        crate::transforms::emit_utils::export_decl_has_runtime_value(
+            self.arena,
+            export_decl,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     /// Check if we should emit the __esModule marker.

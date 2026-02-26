@@ -816,7 +816,11 @@ impl<'a> LoweringPass<'a> {
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
     ) -> bool {
-        crate::transforms::emit_utils::export_decl_has_runtime_value(self.arena, export_decl)
+        crate::transforms::emit_utils::export_decl_has_runtime_value(
+            self.arena,
+            export_decl,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     pub(super) fn export_has_runtime_dependency(
