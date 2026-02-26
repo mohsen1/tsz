@@ -1,20 +1,13 @@
 {
-  "timestamp": "2026-02-26T03:47:51Z",
-  "git_sha": "df8d9f96a3c5a59c252da0bc59ab19b99b13f365",
+  "timestamp": "2026-02-26T04:34:03Z",
+  "git_sha": "7e49fc4bca797a8ba14a7bdf671de77a9fbe5863",
   "summary": {
     "total_tests": 12570,
-    "passed": 8744,
-    "failed": 3826,
+    "passed": 8748,
+    "failed": 3822,
     "pass_rate": 69.6
   },
   "areas_by_pass_rate": [
-    {
-      "area": "types/union",
-      "total": 25,
-      "passed": 9,
-      "failed": 16,
-      "pass_rate": 36.0
-    },
     {
       "area": "classes",
       "total": 16,
@@ -30,6 +23,13 @@
       "pass_rate": 38.46
     },
     {
+      "area": "types/union",
+      "total": 25,
+      "passed": 10,
+      "failed": 15,
+      "pass_rate": 40.0
+    },
+    {
       "area": "generators",
       "total": 15,
       "passed": 6,
@@ -42,13 +42,6 @@
       "passed": 7,
       "failed": 10,
       "pass_rate": 41.18
-    },
-    {
-      "area": "expressions/typeSatisfaction",
-      "total": 16,
-      "passed": 7,
-      "failed": 9,
-      "pass_rate": 43.75
     },
     {
       "area": "types/spread",
@@ -163,6 +156,13 @@
       "pass_rate": 53.42
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 13,
+      "failed": 11,
+      "pass_rate": 54.17
+    },
+    {
       "area": "controlFlow",
       "total": 57,
       "passed": 31,
@@ -233,20 +233,6 @@
       "pass_rate": 57.58
     },
     {
-      "area": "jsdoc",
-      "total": 249,
-      "passed": 145,
-      "failed": 104,
-      "pass_rate": 58.23
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 14,
-      "failed": 10,
-      "pass_rate": 58.33
-    },
-    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -259,6 +245,13 @@
       "passed": 17,
       "failed": 12,
       "pass_rate": 58.62
+    },
+    {
+      "area": "jsdoc",
+      "total": 249,
+      "passed": 146,
+      "failed": 103,
+      "pass_rate": 58.63
     },
     {
       "area": "expressions/contextualTyping",
@@ -437,10 +430,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4684,
+      "total": 6508,
+      "passed": 4682,
       "failed": 1826,
-      "pass_rate": 71.95
+      "pass_rate": 71.94
     },
     {
       "area": "expressions/binaryOperators",
@@ -476,6 +469,13 @@
       "passed": 514,
       "failed": 173,
       "pass_rate": 74.82
+    },
+    {
+      "area": "expressions/typeSatisfaction",
+      "total": 16,
+      "passed": 12,
+      "failed": 4,
+      "pass_rate": 75.0
     },
     {
       "area": "expressions/unaryOperators",
@@ -887,7 +887,7 @@
     },
     {
       "code": "TS2322",
-      "count": 184
+      "count": 181
     },
     {
       "code": "TS2339",
@@ -955,7 +955,7 @@
     },
     {
       "code": "TS2353",
-      "count": 17
+      "count": 16
     },
     {
       "code": "TS2591",
