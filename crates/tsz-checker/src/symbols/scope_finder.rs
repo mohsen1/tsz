@@ -1167,6 +1167,96 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Like [`is_direct_heritage_type_reference`] but returns `true` ONLY when
+    /// the heritage clause is in a **type-only context** — `interface extends`,
+    /// `class implements`, or `declare class extends`.
+    ///
+    /// For non-ambient `class extends`, this returns `false` because the extends
+    /// clause is a **value context** — it needs a constructable runtime value.
+    /// When a type-only import is used in `class extends`, TS1361 must fire.
+    ///
+    /// This is used specifically for the `alias_resolves_to_type_only` path
+    /// (TS1361/TS1362 emission).  The broader `is_direct_heritage_type_reference`
+    /// is still used for TS2693/TS2708 suppression where ALL heritage clauses
+    /// should suppress the generic error.
+    pub(crate) fn is_heritage_type_only_context(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
+
+        let mut current = idx;
+        for _ in 0..20 {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) if ext.parent.is_some() => ext,
+                _ => return false,
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == HERITAGE_CLAUSE {
+                // Found the heritage clause. Check its parent to determine context.
+                let hc_ext = match self.ctx.arena.get_extended(parent_idx) {
+                    Some(ext) if ext.parent.is_some() => ext,
+                    _ => return true, // fallback: suppress
+                };
+                let hc_parent_idx = hc_ext.parent;
+                let Some(hc_parent) = self.ctx.arena.get(hc_parent_idx) else {
+                    return true; // fallback: suppress
+                };
+
+                // Interface: always type-only context
+                if hc_parent.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    return true;
+                }
+
+                // Class: check extends vs implements, and declare modifier
+                if hc_parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || hc_parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    // `implements` is always a type-only context
+                    if let Some(heritage) = self.ctx.arena.get_heritage_clause(parent_node)
+                        && heritage.token == SyntaxKind::ImplementsKeyword as u16
+                    {
+                        return true;
+                    }
+
+                    // Ambient class extends (declare class, or class inside
+                    // declare namespace/module) → suppress TS1361
+                    if self.ctx.arena.is_in_ambient_context(hc_parent_idx) {
+                        return true;
+                    }
+
+                    // Regular class extends: value context → DON'T suppress
+                    return false;
+                }
+
+                return true; // other parent: suppress (fallback)
+            }
+
+            // Nested inside a call/new: not a direct reference
+            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+            {
+                return false;
+            }
+
+            // Stop at function/class/interface boundaries
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
     /// Returns `true` when the identifier is being evaluated inside a computed
     /// property name (`[expr]`) that belongs to a type-only or ambient context
     /// (interface member, type literal member, abstract member, `declare`

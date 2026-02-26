@@ -149,7 +149,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.is_direct_heritage_type_reference(idx) {
+        // Only suppress TS1361/TS1362 in type-only heritage contexts
+        // (interface extends, class implements, declare class extends).
+        // Regular class extends is a value context — TS1361 must fire.
+        if self.is_heritage_type_only_context(idx) {
             return;
         }
 

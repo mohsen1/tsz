@@ -168,3 +168,191 @@ declare class B extends I {}
             .collect::<Vec<_>>()
     );
 }
+
+/// Non-ambient class extending a type-only import should emit TS1361.
+/// `import type { Foo } from './foo'; class U extends Foo {}` → TS1361.
+#[test]
+fn class_extends_type_only_import_emits_ts1361() {
+    let source = r"
+import type { Foo } from './foo';
+class U extends Foo {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS1361 for class extending a type-only import
+    let ts1361_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1361)
+        .count();
+    assert!(
+        ts1361_count >= 1,
+        "Expected TS1361 for class extending type-only import, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // TS2693 should NOT be emitted
+    let ts2693_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2693)
+        .count();
+    assert_eq!(
+        ts2693_count,
+        0,
+        "Expected no TS2693, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 2693)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Interface extending a type-only import should NOT emit TS1361.
+/// `import type { Foo } from './foo'; interface Q extends Foo {}` → no TS1361.
+#[test]
+fn interface_extends_type_only_import_no_ts1361() {
+    let source = r"
+import type { Foo } from './foo';
+interface Q extends Foo {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+
+    checker.check_source_file(root);
+
+    // Should NOT emit TS1361 (interface extends is a type-only context)
+    let ts1361_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1361)
+        .count();
+    assert_eq!(
+        ts1361_count,
+        0,
+        "Expected no TS1361 for interface extending type-only import, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 1361)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // TS2693 should also NOT be emitted
+    let ts2693_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2693)
+        .count();
+    assert_eq!(
+        ts2693_count,
+        0,
+        "Expected no TS2693, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 2693)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Declare class extending a type-only import should NOT emit TS1361.
+/// `import type { Foo } from './foo'; declare class U extends Foo {}` → no TS1361.
+#[test]
+fn declare_class_extends_type_only_import_no_ts1361() {
+    let source = r"
+import type { Foo } from './foo';
+declare class U extends Foo {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+
+    checker.check_source_file(root);
+
+    // Should NOT emit TS1361 (declare class extends is ambient context)
+    let ts1361_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1361)
+        .count();
+    assert_eq!(
+        ts1361_count,
+        0,
+        "Expected no TS1361 for declare class extending type-only import, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == 1361)
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

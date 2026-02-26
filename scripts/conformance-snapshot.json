@@ -1,13 +1,20 @@
 {
-  "timestamp": "2026-02-26T17:21:35Z",
-  "git_sha": "9b346a576050ad69d690f012e8bc2776d5be145a",
+  "timestamp": "2026-02-26T17:15:45Z",
+  "git_sha": "0b3e66ba5fa9557df972faab2ecfd918ac113919",
   "summary": {
     "total_tests": 12570,
-    "passed": 9239,
-    "failed": 3331,
+    "passed": 9235,
+    "failed": 3335,
     "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
+    {
+      "area": "node/allowJs",
+      "total": 21,
+      "passed": 8,
+      "failed": 13,
+      "pass_rate": 38.1
+    },
     {
       "area": "types/mapped",
       "total": 26,
@@ -37,13 +44,6 @@
       "pass_rate": 47.37
     },
     {
-      "area": "node/allowJs",
-      "total": 21,
-      "passed": 10,
-      "failed": 11,
-      "pass_rate": 47.62
-    },
-    {
       "area": "types/union",
       "total": 25,
       "passed": 12,
@@ -51,18 +51,11 @@
       "pass_rate": 48.0
     },
     {
-      "area": "externalModules/typeOnly",
-      "total": 65,
-      "passed": 32,
-      "failed": 33,
-      "pass_rate": 49.23
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 12,
-      "failed": 12,
-      "pass_rate": 50.0
+      "area": "node",
+      "total": 73,
+      "passed": 36,
+      "failed": 37,
+      "pass_rate": 49.32
     },
     {
       "area": "classes",
@@ -84,6 +77,13 @@
       "passed": 5,
       "failed": 5,
       "pass_rate": 50.0
+    },
+    {
+      "area": "externalModules/typeOnly",
+      "total": 65,
+      "passed": 33,
+      "failed": 32,
+      "pass_rate": 50.77
     },
     {
       "area": "types/spread",
@@ -114,11 +114,11 @@
       "pass_rate": 53.33
     },
     {
-      "area": "node",
-      "total": 73,
-      "passed": 39,
-      "failed": 34,
-      "pass_rate": 53.42
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 13,
+      "failed": 11,
+      "pass_rate": 54.17
     },
     {
       "area": "transpile",
@@ -219,13 +219,6 @@
       "pass_rate": 61.29
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -324,6 +317,13 @@
       "pass_rate": 68.57
     },
     {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 20,
+      "failed": 9,
+      "pass_rate": 68.97
+    },
+    {
       "area": "es6/shorthandPropertyAssignment",
       "total": 13,
       "passed": 9,
@@ -402,8 +402,8 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4848,
+      "total": 6509,
+      "passed": 4847,
       "failed": 1662,
       "pass_rate": 74.47
     },
@@ -420,6 +420,13 @@
       "passed": 12,
       "failed": 4,
       "pass_rate": 75.0
+    },
+    {
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 32,
+      "failed": 10,
+      "pass_rate": 76.19
     },
     {
       "area": "es6/unicodeExtendedEscapes",
@@ -443,11 +450,11 @@
       "pass_rate": 76.92
     },
     {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 33,
-      "failed": 9,
-      "pass_rate": 78.57
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 51,
+      "failed": 14,
+      "pass_rate": 78.46
     },
     {
       "area": "enums",
@@ -462,13 +469,6 @@
       "passed": 75,
       "failed": 20,
       "pass_rate": 78.95
-    },
-    {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 52,
-      "failed": 13,
-      "pass_rate": 80.0
     },
     {
       "area": "expressions/commaOperator",

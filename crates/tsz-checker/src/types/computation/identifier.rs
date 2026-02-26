@@ -245,8 +245,11 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
-                // Don't emit TS2693 in heritage clause context (e.g., `extends A`)
-                if self.is_direct_heritage_type_reference(idx) {
+                // Suppress TS1361/TS1362 only in type-only heritage contexts
+                // (interface extends, class implements, declare class extends).
+                // For regular class extends, TS1361 must fire because the extends
+                // clause is a value context requiring a constructable runtime value.
+                if self.is_heritage_type_only_context(idx) {
                     return TypeId::ERROR;
                 }
                 // Don't emit TS2693 for export default/export = expressions
