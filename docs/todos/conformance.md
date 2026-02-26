@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9233/12570 (73.5%) — full suite, error-code level
-> Previously ~9232/12570 (73.4%) baseline.
+**Current score**: ~9239/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
+> Previously ~9236/12570 (73.5%) baseline.
 
 ---
 
@@ -40,6 +40,38 @@
   2. Per-property inference using `T[P]` as inference variable against the template
   3. Proper handling of modifier stripping (optional/readonly) during reversal
   4. Cycle detection for deeply nested reverse mapped types
+
+### Contextual typing for arrow function initializers in binding patterns — PARTIAL (Session 2026-02-26)
+- **Area**: `types/contextualTypes` (47.37% pass rate, 19 total tests)
+- **Improvement**: +2 conformance tests (9236→9238), no regressions
+- **Root cause**: `infer_type_from_binding_pattern` evaluates binding element initializers
+  without setting contextual type. For arrow function defaults like `v => v.toString()` in
+  `function f({ show = v => v.toString() }: Show)`, the arrow's parameters would be typed as
+  `any` because no contextual type was available during the first (cached) evaluation.
+- **Fix**: Set `ctx.contextual_type` to the element type before evaluating function-like
+  (arrow function / function expression) initializers in `infer_type_from_binding_pattern`.
+  Also added `check_parameter_binding_pattern_defaults` infrastructure in `parameter_checker.rs`
+  for function declaration binding pattern checking.
+- **Files**: `binding.rs`, `parameter_checker.rs`, `statement_callback_bridge.rs`, `core.rs`
+- **Unit tests**: 10 new tests covering positive cases (matching defaults) and contextual typing
+- **Remaining issues (documented for future sessions)**:
+  1. **Arrow body evaluation**: Arrow function defaults like `v => v` still produce `error`
+     return type because function body evaluation can't resolve parameter references during
+     `infer_type_from_binding_pattern`. Only literal-returning arrows (`v => v.toString()`,
+     `() => 42`) work correctly.
+  2. **type_includes_undefined gate**: `check_binding_element` skips assignability checks for
+     required object properties (via `type_includes_undefined`). This gate is needed to prevent
+     false positives from cached widened types (array literals get `T[]` instead of tuple,
+     string literals get `string` instead of narrow literal type). Removing it causes 23+ JSX
+     test regressions.
+  3. **Full contextual typing for all initializers**: Setting contextual type for ALL initializers
+     (not just arrows) in `infer_type_from_binding_pattern` fixes tuple/string literal defaults
+     but causes 23 JSX attribute regressions. The issue is that JSX component function parameters
+     also go through `infer_type_from_binding_pattern`, and full contextual typing there changes
+     how React component prop types are resolved.
+  4. **Cache poisoning**: The node type cache stores the first evaluation result. When
+     `infer_type_from_binding_pattern` evaluates initializers without contextual type, subsequent
+     checks get stale cached types. This affects non-function-like defaults (tuples, strings).
 
 ### TS2362/TS2363 — Per-operand arithmetic check with `any` operand — RESOLVED (Session 2026-02-26)
 - **Fixed**: `arithmeticOperatorWithTypeParameter` conformance test (+1 test, 20 fingerprints)

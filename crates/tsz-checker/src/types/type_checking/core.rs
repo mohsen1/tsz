@@ -744,8 +744,6 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
-
         // Check computed property name expression for unresolved identifiers (TS2304)
         // e.g., in `{[z]: x}` where `z` is undefined
         if element_data.property_name.is_some() {
@@ -778,11 +776,11 @@ impl<'a> CheckerState<'a> {
             let default_value_type = self.get_type_of_node(element_data.initializer);
             self.ctx.contextual_type = prev_context;
 
-            // TypeScript only checks default value assignability in function parameter
-            // destructuring, not in variable declaration destructuring.
-            // For object binding patterns, a default initializer is only reachable when
-            // the property can be missing/undefined. Skip assignability checks for required
-            // properties to match TypeScript's control-flow behavior.
+            // TypeScript checks default value assignability for binding elements.
+            // For object binding patterns, only check if the property type includes
+            // undefined (the default is only reachable when the property can be
+            // missing). For array patterns, always check.
+            let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
             if check_default_assignability
                 && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || tsz_solver::type_queries::type_includes_undefined(
