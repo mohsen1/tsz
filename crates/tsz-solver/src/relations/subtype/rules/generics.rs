@@ -784,9 +784,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Renaming as-clauses (e.g., `as \`bool${P}\``) change property keys,
         // so T is not necessarily assignable to the result type.
         if let Some(name_type) = mapped.name_type
-            && !is_filtering_name_type(self.interner, name_type, &mapped) {
-                return false;
-            }
+            && !is_filtering_name_type(self.interner, name_type, &mapped)
+        {
+            return false;
+        }
 
         // Mapped types that REMOVE optionality (-?) like Required<T> are NARROWER
         // than T. The source (which may have optional properties) cannot satisfy
