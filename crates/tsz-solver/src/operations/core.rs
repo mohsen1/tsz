@@ -146,6 +146,28 @@ enum UnionCallSignatureCompatibility {
     Unknown,
 }
 
+/// Combined call signature computed from a union of callable types.
+///
+/// TypeScript computes a combined signature for unions where each member has
+/// exactly one call signature (non-generic). The combined signature intersects
+/// parameter types (contravariant) and unions return types:
+///
+/// ```text
+/// { (a: number): string } | { (a: boolean): Date }
+///   → combined: (a: number & boolean): string | Date
+///              = (a: never): string | Date
+/// ```
+struct CombinedUnionSignature {
+    /// Intersected parameter types at each position
+    param_types: Vec<TypeId>,
+    /// Minimum required arguments (max of all members' required counts)
+    min_required: usize,
+    /// Maximum allowed arguments (None if unbounded / has rest)
+    max_allowed: Option<usize>,
+    /// Unioned return type from all members
+    return_type: TypeId,
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub fn new(interner: &'a dyn QueryDatabase, checker: &'a mut C) -> Self {
         CallEvaluator {
@@ -700,6 +722,138 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Try to compute a combined call signature for a union type.
+    ///
+    /// In TypeScript, when all members of a union have exactly one call signature
+    /// (non-generic), the union is callable with a combined signature where:
+    /// - Parameter types are intersected (contravariant position)
+    /// - Return types are unioned
+    /// - Required param count is the max across all members
+    ///
+    /// Returns `None` if any member is not callable or has multiple/generic signatures.
+    fn try_compute_combined_union_signature(
+        &self,
+        members: &[TypeId],
+    ) -> Option<CombinedUnionSignature> {
+        if members.is_empty() {
+            return None;
+        }
+
+        // Collect single signatures from each member: (params, return_type, has_rest)
+        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> = Vec::new();
+
+        for &member in members {
+            let member = self.normalize_union_member(member);
+            match self.interner.lookup(member) {
+                Some(TypeData::Function(func_id)) => {
+                    let function = self.interner.function_shape(func_id);
+                    if !function.type_params.is_empty() {
+                        return None; // generic functions need separate handling
+                    }
+                    let has_rest = function.params.iter().any(|p| p.rest);
+                    all_signatures.push((function.params.clone(), function.return_type, has_rest));
+                }
+                Some(TypeData::Callable(callable_id)) => {
+                    let callable = self.interner.callable_shape(callable_id);
+                    if callable.call_signatures.len() != 1 {
+                        return None; // multiple overloads need separate handling
+                    }
+                    let sig = &callable.call_signatures[0];
+                    if !sig.type_params.is_empty() {
+                        return None;
+                    }
+                    let has_rest = sig.params.iter().any(|p| p.rest);
+                    all_signatures.push((sig.params.clone(), sig.return_type, has_rest));
+                }
+                _ => return None, // not callable
+            }
+        }
+
+        if all_signatures.is_empty() {
+            return None;
+        }
+
+        // Determine max param count and rest status
+        let any_has_rest = all_signatures.iter().any(|(_, _, rest)| *rest);
+        let max_param_count = all_signatures
+            .iter()
+            .map(|(params, _, _)| params.len())
+            .max()
+            .unwrap_or(0);
+
+        let mut combined_params = Vec::new();
+        let mut min_required = 0;
+
+        for i in 0..max_param_count {
+            let mut param_types_at_pos = Vec::new();
+            let mut any_required = false;
+
+            for (params, _, _) in &all_signatures {
+                if i < params.len() {
+                    let param = &params[i];
+                    if param.rest {
+                        // For rest params like `...b: number[]`, extract the element type
+                        // so we intersect `number` (not `number[]`) with other members' types
+                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                            self.interner,
+                            param.type_id,
+                        ) {
+                            param_types_at_pos.push(elem);
+                        } else {
+                            // Can't extract element type; bail out
+                            return None;
+                        }
+                    } else {
+                        param_types_at_pos.push(param.type_id);
+                    }
+                    if param.is_required() {
+                        any_required = true;
+                    }
+                }
+                // If a member doesn't have a param at this position, it doesn't
+                // constrain the type (absent). But if ANY member requires it,
+                // the combined signature requires it.
+            }
+
+            // Intersect all param types at this position
+            let combined_type = if param_types_at_pos.len() == 1 {
+                param_types_at_pos[0]
+            } else if param_types_at_pos.is_empty() {
+                // Shouldn't happen since we iterate up to max_param_count
+                continue;
+            } else {
+                let mut result = param_types_at_pos[0];
+                for &pt in &param_types_at_pos[1..] {
+                    result = self.interner.intersection2(result, pt);
+                }
+                result
+            };
+
+            combined_params.push(combined_type);
+
+            if any_required {
+                min_required = i + 1;
+            }
+        }
+
+        let max_allowed = if any_has_rest {
+            None // Unbounded when any member has rest params
+        } else {
+            Some(max_param_count)
+        };
+
+        // Union all return types
+        let return_types: Vec<TypeId> = all_signatures.iter().map(|(_, ret, _)| *ret).collect();
+        let return_type = self.interner.union(return_types);
+
+        Some(CombinedUnionSignature {
+            param_types: combined_params,
+            min_required,
+            max_allowed,
+            return_type,
+        })
+    }
+
     fn build_union_call_result(
         &self,
         union_type: TypeId,
@@ -786,15 +940,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
-        let compatibility = self.union_call_signature_bounds(&members);
 
-        if matches!(compatibility, UnionCallSignatureCompatibility::Incompatible) {
-            return CallResult::NotCallable {
-                type_id: union_type,
-            };
+        // Try to compute a combined signature for the union.
+        // TypeScript computes combined arity (max required params across members)
+        // and intersected parameter types with unioned return types.
+        let combined = self.try_compute_combined_union_signature(&members);
+
+        // Phase 1: Argument count validation using combined signature.
+        // This catches cases where members have different param counts —
+        // the combined signature requires the maximum number of params.
+        if let Some(ref combined) = combined {
+            if arg_types.len() < combined.min_required {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: combined.min_required,
+                    expected_max: combined.max_allowed,
+                    actual: arg_types.len(),
+                };
+            }
+            if let Some(max) = combined.max_allowed
+                && arg_types.len() > max {
+                    return CallResult::ArgumentCountMismatch {
+                        expected_min: combined.min_required,
+                        expected_max: combined.max_allowed,
+                        actual: arg_types.len(),
+                    };
+                }
         }
 
-        // Check each member of the union
+        // Phase 2: Per-member resolution for argument type checking.
+        // This avoids over-constraining via intersection when tsc would reduce the union.
+        let compatibility = if combined.is_some() {
+            // Combined signature already validated arity; skip old bounds check
+            UnionCallSignatureCompatibility::Unknown
+        } else {
+            let compat = self.union_call_signature_bounds(&members);
+            if matches!(compat, UnionCallSignatureCompatibility::Incompatible) {
+                return CallResult::NotCallable {
+                    type_id: union_type,
+                };
+            }
+            compat
+        };
+
         let mut return_types = Vec::new();
         let mut failures = Vec::new();
 
@@ -805,22 +992,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return_types.push(return_type);
                 }
                 CallResult::NotCallable { .. } => {
-                    // At least one member is not callable
-                    // This means the union as a whole is not callable
-                    // (we can't call a union without knowing which branch is active)
                     return CallResult::NotCallable {
                         type_id: union_type,
                     };
                 }
                 other => {
-                    // Track failures for potential overload reporting
                     failures.push(other);
                 }
             }
         }
 
-        // If any members succeeded, return a union of their return types
-        // TypeScript allows calling a union of functions if at least one member accepts the arguments
+        // Phase 3: Result aggregation.
+        // When we have a combined signature and some members fail on arity
+        // (because they have fewer params than the combined requires),
+        // use the combined return type since the overall call is valid.
+        if let Some(ref combined) = combined {
+            let all_failures_are_arity = !failures.is_empty()
+                && failures
+                    .iter()
+                    .all(|f| matches!(f, CallResult::ArgumentCountMismatch { .. }));
+
+            if all_failures_are_arity && !return_types.is_empty() {
+                // Some members succeeded, some failed on arity only.
+                // The combined arity check passed, so the call is valid.
+                return CallResult::Success(combined.return_type);
+            }
+
+            if all_failures_are_arity && return_types.is_empty() {
+                // All members failed on arity but combined check passed.
+                // Validate argument types against the combined (intersected) params.
+                for (i, &arg_type) in arg_types.iter().enumerate() {
+                    if i < combined.param_types.len() {
+                        let param_type = combined.param_types[i];
+                        if !self.checker.is_assignable_to(arg_type, param_type) {
+                            return CallResult::ArgumentTypeMismatch {
+                                index: i,
+                                expected: param_type,
+                                actual: arg_type,
+                                fallback_return: combined.return_type,
+                            };
+                        }
+                    }
+                }
+                return CallResult::Success(combined.return_type);
+            }
+        }
+
+        // Standard per-member result aggregation (no combined signature or mixed failures)
         if !return_types.is_empty() {
             match compatibility {
                 UnionCallSignatureCompatibility::Compatible {
@@ -861,13 +1079,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if return_types.len() == 1 {
                 return CallResult::Success(return_types[0]);
             }
-            // Return a union of all return types
             let union_result = self.interner.union(return_types);
             CallResult::Success(union_result)
         } else if !failures.is_empty() {
             self.build_union_call_result(union_type, &mut failures, return_types)
         } else {
-            // Should not reach here, but handle gracefully
             CallResult::NotCallable {
                 type_id: union_type,
             }

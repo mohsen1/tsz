@@ -8410,3 +8410,129 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         "Expected second call dot(id)(id) to succeed, got {second:?}"
     );
 }
+
+// ─── Union call signature tests ───────────────────────────────
+
+#[test]
+fn test_union_call_different_return_types() {
+    // { (a: number): number } | { (a: number): string }
+    // Combined: (a: number): number | string
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::NUMBER,
+        )],
+        TypeId::NUMBER,
+    ));
+    let f2 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::NUMBER,
+        )],
+        TypeId::STRING,
+    ));
+    let union = interner.union(vec![f1, f2]);
+
+    // Call with correct arg → success with unioned return
+    let result = evaluator.resolve_call(union, &[TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for union call with matching arg, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_different_param_counts() {
+    // { (a: string): string } | { (a: string, b: number): number }
+    // Combined: (a: string, b: number): string | number — requires 2 args
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )],
+        TypeId::STRING,
+    ));
+    let f2 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(interner.intern_string("a"), TypeId::STRING),
+            ParamInfo::required(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        TypeId::NUMBER,
+    ));
+    let union = interner.union(vec![f1, f2]);
+
+    // Call with 2 args → success
+    let result = evaluator.resolve_call(union, &[TypeId::STRING, TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for union call with 2 args, got {result:?}"
+    );
+
+    // Call with 1 arg → arity error (combined requires 2)
+    let result = evaluator.resolve_call(union, &[TypeId::STRING]);
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentCountMismatch {
+                expected_min: 2,
+                ..
+            }
+        ),
+        "Expected ArgumentCountMismatch with min=2 for 1 arg, got {result:?}"
+    );
+
+    // Call with 0 args → arity error
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentCountMismatch {
+                expected_min: 2,
+                ..
+            }
+        ),
+        "Expected ArgumentCountMismatch with min=2 for 0 args, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_incompatible_param_types() {
+    // { (a: number): number } | { (a: string): string }
+    // Combined: (a: number & string = never): number | string
+    // Any argument should fail against `never`
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::NUMBER,
+        )],
+        TypeId::NUMBER,
+    ));
+    let f2 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("a"),
+            TypeId::STRING,
+        )],
+        TypeId::STRING,
+    ));
+    let union = interner.union(vec![f1, f2]);
+
+    // Call with number → both members fail (one on type, one on type)
+    // Combined param is never, so TS2345 not TS2349
+    let result = evaluator.resolve_call(union, &[TypeId::NUMBER]);
+    assert!(
+        !matches!(result, CallResult::NotCallable { .. }),
+        "Union of callable types should NOT be NotCallable, got {result:?}"
+    );
+}
