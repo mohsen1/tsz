@@ -178,6 +178,23 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
+            // Remap virtual absolute typeRoots paths to real tmpdir paths.
+            // Tests use `/types` as a virtual FS root; files are written at
+            // `<tmpdir>/types/...`, so typeRoots must point there.
+            if has_absolute_filenames {
+                if let Some(serde_json::Value::Array(ref mut roots)) = map.get_mut("typeRoots") {
+                    for root in roots.iter_mut() {
+                        if let serde_json::Value::String(ref s) = root.clone() {
+                            if s.starts_with('/') {
+                                let real_path = dir_path.join(s.trim_start_matches('/'));
+                                *root = serde_json::Value::String(
+                                    real_path.to_string_lossy().into_owned(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             if check_js {
                 if explicit_allow_js.is_none() {
                     // Keep historical harness behavior for tests that set checkJs
