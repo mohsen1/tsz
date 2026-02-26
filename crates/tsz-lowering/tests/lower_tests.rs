@@ -1419,7 +1419,8 @@ fn test_lower_union_type_normalization() {
     match key {
         TypeData::Union(members) => {
             let members = interner.type_list(members);
-            assert_eq!(members.as_ref(), [TypeId::NUMBER, TypeId::STRING]);
+            // string | number | string deduplicates to string | number (insertion order)
+            assert_eq!(members.as_ref(), [TypeId::STRING, TypeId::NUMBER]);
         }
         _ => panic!("Expected Union type, got {key:?}"),
     }

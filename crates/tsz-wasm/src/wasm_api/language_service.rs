@@ -83,6 +83,9 @@ impl TsLanguageService {
                 label: item.label,
                 kind: match item.kind {
                     CompletionItemKind::Variable
+                    | CompletionItemKind::Const
+                    | CompletionItemKind::Let
+                    | CompletionItemKind::Alias
                     | CompletionItemKind::Parameter
                     | CompletionItemKind::TypeAlias => 6,
                     CompletionItemKind::Function => 3,

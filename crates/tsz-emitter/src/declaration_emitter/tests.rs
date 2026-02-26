@@ -106,10 +106,49 @@ fn test_type_alias() {
 
 #[test]
 fn test_type_only_export_module_gets_empty_export_marker() {
+    // When a module has only an import (module syntax) and private types,
+    // the .d.ts needs `export {};` to preserve module semantics, since tsc
+    // would not emit any explicit exports for a file like this.
+    let source = r#"
+import "some-dep";
+type T = { x: number };
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export {};"),
+        "Expected empty export marker for import-only module: {output}"
+    );
+}
+
+#[test]
+fn test_type_export_module_does_not_need_empty_export_marker() {
+    // When the .d.ts already has an explicit type export, `export {};` is not
+    // needed — the export itself preserves module semantics.
     let source = r#"
 type T = { x: number };
 export interface I {
     f: T;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export interface I"),
+        "Expected exported interface: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Did not expect empty export marker when explicit type export exists: {output}"
+    );
 }
 
 #[test]
@@ -128,22 +167,6 @@ fn test_empty_named_export_has_no_extra_spacing() {
     assert!(
         !output.contains("export {  };"),
         "Did not expect extra spacing in empty export syntax: {output}"
-    );
-}
-"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut emitter = DeclarationEmitter::new(&parser.arena);
-    let output = emitter.emit(root);
-
-    assert!(
-        output.contains("export interface I"),
-        "Expected exported interface: {output}"
-    );
-    assert!(
-        output.contains("export {};"),
-        "Expected empty export marker for type-only module exports: {output}"
     );
 }
 
