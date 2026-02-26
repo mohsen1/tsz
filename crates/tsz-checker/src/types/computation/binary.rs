@@ -719,27 +719,29 @@ impl<'a> CheckerState<'a> {
                             if left_any_like
                                 && !evaluator.is_arithmetic_operand(eval_right)
                                 && !self.is_enum_type(right_type)
-                                && let Some(loc) = self.get_source_location(right_idx) {
-                                    self.ctx.diagnostics.push(Diagnostic::error(
+                                && let Some(loc) = self.get_source_location(right_idx)
+                            {
+                                self.ctx.diagnostics.push(Diagnostic::error(
                                         self.ctx.file_name.clone(),
                                         loc.start,
                                         loc.length(),
                                         "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                                         crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                                     ));
-                                }
+                            }
                             if right_any_like
                                 && !evaluator.is_arithmetic_operand(eval_left)
                                 && !self.is_enum_type(left_type)
-                                && let Some(loc) = self.get_source_location(left_idx) {
-                                    self.ctx.diagnostics.push(Diagnostic::error(
+                                && let Some(loc) = self.get_source_location(left_idx)
+                            {
+                                self.ctx.diagnostics.push(Diagnostic::error(
                                         self.ctx.file_name.clone(),
                                         loc.start,
                                         loc.length(),
                                         "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                                         crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                                     ));
-                                }
+                            }
                         }
                     }
 
@@ -933,27 +935,29 @@ impl<'a> CheckerState<'a> {
                     if left_any_like
                         && !evaluator.is_arithmetic_operand(eval_right)
                         && !self.is_enum_type(right_type)
-                        && let Some(loc) = self.get_source_location(right_idx) {
-                            self.ctx.diagnostics.push(Diagnostic::error(
+                        && let Some(loc) = self.get_source_location(right_idx)
+                    {
+                        self.ctx.diagnostics.push(Diagnostic::error(
                                 self.ctx.file_name.clone(),
                                 loc.start,
                                 loc.length(),
                                 "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                                 crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             ));
-                        }
+                    }
                     if right_any_like
                         && !evaluator.is_arithmetic_operand(eval_left)
                         && !self.is_enum_type(left_type)
-                        && let Some(loc) = self.get_source_location(left_idx) {
-                            self.ctx.diagnostics.push(Diagnostic::error(
+                        && let Some(loc) = self.get_source_location(left_idx)
+                    {
+                        self.ctx.diagnostics.push(Diagnostic::error(
                                 self.ctx.file_name.clone(),
                                 loc.start,
                                 loc.length(),
                                 "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
                                 crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             ));
-                        }
+                    }
                 }
             }
 
