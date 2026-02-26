@@ -484,4 +484,56 @@ impl<'a> CheckerState<'a> {
 
         self.apply_flow_narrowing(idx, result_type)
     }
+
+    /// Check if a symbol represents a type-only export that should be excluded
+    /// from the value namespace of a module.
+    ///
+    /// Returns `true` when the symbol was exported via `export type { X }` and
+    /// should not appear as a value property on namespace objects.
+    ///
+    /// Handles a subtle binder quirk: `import type { A }` sets `is_type_only`
+    /// on the alias symbol, and if the same name is later declared as a value
+    /// (`const A = 0`) and re-exported (`export { A }`), the merged symbol
+    /// still has `is_type_only = true` from the import. We detect this by
+    /// checking if the symbol has BOTH `ALIAS` and `VALUE` flags — the `ALIAS`
+    /// came from the import type, and the `VALUE` from the const/function/class.
+    pub(crate) fn is_type_only_export_symbol(&self, sym_id: SymbolId) -> bool {
+        let symbol =
+            self.get_symbol_globally(sym_id)
+                .or_else(|| {
+                    // Cross-file fallback
+                    let file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied()?;
+                    let binder = self.ctx.get_binder_for_file(file_idx)?;
+                    binder.get_symbol(sym_id)
+                })
+                .or_else(|| {
+                    // Search all binders
+                    self.ctx.all_binders.as_ref().and_then(|binders| {
+                        binders.iter().find_map(|binder| binder.get_symbol(sym_id))
+                    })
+                });
+
+        let Some(symbol) = symbol else {
+            return false;
+        };
+
+        if !symbol.is_type_only {
+            return false;
+        }
+
+        // If the symbol has ALIAS + VALUE flags, is_type_only came from an
+        // `import type` alias that merged with a value declaration. The value
+        // export is not type-only.
+        use tsz_binder::symbol_flags;
+        if symbol.flags & symbol_flags::ALIAS != 0 && symbol.flags & symbol_flags::VALUE != 0 {
+            return false;
+        }
+
+        true
+    }
 }

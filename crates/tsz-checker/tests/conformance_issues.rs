@@ -10,6 +10,7 @@
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -3150,5 +3151,156 @@ function process(v: Variant) {
     assert!(
         relevant.is_empty(),
         "Template expression switch should exhaust union to never. Got: {relevant:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-file helpers for cross-file type-only export tests
+// ---------------------------------------------------------------------------
+
+/// Compile two files (a.ts and b.ts) and return diagnostics from b.ts.
+/// `module_spec` is the import specifier used in b.ts to reference a.ts (e.g., "./a").
+fn compile_two_files_get_diagnostics(
+    a_source: &str,
+    b_source: &str,
+    module_spec: &str,
+) -> Vec<(u32, String)> {
+    let mut parser_a = ParserState::new("a.ts".to_string(), a_source.to_string());
+    let root_a = parser_a.parse_source_file();
+    let mut binder_a = BinderState::new();
+    binder_a.bind_source_file(parser_a.get_arena(), root_a);
+
+    let mut parser_b = ParserState::new("b.ts".to_string(), b_source.to_string());
+    let root_b = parser_b.parse_source_file();
+    let mut binder_b = BinderState::new();
+    binder_b.bind_source_file(parser_b.get_arena(), root_b);
+
+    let arena_a = Arc::new(parser_a.get_arena().clone());
+    let arena_b = Arc::new(parser_b.get_arena().clone());
+
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_a), Arc::clone(&arena_b)]);
+
+    // Merge module exports: copy a.ts exports into b.ts's binder for cross-file resolution
+    let file_a_exports = binder_a.module_exports.get("a.ts").cloned();
+    if let Some(exports) = &file_a_exports {
+        binder_b
+            .module_exports
+            .insert(module_spec.to_string(), exports.clone());
+    }
+
+    // Record cross-file symbol targets: SymbolIds from binder_a need to resolve
+    // in binder_a's arena, not binder_b's. Map them to file index 0 (a.ts).
+    let mut cross_file_targets = FxHashMap::default();
+    if let Some(exports) = &file_a_exports {
+        for (_name, &sym_id) in exports.iter() {
+            cross_file_targets.insert(sym_id, 0usize);
+        }
+    }
+
+    let binder_a = Arc::new(binder_a);
+    let binder_b = Arc::new(binder_b);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_a), Arc::clone(&binder_b)]);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        no_lib: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        arena_b.as_ref(),
+        binder_b.as_ref(),
+        &types,
+        "b.ts".to_string(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(1);
+
+    // Register cross-file symbol targets so the checker looks up SymbolIds
+    // from a.ts in the correct binder (file index 0).
+    for (sym_id, file_idx) in &cross_file_targets {
+        checker
+            .ctx
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .insert(*sym_id, *file_idx);
+    }
+
+    let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    resolved_module_paths.insert((1, module_spec.to_string()), 0);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+
+    let mut resolved_modules: FxHashSet<String> = FxHashSet::default();
+    resolved_modules.insert(module_spec.to_string());
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(root_b);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Type-only export filtering: namespace import value access
+// ---------------------------------------------------------------------------
+
+/// When a module uses `export type { A }`, accessing `A` through a namespace
+/// import (`import * as ns from './mod'`) in value position should produce
+/// TS2339 because type-only exports are not value members of the namespace.
+#[test]
+fn test_type_only_export_not_accessible_as_namespace_value() {
+    let a_source = r#"
+class A { a!: string }
+export type { A };
+"#;
+    let b_source = r#"
+import * as types from './a';
+types.A;
+"#;
+    let diagnostics = compile_two_files_get_diagnostics(a_source, b_source, "./a");
+    // Filter out TS2318 (missing global types) since we don't load lib files in unit tests
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2339_errors: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2339).collect();
+    assert!(
+        !ts2339_errors.is_empty(),
+        "Expected TS2339 for type-only export accessed as namespace value member. Got: {relevant:?}"
+    );
+}
+
+/// Multiple type-only exports should all be filtered from the namespace.
+#[test]
+fn test_multiple_type_only_exports_filtered_from_namespace() {
+    let a_source = r#"
+class A { a!: string }
+class B { b!: number }
+export type { A, B };
+"#;
+    let b_source = r#"
+import * as types from './a';
+types.A;
+types.B;
+"#;
+    let diagnostics = compile_two_files_get_diagnostics(a_source, b_source, "./a");
+    // Filter out TS2318 (missing global types) since we don't load lib files in unit tests
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2339_errors: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2339).collect();
+    assert!(
+        ts2339_errors.len() >= 2,
+        "Expected TS2339 for both type-only exports accessed as namespace value members. Got: {relevant:?}"
     );
 }
