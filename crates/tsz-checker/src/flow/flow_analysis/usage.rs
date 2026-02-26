@@ -77,6 +77,10 @@ impl<'a> CheckerState<'a> {
         if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
+            // Mark this node so `get_type_of_node` won't re-narrow via the second
+            // flow-narrowing pass. Without this, the declared type returned here
+            // gets overridden with the narrowed type, hiding TS2322 mismatches.
+            self.ctx.daa_error_nodes.insert(idx.0);
             // Return the declared type — narrowing is not trustworthy when the
             // variable might be uninitialized (e.g., typeof false branch where
             // the variable could be undefined).
