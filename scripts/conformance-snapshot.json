@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T16:28:37Z",
-  "git_sha": "f3cfc1bcea276340c243ee1c7b03ff125855b7a8",
+  "timestamp": "2026-02-26T16:33:47Z",
+  "git_sha": "71719ad78ae4c17544a2fe607c6af3d4b9687bae",
   "summary": {
     "total_tests": 12570,
-    "passed": 9232,
-    "failed": 3338,
-    "pass_rate": 73.4
+    "passed": 9235,
+    "failed": 3335,
+    "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
     {
@@ -268,13 +268,6 @@
       "pass_rate": 64.74
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 19,
-      "failed": 10,
-      "pass_rate": 65.52
-    },
-    {
       "area": "classes/members",
       "total": 198,
       "passed": 130,
@@ -315,6 +308,13 @@
       "passed": 24,
       "failed": 11,
       "pass_rate": 68.57
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 20,
+      "failed": 9,
+      "pass_rate": 68.97
     },
     {
       "area": "es6/shorthandPropertyAssignment",
@@ -394,18 +394,11 @@
       "pass_rate": 73.81
     },
     {
-      "area": "override",
-      "total": 31,
-      "passed": 23,
-      "failed": 8,
-      "pass_rate": 74.19
-    },
-    {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4844,
-      "failed": 1666,
-      "pass_rate": 74.41
+      "total": 6507,
+      "passed": 4843,
+      "failed": 1664,
+      "pass_rate": 74.43
     },
     {
       "area": "es6/yieldExpressions",
@@ -511,6 +504,13 @@
       "passed": 10,
       "failed": 2,
       "pass_rate": 83.33
+    },
+    {
+      "area": "override",
+      "total": 31,
+      "passed": 26,
+      "failed": 5,
+      "pass_rate": 83.87
     },
     {
       "area": "es6/functionDeclarations",
