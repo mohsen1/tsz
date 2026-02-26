@@ -3044,3 +3044,111 @@ declare namespace JSX {
         "Expected no TS2339 when all tags are declared, got: {ts2339_diags:?}"
     );
 }
+
+/// Template expressions in switch cases should narrow discriminated unions.
+/// Before the fix, template expression case values resolved to `string` instead
+/// of the literal `"cat"`, preventing discriminant narrowing and producing
+/// false TS2339 errors on narrowed member accesses like `animal.meow`.
+#[test]
+fn test_template_expression_switch_narrows_discriminated_union() {
+    let source = r#"
+enum AnimalType {
+  cat = "cat",
+  dog = "dog",
+}
+
+type Animal =
+  | { type: `${AnimalType.cat}`; meow: string; }
+  | { type: `${AnimalType.dog}`; bark: string; };
+
+function action(animal: Animal) {
+  switch (animal.type) {
+    case `${AnimalType.cat}`:
+      console.log(animal.meow);
+      break;
+    case `${AnimalType.dog}`:
+      console.log(animal.bark);
+      break;
+  }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339_diags.is_empty(),
+        "Template expression switch cases should narrow discriminated unions. Got false TS2339: {ts2339_diags:?}"
+    );
+}
+
+/// Template expressions with multiple substitutions should also produce
+/// literal types for narrowing (e.g. `${prefix}${suffix}`).
+#[test]
+fn test_template_expression_multi_substitution_narrows() {
+    let source = r#"
+type Tag = "a-1" | "b-2";
+type Item =
+  | { tag: "a-1"; alpha: string; }
+  | { tag: "b-2"; beta: string; };
+
+declare const prefix: "a" | "b";
+
+function check(item: Item) {
+  if (item.tag === `a-1`) {
+    const x: string = item.alpha;
+  }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2339_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339_diags.is_empty(),
+        "Simple template literal (no-substitution) should narrow. Got false TS2339: {ts2339_diags:?}"
+    );
+}
+
+/// Exhaustiveness check: after narrowing all variants via template expression
+/// switch cases, the default branch should reach `never`.
+#[test]
+fn test_template_expression_switch_exhaustiveness_reaches_never() {
+    let source = r#"
+enum Kind {
+  A = "a",
+  B = "b",
+}
+
+type Variant =
+  | { kind: `${Kind.A}`; a: number; }
+  | { kind: `${Kind.B}`; b: number; };
+
+function check(p: never) {
+  throw new Error("unreachable");
+}
+
+function process(v: Variant) {
+  switch (v.kind) {
+    case `${Kind.A}`:
+      return v.a;
+    case `${Kind.B}`:
+      return v.b;
+    default:
+      check(v);
+  }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    // No TS2339 (member access after narrowing) and no TS2345 (v not assignable to never)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339 || *code == 2345)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Template expression switch should exhaust union to never. Got: {relevant:?}"
+    );
+}
