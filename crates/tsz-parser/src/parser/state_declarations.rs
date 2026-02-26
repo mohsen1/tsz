@@ -1704,15 +1704,51 @@ impl ParserState {
         }
 
         // Check for "defer" keyword (import defer * as ns from ...)
+        // Disambiguation mirrors the `type` modifier logic above:
+        //   import defer * as ns from "..." → defer is modifier
+        //   import defer { foo } from "..." → defer is modifier (checker emits TS18059)
+        //   import defer foo from "..." → defer is modifier (checker emits TS18058)
+        //   import defer from from "..." → defer is modifier (checker emits TS18058)
+        //   import defer from "..." → defer is the default import NAME
+        //   import defer type * as ns → defer is the default import NAME (modifier conflict)
         if self.is_token(SyntaxKind::DeferKeyword) {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
+            let saved_arena_len = self.arena.nodes.len();
+            let saved_diagnostics_len = self.parse_diagnostics.len();
             self.next_token();
-            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::AsteriskToken) {
+
+            if self.is_token(SyntaxKind::AsteriskToken) || self.is_token(SyntaxKind::OpenBraceToken)
+            {
+                // `import defer * ...` or `import defer { ... }` — defer is modifier
                 is_deferred = true;
-            } else {
+            } else if self.is_identifier_or_keyword() && !self.is_token(SyntaxKind::TypeKeyword) {
+                // Could be `import defer foo from` (modifier + name)
+                // or `import defer from '...'` (defer is name).
+                // Look one more token ahead to disambiguate.
+                self.next_token();
+                if self.is_token(SyntaxKind::FromKeyword)
+                    || self.is_token(SyntaxKind::CommaToken)
+                    || self.is_token(SyntaxKind::EqualsToken)
+                {
+                    // `import defer X from/,/=` — defer is modifier
+                    is_deferred = true;
+                }
+                // Restore either way (we'll re-parse the import name below)
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
+                self.arena.nodes.truncate(saved_arena_len);
+                self.parse_diagnostics.truncate(saved_diagnostics_len);
+                if is_deferred {
+                    // Re-consume `defer` since it's the modifier
+                    self.next_token();
+                }
+            } else {
+                // Not a valid defer target — defer is the import name
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                self.arena.nodes.truncate(saved_arena_len);
+                self.parse_diagnostics.truncate(saved_diagnostics_len);
             }
         }
 

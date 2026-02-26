@@ -12,7 +12,7 @@ use crate::parser::{
     },
     syntax_kind_ext,
 };
-use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
@@ -737,27 +737,59 @@ impl ParserState {
         missing
     }
 
-    /// Parse import expression: import(...) or import.meta
+    /// Parse import expression: import(...), import.meta, or import.defer(...)
     pub(crate) fn parse_import_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
 
-        // Check for import.meta
+        // Check for import.meta / import.defer(...)
         if self.is_token(SyntaxKind::DotToken) {
             self.next_token(); // consume '.'
             // Create import keyword node
             let import_node =
                 self.arena
                     .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
-            // Check if identifier after '.' is 'meta'; emit TS1005 if not
-            let is_meta =
-                self.is_identifier_or_keyword() && self.scanner.get_token_value_ref() == "meta";
+            // Check if identifier after '.' is 'meta' or 'defer'
+            let prop_name = if self.is_identifier_or_keyword() {
+                self.scanner.get_token_value_ref().to_string()
+            } else {
+                String::new()
+            };
+            let is_valid = prop_name == "meta" || prop_name == "defer";
+            let name_start = self.token_pos();
             let name = self.parse_identifier_name();
-            if !is_meta {
-                // import.X where X != meta: emit TS1005 "'(' expected."
-                // TSC reports this error after the identifier
-                use tsz_common::diagnostics::diagnostic_codes;
+            let name_end = self.token_end();
+            if prop_name == "defer" && !self.is_token(SyntaxKind::OpenParenToken) {
+                // import.defer without '(' — TS1005 "'(' expected."
+                // Unlike import.meta, import.defer is only valid as a call expression.
                 self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            } else if !is_valid && !prop_name.is_empty() {
+                // import.X where X is neither 'meta' nor 'defer'
+                // If followed by '(' → TS18061 (suggest 'meta' or 'defer')
+                // Otherwise → TS17012 (suggest only 'meta')
+                if self.is_token(SyntaxKind::OpenParenToken) {
+                    let msg = format_message(
+                        diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
+                        &[&prop_name],
+                    );
+                    self.parse_error_at(
+                        name_start,
+                        name_end.saturating_sub(name_start),
+                        &msg,
+                        diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_IMPORT_DID_YOU_MEAN_META_OR_DEFER,
+                    );
+                } else {
+                    let msg = format_message(
+                        diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                        &[&prop_name, "import", "meta"],
+                    );
+                    self.parse_error_at(
+                        name_start,
+                        name_end.saturating_sub(name_start),
+                        &msg,
+                        diagnostic_codes::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
+                    );
+                }
             }
             let end_pos = self.token_end();
 
