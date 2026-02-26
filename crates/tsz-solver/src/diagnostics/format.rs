@@ -781,7 +781,7 @@ mod tests {
 
         let mut fmt = TypeFormatter::new(&db);
         let result = fmt.format(union_id);
-        // Order should be preserved when no nullish members
-        assert_eq!(result, "number | string");
+        // Union members are sorted by tsc's type creation order (string=8, number=9)
+        assert_eq!(result, "string | number");
     }
 }
