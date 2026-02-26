@@ -3304,3 +3304,56 @@ types.B;
         "Expected TS2339 for both type-only exports accessed as namespace value members. Got: {relevant:?}"
     );
 }
+
+// TS1100: eval/arguments used as function name in strict mode
+#[test]
+fn test_ts1100_function_named_eval_strict_mode() {
+    let source = r#"
+"use strict";
+function eval() {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected TS1100 for 'function eval()' in strict mode. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1100_function_named_arguments_strict_mode() {
+    let source = r#"
+"use strict";
+function arguments() {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected TS1100 for 'function arguments()' in strict mode. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1100_function_expression_named_eval_strict_mode() {
+    let source = r#"
+"use strict";
+var v = function eval() {};
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected TS1100 for function expression named 'eval' in strict mode. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts1100_eval_assignment_strict_mode() {
+    let source = r#"
+"use strict";
+eval = 1;
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 1100),
+        "Expected TS1100 for 'eval = 1' in strict mode. Got: {diagnostics:?}"
+    );
+}
