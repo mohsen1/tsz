@@ -8,9 +8,9 @@ use crate::query_boundaries::assignability::{
     are_types_overlapping_with_env, check_assignable_gate_with_overrides,
     classify_for_assignability_eval, classify_for_excess_properties, contains_infer_types,
     get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
-    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_callable_type,
-    is_keyof_type, is_relation_cacheable, is_type_parameter_like, keyof_object_properties,
-    map_compound_members, object_shape_for_type,
+    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_keyof_type,
+    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, map_compound_members,
+    object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -449,24 +449,6 @@ impl<'a> CheckerState<'a> {
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
-
-        // Pre-check: Function interface accepts any callable type.
-        // Must check before evaluate_type_for_assignability resolves Lazy(DefId)
-        // to ObjectShape, losing the DefId identity needed to recognize it as Function.
-        {
-            use tsz_solver::visitor::lazy_def_id;
-            let is_function_target = lazy_def_id(self.ctx.types, target).is_some_and(|t_def| {
-                self.ctx.type_env.try_borrow().ok().is_some_and(|env| {
-                    env.is_boxed_def_id(t_def, tsz_solver::IntrinsicKind::Function)
-                })
-            });
-            if is_function_target {
-                let source_eval = self.evaluate_type_for_assignability(source);
-                if is_callable_type(self.ctx.types, source_eval) {
-                    return true;
-                }
-            }
-        }
 
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);

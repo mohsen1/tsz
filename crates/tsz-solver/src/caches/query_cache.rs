@@ -551,6 +551,14 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
         self.interner.is_identity_comparable_type(type_id)
     }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.interner.get_boxed_type(kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.interner.is_boxed_def_id(def_id, kind)
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.
@@ -589,6 +597,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
         self.interner.set_boxed_type(kind, type_id);
+    }
+
+    fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
+        self.interner.register_boxed_def_id(kind, def_id);
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {

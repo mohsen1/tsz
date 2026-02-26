@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
         // Register boxed types through the query database so PropertyAccessEvaluator
         // can resolve primitive methods (e.g., "hello".match()) through the actual
         // interface types from lib.d.ts instead of falling back to hardcoded lists.
-        for (kind, type_id) in [
+        let boxed_pairs: &[(IntrinsicKind, Option<TypeId>)] = &[
             (IntrinsicKind::String, string_type),
             (IntrinsicKind::Number, number_type),
             (IntrinsicKind::Boolean, boolean_type),
@@ -183,9 +183,47 @@ impl<'a> CheckerState<'a> {
             (IntrinsicKind::Bigint, bigint_type),
             (IntrinsicKind::Object, object_type),
             (IntrinsicKind::Function, function_type),
-        ] {
+        ];
+        for &(kind, type_id) in boxed_pairs {
             if let Some(ty) = type_id {
                 self.ctx.types.register_boxed_type(kind, ty);
+                // Also register the DefId (if it's a Lazy type) so the interner
+                // can identify boxed types by DefId even when TypeEnvironment
+                // is unavailable (e.g., during RefCell borrow conflicts).
+                if let Some(def_id) =
+                    tsz_solver::visitor::lazy_def_id(self.ctx.types.as_type_database(), ty)
+                {
+                    self.ctx.types.register_boxed_def_id(kind, def_id);
+                }
+            }
+        }
+
+        // Register DefIds from ALL lib contexts in the interner EAGERLY.
+        // This must happen before any constraint checking (which may occur during
+        // build_type_environment), so the SubtypeChecker and generic constraint
+        // validation can identify boxed types by DefId even before the
+        // TypeEnvironment is populated.
+        let boxed_names: &[(&str, Option<TypeId>, IntrinsicKind)] = &[
+            ("String", string_type, IntrinsicKind::String),
+            ("Number", number_type, IntrinsicKind::Number),
+            ("Boolean", boolean_type, IntrinsicKind::Boolean),
+            ("Symbol", symbol_type, IntrinsicKind::Symbol),
+            ("BigInt", bigint_type, IntrinsicKind::Bigint),
+            ("Object", object_type, IntrinsicKind::Object),
+            ("Function", function_type, IntrinsicKind::Function),
+        ];
+        for &(name, type_opt, kind) in boxed_names {
+            if type_opt.is_some() {
+                for ctx in &self.ctx.lib_contexts {
+                    if let Some(sym_id) = ctx.binder.file_locals.get(name) {
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        self.ctx.types.register_boxed_def_id(kind, def_id);
+                    }
+                }
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx.types.register_boxed_def_id(kind, def_id);
+                }
             }
         }
 
@@ -219,27 +257,14 @@ impl<'a> CheckerState<'a> {
                 env.set_array_base_type(ty, array_type_params);
             }
 
-            // 3. Register DefId mappings for non-generic boxed types.
+            // 3. Register DefId mappings for non-generic boxed types in the env too.
             // When user code writes `a: Function`, the type annotation creates a
             // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
             // uses TypeEnvironment as its resolver, which resolves Lazy types via
             // def_types. Without this registration, Lazy(DefId) for Function can't
             // be resolved, causing false TS2345/TS2322 errors.
-            let boxed_names: &[(&str, Option<TypeId>, IntrinsicKind)] = &[
-                ("String", string_type, IntrinsicKind::String),
-                ("Number", number_type, IntrinsicKind::Number),
-                ("Boolean", boolean_type, IntrinsicKind::Boolean),
-                ("Symbol", symbol_type, IntrinsicKind::Symbol),
-                ("BigInt", bigint_type, IntrinsicKind::Bigint),
-                ("Object", object_type, IntrinsicKind::Object),
-                ("Function", function_type, IntrinsicKind::Function),
-            ];
             for &(name, type_opt, kind) in boxed_names {
                 if let Some(ty) = type_opt {
-                    // Register DefIds from ALL lib contexts, not just the first.
-                    // Multiple lib files (es5, es2015, etc.) each have their own
-                    // symbol for types like Function, String, etc. User code can
-                    // reference any of them, so all must resolve to the same type.
                     for ctx in &self.ctx.lib_contexts {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -247,7 +272,6 @@ impl<'a> CheckerState<'a> {
                             env.register_boxed_def_id(kind, def_id);
                         }
                     }
-                    // Also register from current file's binder (for global augmentations)
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
                         let def_id = self.ctx.get_or_create_def_id(sym_id);
                         env.insert_def(def_id, ty);
@@ -261,6 +285,35 @@ impl<'a> CheckerState<'a> {
     /// Prime boxed and Array base types before checking files.
     pub fn prime_boxed_types(&mut self) {
         self.register_boxed_types();
+    }
+
+    /// Early-register Function interface `DefIds` in the interner (`DashMap`).
+    ///
+    /// This must be called BEFORE `build_type_environment()` so that constraint
+    /// checks during type alias processing (e.g., `T extends Function`) can
+    /// identify the Function interface. Only registers Function to minimize
+    /// side effects on DefId creation ordering.
+    pub(crate) fn register_function_def_ids_early(&mut self) {
+        use tsz_solver::IntrinsicKind;
+
+        if !self.ctx.has_lib_loaded() {
+            return;
+        }
+
+        for ctx in &self.ctx.lib_contexts {
+            if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .types
+                    .register_boxed_def_id(IntrinsicKind::Function, def_id);
+            }
+        }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("Function") {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .types
+                .register_boxed_def_id(IntrinsicKind::Function, def_id);
+        }
     }
 
     /// Check for feature-specific global types that may be missing.

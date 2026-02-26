@@ -331,7 +331,21 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+                let mut is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+
+                // Fallback: if assignability failed but the constraint is the Function
+                // interface and the type argument is callable, accept it. This handles
+                // the case where Function has multiple TypeIds that aren't recognized
+                // as equivalent during assignability checking (RefCell borrow conflict
+                // prevents boxed type lookup during type evaluation).
+                if !is_satisfied {
+                    // Check original (pre-resolution) constraint which may still be
+                    // Lazy(DefId), making it easier to identify via boxed DefId lookup.
+                    let original_constraint = param.constraint.unwrap_or(TypeId::NEVER);
+                    let db = self.ctx.types.as_type_database();
+                    is_satisfied = self.is_function_constraint(original_constraint)
+                        && tsz_solver::type_queries::is_callable_type(db, type_arg);
+                }
 
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
                     self.error_type_constraint_not_satisfied(
@@ -342,6 +356,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if a type represents the global `Function` interface from lib.d.ts.
+    ///
+    /// Checks via Lazy(DefId) against the interner's registered boxed `DefIds`,
+    /// or by direct TypeId match against the interner's registered boxed type.
+    fn is_function_constraint(&self, type_id: TypeId) -> bool {
+        use tsz_solver::visitor::lazy_def_id;
+        let db = self.ctx.types.as_type_database();
+        // Direct match against interner's boxed Function TypeId
+        if let Some(boxed_id) = db.get_boxed_type(tsz_solver::IntrinsicKind::Function)
+            && type_id == boxed_id
+        {
+            return true;
+        }
+        // Check if the type is Lazy(DefId) with a known Function boxed DefId
+        if let Some(def_id) = lazy_def_id(db, type_id)
+            && db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Function)
+        {
+            return true;
+        }
+        false
     }
 
     /// Check if a symbol's declaration has type parameters, even if they couldn't be

@@ -27,10 +27,6 @@ pub(crate) fn contains_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     tsz_solver::type_queries::contains_any_type(db, type_id)
 }
 
-pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_callable_type(db, type_id)
-}
-
 pub(crate) fn classify_for_excess_properties(
     db: &dyn TypeDatabase,
     type_id: TypeId,
