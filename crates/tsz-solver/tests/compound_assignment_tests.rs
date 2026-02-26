@@ -1,6 +1,7 @@
 use crate::{
-    TypeDatabase, TypeId, TypeInterner, fallback_compound_assignment_result,
-    is_compound_assignment_operator, map_compound_assignment_to_binary,
+    BinaryOpEvaluator, BinaryOpResult, QueryDatabase, TypeDatabase, TypeId, TypeInterner,
+    fallback_compound_assignment_result, is_compound_assignment_operator,
+    map_compound_assignment_to_binary,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -65,4 +66,83 @@ fn fallback_result_numeric_operators_return_number() {
         fallback_compound_assignment_result(db, SyntaxKind::BarBarEqualsToken as u16, None),
         None
     );
+}
+
+// Tests for BinaryOpEvaluator::evaluate_plus used by += operator checking
+
+#[test]
+fn plus_boolean_and_void_is_type_error() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert!(matches!(
+        evaluator.evaluate(TypeId::BOOLEAN, TypeId::VOID, "+"),
+        BinaryOpResult::TypeError { .. }
+    ));
+}
+
+#[test]
+fn plus_boolean_and_boolean_is_type_error() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert!(matches!(
+        evaluator.evaluate(TypeId::BOOLEAN, TypeId::BOOLEAN, "+"),
+        BinaryOpResult::TypeError { .. }
+    ));
+}
+
+#[test]
+fn plus_boolean_and_number_is_type_error() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert!(matches!(
+        evaluator.evaluate(TypeId::BOOLEAN, TypeId::NUMBER, "+"),
+        BinaryOpResult::TypeError { .. }
+    ));
+}
+
+#[test]
+fn plus_number_and_number_succeeds() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert_eq!(
+        evaluator.evaluate(TypeId::NUMBER, TypeId::NUMBER, "+"),
+        BinaryOpResult::Success(TypeId::NUMBER)
+    );
+}
+
+#[test]
+fn plus_string_and_number_succeeds_as_string() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert_eq!(
+        evaluator.evaluate(TypeId::STRING, TypeId::NUMBER, "+"),
+        BinaryOpResult::Success(TypeId::STRING)
+    );
+}
+
+#[test]
+fn plus_any_and_null_succeeds_as_any() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert_eq!(
+        evaluator.evaluate(TypeId::ANY, TypeId::NULL, "+"),
+        BinaryOpResult::Success(TypeId::ANY)
+    );
+}
+
+#[test]
+fn null_and_undefined_are_not_arithmetic_operands() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &interner;
+    let evaluator = BinaryOpEvaluator::new(db);
+    assert!(!evaluator.is_arithmetic_operand(TypeId::NULL));
+    assert!(!evaluator.is_arithmetic_operand(TypeId::UNDEFINED));
+    assert!(evaluator.is_arithmetic_operand(TypeId::NUMBER));
+    assert!(evaluator.is_arithmetic_operand(TypeId::ANY));
 }

@@ -680,15 +680,32 @@ impl<'a> CheckerState<'a> {
         let left_is_valid = self.is_arithmetic_operand(left_eval);
         let right_is_valid = self.is_arithmetic_operand(right_eval);
 
-        if !left_is_valid && let Some(loc) = self.get_source_location(left_idx) {
+        // When strictNullChecks is on, null/undefined operands get TS18050 ("The value
+        // 'null'/'undefined' cannot be used here") which takes priority over TS2362/TS2363.
+        // When strictNullChecks is off, null/undefined are in number's domain and
+        // should not trigger arithmetic errors either.
+        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+
+        let mut emitted = false;
+
+        if !left_is_valid
+            && !(left_is_nullish)
+            && let Some(loc) = self.get_source_location(left_idx)
+        {
             self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+            emitted = true;
         }
 
-        if !right_is_valid && let Some(loc) = self.get_source_location(right_idx) {
+        if !right_is_valid
+            && !(right_is_nullish)
+            && let Some(loc) = self.get_source_location(right_idx)
+        {
             self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
+            emitted = true;
         }
 
-        !left_is_valid || !right_is_valid
+        emitted || !left_is_valid || !right_is_valid
     }
 
     /// Emit TS2447 error for boolean bitwise operators (&, |, ^, &=, |=, ^=).
@@ -858,6 +875,41 @@ impl<'a> CheckerState<'a> {
                         ));
                         emitted_operator_error = true;
                     }
+                }
+            }
+        }
+
+        // TS2365: For +=, check if the + operation is valid using the solver.
+        // Emit "Operator '+=' cannot be applied to types X and Y" when the operands
+        // aren't compatible for addition (neither both numeric, both string, nor one any).
+        // Skip if a more specific error (TS18050 for null/undefined, TS2469 for symbol)
+        // was already emitted.
+        if operator == SyntaxKind::PlusEqualsToken as u16
+            && !emitted_operator_error
+            && left_type != TypeId::ERROR
+            && right_type != TypeId::ERROR
+        {
+            let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+            let result = evaluator.evaluate(left_type, right_type, "+");
+            if let tsz_solver::BinaryOpResult::TypeError { .. } = result {
+                // Use widened types for the diagnostic message: tsc widens enum
+                // member types (E.a) to the parent enum (E) in operator diagnostics.
+                let left_widened = self.widen_initializer_type_for_mutable_binding(left_type);
+                let right_widened = self.widen_initializer_type_for_mutable_binding(right_type);
+                let left_str = self.format_type(left_widened);
+                let right_str = self.format_type(right_widened);
+                let message = format!(
+                    "Operator '+=' cannot be applied to types '{left_str}' and '{right_str}'."
+                );
+                if let Some(loc) = self.get_source_location(expr_idx) {
+                    self.ctx.diagnostics.push(Diagnostic::error(
+                        self.ctx.file_name.clone(),
+                        loc.start,
+                        loc.length(),
+                        message,
+                        diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                    ));
+                    emitted_operator_error = true;
                 }
             }
         }

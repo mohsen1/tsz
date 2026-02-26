@@ -53,9 +53,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // tsc suppresses TS18050 when either operand is `any` — operations on `any`
-        // are unchecked and should not produce nullish-value diagnostics.
-        if left_type == TypeId::ANY || right_type == TypeId::ANY {
+        // For the `+` operator, tsc returns `any` early when either operand is `any`
+        // without performing null checks. For other operators (arithmetic, bitwise,
+        // relational), tsc still calls checkNonNullExpression per-operand, so
+        // null/undefined should be flagged with TS18050 even when the other side is `any`.
+        if (left_type == TypeId::ANY || right_type == TypeId::ANY) && op == "+" {
             return false;
         }
 
