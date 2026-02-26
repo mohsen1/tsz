@@ -331,3 +331,40 @@ interface A {
         "Should still emit TS2413 once for incompatible indexes, got {ts2413_count} emissions"
     );
 }
+
+// ── TS2515 abstract member satisfaction via declaration merging ──────────
+
+#[test]
+fn ts2515_suppressed_when_merged_interface_satisfies_abstract_member() {
+    // When a class merges with an interface that provides the abstract member,
+    // TSC does NOT emit TS2515.
+    let source = r#"
+abstract class BaseClass {
+    abstract bar: number;
+}
+class Broken extends BaseClass {}
+interface IGetters {
+    bar: number;
+}
+interface Broken extends IGetters {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2515),
+        "Should NOT emit TS2515 when merged interface provides the abstract member"
+    );
+}
+
+#[test]
+fn ts2515_emitted_when_no_merged_interface_provides_abstract_member() {
+    // Without declaration merging, TS2515 should fire.
+    let source = r#"
+abstract class BaseClass {
+    abstract bar: number;
+}
+class Broken extends BaseClass {}
+"#;
+    assert!(
+        has_error_with_code(source, 2515),
+        "Should emit TS2515 when non-abstract class doesn't implement abstract member"
+    );
+}
