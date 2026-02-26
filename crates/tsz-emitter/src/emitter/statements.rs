@@ -622,11 +622,14 @@ impl<'a> Printer<'a> {
         }
 
         // When a function expression appears as a statement, it needs wrapping parentheses
-        // to distinguish it from a function declaration. This includes:
-        // - Arrow functions transpiled to ES5 function expressions
-        // - Regular function expressions
+        // to distinguish it from a function declaration. We unwrap type assertions since
+        // those are erased in JS output but the underlying expression still needs parens.
+        // e.g., `<unknown>function() {}();` → `(function () { })();`
         let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
-            expr_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            let inner_kind = self
+                .unwrap_type_assertion_kind(expr_stmt.expression)
+                .unwrap_or(expr_node.kind);
+            inner_kind == syntax_kind_ext::FUNCTION_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION)
         } else {
             false
