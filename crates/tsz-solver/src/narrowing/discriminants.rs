@@ -113,19 +113,27 @@ impl<'a> NarrowingContext<'a> {
 
                 match prop_type {
                     Some(ty) => {
-                        // Must be a literal type
-                        if is_literal_type_through_type_constraints(self.db, ty) {
-                            // Must be unique among members
-                            if seen_literals.contains(&ty) {
+                        // Evaluate the property type to resolve template literals
+                        // (e.g., `${AnimalType.cat}` → "cat") and enum wrappers
+                        // before checking if it's a literal discriminant.
+                        let evaluated_ty = self.db.evaluate_type(ty);
+                        let check_ty =
+                            if is_literal_type_through_type_constraints(self.db, evaluated_ty) {
+                                evaluated_ty
+                            } else if is_literal_type_through_type_constraints(self.db, ty) {
+                                ty
+                            } else {
+                                // Not a literal type even after evaluation
                                 is_discriminant = false;
                                 break;
-                            }
-                            seen_literals.push(ty);
-                            variants.push((ty, members[i]));
-                        } else {
+                            };
+                        // Must be unique among members
+                        if seen_literals.contains(&check_ty) {
                             is_discriminant = false;
                             break;
                         }
+                        seen_literals.push(check_ty);
+                        variants.push((check_ty, members[i]));
                     }
                     None => {
                         // Property doesn't exist in this member
