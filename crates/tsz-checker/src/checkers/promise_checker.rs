@@ -739,17 +739,17 @@ impl<'a> CheckerState<'a> {
             if let Some(iface) = self.ctx.arena.get_interface(decl_node)
                 && let Some(result) =
                     self.find_generator_arg_in_heritage(&iface.heritage_clauses, arg_index, depth)
-                {
-                    return Some(result);
-                }
+            {
+                return Some(result);
+            }
 
             // Check class declarations
             if let Some(class) = self.ctx.arena.get_class(decl_node)
                 && let Some(result) =
                     self.find_generator_arg_in_heritage(&class.heritage_clauses, arg_index, depth)
-                {
-                    return Some(result);
-                }
+            {
+                return Some(result);
+            }
         }
 
         None
@@ -794,21 +794,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                    && Self::is_generator_like_name(&ident.escaped_text) {
-                        // Found generator-like heritage. Extract the type arg at arg_index.
-                        if let Some(type_args) = &type_arguments {
-                            if arg_index < type_args.nodes.len() {
-                                return Some(
-                                    self.get_type_from_type_node(type_args.nodes[arg_index]),
-                                );
-                            }
-                            // arg_index == 1 with only 1 arg: TReturn defaults to `any`
-                            if arg_index == 1 && type_args.nodes.len() == 1 {
-                                return Some(TypeId::ANY);
-                            }
+                    && Self::is_generator_like_name(&ident.escaped_text)
+                {
+                    // Found generator-like heritage. Extract the type arg at arg_index.
+                    if let Some(type_args) = &type_arguments {
+                        if arg_index < type_args.nodes.len() {
+                            return Some(self.get_type_from_type_node(type_args.nodes[arg_index]));
                         }
-                        return None; // Generator-like but missing the requested arg
+                        // arg_index == 1 with only 1 arg: TReturn defaults to `any`
+                        if arg_index == 1 && type_args.nodes.len() == 1 {
+                            return Some(TypeId::ANY);
+                        }
                     }
+                    return None; // Generator-like but missing the requested arg
+                }
 
                 // Non-generator heritage type — resolve its type and recurse through its heritage
                 let heritage_base_type = self.get_type_of_node(expr_idx);
@@ -817,9 +816,10 @@ impl<'a> CheckerState<'a> {
                         heritage_base_type,
                         arg_index,
                         depth + 1,
-                    ) {
-                        return Some(result);
-                    }
+                    )
+                {
+                    return Some(result);
+                }
             }
         }
 
