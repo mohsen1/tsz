@@ -524,6 +524,9 @@ pub struct ExprWithTypeArgsData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportDeclData {
     pub modifiers: Option<NodeList>,
+    /// For `import type X = require(...)` (import-equals only): true when the `type` keyword was present.
+    /// For regular import declarations, this is always false (type-only info lives in `ImportClauseData`).
+    pub is_type_only: bool,
     pub import_clause: NodeIndex,
     pub module_specifier: NodeIndex,
     pub attributes: NodeIndex,

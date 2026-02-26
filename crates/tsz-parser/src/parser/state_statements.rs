@@ -912,8 +912,6 @@ impl ParserState {
         } else {
             false
         };
-        let _ = is_type_only; // stored for future use in type checking
-
         // Parse the name - allows keywords like 'require' and 'exports' as valid names
         let name = self.parse_identifier_name();
 
@@ -937,6 +935,7 @@ impl ParserState {
             end_pos,
             ImportDeclData {
                 modifiers: None,
+                is_type_only,
                 import_clause: name,
                 module_specifier: module_reference,
                 attributes: NodeIndex::NONE,
