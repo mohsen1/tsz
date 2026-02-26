@@ -228,6 +228,9 @@ mod type_queries_function_rewrite_tests;
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
+#[path = "tests/type_queries_spread_tests.rs"]
+mod type_queries_spread_tests;
+#[cfg(test)]
 #[path = "tests/typedata_contract_tests.rs"]
 mod typedata_contract_tests;
 #[cfg(test)]
