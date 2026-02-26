@@ -609,7 +609,7 @@ export const bar = 42;
     };
 
     let (func_exports, other_exports, _default_func_export) =
-        collect_export_names_categorized(&parser.arena, &source_file.statements.nodes);
+        collect_export_names_categorized(&parser.arena, &source_file.statements.nodes, false);
 
     assert_eq!(
         func_exports,
