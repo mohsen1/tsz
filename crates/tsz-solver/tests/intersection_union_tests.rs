@@ -237,7 +237,7 @@ fn test_intersection_required_wins_over_optional() {
 }
 
 #[test]
-fn test_intersection_readonly_is_cumulative() {
+fn test_intersection_readonly_mutable_wins() {
     let interner = TypeInterner::new();
 
     let obj_readonly = interner.object(vec![PropertyInfo::readonly(
@@ -250,7 +250,8 @@ fn test_intersection_readonly_is_cumulative() {
         TypeId::STRING,
     )]);
 
-    // readonly & mutable = readonly (readonly is cumulative)
+    // readonly & mutable = mutable (writable wins in intersections)
+    // tsc: { readonly x: string } & { x: string } allows assignment to x
     let result = interner.intersection2(obj_readonly, obj_mutable);
 
     if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
@@ -260,7 +261,43 @@ fn test_intersection_readonly_is_cumulative() {
             .iter()
             .find(|p| p.name == interner.intern_string("x"));
         assert!(prop_x.is_some());
-        assert!(prop_x.unwrap().readonly, "Property should be readonly");
+        assert!(
+            !prop_x.unwrap().readonly,
+            "Property should be writable when any member is writable"
+        );
+    } else {
+        panic!("Expected object type");
+    }
+}
+
+#[test]
+fn test_intersection_all_readonly_stays_readonly() {
+    let interner = TypeInterner::new();
+
+    let obj_readonly1 = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+
+    let obj_readonly2 = interner.object(vec![PropertyInfo::readonly(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+
+    // readonly & readonly = readonly
+    let result = interner.intersection2(obj_readonly1, obj_readonly2);
+
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        let prop_x = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("x"));
+        assert!(prop_x.is_some());
+        assert!(
+            prop_x.unwrap().readonly,
+            "Property should be readonly when all members are readonly"
+        );
     } else {
         panic!("Expected object type");
     }

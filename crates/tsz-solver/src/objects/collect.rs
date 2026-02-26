@@ -286,13 +286,20 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.type_id = self
                     .interner
                     .intersect_types_raw2(existing.type_id, prop.type_id);
-                existing.write_type = self
-                    .interner
-                    .intersect_types_raw2(existing.write_type, prop.write_type);
                 // TS Rule: Optional if ALL are optional (required wins)
                 existing.optional = existing.optional && prop.optional;
-                // TS Rule: Readonly if ANY is readonly (readonly is cumulative)
-                existing.readonly = existing.readonly || prop.readonly;
+                // TS Rule: Readonly only if ALL are readonly (writable wins)
+                // { readonly a: number } & { a: number } = { a: number }
+                existing.readonly = existing.readonly && prop.readonly;
+                // Write type: if writable, use read type to avoid NONE sentinels
+                // from readonly members (NONE & number = "error & number").
+                if !existing.readonly {
+                    existing.write_type = existing.type_id;
+                } else {
+                    existing.write_type = self
+                        .interner
+                        .intersect_types_raw2(existing.write_type, prop.write_type);
+                }
                 // Merge visibility: use the more restrictive one (private > protected > public)
                 existing.visibility = merge_visibility(existing.visibility, prop.visibility);
                 // is_method: if one is a method, treat as property (more general)
@@ -311,8 +318,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.value_type = self
                     .interner
                     .intersect_types_raw2(existing.value_type, idx.value_type);
-                // Readonly if ANY is readonly
-                existing.readonly = existing.readonly || idx.readonly;
+                // Readonly only if ALL are readonly
+                existing.readonly = existing.readonly && idx.readonly;
             } else {
                 self.string_index = Some(idx.clone());
             }
@@ -325,8 +332,8 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 existing.value_type = self
                     .interner
                     .intersect_types_raw2(existing.value_type, idx.value_type);
-                // Readonly if ANY is readonly
-                existing.readonly = existing.readonly || idx.readonly;
+                // Readonly only if ALL are readonly
+                existing.readonly = existing.readonly && idx.readonly;
             } else {
                 self.number_index = Some(idx.clone());
             }
