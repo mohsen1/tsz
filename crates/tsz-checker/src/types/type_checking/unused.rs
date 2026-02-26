@@ -28,7 +28,14 @@ impl<'a> CheckerState<'a> {
         // For script files (non-module), skip the root SourceFile scope since
         // top-level declarations are globals and not checked by noUnusedLocals.
         // For module files, check all scopes including root.
+        //
+        // The binder may create duplicate symbols for the same declaration in
+        // both Function and Block scopes (e.g. `var` inside a function body).
+        // Deduplicate by (name, declaration node) so we only check each
+        // declaration once.  If ANY duplicate symbol is referenced, we treat
+        // the canonical one as referenced too.
         let mut symbols_to_check: Vec<(tsz_binder::SymbolId, String)> = Vec::new();
+        let mut seen_decls: HashSet<(String, NodeIndex)> = HashSet::new();
 
         for scope in &self.ctx.binder.scopes {
             // Skip root scope in script files
@@ -38,6 +45,38 @@ impl<'a> CheckerState<'a> {
             for (name, &sym_id) in scope.table.iter() {
                 // Skip lib-originating symbols (e.g. from lib.d.ts)
                 if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
+                    continue;
+                }
+                // Deduplicate symbols that share the same name and declaration.
+                // The binder can create separate SymbolIds for the same `var`
+                // in both Function scope and Block scope.  Only keep the first
+                // occurrence but propagate referenced status from duplicates.
+                let decl_idx = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| {
+                        if s.value_declaration.is_some() {
+                            s.value_declaration
+                        } else {
+                            s.declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                        }
+                    })
+                    .unwrap_or(NodeIndex::NONE);
+                let key = (name.clone(), decl_idx);
+                if !seen_decls.insert(key) {
+                    // Duplicate — propagate referenced status to the canonical symbol
+                    if self.ctx.referenced_symbols.borrow().contains(&sym_id) {
+                        // Find the canonical sym_id already in symbols_to_check
+                        if let Some(&(canonical_sym_id, _)) =
+                            symbols_to_check.iter().find(|(_, n)| *n == *name)
+                        {
+                            self.ctx
+                                .referenced_symbols
+                                .borrow_mut()
+                                .insert(canonical_sym_id);
+                        }
+                    }
                     continue;
                 }
                 symbols_to_check.push((sym_id, name.clone()));
