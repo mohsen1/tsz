@@ -200,13 +200,16 @@ impl<'a> CheckerState<'a> {
         // e.g., `import type A, { B } from '...'` is invalid.
         if let Some(clause_node) = self.ctx.arena.get(import.import_clause)
             && let Some(clause) = self.ctx.arena.get_import_clause(clause_node)
-                && clause.is_type_only && clause.name.is_some() && clause.named_bindings.is_some() {
-                    self.error_at_node(
+            && clause.is_type_only
+            && clause.name.is_some()
+            && clause.named_bindings.is_some()
+        {
+            self.error_at_node(
                         import.import_clause,
                         "A type-only import can specify a default import or named bindings, but not both.",
                         diagnostic_codes::A_TYPE_ONLY_IMPORT_CAN_SPECIFY_A_DEFAULT_IMPORT_OR_NAMED_BINDINGS_BUT_NOT_BOTH,
                     );
-                }
+        }
 
         // TS2823: Import attributes require specific module options
         self.check_import_attributes_module_option(import.attributes);
