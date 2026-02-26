@@ -416,10 +416,22 @@ impl<'a> NarrowingContext<'a> {
             span!(Level::TRACE, "narrow_by_typeof", source_type = source_type.0, %typeof_result)
                 .entered();
 
-        // CRITICAL FIX: Narrow `any` for typeof checks
-        // TypeScript narrows `any` for typeof/instanceof/Array.isArray/user-defined guards
-        // But NOT for equality/truthiness/in operator
-        if source_type == TypeId::UNKNOWN || source_type == TypeId::ANY {
+        // TypeScript narrows `any` via typeof only for PRIMITIVE type checks.
+        // "object" and "function" are non-primitive and do NOT narrow `any`.
+        // `unknown` is always narrowed by all typeof checks.
+        if source_type == TypeId::ANY {
+            return match typeof_result {
+                "string" => TypeId::STRING,
+                "number" => TypeId::NUMBER,
+                "boolean" => TypeId::BOOLEAN,
+                "bigint" => TypeId::BIGINT,
+                "symbol" => TypeId::SYMBOL,
+                "undefined" => TypeId::UNDEFINED,
+                // "object" and "function" do NOT narrow `any`
+                _ => source_type,
+            };
+        }
+        if source_type == TypeId::UNKNOWN {
             return match typeof_result {
                 "string" => TypeId::STRING,
                 "number" => TypeId::NUMBER,
@@ -1191,6 +1203,12 @@ impl<'a> NarrowingContext<'a> {
                 if sense {
                     self.narrow_by_typeof(source_type, type_name)
                 } else {
+                    // TypeScript does NOT narrow `any` in the false branch of typeof.
+                    // The true branch narrows `any` to the primitive type, but the
+                    // false branch keeps `any` unchanged.
+                    if source_type == TypeId::ANY {
+                        return source_type;
+                    }
                     // Negation: exclude typeof type
                     self.narrow_by_typeof_negation(source_type, type_name)
                 }
