@@ -188,15 +188,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (_, Some(TypeData::Mapped(mapped_id))) => {
                 let mapped = self.interner.mapped_type(mapped_id);
-                // When source is an object and target is a mapped type with
-                // inference placeholders, infer directly from the object's
-                // properties rather than trying to evaluate the mapped type
-                // (which can't expand when its constraint is a placeholder).
-                // e.g., source { a: "hello" } against { [P in K]: T }
-                //   -> K = "a", T = string
                 if let Some(TypeData::Object(source_shape)) = self.interner.lookup(source) {
                     let source_obj = self.interner.object_shape(source_shape);
                     if !source_obj.properties.is_empty() {
+                        // Check for reverse mapped type inference pattern:
+                        // constraint is `keyof T` where T is an inference placeholder.
+                        // This handles homomorphic mapped types like Boxified<T> =
+                        // { [P in keyof T]: Box<T[P]> }. For each source property,
+                        // we reverse through the template to reconstruct T.
+                        if let Some(TypeData::KeyOf(keyof_target)) =
+                            self.interner.lookup(mapped.constraint)
+                            && var_map.contains_key(&keyof_target)
+                                && self.constrain_reverse_mapped_type(
+                                    ctx,
+                                    var_map,
+                                    &source_obj,
+                                    &mapped,
+                                    keyof_target,
+                                ) {
+                                    return;
+                                }
+                                // Reverse inference failed (template too complex),
+                                // fall through to simple/evaluate paths
+
+                        // Simple mapped type inference for { [P in K]: T }
                         // Infer constraint (K) from property name literals
                         let name_literals: Vec<TypeId> = source_obj
                             .properties
@@ -962,6 +977,113 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => {}
         }
+    }
+
+    /// Attempt reverse mapped type inference for homomorphic mapped types.
+    ///
+    /// Given source `{ a: Box<number>, b: Box<string> }` and mapped type
+    /// `{ [P in keyof T]: Box<T[P]> }` where T is a placeholder, builds the
+    /// reverse object `{ a: number, b: string }` and constrains it against T.
+    ///
+    /// Returns `true` if reverse inference succeeded (all properties reversed),
+    /// `false` if any property couldn't be reversed through the template.
+    fn constrain_reverse_mapped_type(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_obj: &ObjectShape,
+        mapped: &crate::types::MappedType,
+        target_placeholder: TypeId,
+    ) -> bool {
+        let template = mapped.template;
+        let iter_param_name = mapped.type_param.name;
+
+        let mut reverse_properties = Vec::new();
+
+        for prop in &source_obj.properties {
+            // Substitute the iteration parameter K with the property name literal
+            let key_literal = self.interner.literal_string_atom(prop.name);
+            let mut subst = TypeSubstitution::new();
+            subst.insert(iter_param_name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, template, &subst);
+
+            // Reverse-infer through the template: find what T[K] should be.
+            // If reversal fails for any property, abort the entire reverse inference.
+            let reversed_value = match self.reverse_infer_through_template(
+                prop.type_id,
+                instantiated_template,
+                target_placeholder,
+            ) {
+                Some(v) => v,
+                None => return false, // Can't reverse this property, fall back
+            };
+
+            reverse_properties.push(PropertyInfo::new(prop.name, reversed_value));
+        }
+
+        // Build the reverse mapped object and constrain it against the placeholder T
+        // using HomomorphicMappedType priority (lower than direct NakedTypeVariable inference).
+        let reverse_object = self.interner.object(reverse_properties);
+        self.constrain_types(
+            ctx,
+            var_map,
+            reverse_object,
+            target_placeholder,
+            crate::types::InferencePriority::HomomorphicMappedType,
+        );
+        true
+    }
+
+    /// Reverse-infer a single property value through a mapped type template.
+    ///
+    /// Given `source_value` (e.g., `Box<number>`) and `template` (e.g., `Box<T["a"]>`),
+    /// extracts what `T["a"]` must be (e.g., `number`).
+    ///
+    /// Returns `None` if the template is too complex to reverse (e.g., function types,
+    /// conditional types, etc.), signaling that reverse inference should be abandoned.
+    fn reverse_infer_through_template(
+        &self,
+        source_value: TypeId,
+        template: TypeId,
+        target_placeholder: TypeId,
+    ) -> Option<TypeId> {
+        // Case 1: template is directly IndexAccess(T, key) → source IS the reversed value
+        if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template)
+            && obj == target_placeholder {
+                return Some(source_value);
+            }
+
+        // Case 2: template is Application(F, args) and source is Application(F, args')
+        // with same base → recurse into matching args to find the T[K] position
+        if let Some(TypeData::Application(template_app_id)) = self.interner.lookup(template) {
+            let template_app = self.interner.type_application(template_app_id);
+            if let Some(TypeData::Application(source_app_id)) = self.interner.lookup(source_value) {
+                let source_app = self.interner.type_application(source_app_id);
+                if template_app.base == source_app.base
+                    && template_app.args.len() == source_app.args.len()
+                {
+                    for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
+                        let reversed =
+                            self.reverse_infer_through_template(*s_arg, *t_arg, target_placeholder);
+                        if let Some(rev) = reversed
+                            && rev != *s_arg {
+                                return Some(rev);
+                            }
+                    }
+                    // Single type arg shortcut (Box<T[P]> → unwrap the single arg)
+                    if template_app.args.len() == 1 {
+                        return Some(source_app.args[0]);
+                    }
+                }
+            }
+            // Template is an Application but source doesn't match — can't reverse
+            return None;
+        }
+
+        // For any other template shape (function types, conditional types, etc.),
+        // we can't safely reverse. Signal failure so we fall back to the
+        // standard simple/evaluate paths.
+        None
     }
 
     fn constrain_properties(

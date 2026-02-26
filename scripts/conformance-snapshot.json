@@ -1,26 +1,26 @@
 {
-  "timestamp": "2026-02-26T18:35:17Z",
-  "git_sha": "edcaf27369cba102ff1f6d0376aeebaaabdfe8ba",
+  "timestamp": "2026-02-26T18:30:30Z",
+  "git_sha": "09b89e515f6fcf3ca7befb10ba8d71be8f998d59",
   "summary": {
     "total_tests": 12570,
-    "passed": 9252,
-    "failed": 3318,
-    "pass_rate": 73.6
+    "passed": 9230,
+    "failed": 3340,
+    "pass_rate": 73.4
   },
   "areas_by_pass_rate": [
+    {
+      "area": "node/allowJs",
+      "total": 21,
+      "passed": 8,
+      "failed": 13,
+      "pass_rate": 38.1
+    },
     {
       "area": "types/mapped",
       "total": 26,
       "passed": 12,
       "failed": 14,
       "pass_rate": 46.15
-    },
-    {
-      "area": "jsx",
-      "total": 195,
-      "passed": 91,
-      "failed": 104,
-      "pass_rate": 46.67
     },
     {
       "area": "generators",
@@ -30,18 +30,18 @@
       "pass_rate": 46.67
     },
     {
+      "area": "jsx",
+      "total": 190,
+      "passed": 90,
+      "failed": 100,
+      "pass_rate": 47.37
+    },
+    {
       "area": "types/contextualTypes",
       "total": 19,
       "passed": 9,
       "failed": 10,
       "pass_rate": 47.37
-    },
-    {
-      "area": "node/allowJs",
-      "total": 21,
-      "passed": 10,
-      "failed": 11,
-      "pass_rate": 47.62
     },
     {
       "area": "types/union",
@@ -51,11 +51,18 @@
       "pass_rate": 48.0
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 12,
-      "failed": 12,
-      "pass_rate": 50.0
+      "area": "externalModules/typeOnly",
+      "total": 65,
+      "passed": 32,
+      "failed": 33,
+      "pass_rate": 49.23
+    },
+    {
+      "area": "node",
+      "total": 73,
+      "passed": 36,
+      "failed": 37,
+      "pass_rate": 49.32
     },
     {
       "area": "classes",
@@ -79,13 +86,6 @@
       "pass_rate": 50.0
     },
     {
-      "area": "externalModules/typeOnly",
-      "total": 65,
-      "passed": 33,
-      "failed": 32,
-      "pass_rate": 50.77
-    },
-    {
       "area": "types/spread",
       "total": 25,
       "passed": 13,
@@ -105,20 +105,6 @@
       "passed": 16,
       "failed": 14,
       "pass_rate": 53.33
-    },
-    {
-      "area": "references",
-      "total": 15,
-      "passed": 8,
-      "failed": 7,
-      "pass_rate": 53.33
-    },
-    {
-      "area": "node",
-      "total": 73,
-      "passed": 39,
-      "failed": 34,
-      "pass_rate": 53.42
     },
     {
       "area": "transpile",
@@ -156,18 +142,18 @@
       "pass_rate": 55.88
     },
     {
-      "area": "controlFlow",
-      "total": 57,
-      "passed": 32,
-      "failed": 25,
-      "pass_rate": 56.14
-    },
-    {
       "area": "types/nonPrimitive",
       "total": 16,
       "passed": 9,
       "failed": 7,
       "pass_rate": 56.25
+    },
+    {
+      "area": "controlFlow",
+      "total": 56,
+      "passed": 32,
+      "failed": 24,
+      "pass_rate": 57.14
     },
     {
       "area": "decorators/invalid",
@@ -177,6 +163,13 @@
       "pass_rate": 57.14
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
+    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -184,18 +177,18 @@
       "pass_rate": 58.33
     },
     {
+      "area": "jsdoc",
+      "total": 249,
+      "passed": 147,
+      "failed": 102,
+      "pass_rate": 59.04
+    },
+    {
       "area": "types/literal",
       "total": 44,
       "passed": 26,
       "failed": 18,
       "pass_rate": 59.09
-    },
-    {
-      "area": "jsdoc",
-      "total": 249,
-      "passed": 148,
-      "failed": 101,
-      "pass_rate": 59.44
     },
     {
       "area": "types/typeAliases",
@@ -275,13 +268,6 @@
       "pass_rate": 64.74
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 19,
-      "failed": 10,
-      "pass_rate": 65.52
-    },
-    {
       "area": "classes/members",
       "total": 198,
       "passed": 130,
@@ -322,6 +308,13 @@
       "passed": 24,
       "failed": 11,
       "pass_rate": 68.57
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 20,
+      "failed": 9,
+      "pass_rate": 68.97
     },
     {
       "area": "es6/shorthandPropertyAssignment",
@@ -401,11 +394,18 @@
       "pass_rate": 73.81
     },
     {
+      "area": "override",
+      "total": 31,
+      "passed": 23,
+      "failed": 8,
+      "pass_rate": 74.19
+    },
+    {
       "area": "compiler",
-      "total": 6508,
-      "passed": 4853,
-      "failed": 1655,
-      "pass_rate": 74.57
+      "total": 6506,
+      "passed": 4844,
+      "failed": 1662,
+      "pass_rate": 74.45
     },
     {
       "area": "es6/yieldExpressions",
@@ -422,11 +422,25 @@
       "pass_rate": 75.0
     },
     {
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 32,
+      "failed": 10,
+      "pass_rate": 76.19
+    },
+    {
       "area": "es6/unicodeExtendedEscapes",
       "total": 64,
       "passed": 49,
       "failed": 15,
       "pass_rate": 76.56
+    },
+    {
+      "area": "jsdoc/declarations",
+      "total": 90,
+      "passed": 69,
+      "failed": 21,
+      "pass_rate": 76.67
     },
     {
       "area": "interfaces/declarationMerging",
@@ -436,11 +450,11 @@
       "pass_rate": 76.92
     },
     {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 33,
-      "failed": 9,
-      "pass_rate": 78.57
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 51,
+      "failed": 14,
+      "pass_rate": 78.46
     },
     {
       "area": "enums",
@@ -455,20 +469,6 @@
       "passed": 75,
       "failed": 20,
       "pass_rate": 78.95
-    },
-    {
-      "area": "jsdoc/declarations",
-      "total": 91,
-      "passed": 72,
-      "failed": 19,
-      "pass_rate": 79.12
-    },
-    {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 52,
-      "failed": 13,
-      "pass_rate": 80.0
     },
     {
       "area": "expressions/commaOperator",
@@ -511,13 +511,6 @@
       "passed": 10,
       "failed": 2,
       "pass_rate": 83.33
-    },
-    {
-      "area": "override",
-      "total": 31,
-      "passed": 26,
-      "failed": 5,
-      "pass_rate": 83.87
     },
     {
       "area": "es6/functionDeclarations",
@@ -639,6 +632,13 @@
       "pass_rate": 93.33
     },
     {
+      "area": "references",
+      "total": 15,
+      "passed": 14,
+      "failed": 1,
+      "pass_rate": 93.33
+    },
+    {
       "area": "functions",
       "total": 18,
       "passed": 17,
@@ -742,10 +742,6 @@
       "count": 9
     },
     {
-      "code": "TS2688",
-      "count": 9
-    },
-    {
       "code": "TS2741",
       "count": 8
     },
@@ -762,15 +758,15 @@
       "count": 7
     },
     {
-      "code": "TS2769",
-      "count": 7
-    },
-    {
       "code": "TS2403",
       "count": 6
     },
     {
       "code": "TS2440",
+      "count": 6
+    },
+    {
+      "code": "TS2769",
       "count": 6
     },
     {
@@ -796,6 +792,10 @@
     {
       "code": "TS7006",
       "count": 4
+    },
+    {
+      "code": "TS2882",
+      "count": 4
     }
   ],
   "not_implemented_codes": [
@@ -806,10 +806,6 @@
     {
       "code": "TS2497",
       "count": 8
-    },
-    {
-      "code": "TS2875",
-      "count": 7
     },
     {
       "code": "TS7017",
@@ -878,12 +874,16 @@
     {
       "code": "TS2819",
       "count": 4
+    },
+    {
+      "code": "TS1138",
+      "count": 4
     }
   ],
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 175
+      "count": 174
     },
     {
       "code": "TS1005",
@@ -927,7 +927,7 @@
     },
     {
       "code": "TS2769",
-      "count": 22
+      "count": 21
     },
     {
       "code": "TS2300",
@@ -946,11 +946,11 @@
       "count": 19
     },
     {
-      "code": "TS18048",
-      "count": 18
+      "code": "TS1134",
+      "count": 17
     },
     {
-      "code": "TS1134",
+      "code": "TS18048",
       "count": 17
     },
     {
@@ -958,8 +958,8 @@
       "count": 16
     },
     {
-      "code": "TS2688",
-      "count": 15
+      "code": "TS2353",
+      "count": 14
     }
   ]
 }
