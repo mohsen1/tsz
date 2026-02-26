@@ -238,7 +238,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     .resolver
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(type_id),
-                Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                Some(TypeData::Mapped(_) | TypeData::Application(_) | TypeData::KeyOf(_)) => {
                     self.subtype.evaluate_type(type_id)
                 }
                 _ => type_id,

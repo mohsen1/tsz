@@ -228,3 +228,58 @@ fn assignability_failure_analysis_helper_reports_reason() {
         "expected failure reason for number -> string assignability mismatch"
     );
 }
+
+#[test]
+fn redeclaration_identity_evaluates_keyof_to_literal_union() {
+    // Regression test: `var v: "a" | "b"; var v: keyof { a: number, b: string }`
+    // should NOT produce TS2403 because `keyof { a: number, b: string }` evaluates
+    // to `"a" | "b"`. The normalization step in the compat checker must evaluate
+    // KeyOf types before comparing for redeclaration identity.
+    let interner = TypeInterner::new();
+    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+
+    let a_atom = interner.intern_string("a");
+    let b_atom = interner.intern_string("b");
+
+    // Build the object type { a: number, b: string }
+    let obj = interner.object(vec![
+        PropertyInfo::new(a_atom, TypeId::NUMBER),
+        PropertyInfo::new(b_atom, TypeId::STRING),
+    ]);
+
+    // Build keyof { a: number, b: string } — should evaluate to "a" | "b"
+    let keyof_obj = interner.keyof(obj);
+
+    // Build "a" | "b" as a union of string literals
+    let lit_a = interner.literal_string_atom(a_atom);
+    let lit_b = interner.literal_string_atom(b_atom);
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    // These must be identical for redeclaration purposes
+    let result = query_relation(
+        &interner,
+        keyof_obj,
+        union_ab,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(
+        result.is_related(),
+        "keyof {{a: number, b: string}} should be identical to \"a\" | \"b\" for redeclaration"
+    );
+
+    // And in the reverse direction
+    let result_rev = query_relation(
+        &interner,
+        union_ab,
+        keyof_obj,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(
+        result_rev.is_related(),
+        "\"a\" | \"b\" should be identical to keyof {{a: number, b: string}} for redeclaration"
+    );
+}
