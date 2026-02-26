@@ -958,13 +958,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
             }
             if let Some(max) = combined.max_allowed
-                && arg_types.len() > max {
-                    return CallResult::ArgumentCountMismatch {
-                        expected_min: combined.min_required,
-                        expected_max: combined.max_allowed,
-                        actual: arg_types.len(),
-                    };
-                }
+                && arg_types.len() > max
+            {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: combined.min_required,
+                    expected_max: combined.max_allowed,
+                    actual: arg_types.len(),
+                };
+            }
         }
 
         // Phase 2: Per-member resolution for argument type checking.
