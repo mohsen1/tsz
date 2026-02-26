@@ -427,6 +427,17 @@
 - **Root cause detail**: During generic instantiation, `keyof T` in type args was eagerly evaluated to `"a" | "b"` while `T` was resolved to a different TypeId. This caused Method 1 homomorphism check (`obj != source_from_constraint`) to fail, and Method 2 (`expected_keys == mapped.constraint`) to fail because constraint was still `KeyOf(Lazy(...))`.
 - **Tests added**: 3 evaluate tests (keyof preserves optional/readonly, post-instantiation preserves optional) + 1 integration test (Pick identity bidirectional subtype)
 
+#### Run note (2026-02-26) — types/mapped area (filtering as-clauses)
+- **Area**: types/mapped (46.15% → 50.0%, 12/26 → 13/26)
+- **Net gain**: +6 tests across full suite (9256 → 9262, 73.7%)
+- **Fixed**: `mappedTypeAsClauseRelationships.ts` — false TS2322 on lines 12, 22 where `T` is assigned to filtering mapped types like `Filter<T> = { [P in keyof T as T[P] extends Foo ? P : never]: T[P] }`
+- **Root cause**: `check_source_to_homomorphic_mapped` (generics.rs) and `is_assignable_to_homomorphic_mapped` (unions.rs) blanket-rejected ALL mapped types with `as` clauses (name_type != None). But **filtering** as-clauses — conditionals that produce either `P` or `never` — preserve key subsets of T, so T is still assignable to the result.
+- **Fix**: Added `is_filtering_name_type()` helper in generics.rs. Checks if the as-clause is a conditional type where one branch is the iteration parameter and the other is `never`. When this pattern is detected, the homomorphic assignability optimization is allowed to proceed. Made `pub(crate)` so unions.rs can reuse it.
+- **Key distinction**: Filtering as-clauses (`as T[P] extends Foo ? P : never`) keep a subset of original keys → T is assignable. Renaming as-clauses (`as \`bool${P}\``) transform keys → T is NOT assignable.
+- **Files**: `crates/tsz-solver/src/relations/subtype/rules/generics.rs`, `crates/tsz-solver/src/relations/subtype/rules/unions.rs`
+- **Tests added**: 3 unit tests in `generics_rules_tests.rs` (filter no modifier, filter with optional, filter with remove-optional fails correctly)
+- **Remaining types/mapped failures**: 13/26 still fail. Dominant causes: TS2322 from generic mapped type eval (mappedTypeRelationships, mappedTypeErrors), TS1360 false positive (mappedTypesGenericTuples2), TS2769 false positive (mappedTypesArraysTuples), TS2313/TS2456/TS2589 missing (recursiveMappedTypes), parser issues (mappedTypeProperties)
+
 #### Run note (2026-02-25, session 13) — references area
 - **Area**: references (13.3% → 93.3%, 2/15 → 14/15, +12 in area, +14 net suite-wide)
 - **Fixed**: Three root causes for `/// <reference types="..." />` resolution:
@@ -874,3 +885,4 @@ All items below have been validated against the codebase (implementations + test
 | TS1345 strictNullChecks | Gate void truthiness check (TS1345) on `strictNullChecks` — was unconditionally emitting | +2 tests (logicalAndOperatorWithEveryType, logicalOrOperatorWithEveryType) |
 | TS2365 mixed-orderable | Remove `is_orderable`/`OrderableVisitor` from solver `BinaryOpEvaluator` — was accepting mixed-kind comparisons like `number < string` | +1 test (comparisonOperatorWithNoRelationshipPrimitiveType) |
 | TS2411/TS2413 index sig | TS2411: preserve original quote style for string literal property names using `node_text()`. TS2413: only emit on number index nodes (remove string/container fallback); remove redundant cross-body number-vs-string checks from `duplicate_identifiers.rs` | +1 test (mergedInterfacesWithIndexers2) |
+| mapped type as-clause | Filtering as-clause recognition in homomorphic mapped type assignability (T <: Filter<T> where Filter uses `as P extends Foo ? P : never`) | +6 tests |
