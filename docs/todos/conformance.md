@@ -1,13 +1,27 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9195/12570 (73.2%) — full suite, fingerprint level (new framework)
-> Note: upstream TS2882 regression (eabafa0e1) temporarily dropped snapshot to 7116.
-> The +8 from iterable spread fix is validated against the pre-regression baseline.
+**Current score**: ~7116/12570 (56.6%) — full suite, fingerprint level (new framework)
+> Note: `noUncheckedSideEffectImports` default changed to `true` (matching tsc 6.0)
+> causes TS2882 on many tests with side-effect imports, dropping from ~9210 to ~7116.
 
 ---
 
 ## High Impact — Core Type System
+
+### Async function expression/arrow return type unwrapping — RESOLVED (Session 2026-02-26)
+- **Fixed**: `arrowFunctionParsingGenericInObject` (+5 fingerprint-level tests)
+- **Root cause**: `evaluate_application_type()` in `function_type.rs` expands `Promise<T>` into
+  its structural object form before `unwrap_promise_type()` runs. The unwrap only recognises
+  `Application` variants, so it silently fails for function expressions and arrow functions.
+  Function declarations (in `statement_callback_bridge.rs`) don't call `evaluate_application_type`,
+  which is why they worked.
+- **Fix**: (1) Use pre-expansion `annotated_return_type` as input to `unwrap_promise_type()`.
+  (2) Use already-unwrapped `body_return_type` for expression-body checking instead of
+  raw `annotated_return_type`.
+- **Files**: `crates/tsz-checker/src/types/function_type.rs`
+- **Unit tests**: 4 new tests covering async arrow (expression + block body), async function
+  expression, and async generic arrow.
 
 ### types/mapped — Explain path mapped type evaluation (Session 2026-02-26) — DONE
 - **Area**: types/mapped (46.15% → ~50.9% at code level, 28/55 pass)
@@ -35,6 +49,17 @@
   `evaluate_type_with_resolution()` then checks if all properties are optional.
 - **Files**: `crates/tsz-checker/src/types/utilities/enum_utils.rs`,
   `crates/tsz-checker/src/assignability/assignability_checker.rs`
+
+### Inference priority — bad inference lower priority than good inference (NOT YET FIXED)
+- **Test**: `badInferenceLowerPriorityThanGoodInference.ts`
+- **Status**: Investigated, root cause identified, fix requires solver changes
+- **Root cause**: When inferring `A` from `Foo<A>` where `a: { BLAH: 33 }` gives `A = { BLAH: number }`
+  and `b: (x: A) => void` gives no useful inference (contravariant position), our solver creates a
+  union type `{ BLAH: number } | A` instead of preferring the covariant inference. tsc gives lower
+  priority to inferences from contravariant positions when good inferences exist from covariant positions.
+- **Fix needed**: Solver inference priority system — contravariant position inferences should be
+  de-prioritized when covariant inferences are available. This is a fundamental solver change.
+- **Estimated LOC**: 50-100 lines in solver inference module
 
 ### expressions/binaryOperators — Generic function type comparability (NOT YET FIXED)
 - **Tests**: `comparisonOperatorWithNoRelationshipObjectsOnInstantiatedCallSignature`,
