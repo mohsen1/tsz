@@ -1,12 +1,45 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9238/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
-> Previously ~9236/12570 (73.5%) baseline.
+**Current score**: ~9233/12570 (73.5%) — full suite, error-code level
+> Previously ~9232/12570 (73.4%) baseline.
 
 ---
 
 ## High Impact — Core Type System
+
+### Reverse Mapped Type Inference — PARTIAL (Session 2026-02-26)
+- **Added**: Conservative reverse mapped type inference in `constraints.rs`
+- **Root cause**: When inferring T from `Boxified<T> = { [P in keyof T]: Box<T[P]> }`,
+  the solver had no reverse inference — it fell back to T's constraint (`object`).
+- **Fix**: In the constraint system's Mapped type handler, detect homomorphic mapped types
+  (constraint = `keyof T` where T is a placeholder). For each source property, instantiate
+  the template with the property key, then structurally reverse the template to extract
+  the unwrapped value type. Build a reverse object and constrain it against T using
+  `HomomorphicMappedType` priority.
+- **Conservative approach**: The reversal only handles two patterns:
+  1. `IndexAccess(T, key)` — direct passthrough (source value IS the reversed value)
+  2. `Application(F, [IndexAccess(T, key)])` — matching Applications with same base type
+  If the template is a function type, conditional type, or anything else, reversal fails
+  and we fall back to the existing simple/evaluate paths.
+- **Files**: `crates/tsz-solver/src/operations/constraints.rs`
+- **Tests**: 3 new tests in `conformance_issues.rs` (boxified unbox, contravariant no-regression,
+  func template no-regression)
+- **Net result**: +1 at error-code level (stable at ~9233 vs 9232 baseline)
+- **Improved tests**: `reverseMappedTypeInferenceWidening2`, `intersectionTypeInference2`,
+  `iterableContextualTyping1`, `prespecializedGenericMembers1`
+- **Remaining gaps in isomorphicMappedTypeInference.ts** (still 3 extra error codes):
+  - Line 33, 108: TS7053 — for-in loop indexing on deferred mapped type (separate issue)
+  - Lines 89-90: TS2322 — `makeRecord` simple mapped type `{ [P in K]: T }` picks last
+    property type instead of union
+  - Line 122: TS2345 — `clone(foo)` reverse inference not preserving readonly modifiers
+  - Line 183: TS2322 — `Pick<any, string>` evaluation issue
+- **Future work**: Full reverse mapped type inference requires:
+  1. A deferred `ReverseMappedType` node (like TypeScript's `ObjectFlags.ReverseMapped`)
+     that lazily materializes members using standard inference machinery per-property
+  2. Per-property inference using `T[P]` as inference variable against the template
+  3. Proper handling of modifier stripping (optional/readonly) during reversal
+  4. Cycle detection for deeply nested reverse mapped types
 
 ### TS2362/TS2363 — Per-operand arithmetic check with `any` operand — RESOLVED (Session 2026-02-26)
 - **Fixed**: `arithmeticOperatorWithTypeParameter` conformance test (+1 test, 20 fingerprints)
