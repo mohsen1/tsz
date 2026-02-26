@@ -634,9 +634,21 @@ fn convert_options_to_tsconfig(
             .any(|&opt| opt.to_lowercase() == key_lower)
         {
             // Parse comma-separated list
+            // For typeRoots: strip leading '/' from virtual absolute paths (e.g. "/types" → "types")
+            // The conformance runner places virtual absolute paths at {temp_dir}/{path},
+            // so we need relative paths for typeRoots to resolve correctly.
+            let is_type_roots = key_lower == "typeroots";
             let items: Vec<serde_json::Value> = value
                 .split(',')
-                .map(|s| serde_json::Value::String(s.trim().to_string()))
+                .map(|s| {
+                    let s = s.trim();
+                    let s = if is_type_roots {
+                        s.trim_start_matches('/')
+                    } else {
+                        s
+                    };
+                    serde_json::Value::String(s.to_string())
+                })
                 .collect();
             serde_json::Value::Array(items)
         } else {

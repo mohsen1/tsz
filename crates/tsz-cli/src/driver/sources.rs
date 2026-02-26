@@ -371,7 +371,7 @@ pub(super) fn collect_type_root_files(
         // Filter out "*" wildcard — it means "include all type packages"
         // rather than a literal package name. When present, fall through
         // to the auto-discovery path below.
-        let has_wildcard = types.iter().any(|t| t == "*");
+        let has_wildcard = types.iter().any(|t| t == "*" || t.trim().is_empty());
         if !has_wildcard {
             let mut unresolved = Vec::new();
             for name in types {
