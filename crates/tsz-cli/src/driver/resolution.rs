@@ -1019,20 +1019,13 @@ fn expand_export_path_candidates(
     let base = normalize_path(path);
     let suffixes = &options.module_suffixes;
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
-        let mut candidates =
-            candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
-        // In Node16/NodeNext/Bundler, exports map targets like "./foo.js" should also
-        // resolve to "./foo.d.ts", "./foo.ts", etc. (output extension remapping).
-        // This is how tsc resolves declaration files when the exports map only lists JS outputs.
-        if let Some(decl_extensions) = js_to_declaration_extensions(extension) {
-            for decl_ext in decl_extensions {
-                candidates.extend(candidates_with_suffixes_and_extension(
-                    &base_no_ext,
-                    decl_ext,
-                    suffixes,
-                ));
-            }
-        }
+        // Exports map targets are resolved as-is. tsc does NOT perform
+        // .js → .d.ts substitution for exports/imports map entries: the
+        // package author must use an explicit `types` condition to expose
+        // declaration files. Extension substitution (.js → .ts/.d.ts) is
+        // only valid for user-written import specifiers, not for package
+        // manifest entries. See: test_exports_js_target_does_not_substitute_dts
+        let candidates = candidates_with_suffixes_and_extension(&base_no_ext, extension, suffixes);
         return candidates;
     }
 
@@ -1164,17 +1157,6 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
 ];
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 
-/// Maps JS output extensions to their TypeScript/declaration equivalents.
-/// Used in exports map resolution to find declaration files when the exports
-/// map only lists JS output paths (e.g., `"./index.js"` → try `index.d.ts`).
-fn js_to_declaration_extensions(js_ext: &str) -> Option<&'static [&'static str]> {
-    match js_ext {
-        "js" | "jsx" => Some(&["ts", "tsx", "d.ts"]),
-        "mjs" => Some(&["mts", "d.mts"]),
-        "cjs" => Some(&["cts", "d.cts"]),
-        _ => None,
-    }
-}
 const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
 const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =

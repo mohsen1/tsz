@@ -322,11 +322,11 @@ impl<'a> DeclarationEmitter<'a> {
                         // `export interface ...` / `export type X = ...` wrapped in EXPORT_DECLARATION
                         if export.export_clause.is_some()
                             && let Some(clause_node) = self.arena.get(export.export_clause)
-                                && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                    || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
-                                {
-                                    return true;
-                                }
+                            && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                        {
+                            return true;
+                        }
                     }
                 }
                 _ => {}

@@ -870,10 +870,15 @@ pub(super) fn check_file_for_parallel<'a>(
         return Vec::new();
     }
 
-    // Skip semantic checking of declaration files in node_modules.
-    // tsc doesn't report diagnostics for external library files.
+    // Skip semantic checking of declaration files in node_modules but still report
+    // parse errors. tsc suppresses semantic diagnostics for external library files
+    // but does surface syntax errors (e.g. a broken .d.ts in a published package).
     if is_node_modules_declaration_file(&file.file_name) {
-        return Vec::new();
+        return file
+            .parse_diagnostics
+            .iter()
+            .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
+            .collect();
     }
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 

@@ -122,14 +122,15 @@ impl<'a> CheckerState<'a> {
                 return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
-            // Emitted unconditionally (regardless of noImplicitAny) when JSX.IntrinsicElements is absent.
-            // This is a JSX-specific diagnostic, not a standard implicit-any check.
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                idx,
-                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
-                &["IntrinsicElements"],
-            );
+            // TypeScript gates this on noImplicitAny: the diagnostic name includes "implicitly has type 'any'".
+            if self.ctx.compiler_options.no_implicit_any {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    idx,
+                    diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                    &["IntrinsicElements"],
+                );
+            }
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -170,7 +171,10 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
-        if is_intrinsic && self.get_intrinsic_elements_type().is_none() {
+        if is_intrinsic
+            && self.get_intrinsic_elements_type().is_none()
+            && self.ctx.compiler_options.no_implicit_any
+        {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 idx,
