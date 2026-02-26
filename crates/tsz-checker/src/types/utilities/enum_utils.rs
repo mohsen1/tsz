@@ -619,9 +619,64 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Additional check: Two object types where ALL common named properties are
+        // optional always overlap, because both types include the empty object `{}`.
+        // Example: `{ b?: number }` and `{ b?: string }` overlap at `{}`.
+        // The assignability check misses this because `number` is not assignable to
+        // `string` and vice versa, but the types still share `{}` as a common value.
+        if self.objects_with_all_optional_common_props_overlap(effective_left, effective_right) {
+            tracing::trace!("objects with all-optional common properties overlap");
+            return false;
+        }
+
         tracing::trace!("no overlap detected");
         // No other overlap detected
         true
+    }
+
+    /// Check if two types are both object types whose properties are ALL optional.
+    /// When this is the case, the empty object `{}` satisfies both types,
+    /// so they always overlap (and are comparable).
+    ///
+    /// Example: `{ b?: number }` and `{ b?: string }` — even though `number` and
+    /// `string` are incompatible, both types include `{}` (property absent) as a
+    /// valid value, so they overlap. Bidirectional assignability misses this.
+    ///
+    /// Resolves `Lazy(DefId)` types through the type environment before checking.
+    pub(crate) fn objects_with_all_optional_common_props_overlap(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::assignability::object_shape_for_type;
+
+        // Resolve lazy types (interfaces, type aliases, etc.) to their concrete shapes
+        let left_resolved = self.evaluate_type_with_resolution(left);
+        let right_resolved = self.evaluate_type_with_resolution(right);
+
+        let left_shape = match object_shape_for_type(self.ctx.types, left_resolved) {
+            Some(s) => s,
+            None => return false,
+        };
+        let right_shape = match object_shape_for_type(self.ctx.types, right_resolved) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // ALL properties in BOTH types must be optional (both types admit `{}`)
+        for lp in &left_shape.properties {
+            if !lp.optional {
+                return false;
+            }
+        }
+        for rp in &right_shape.properties {
+            if !rp.optional {
+                return false;
+            }
+        }
+
+        // At least one type must have properties (avoid trivial empty-object matching)
+        !left_shape.properties.is_empty() || !right_shape.properties.is_empty()
     }
 
     /// Get display string for implicit any return type.
