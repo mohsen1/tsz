@@ -24,6 +24,36 @@ pub(super) struct ParsedFileContext<'a> {
     pub(super) file: &'a str,
 }
 
+/// Map a `DocumentSymbol`'s kind + kind_modifiers to the tsserver ScriptElementKind string.
+fn symbol_kind_to_tsserver(
+    kind: tsz::lsp::symbols::document_symbols::SymbolKind,
+    kind_modifiers: &str,
+) -> &'static str {
+    use tsz::lsp::symbols::document_symbols::SymbolKind;
+    match kind {
+        SymbolKind::Module => "module",
+        SymbolKind::Class => "class",
+        SymbolKind::Method => "method",
+        SymbolKind::Property | SymbolKind::Field => "property",
+        SymbolKind::Constructor => "constructor",
+        SymbolKind::Enum => "enum",
+        SymbolKind::Interface => "interface",
+        SymbolKind::Function => "function",
+        SymbolKind::Variable => {
+            if kind_modifiers.contains("let") {
+                "let"
+            } else {
+                "var"
+            }
+        }
+        SymbolKind::Constant => "const",
+        SymbolKind::EnumMember => "enum member",
+        SymbolKind::TypeParameter => "type parameter",
+        SymbolKind::Struct => "type",
+        _ => "unknown",
+    }
+}
+
 impl Server {
     fn build_project_for_file(&self, file_name: &str) -> Option<Project> {
         let mut files = self.open_files.clone();
@@ -1523,26 +1553,14 @@ impl Server {
             fn symbol_to_navtree(
                 sym: &tsz::lsp::symbols::document_symbols::DocumentSymbol,
             ) -> serde_json::Value {
-                let kind = match sym.kind {
+                let kind = if matches!(
+                    sym.kind,
                     tsz::lsp::symbols::document_symbols::SymbolKind::File
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                    _ => "unknown",
+                        | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace
+                ) {
+                    "module"
+                } else {
+                    symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers)
                 };
                 let children: Vec<serde_json::Value> =
                     sym.children.iter().map(symbol_to_navtree).collect();
@@ -1605,26 +1623,14 @@ impl Server {
                 indent: usize,
                 items: &mut Vec<serde_json::Value>,
             ) {
-                let kind = match sym.kind {
+                let kind = if matches!(
+                    sym.kind,
                     tsz::lsp::symbols::document_symbols::SymbolKind::File
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Module
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                    _ => "unknown",
+                        | tsz::lsp::symbols::document_symbols::SymbolKind::Namespace
+                ) {
+                    "module"
+                } else {
+                    symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers)
                 };
                 let child_items: Vec<serde_json::Value> = sym
                     .children
@@ -1632,19 +1638,7 @@ impl Server {
                     .map(|c| {
                         serde_json::json!({
                             "text": c.name,
-                            "kind": match c.kind {
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                                tsz::lsp::symbols::document_symbols::SymbolKind::Struct => "type",
-                                _ => "unknown",
-                            },
+                            "kind": symbol_kind_to_tsserver(c.kind, &c.kind_modifiers),
                             "spans": [{
                                 "start": {
                                     "line": c.range.start.line + 1,
@@ -1689,18 +1683,7 @@ impl Server {
                 .map(|sym| {
                     serde_json::json!({
                         "text": sym.name,
-                        "kind": match sym.kind {
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Property => "property",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                            tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                            _ => "unknown",
-                        },
+                        "kind": symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers),
                         "spans": [{
                             "start": {
                                 "line": sym.range.start.line + 1,
@@ -1785,24 +1768,7 @@ impl Server {
             let name_lower = sym.name.to_lowercase();
             if name_lower.contains(search_lower) {
                 let is_case_sensitive = sym.name.contains(search_value);
-                let kind = match sym.kind {
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Module => "module",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Class => "class",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Property
-                    | tsz::lsp::symbols::document_symbols::SymbolKind::Field => "property",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constructor => "constructor",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Enum => "enum",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Interface => "interface",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Function => "function",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Variable => "var",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::Constant => "const",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::EnumMember => "enum member",
-                    tsz::lsp::symbols::document_symbols::SymbolKind::TypeParameter => {
-                        "type parameter"
-                    }
-                    _ => "unknown",
-                };
+                let kind = symbol_kind_to_tsserver(sym.kind, &sym.kind_modifiers);
                 let match_kind = if name_lower == *search_lower {
                     "exact"
                 } else if name_lower.starts_with(search_lower) {
