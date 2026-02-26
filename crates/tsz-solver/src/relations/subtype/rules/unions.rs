@@ -128,9 +128,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If there's an as-clause, it must be a filtering conditional
         // (produces only P or never) for this optimization to apply.
         if let Some(name_type) = mapped.name_type
-            && !super::generics::is_filtering_name_type(self.interner, name_type, &mapped) {
-                return false;
-            }
+            && !super::generics::is_filtering_name_type(self.interner, name_type, &mapped)
+        {
+            return false;
+        }
 
         // Mapped types that REMOVE optionality (-?) like Required<T> are NARROWER
         // than the source type parameter. T may have optional properties that
