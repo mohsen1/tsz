@@ -9441,24 +9441,21 @@ function f() {
     // Should have TS7005 for the var declaration (implicit any)
     assert!(
         codes.contains(&7005),
-        "Expected TS7005 for var declaration, got: {:?}",
-        codes
+        "Expected TS7005 for var declaration, got: {codes:?}"
     );
 
     // The TS7005 should only fire once — for `var y`, NOT for `let x`
     let ts7005_count = codes.iter().filter(|&&c| c == 7005).count();
     assert_eq!(
         ts7005_count, 1,
-        "Expected exactly 1 TS7005 (var only, not let), got {}: {:?}",
-        ts7005_count, codes
+        "Expected exactly 1 TS7005 (var only, not let), got {ts7005_count}: {codes:?}"
     );
 
     // No TS7034 should appear for this simple case (TS7034 is for captured-in-closure scenarios)
     let ts7034_count = codes.iter().filter(|&&c| c == 7034).count();
     assert_eq!(
         ts7034_count, 0,
-        "Expected 0 TS7034 in this test, got {}: {:?}",
-        ts7034_count, codes
+        "Expected 0 TS7034 in this test, got {ts7034_count}: {codes:?}"
     );
 }
 

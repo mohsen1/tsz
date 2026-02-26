@@ -46,6 +46,27 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a unary expression node is the direct left-hand side of a `**` binary.
+    ///
+    /// Used to suppress secondary diagnostics (TS2703 from `delete`, TS2872 from `!`) when
+    /// the unary expression is in a grammar-error position. When `(delete X) ** Y` or
+    /// `(!X) ** Y` is processed, binary.rs will emit TS17006 for this node as the LHS of `**`.
+    /// Emitting TS2703/TS2872 on top would be a false positive, so we skip them here.
+    fn is_lhs_of_exponentiation(&self, node_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+        if let Some(parent_idx) = self.ctx.arena.get_extended(node_idx).map(|e| e.parent)
+            && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+            && parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+            && parent_binary.operator_token == SyntaxKind::AsteriskAsteriskToken as u16
+            && parent_binary.left == node_idx
+        {
+            true
+        } else {
+            false
+        }
+    }
+
     /// Check if a node is a "literal expression of object" — one of:
     /// `ObjectLiteralExpression`, `ArrayLiteralExpression`, `RegularExpressionLiteral`,
     /// `FunctionExpression`, or `ClassExpression`. Used for TS2839 (object equality check).
@@ -419,8 +440,15 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::ExclamationToken as u16 => {
                 // Type-check operand fully so inner expression diagnostics fire
                 // (e.g. TS18050 for `!(null + undefined)`).
-                self.get_type_of_node(unary.operand);
-                self.check_truthy_or_falsy(unary.operand);
+                let operand_type = self.get_type_of_node(unary.operand);
+                // Suppress TS2872/TS2873 when:
+                // 1. Operand is an error type (inner error already reported).
+                // 2. This `!` is the direct LHS of `**`: `!X ** Y` parses as `(!X) ** Y`,
+                //    which is a grammar error (TS17006). Reporting "always truthy" on top
+                //    would be a false positive.
+                if operand_type != TypeId::ERROR && !self.is_lhs_of_exponentiation(idx) {
+                    self.check_truthy_or_falsy_with_type(unary.operand, operand_type);
+                }
                 TypeId::BOOLEAN
             }
             // typeof returns string but still type-check operand for flow/node types.
@@ -581,7 +609,7 @@ impl<'a> CheckerState<'a> {
             // delete returns boolean and checks that operand is a property reference
             k if k == SyntaxKind::DeleteKeyword as u16 => {
                 // Evaluate operand for side effects / flow analysis
-                self.get_type_of_node(unary.operand);
+                let operand_type = self.get_type_of_node(unary.operand);
 
                 // TS1102: delete cannot be called on an identifier in strict mode.
                 let is_identifier_operand = unary.operand.is_some()
@@ -614,7 +642,15 @@ impl<'a> CheckerState<'a> {
                                 || operand_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                         });
 
-                if !is_property_reference {
+                // Suppress TS2703 when:
+                // 1. Operand has an error type (inner error already reported).
+                // 2. This `delete` is the direct LHS of `**`: `delete X ** Y` parses as
+                //    `(delete X) ** Y`, which is a grammar error (TS17006). Reporting
+                //    TS2703 on top would be a false positive.
+                if !is_property_reference
+                    && operand_type != TypeId::ERROR
+                    && !self.is_lhs_of_exponentiation(idx)
+                {
                     self.error_at_node(
                         unary.operand,
                         crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,

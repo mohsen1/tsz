@@ -1061,12 +1061,16 @@ fn compile_inner(
     // EXCEPTION: tsc suppresses TS5107 when real file-level errors exist (preferring
     // file errors over config warnings). We can't fully replicate this because our
     // checker emits false-positive semantic errors that would wrongly suppress TS5107.
-    // However, JS grammar errors (TS8xxx: "can only be used in TypeScript files") are
-    // reliable and never false positives, so we suppress TS5107 when 8xxx errors exist.
+    // We only suppress TS5107 for reliable grammar error ranges:
+    //   - 8xxx: JS grammar errors ("can only be used in TypeScript files") — never false positives
+    //   - 17xxx: exponentiation grammar errors (TS17006/TS17007) — from our binary checker
+    // NOT 1xxx parser errors, because our checker still has false-positive 1xxx errors.
     if has_deprecation_diagnostics {
-        let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
-        if has_js_grammar_errors {
-            // Real JS grammar errors take priority — drop TS5107 from config diagnostics.
+        let has_reliable_grammar_errors = diagnostics
+            .iter()
+            .any(|d| (8000..9000).contains(&d.code) || (17000..18000).contains(&d.code));
+        if has_reliable_grammar_errors {
+            // Real grammar errors take priority — drop TS5107 from config diagnostics.
             config_diagnostics.retain(|d| {
                 d.code
                     != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
