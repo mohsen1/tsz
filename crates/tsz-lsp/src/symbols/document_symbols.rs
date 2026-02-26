@@ -357,7 +357,9 @@ impl<'a> DocumentSymbolProvider<'a> {
                     for &decl_list_idx in &var.declarations.nodes {
                         if let Some(list_node) = self.arena.get(decl_list_idx) {
                             // Check if this is const/let/var based on list node flags
-                            let is_const = (list_node.flags as u32 & node_flags::CONST) != 0;
+                            let flags32 = list_node.flags as u32;
+                            let is_const = (flags32 & node_flags::CONST) != 0;
+                            let is_let = (flags32 & node_flags::LET) != 0;
                             let kind = if is_const {
                                 SymbolKind::Constant
                             } else {
@@ -384,11 +386,20 @@ impl<'a> DocumentSymbolProvider<'a> {
                                             decl.name,
                                         );
 
+                                        let var_modifiers = if is_let {
+                                            if stmt_modifiers.is_empty() {
+                                                "let".to_string()
+                                            } else {
+                                                format!("{stmt_modifiers},let")
+                                            }
+                                        } else {
+                                            stmt_modifiers.clone()
+                                        };
                                         symbols.push(DocumentSymbol {
                                             name,
                                             detail: None,
                                             kind,
-                                            kind_modifiers: stmt_modifiers.clone(),
+                                            kind_modifiers: var_modifiers,
                                             range,
                                             selection_range,
                                             container_name: container_name
