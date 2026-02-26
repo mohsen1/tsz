@@ -348,6 +348,30 @@ pub(crate) fn apply_wildcard_substitution(target: &str, wildcard: &str) -> Strin
     }
 }
 
+/// Apply wildcard substitution recursively to all String variants in a `PackageExports` value.
+/// Used for pattern exports where `*` in the target must be replaced with the matched
+/// portion before path resolution (per Node.js `PACKAGE_TARGET_RESOLVE` spec).
+pub(crate) fn substitute_wildcard_in_exports(
+    value: &PackageExports,
+    wildcard: &str,
+) -> PackageExports {
+    match value {
+        PackageExports::String(s) => PackageExports::String(s.replace('*', wildcard)),
+        PackageExports::Conditional(entries) => PackageExports::Conditional(
+            entries
+                .iter()
+                .map(|(k, v)| (k.clone(), substitute_wildcard_in_exports(v, wildcard)))
+                .collect(),
+        ),
+        PackageExports::Map(map) => PackageExports::Map(
+            map.iter()
+                .map(|(k, v)| (k.clone(), substitute_wildcard_in_exports(v, wildcard)))
+                .collect(),
+        ),
+        PackageExports::Null => PackageExports::Null,
+    }
+}
+
 pub(crate) fn split_path_extension(path: &Path) -> Option<(PathBuf, &'static str)> {
     let path_str = path.to_string_lossy();
     for ext in KNOWN_EXTENSIONS {

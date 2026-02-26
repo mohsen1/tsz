@@ -1907,17 +1907,18 @@ impl ModuleResolver {
                     }
                 }
 
-                if let Some((_, wildcard, value)) = best_match
-                    && let Some(resolved) =
-                        self.resolve_export_value_with_conditions(package_dir, value, conditions)
-                {
-                    // Substitute wildcard in path
-                    let resolved_str = resolved.to_string_lossy();
-                    if resolved_str.contains('*') {
-                        let substituted = resolved_str.replace('*', &wildcard);
-                        return Some(PathBuf::from(substituted));
+                if let Some((_, wildcard, value)) = best_match {
+                    // Per Node.js PACKAGE_TARGET_RESOLVE spec, substitute * with the
+                    // matched wildcard portion BEFORE resolving the target path.
+                    // Without this, try_export_target would look for literal "*.cjs" files.
+                    let substituted_value = substitute_wildcard_in_exports(value, &wildcard);
+                    if let Some(resolved) = self.resolve_export_value_with_conditions(
+                        package_dir,
+                        &substituted_value,
+                        conditions,
+                    ) {
+                        return Some(resolved);
                     }
-                    return Some(resolved);
                 }
 
                 None
@@ -2502,6 +2503,115 @@ mod tests {
             apply_wildcard_substitution("./dist/index.js", "ignored"),
             "./dist/index.js"
         );
+    }
+
+    #[test]
+    fn test_substitute_wildcard_in_exports_string() {
+        let value = PackageExports::String("./*.cjs".to_string());
+        let result = substitute_wildcard_in_exports(&value, "index");
+        assert!(matches!(result, PackageExports::String(s) if s == "./index.cjs"));
+    }
+
+    #[test]
+    fn test_substitute_wildcard_in_exports_conditional() {
+        let value = PackageExports::Conditional(vec![
+            (
+                "import".to_string(),
+                PackageExports::String("./*.mjs".to_string()),
+            ),
+            (
+                "default".to_string(),
+                PackageExports::String("./*.cjs".to_string()),
+            ),
+        ]);
+        let result = substitute_wildcard_in_exports(&value, "foo");
+        match result {
+            PackageExports::Conditional(entries) => {
+                assert_eq!(entries.len(), 2);
+                assert!(matches!(&entries[0].1, PackageExports::String(s) if s == "./foo.mjs"));
+                assert!(matches!(&entries[1].1, PackageExports::String(s) if s == "./foo.cjs"));
+            }
+            _ => panic!("Expected Conditional"),
+        }
+    }
+
+    #[test]
+    fn test_substitute_wildcard_in_exports_no_wildcard() {
+        let value = PackageExports::String("./index.js".to_string());
+        let result = substitute_wildcard_in_exports(&value, "anything");
+        assert!(matches!(result, PackageExports::String(s) if s == "./index.js"));
+    }
+
+    #[test]
+    fn test_node16_pattern_exports_resolves_with_dts() {
+        // Pattern exports like "./cjs/*": "./*.cjs" should resolve when
+        // the wildcard-substituted path has a corresponding .d.cts file.
+        // This tests the fix: wildcard substitution must happen BEFORE
+        // try_export_target, not after.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_pattern_exports_resolve");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        // Package with pattern exports
+        fs::write(
+            dir.join("node_modules/inner/package.json"),
+            r#"{"name":"inner","exports":{"./cjs/*":"./*.cjs","./mjs/*":"./*.mjs"}}"#,
+        )
+        .unwrap();
+        // Declaration files that should be found via extension substitution
+        fs::write(
+            dir.join("node_modules/inner/index.d.cts"),
+            "export declare const cjsSource: boolean;",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("node_modules/inner/index.d.mts"),
+            "export declare const mjsSource: boolean;",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("src/index.ts"),
+            "import * as x from 'inner/cjs/index';",
+        )
+        .unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
+
+        let mut resolver = ModuleResolver::new(&options);
+
+        // ./cjs/* pattern matches ./cjs/index, wildcard = "index"
+        // Target ./*.cjs becomes ./index.cjs after substitution
+        // Extension substitution: index.cjs -> index.d.cts (exists)
+        let result = resolver.resolve(
+            "inner/cjs/index",
+            &dir.join("src/index.ts"),
+            Span::new(24, 40),
+        );
+        assert!(
+            result.is_ok(),
+            "Pattern export ./cjs/* should resolve via .d.cts: {:?}",
+            result.err()
+        );
+
+        // Also test ./mjs/* pattern
+        let result = resolver.resolve(
+            "inner/mjs/index",
+            &dir.join("src/index.ts"),
+            Span::new(24, 40),
+        );
+        assert!(
+            result.is_ok(),
+            "Pattern export ./mjs/* should resolve via .d.mts: {:?}",
+            result.err()
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
