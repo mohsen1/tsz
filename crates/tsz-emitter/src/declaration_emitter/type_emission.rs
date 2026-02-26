@@ -216,7 +216,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Type literal - inline format without newlines
+            // Type literal - multi-line format with proper indentation
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(lit) = self.arena.get_type_literal(type_node) {
                     self.write("{\n");
@@ -228,6 +228,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write_line();
                     }
                     self.decrease_indent();
+                    self.write_indent();
                     self.write("}");
                 }
             }
