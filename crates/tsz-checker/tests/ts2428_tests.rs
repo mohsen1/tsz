@@ -137,3 +137,82 @@ namespace M {
         "Should emit TS2428 for interfaces in same namespace block with different type params"
     );
 }
+
+#[test]
+fn any_constraint_not_identical_to_concrete_constraint_emits_ts2428() {
+    // TSC uses isTypeIdenticalTo, not assignability, for constraint comparison.
+    // A<any> is mutually assignable to A<Date> but NOT identical.
+    let source = r#"
+interface Foo {}
+namespace M {
+    interface B<T extends Foo> {
+        x: T;
+    }
+    interface B<T extends any> {
+        y: T;
+    }
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "Should emit TS2428 when one constraint is `any` and the other is a concrete type"
+    );
+}
+
+#[test]
+fn same_constraint_no_ts2428() {
+    let source = r#"
+interface Foo {}
+namespace M {
+    interface B<T extends Foo> {
+        x: T;
+    }
+    interface B<T extends Foo> {
+        y: T;
+    }
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 when constraints are identical"
+    );
+}
+
+#[test]
+fn one_constraint_missing_no_ts2428() {
+    // TSC: if one has a constraint and the other doesn't, they're compatible.
+    let source = r#"
+interface B<T extends number> {
+    u: T;
+}
+interface B<T> {
+    x: T;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 when one has constraint and the other doesn't"
+    );
+}
+
+#[test]
+fn ts2717_separate_namespace_blocks_exported() {
+    // Exported interfaces in separate namespace blocks should have
+    // property types compared across blocks (TS2717).
+    let source = r#"
+namespace M3 {
+    export interface A<T> {
+        x: T;
+    }
+}
+namespace M3 {
+    export interface A<T> {
+        x: number;
+    }
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2717),
+        "Should emit TS2717 for conflicting property types across separate namespace blocks"
+    );
+}

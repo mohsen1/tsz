@@ -10,7 +10,8 @@ impl<'a> CheckerState<'a> {
     /// Compare interface type parameters across declarations for declaration-merge compatibility.
     ///
     /// - Parameter names must match and appear in the same order.
-    /// - Parameter constraints must be mutually assignable when both are present.
+    /// - Parameter constraints must be identical (TypeId equality) when both are present.
+    ///   TSC uses `isTypeIdenticalTo`, not assignability — this matters for `any` constraints.
     /// - Missing constraints are compatible with any constraint (e.g. `T` vs `T extends number`).
     pub(crate) fn interface_type_parameters_are_merge_compatible(
         &mut self,
@@ -36,10 +37,12 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
+            // TSC uses isTypeIdenticalTo for constraint comparison (not assignability).
+            // This matters for `any`: A<any> is mutually assignable to A<Date>,
+            // but they are NOT identical. With type interning, TypeId equality = identity.
             if let (Some(first_constraint), Some(second_constraint)) =
                 (first_constraint, second_constraint)
-                && (!self.is_assignable_to(*first_constraint, *second_constraint)
-                    || !self.is_assignable_to(*second_constraint, *first_constraint))
+                && first_constraint != second_constraint
             {
                 return false;
             }
