@@ -922,12 +922,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // For equality operators (==, !=, ===, !==), tsc allows comparison
                         // when the types are comparable (assignable in either direction).
-                        // For relational operators (<, >, <=, >=), tsc allows comparison
-                        // if both are assignable to number/bigint, or if neither are, they must
-                        // be comparable.
-                        // Use cmp_left/cmp_right which are widened for relational operators
-                        // (matching tsc's getBaseTypeOfLiteralTypeForComparison) and unchanged
-                        // for equality operators.
+                        // For relational operators (<, >, <=, >=), tsc requires both
+                        // operands to be assignable to number/bigint/string, or if neither
+                        // is, they must be comparable via the comparable relation.
+                        // cmp_left/cmp_right are widened for relational operators
+                        // (matching tsc's getBaseTypeOfLiteralTypeForComparison) and
+                        // unchanged for equality operators.
                         let is_comparable = if matches!(op_str, "==" | "!=" | "===" | "!==") {
                             self.is_type_comparable_to(cmp_left, cmp_right)
                         } else if matches!(op_str, "<" | ">" | "<=" | ">=") {
@@ -1271,6 +1271,107 @@ mod tests {
         assert!(
             !has_18050,
             "Should NOT emit TS18050 for undefined * boolean without strictNullChecks, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    // =========================================================================
+    // TS2365: Mixed-orderable relational operator checks
+    // =========================================================================
+
+    #[test]
+    fn ts2365_number_less_than_string() {
+        // TSC rejects `number < string` — they are individually orderable but
+        // not of the same orderable kind.
+        let diags = check_source_diagnostics(
+            "declare var a: number; declare var b: string; var r = a < b;",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == 2365),
+            "Expected TS2365 for number < string, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2365_string_greater_than_number() {
+        // Same test in reverse direction.
+        let diags = check_source_diagnostics(
+            "declare var a: string; declare var b: number; var r = a > b;",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == 2365),
+            "Expected TS2365 for string > number, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2365_for_same_orderable_kind() {
+        // Same orderable kind should not produce TS2365.
+        let diags = check_source_diagnostics(
+            "declare var a: number; declare var b: number; var r = a < b;",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 2365),
+            "Should NOT emit TS2365 for number < number, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    // =========================================================================
+    // TS1345: Void truthiness gated on strictNullChecks
+    // =========================================================================
+
+    fn check_source_diagnostics_no_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        crate::test_utils::check_source(
+            source,
+            "test.ts",
+            crate::context::CheckerOptions {
+                strict: false,
+                strict_null_checks: false,
+                strict_function_types: false,
+                strict_property_initialization: false,
+                no_implicit_this: false,
+                no_implicit_any: false,
+                use_unknown_in_catch_variables: false,
+                ..crate::context::CheckerOptions::default()
+            },
+        )
+    }
+
+    #[test]
+    fn ts1345_void_truthiness_with_strict() {
+        // With strict (default), TS1345 should fire for void truthiness.
+        let diags = check_source_diagnostics("declare var a: void; if (a) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 1345),
+            "Expected TS1345 for void truthiness with strict, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts1345_void_truthiness_without_strict() {
+        // Without strictNullChecks, TS1345 should NOT fire for void truthiness.
+        // TSC does not emit this diagnostic when strictNullChecks is off.
+        let diags = check_source_diagnostics_no_strict("declare var a: void; if (a) {}");
+        assert!(
+            !diags.iter().any(|d| d.code == 1345),
+            "Should NOT emit TS1345 for void truthiness without strict, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts1345_void_in_logical_and_without_strict() {
+        // void && any — should NOT emit TS1345 without strictNullChecks.
+        let diags = check_source_diagnostics_no_strict(
+            "declare var a: void; declare var b: any; var r = a && b;",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 1345),
+            "Should NOT emit TS1345 for void && any without strict, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
