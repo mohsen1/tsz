@@ -684,6 +684,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Error 1089: 'override' modifier cannot appear on a constructor declaration.
+        if let Some(override_mod_idx) = self.find_override_modifier(&ctor.modifiers) {
+            self.error_at_node_msg(
+                override_mod_idx,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                &["override"],
+            );
+        }
+
         // Error 1242: 'abstract' modifier can only appear on a class, method, or property declaration.
         // Constructors cannot be abstract.
         if self.has_abstract_modifier(&ctor.modifiers) {

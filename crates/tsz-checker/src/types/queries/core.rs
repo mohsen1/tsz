@@ -95,6 +95,15 @@ impl<'a> CheckerState<'a> {
             .find_modifier(modifiers, SyntaxKind::AsyncKeyword)
     }
 
+    pub(crate) fn find_override_modifier(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        self.ctx
+            .arena
+            .find_modifier(modifiers, SyntaxKind::OverrideKeyword)
+    }
+
     /// Check if a node has the `abstract` modifier.
     pub(crate) fn has_abstract_modifier(
         &self,
