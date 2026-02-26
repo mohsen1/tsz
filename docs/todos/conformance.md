@@ -1,8 +1,34 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9259/12570 (73.7%) — full suite, error-code level
-> Previously ~9260/12570 (73.7%) baseline.
+**Current score**: ~7129/12570 (56.7%) — full suite, error-code level
+> Note: Regression from ~9264 to ~7129 caused by upstream TS2430 feature commit.
+> TS5107 fix added +5 tests (9261→9266) before upstream regression landed.
+
+---
+
+## TS5107 Deprecation Priority Fix — Session 2026-02-26
+- **Area**: node/allowJs (47.6% → 57.7% in allowJs before upstream regression)
+- **Root cause**: `@strict: false` expands to `alwaysStrict: false`, triggering TS5107
+  deprecation. Our driver cleared ALL file-level diagnostics when TS5107 existed, but
+  tsc does the opposite: it suppresses TS5107 when real file-level errors exist.
+- **Fix**: When JS grammar errors (8xxx range, e.g. TS8002 "can only be used in
+  TypeScript files") exist in file-level diagnostics, suppress TS5107 instead.
+  8xxx errors are reliable (never false positives), so this is safe.
+- **Also fixed**: `expand_include_patterns` in `fs.rs` — added `.mjs`/`.cjs` to
+  the extension check list. Without this, patterns like `*.mjs` were incorrectly
+  expanded to `*.mjs/**/*` (directory patterns).
+- **Files**: `crates/tsz-cli/src/driver/core.rs`, `crates/tsz-cli/src/fs.rs`
+- **Net result**: +5 tests (9261→9266) at error-code level before upstream regression
+- **Improved tests**: `nodeModulesAllowJsImportAssignment` and related allowJs tests
+
+### Structural limitation: .mjs/.cjs file discovery
+- tsc discovers `.mjs`/`.cjs` files through **import resolution**, not glob patterns.
+- tsz uses glob-based include patterns which don't match `.mjs`/`.cjs`.
+- Adding `.mjs`/`.cjs` to include patterns or tsconfig `files` array over-discovers:
+  it finds files tsc wouldn't check (because they're not imported by anything).
+- **Proper fix requires**: import-based file discovery in tsz's driver.
+- **Affected tests**: `nodeModulesAllowJs1`, `nodeModulesAllowJsPackageExports`, etc.
 
 ---
 
