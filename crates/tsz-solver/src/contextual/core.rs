@@ -136,6 +136,23 @@ impl<'a> ContextualTypeContext<'a> {
             }
         }
 
+        // Handle TypeParameter - use its constraint for parameter type extraction.
+        // Example: f<T extends (p1: number) => number>(callback: T)
+        // When the contextual type is T (a TypeParameter), use its constraint
+        // (p1: number) => number to extract the parameter type.
+        // Without this, callbacks passed to generic functions get TS7006 (false positive)
+        // because get_parameter_type() returns None for unhandled TypeParameter variants.
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected_and_options(
+                self.interner,
+                constraint,
+                self.no_implicit_any,
+            );
+            return ctx.get_parameter_type(index);
+        }
+
         // Use visitor for Function/Callable types
         let mut extractor = ParameterExtractor::new(self.interner, index, self.no_implicit_any);
         extractor.extract(expected)
@@ -176,6 +193,28 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             }
             return None;
+        }
+
+        // Handle TypeParameter - use its constraint for parameter type extraction.
+        // Example: f<T extends (p1: number) => number>(callback: T) called as f(x => x)
+        // When the contextual type is T (TypeParameter), use its constraint to get the
+        // parameter type, so x is contextually typed as number (not any).
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.get_parameter_type_for_call(index, arg_count);
+        }
+
+        // Handle Mapped, Conditional, and Lazy types by evaluating them first
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_parameter_type_for_call(index, arg_count);
+            }
         }
 
         // Use visitor for Function/Callable types
