@@ -8504,6 +8504,235 @@ fn test_union_call_different_param_counts() {
 }
 
 #[test]
+fn test_union_call_mixed_rest_and_required_uses_base_member_max() {
+    // Models unionTypeCallSignatures4.ts:
+    //   F1 = (a: string, b?: string) => void       — min=1, max=2, no rest
+    //   F2 = (a: string, b?: string, c?: string) => void — min=1, max=3, no rest
+    //   F3 = (a: string, ...rest: string[]) => void — min=1, unlimited, rest
+    //   F4 = (a: string, b?: string, ...rest: string[]) => void — min=1, unlimited, rest
+    //   F5 = (a: string, b: string) => void         — min=2, max=2, no rest
+    //
+    // tsc's Phase 1: F5 has the highest min (2), so it becomes the base.
+    // Combined signature inherits F5's shape: exactly 2 params, no rest.
+    // max_allowed = Some(2), NOT None.
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+    let rest = interner.intern_string("rest");
+
+    // F1: (a: string, b?: string) => void
+    let f1 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::optional(b, TypeId::STRING),
+        ],
+        TypeId::VOID,
+    ));
+    // F2: (a: string, b?: string, c?: string) => void
+    let f2 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::optional(b, TypeId::STRING),
+            ParamInfo::optional(c, TypeId::STRING),
+        ],
+        TypeId::VOID,
+    ));
+    // F3: (a: string, ...rest: string[]) => void
+    let rest_type = interner.array(TypeId::STRING);
+    let f3 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::rest(rest, rest_type),
+        ],
+        TypeId::VOID,
+    ));
+    // F4: (a: string, b?: string, ...rest: string[]) => void
+    let f4 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::optional(b, TypeId::STRING),
+            ParamInfo::rest(rest, rest_type),
+        ],
+        TypeId::VOID,
+    ));
+    // F5: (a: string, b: string) => void
+    let f5 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::required(b, TypeId::STRING),
+        ],
+        TypeId::VOID,
+    ));
+
+    let union = interner.union(vec![f1, f2, f3, f4, f5]);
+
+    // f12345("a") → 1 arg, min=2 → TS2554 (max_allowed=Some(2), not None)
+    let result = evaluator.resolve_call(union, &[TypeId::STRING]);
+    match &result {
+        CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            actual,
+        } => {
+            assert_eq!(*expected_min, 2, "min should be 2");
+            assert_eq!(
+                *expected_max,
+                Some(2),
+                "max should be Some(2), not None (would give TS2555 instead of TS2554)"
+            );
+            assert_eq!(*actual, 1);
+        }
+        other => panic!("Expected ArgumentCountMismatch, got {other:?}"),
+    }
+
+    // f12345("a", "b") → 2 args → success
+    let result = evaluator.resolve_call(union, &[TypeId::STRING, TypeId::STRING]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for 2 args, got {result:?}"
+    );
+
+    // f12345("a", "b", "c") → 3 args, max=2 → TS2554
+    let result = evaluator.resolve_call(union, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
+    match &result {
+        CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            actual,
+        } => {
+            assert_eq!(*expected_min, 2);
+            assert_eq!(
+                *expected_max,
+                Some(2),
+                "max should be Some(2) to reject 3 args"
+            );
+            assert_eq!(*actual, 3);
+        }
+        other => panic!("Expected ArgumentCountMismatch for 3 args, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_union_call_all_same_min_uses_max_param_count() {
+    // F1 = (a: string, b?: string) => void       — min=1, max=2
+    // F2 = (a: string, b?: string, c?: string) => void — min=1, max=3
+    // All have same min (1), so all are "base members".
+    // max_allowed = max(2, 3) = Some(3)
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::optional(b, TypeId::STRING),
+        ],
+        TypeId::VOID,
+    ));
+    let f2 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::optional(b, TypeId::STRING),
+            ParamInfo::optional(c, TypeId::STRING),
+        ],
+        TypeId::VOID,
+    ));
+    let union = interner.union(vec![f1, f2]);
+
+    // 3 args should succeed (combined max=3 from F2)
+    let result = evaluator.resolve_call(union, &[TypeId::STRING, TypeId::STRING, TypeId::STRING]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for 3 args on F1|F2 (max=3), got {result:?}"
+    );
+
+    // 4 args should fail
+    let result = evaluator.resolve_call(
+        union,
+        &[
+            TypeId::STRING,
+            TypeId::STRING,
+            TypeId::STRING,
+            TypeId::STRING,
+        ],
+    );
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentCountMismatch {
+                expected_max: Some(3),
+                ..
+            }
+        ),
+        "Expected arity error with max=3 for 4 args, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_rest_base_member_gives_unlimited_max() {
+    // F1 = (a: string) => void                    — min=1, no rest
+    // F6 = (a: string, b: string, ...rest: string[]) => void — min=2, rest
+    // F6 has highest min (2) and has rest → max_allowed = None (unlimited)
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let rest = interner.intern_string("rest");
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(a, TypeId::STRING)],
+        TypeId::VOID,
+    ));
+    let rest_type = interner.array(TypeId::STRING);
+    let f6 = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::required(a, TypeId::STRING),
+            ParamInfo::required(b, TypeId::STRING),
+            ParamInfo::rest(rest, rest_type),
+        ],
+        TypeId::VOID,
+    ));
+    let union = interner.union(vec![f1, f6]);
+
+    // 1 arg → too few (min=2)
+    let result = evaluator.resolve_call(union, &[TypeId::STRING]);
+    match &result {
+        CallResult::ArgumentCountMismatch {
+            expected_min,
+            expected_max,
+            ..
+        } => {
+            assert_eq!(*expected_min, 2);
+            assert_eq!(*expected_max, None, "Base member has rest → unlimited max");
+        }
+        other => panic!("Expected ArgumentCountMismatch, got {other:?}"),
+    }
+
+    // 5 args → success (base has rest, so unlimited)
+    let result = evaluator.resolve_call(
+        union,
+        &[
+            TypeId::STRING,
+            TypeId::STRING,
+            TypeId::STRING,
+            TypeId::STRING,
+            TypeId::STRING,
+        ],
+    );
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for 5 args (base has rest), got {result:?}"
+    );
+}
+
+#[test]
 fn test_union_call_incompatible_param_types() {
     // { (a: number): number } | { (a: string): string }
     // Combined: (a: number & string = never): number | string
