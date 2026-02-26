@@ -436,8 +436,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
 
-        // North Star: any should NOT silence structural mismatches in strict mode
-        self.lawyer.allow_any_suppression = !config.strict_function_types && !config.sound_mode;
+        // In tsc, `any` is always assignable to and from all types regardless of
+        // strictFunctionTypes. The strictFunctionTypes flag only affects contravariance
+        // of function parameters. Sound mode is the opt-in for stricter `any` behavior.
+        self.lawyer.allow_any_suppression = !config.sound_mode;
 
         // Clear cache as configuration changed
         self.cache.clear();
