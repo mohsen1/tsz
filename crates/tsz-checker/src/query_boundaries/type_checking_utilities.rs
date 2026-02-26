@@ -1,10 +1,10 @@
 use tsz_solver::{TupleListId, TypeDatabase, TypeId};
 
+pub(crate) use tsz_solver::type_queries::UnionMembersKind;
 pub(crate) use tsz_solver::type_queries::{
     ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, LiteralTypeKind,
     TypeQueryKind,
 };
-pub(crate) use tsz_solver::type_queries::{TypeParameterConstraintKind, UnionMembersKind};
 
 pub(crate) fn tuple_list_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
     tsz_solver::type_queries::get_tuple_list_id(db, type_id)
@@ -48,13 +48,6 @@ pub(crate) fn get_invalid_index_type_member(
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::get_invalid_index_type_member(db, type_id)
-}
-
-pub(crate) fn classify_for_type_parameter_constraint(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> TypeParameterConstraintKind {
-    tsz_solver::type_queries::classify_for_type_parameter_constraint(db, type_id)
 }
 
 pub(crate) fn classify_for_union_members(
