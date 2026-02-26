@@ -345,27 +345,9 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 }
 
-                return type_id;
-            }
-
-            // Prefix unary: !x
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.arena.get_unary_expr(cond_node) {
-                    // !x inverts the narrowing
-                    if unary.operator == SyntaxKind::ExclamationToken as u16 {
-                        return self.narrow_type_by_condition_inner(
-                            type_id,
-                            unary.operand,
-                            target,
-                            !is_true_branch,
-                            antecedent_id,
-                            visited_aliases,
-                        );
-                    }
-                }
-            }
-
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                // Fall through to type-resolved predicate narrowing when AST-based
+                // extract_type_guard didn't match (e.g. declared function predicates
+                // where the callee type carries the predicate signature).
                 if let Some(call) = self.arena.get_call_expr(cond_node) {
                     if let Some(narrowed) =
                         self.narrow_by_call_predicate(type_id, call, target, is_true_branch)
@@ -387,6 +369,23 @@ impl<'a> FlowAnalyzer<'a> {
                             let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
                             return narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                         }
+                    }
+                }
+            }
+
+            // Prefix unary: !x
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(cond_node) {
+                    // !x inverts the narrowing
+                    if unary.operator == SyntaxKind::ExclamationToken as u16 {
+                        return self.narrow_type_by_condition_inner(
+                            type_id,
+                            unary.operand,
+                            target,
+                            !is_true_branch,
+                            antecedent_id,
+                            visited_aliases,
+                        );
                     }
                 }
             }
