@@ -610,6 +610,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return (true, true);
         }
 
+        // The `object` type (like `{}`) conceptually accepts any properties —
+        // when it appears in a union, excess property checking should be suppressed.
+        if type_id == TypeId::OBJECT {
+            return (true, false);
+        }
+
         let type_id = match self.interner.lookup(type_id) {
             Some(TypeData::Lazy(def_id)) => self
                 .subtype
