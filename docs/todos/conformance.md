@@ -9,6 +9,37 @@
 
 ## High Impact — Core Type System
 
+### expressions/binaryOperators — Optional property overlap RESOLVED
+- **Fixed**: `comparisonOperatorWithNoRelationshipObjectsOnOptionalProperty` (+1 test)
+- **Root cause**: `types_have_no_overlap()` and `is_type_comparable_to()` used bidirectional
+  assignability as proxy for overlap. `{b?: number}` and `{b?: string}` are NOT assignable
+  to each other, but DO overlap at `{}` (both optional props can be absent).
+- **Fix**: Added `objects_with_all_optional_common_props_overlap()` helper to checker
+  (`enum_utils.rs` + `assignability_checker.rs`). Resolves `Lazy(DefId)` via
+  `evaluate_type_with_resolution()` then checks if all properties are optional.
+- **Files**: `crates/tsz-checker/src/types/utilities/enum_utils.rs`,
+  `crates/tsz-checker/src/assignability/assignability_checker.rs`
+
+### expressions/binaryOperators — Generic function type comparability (NOT YET FIXED)
+- **Tests**: `comparisonOperatorWithNoRelationshipObjectsOnInstantiatedCallSignature`,
+  `comparisonOperatorWithNoRelationshipObjectsOnInstantiatedConstructorSignature`
+- **Status**: Investigated, root cause identified, fix requires solver changes
+- **Root cause**: `is_type_comparable_to()` falls back to `is_assignable_to()`, which
+  returns false for `{fn<T>(x: T): T}` vs `{fn(): string}`. In tsc, the comparable
+  relation instantiates generic functions (infers `T=string` from return type) making
+  them assignable. Our solver doesn't perform generic instantiation during
+  assignability checking.
+- **Solver function**: `SubtypeChecker::check_subtype()` or function signature comparison
+  in `crates/tsz-solver/src/relations/subtype/rules/functions.rs`
+- **What tsc does**: In `structuredTypeRelatedTo` with `comparableRelation`, tsc
+  instantiates generic call signatures against the target's concrete signature,
+  inferring type parameter values. If instantiation succeeds, the types are comparable.
+- **Estimated LOC**: ~50-100 lines in solver's function signature comparison
+- **Impact**: Would fix 2 tests and potentially many other generic-function-related
+  comparability checks across the suite.
+- **Difficulty**: MEDIUM-HIGH (requires understanding generic instantiation during
+  relation checks, not just during call expression checking)
+
 ### TS2322/TS2339/TS2345 — Type mismatch / property access / argument type (ongoing)
 - **Tests**: Hundreds across the suite (TS2322: ~222, TS2339: ~47, TS2345: ~40 single-code)
 - **Status**: Partially implemented, ongoing solver/checker type relation work

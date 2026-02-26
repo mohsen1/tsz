@@ -1056,6 +1056,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Additional check: Two object types where ALL properties are optional always
+        // overlap at `{}`, making them comparable even if property types differ.
+        // Example: `{ b?: number }` vs `{ b?: string }` are comparable because both
+        // include `{}` as a valid value.
+        if self.objects_with_all_optional_common_props_overlap(source_apparent, target_apparent) {
+            return true;
+        }
+
         false
     }
 

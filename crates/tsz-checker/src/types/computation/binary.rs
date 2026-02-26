@@ -1375,4 +1375,53 @@ mod tests {
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
+
+    // Tests for optional property overlap (TS2365/TS2367)
+
+    #[test]
+    fn no_ts2365_for_objects_with_all_optional_properties() {
+        // Objects where ALL properties are optional overlap at `{}`, so comparison
+        // operators should not emit TS2365 even if the optional property types differ.
+        let diags = check_source_diagnostics(
+            "interface A { b?: number; } interface B { b?: string; }
+             declare var a: A; declare var b: B;
+             var r = a < b;",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 2365),
+            "Should NOT emit TS2365 for all-optional property objects, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2367_for_objects_with_all_optional_properties() {
+        // Objects where ALL properties are optional overlap at `{}`, so equality
+        // operators should not emit TS2367 even if the optional property types differ.
+        let diags = check_source_diagnostics(
+            "interface A { b?: number; } interface B { b?: string; }
+             declare var a: A; declare var b: B;
+             var r = a === b;",
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 2367),
+            "Should NOT emit TS2367 for all-optional property objects, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2365_still_emitted_for_objects_with_required_properties() {
+        // Objects with required properties of incompatible types should still emit TS2365.
+        let diags = check_source_diagnostics(
+            "interface A { b: number; } interface B { b: string; }
+             declare var a: A; declare var b: B;
+             var r = a < b;",
+        );
+        assert!(
+            diags.iter().any(|d| d.code == 2365),
+            "Expected TS2365 for objects with incompatible required properties, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
 }
