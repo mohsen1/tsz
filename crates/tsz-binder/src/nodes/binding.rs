@@ -1287,6 +1287,19 @@ impl BinderState {
             return true;
         }
 
+        // Allow ALIAS (import) to merge with VALUE symbols.
+        // In TypeScript, imports and local value declarations can share the
+        // same name — the import occupies the type namespace and the local
+        // declaration occupies the value namespace:
+        //   import type { A } from "./a";
+        //   const A: A = "a";  // legal: A is both a type and a value
+        if (existing_flags & symbol_flags::ALIAS) != 0 && (new_flags & symbol_flags::VALUE) != 0 {
+            return true;
+        }
+        if (new_flags & symbol_flags::ALIAS) != 0 && (existing_flags & symbol_flags::VALUE) != 0 {
+            return true;
+        }
+
         // Allow static and instance members to have the same name
         // TypeScript allows a class to have both a static member and an instance member with the same name
         // e.g., class C { static foo; foo; }

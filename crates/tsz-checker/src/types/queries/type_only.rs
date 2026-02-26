@@ -348,6 +348,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         if symbol.is_type_only {
+            // If the symbol also has a VALUE binding (e.g., `import type { A }`
+            // merged with `const A = ...`), the value binding provides a runtime
+            // value and the identifier should not be treated as type-only.
+            if (symbol.flags & symbol_flags::VALUE) != 0 {
+                return false;
+            }
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {

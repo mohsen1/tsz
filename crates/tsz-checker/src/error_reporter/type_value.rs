@@ -608,4 +608,59 @@ var x: Foo.bar = "";
             "Expected TS2713 for type alias property used as type, got: {diagnostics:?}",
         );
     }
+
+    #[test]
+    fn suppresses_ts1361_for_computed_property_in_interface() {
+        // Type-only import used in interface computed property name should NOT
+        // emit TS1361 — the expression is never evaluated at runtime.
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { onInit } from './hooks';
+interface Component {
+  [onInit]?(): void;
+}
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 for computed property in interface, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn suppresses_ts1361_for_computed_property_in_type_literal() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { key } from './keys';
+type T = { [key]: any; };
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 for computed property in type literal, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn alias_merges_with_local_value_suppresses_ts1361() {
+        // When import type is followed by a local const with the same name,
+        // the const should shadow the import type in value position.
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { A } from './a';
+const A: A = "a";
+A.toUpperCase();
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 when local value shadows type-only import, got: {diagnostics:?}",
+        );
+    }
 }
