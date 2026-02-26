@@ -2354,21 +2354,21 @@ function f10() {
 
 // TS2882: Cannot find module or type declarations for side-effect import
 
-/// TS2882 should NOT fire by default (tsc 6.0 default: noUncheckedSideEffectImports = false).
+/// TS2882 should fire by default (tsc 6.0 default: noUncheckedSideEffectImports = true).
 #[test]
-fn test_ts2882_side_effect_import_default_off() {
-    // Default CheckerOptions has no_unchecked_side_effect_imports: false (matching tsc)
+fn test_ts2882_side_effect_import_default_on() {
+    // Default CheckerOptions has no_unchecked_side_effect_imports: true (matching tsc 6.0)
     let diagnostics = compile_imports_and_get_diagnostics(
         r#"import 'nonexistent-module';"#,
         CheckerOptions::default(),
     );
     assert!(
-        !has_error(&diagnostics, 2882),
-        "Should NOT emit TS2882 by default (noUncheckedSideEffectImports defaults to false).\nActual errors: {diagnostics:#?}"
+        has_error(&diagnostics, 2882),
+        "Should emit TS2882 by default (noUncheckedSideEffectImports defaults to true in tsc 6.0).\nActual errors: {diagnostics:#?}"
     );
     assert!(
         !has_error(&diagnostics, 2307),
-        "Should NOT emit TS2307 for side-effect import.\nActual errors: {diagnostics:#?}"
+        "Should NOT emit TS2307 for side-effect import (should use TS2882 instead).\nActual errors: {diagnostics:#?}"
     );
 }
 
