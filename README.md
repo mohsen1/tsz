@@ -12,7 +12,7 @@ engine on top to match TypeScript behavior while preserving correctness where po
 > This project is not ready for general use yet.
 
 <!-- TS_VERSION_START -->
-Currently targeting `TypeScript`@`6.0.0-dev.20260215`
+Currently targeting `TypeScript`@`6.0.0-dev.20260224`
 <!-- TS_VERSION_END -->
 
 ### Type Checker
@@ -23,7 +23,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [█████████████░░░░░░░] 64.4% (8,096/12,574 tests)
+Progress: [█████████████░░░░░░░] 68.7% (8,629/12,565 tests)
 ```
 <!-- CONFORMANCE_END -->
 
