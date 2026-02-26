@@ -43,6 +43,7 @@ pub(crate) fn enum_member_name(arena: &NodeArena, idx: NodeIndex) -> String {
 pub(crate) fn export_decl_has_runtime_value(
     arena: &NodeArena,
     export_decl: &tsz_parser::parser::node::ExportDeclData,
+    preserve_const_enums: bool,
 ) -> bool {
     if export_decl.is_type_only {
         return false;
@@ -83,7 +84,7 @@ pub(crate) fn export_decl_has_runtime_value(
         return false;
     }
 
-    if export_clause_is_type_only(arena, clause_node) {
+    if export_clause_is_type_only(arena, clause_node, preserve_const_enums) {
         return false;
     }
 
@@ -92,9 +93,13 @@ pub(crate) fn export_decl_has_runtime_value(
 
 /// Check if an export clause (the declaration after `export`) is type-only.
 ///
-/// Returns `true` for interfaces, type aliases, const/declare enums,
+/// Returns `true` for interfaces, type aliases, const/declare enums (when not preserved),
 /// and declare-prefixed classes, functions, variables, and modules.
-pub(crate) fn export_clause_is_type_only(arena: &NodeArena, clause_node: &Node) -> bool {
+pub(crate) fn export_clause_is_type_only(
+    arena: &NodeArena,
+    clause_node: &Node,
+    preserve_const_enums: bool,
+) -> bool {
     match clause_node.kind {
         k if k == syntax_kind_ext::INTERFACE_DECLARATION => true,
         k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
@@ -103,7 +108,8 @@ pub(crate) fn export_clause_is_type_only(arena: &NodeArena, clause_node: &Node) 
                 return false;
             };
             arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                || (arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                    && !preserve_const_enums)
         }
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             let Some(class_decl) = arena.get_class(clause_node) else {
