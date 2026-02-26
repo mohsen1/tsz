@@ -329,12 +329,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Collect yield* element type for unannotated generators when resolvable
                     // (skip when get_iterator_info returns None/fallback ANY)
                     if self.checker.ctx.current_yield_type().is_none()
-                        && let Some(ref i) = info {
-                            self.checker
-                                .ctx
-                                .generator_yield_operand_types
-                                .push(i.yield_type);
-                        }
+                        && let Some(ref i) = info
+                    {
+                        self.checker
+                            .ctx
+                            .generator_yield_operand_types
+                            .push(i.yield_type);
+                    }
                     info.map_or(TypeId::ANY, |i| i.yield_type)
                 }
             } else {
