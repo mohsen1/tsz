@@ -909,7 +909,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_app = self.interner.type_application(t_app_id);
                 let evaluated_source = self.checker.evaluate_type(source);
                 let evaluated_target = self.checker.evaluate_type(target);
-                if evaluated_source != source || evaluated_target != target {
+                if s_app.base == t_app.base
+                    && s_app.args.len() == t_app.args.len()
+                    && matches!(
+                        self.interner.lookup(evaluated_target),
+                        Some(TypeData::Mapped(_))
+                    )
+                {
+                    // Target evaluates to a Mapped type (e.g., Boxified<T> →
+                    // { [K in keyof T]: Box<T[K]> }). The Object→Mapped handler
+                    // can't reverse-infer type arguments through keyof constraints.
+                    // Since bases match, use direct argument unification to capture
+                    // the type argument relationship (e.g., Bacon → T from
+                    // Boxified<Bacon> vs Boxified<T>).
+                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                        self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
+                    }
+                } else if evaluated_source != source || evaluated_target != target {
                     self.constrain_types(
                         ctx,
                         var_map,
