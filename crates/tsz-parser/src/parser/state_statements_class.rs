@@ -220,6 +220,7 @@ impl ParserState {
         let mut modifiers = Vec::new();
         let mut seen_readonly = false;
         let mut seen_accessibility = false;
+        let mut seen_override = false;
         let mut reported_accessibility_duplicate = false;
 
         while self.is_parameter_modifier() {
@@ -251,7 +252,7 @@ impl ParserState {
             }
 
             // Check for modifier ordering violations
-            // Parameter modifiers must be in order: accessibility, readonly
+            // Parameter modifiers must be in order: accessibility, override, readonly
             if matches!(
                 mod_kind,
                 SyntaxKind::PublicKeyword
@@ -266,20 +267,27 @@ impl ParserState {
                     );
                     reported_accessibility_duplicate = true;
                 }
-                // TS1029: Accessibility modifier must precede readonly
-                if seen_readonly {
+                // TS1029: Accessibility modifier must precede override and readonly
+                if seen_override || seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let modifier_name = match mod_kind {
                         SyntaxKind::PrivateKeyword => "private",
                         SyntaxKind::ProtectedKeyword => "protected",
                         _ => "public",
                     };
+                    let other = if seen_override {
+                        "override"
+                    } else {
+                        "readonly"
+                    };
                     self.parse_error_at_current_token(
-                        &format!("'{modifier_name}' modifier must precede 'readonly' modifier."),
+                        &format!("'{modifier_name}' modifier must precede '{other}' modifier."),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
                 seen_accessibility = true;
+            } else if mod_kind == SyntaxKind::OverrideKeyword {
+                seen_override = true;
             } else if mod_kind == SyntaxKind::ReadonlyKeyword {
                 seen_readonly = true;
             }

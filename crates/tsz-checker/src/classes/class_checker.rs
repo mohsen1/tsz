@@ -22,6 +22,10 @@ pub(crate) struct ClassMemberInfo {
     pub(crate) is_abstract: bool,
     pub(crate) has_override: bool,
     pub(crate) has_dynamic_name: bool,
+    /// True when the member name is a computed property whose expression is NOT
+    /// a direct string/number literal. tsc uses this (`isComputedNonLiteralName`)
+    /// to skip `noImplicitOverride` checks for computed names like `[someVar]`.
+    pub(crate) has_computed_non_literal_name: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,7 +42,14 @@ pub(crate) enum MemberVisibility {
 impl<'a> CheckerState<'a> {
     /// Determine if a class member name is dynamic (e.g. `[foo]` or computed expressions),
     /// which cannot be used with an `override` modifier.
-    fn is_computed_name_dynamic(&self, name_idx: NodeIndex) -> bool {
+    ///
+    /// In TypeScript, a computed property name is "late-bindable" (not dynamic) only when the
+    /// expression's type resolves to a string/number literal or unique symbol. For example:
+    /// - `const prop = "foo"` → type is `"foo"` (literal) → NOT dynamic
+    /// - `let prop = "foo"` → type is `string` (widened) → dynamic
+    /// - `const sym: symbol = Symbol()` → type is `symbol` → dynamic
+    /// - `const sym = Symbol()` → type is `unique symbol` → NOT dynamic
+    fn is_computed_name_dynamic(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
         };
@@ -53,6 +64,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Well-known symbols like Symbol.iterator are never dynamic
         if self
             .get_symbol_property_name_from_expr(computed.expression)
             .is_some()
@@ -63,16 +75,46 @@ impl<'a> CheckerState<'a> {
         self.is_computed_expression_dynamic(computed.expression)
     }
 
-    fn is_computed_expression_dynamic(&self, expression_idx: NodeIndex) -> bool {
+    fn is_computed_expression_dynamic(&mut self, expression_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expression_idx) else {
             return true;
         };
         let kind = expr_node.kind;
 
+        // For identifiers, check the resolved TYPE — only string/number literals
+        // and unique symbols are considered non-dynamic (late-bindable).
         if kind == SyntaxKind::Identifier as u16 {
-            return false;
+            let expr_type = self.get_type_of_node(expression_idx);
+            if crate::query_boundaries::checkers::property::is_type_usable_as_property_name(
+                self.ctx.types,
+                expr_type,
+            ) {
+                return false; // Literal or unique symbol → not dynamic
+            }
+            // Workaround: our solver doesn't yet infer unique symbols for `const x = Symbol()`.
+            // When the identifier references a `const` without type annotation, tsc infers a
+            // narrow type (literal/unique symbol), so we treat it as non-dynamic.
+            if (expr_type == TypeId::SYMBOL
+                || expr_type == TypeId::STRING
+                || expr_type == TypeId::NUMBER)
+                && let Some(sym_id) = self.resolve_identifier_symbol(expression_idx)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && symbol.value_declaration.is_some()
+                {
+                    let decl_idx = symbol.value_declaration;
+                    if self.ctx.arena.is_const_variable_declaration(decl_idx)
+                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(decl_data) =
+                                self.ctx.arena.get_variable_declaration(decl_node)
+                            && !decl_data.type_annotation.is_some()
+                        {
+                            return false; // const without type annotation → non-dynamic
+                        }
+                }
+            return true; // Widened type (string/number/symbol with annotation or let/var) → dynamic
         }
 
+        // String/number literals in computed names are always non-dynamic
         if matches!(
             kind,
             k if k == SyntaxKind::StringLiteral as u16
@@ -89,6 +131,31 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Check if a member name is a computed property whose expression is NOT a direct
+    /// string/number literal. This matches tsc's `isComputedNonLiteralName()`.
+    /// Used to skip `noImplicitOverride` checks for computed names like `[someVar]`.
+    fn is_computed_non_literal_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return true;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return true;
+        };
+        // Only direct string/number literals are considered "literal" computed names
+        !matches!(
+            expr_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+        )
     }
 
     /// Collect base member names for override suggestions.
@@ -293,8 +360,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else if no_implicit_override && base_member.is_some() {
+                    // tsc points TS4115 at the parameter declaration (starting at the
+                    // first modifier like 'public'), not just the identifier name.
                     self.error_at_node(
-                        param.name,
+                        param_idx,
                         &crate::diagnostics::format_message(
                             diagnostic_messages::THIS_PARAMETER_PROPERTY_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_ME,
                             &[base_class_name],
@@ -355,6 +424,7 @@ impl<'a> CheckerState<'a> {
                     has_override: self.has_override_modifier(&prop.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
+                    has_computed_non_literal_name: self.is_computed_non_literal_name(prop.name),
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -396,6 +466,7 @@ impl<'a> CheckerState<'a> {
                     has_override: self.has_override_modifier(&method.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
+                    has_computed_non_literal_name: self.is_computed_non_literal_name(method.name),
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -430,6 +501,7 @@ impl<'a> CheckerState<'a> {
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
+                    has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -471,6 +543,7 @@ impl<'a> CheckerState<'a> {
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
+                    has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                 })
             }
             _ => None,
@@ -503,9 +576,12 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(class_data.name)
                         .and_then(|n| self.ctx.arena.get_identifier(n))
-                        .map_or_else(|| String::from("<anonymous>"), |id| id.escaped_text.clone())
+                        .map_or_else(
+                            || String::from("(Anonymous class)"),
+                            |id| id.escaped_text.clone(),
+                        )
                 } else {
-                    String::from("<anonymous>")
+                    String::from("(Anonymous class)")
                 };
                 for &member_idx in &class_data.members.nodes {
                     let Some(info) = self.extract_class_member_info(member_idx, false) else {
@@ -585,23 +661,58 @@ impl<'a> CheckerState<'a> {
                     base_type_argument_nodes = Some(args.nodes.clone());
                 }
 
-                // Get the class name from the expression (identifier)
-                if let Some(expr_node) = self.ctx.arena.get(expr_idx)
-                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                {
-                    base_class_name = ident.escaped_text.clone();
+                // Unwrap parenthesized expressions to find the actual base expression.
+                // e.g., `class E extends (class { ... })` — the inner expr is a class expression.
+                let mut resolved_expr_idx = expr_idx;
+                loop {
+                    let Some(rn) = self.ctx.arena.get(resolved_expr_idx) else {
+                        break;
+                    };
+                    if rn.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                        && let Some(paren) = self.ctx.arena.get_parenthesized(rn) {
+                            resolved_expr_idx = paren.expression;
+                            continue;
+                        }
+                    break;
                 }
 
-                // Find the base class declaration via heritage symbol resolution
-                // This handles namespace scoping correctly
-                if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    // Try value_declaration first, then declarations
-                    if symbol.value_declaration.is_some() {
-                        base_class_idx = Some(symbol.value_declaration);
-                    } else if let Some(&decl_idx) = symbol.declarations.first() {
-                        base_class_idx = Some(decl_idx);
+                // Check if the base expression is a class expression directly
+                let resolved_node = self.ctx.arena.get(resolved_expr_idx);
+                let is_class_expr =
+                    resolved_node.is_some_and(|n| n.kind == syntax_kind_ext::CLASS_EXPRESSION);
+
+                if is_class_expr {
+                    // Direct class expression as base — use it directly
+                    base_class_idx = Some(resolved_expr_idx);
+                    if let Some(rn) = resolved_node
+                        && let Some(cls) = self.ctx.arena.get_class(rn)
+                        && cls.name.is_some()
+                        && let Some(name_node) = self.ctx.arena.get(cls.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        base_class_name = ident.escaped_text.clone();
+                    } else {
+                        base_class_name = String::from("(Anonymous class)");
+                    }
+                } else {
+                    // Get the class name from the expression (identifier)
+                    if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                    {
+                        base_class_name = ident.escaped_text.clone();
+                    }
+
+                    // Find the base class declaration via heritage symbol resolution
+                    // This handles namespace scoping correctly
+                    if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        // Try value_declaration first, then declarations
+                        if symbol.value_declaration.is_some() {
+                            base_class_idx = Some(symbol.value_declaration);
+                        } else if let Some(&decl_idx) = symbol.declarations.first() {
+                            base_class_idx = Some(decl_idx);
+                        }
                     }
                 }
             }
@@ -616,15 +727,17 @@ impl<'a> CheckerState<'a> {
                     self.append_type_param_names(&mut name, &class_data.type_parameters);
                     name
                 } else {
-                    String::from("<anonymous>")
+                    String::from("(Anonymous class)")
                 }
             } else {
-                String::from("<anonymous>")
+                String::from("(Anonymous class)")
             }
         } else {
-            String::from("<anonymous>")
+            String::from("(Anonymous class)")
         };
-        let no_implicit_override = self.ctx.no_implicit_override();
+        // tsc does not enforce noImplicitOverride in ambient/declare class declarations.
+        let is_ambient_class = self.has_declare_modifier(&class_data.modifiers);
+        let no_implicit_override = self.ctx.no_implicit_override() && !is_ambient_class;
 
         let Some(base_idx) = base_class_idx else {
             // Even without a base class, explicit `override` is invalid.
@@ -752,6 +865,7 @@ impl<'a> CheckerState<'a> {
                 has_override,
                 has_dynamic_name,
                 is_abstract,
+                has_computed_non_literal_name,
             ) = (
                 info.name,
                 info.type_id,
@@ -763,6 +877,7 @@ impl<'a> CheckerState<'a> {
                 info.has_override,
                 info.has_dynamic_name,
                 info.is_abstract,
+                info.has_computed_non_literal_name,
             );
 
             // Skip override checking for private identifiers (#foo)
@@ -825,7 +940,8 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 }
-            } else if no_implicit_override && base_info.is_some() {
+            } else if no_implicit_override && base_info.is_some() && !has_computed_non_literal_name
+            {
                 // tsc does not require `override` for `declare` property re-declarations.
                 // A `declare property: T` in a derived class is a type-only ambient annotation
                 // (no runtime effect) and is not considered a true override.
