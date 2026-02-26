@@ -207,11 +207,21 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
 
         // Pre-create a single placeholder for skipped sensitive arguments.
-        // The solver's is_contextually_sensitive recognizes Function types and skips them
-        // during Round 1 inference. We create one and reuse its TypeId for all skipped args.
+        // CRITICAL: The placeholder must have at least one parameter so that
+        // `is_contextually_sensitive` returns `true`, which causes
+        // `contextual_round1_arg_types` to skip it (return None) during Round 1
+        // type inference. A zero-parameter placeholder would have
+        // `is_contextually_sensitive = false`, causing it to be included in inference
+        // and incorrectly constraining type parameters (e.g., `T = () => any`).
         let sensitive_placeholder = skip_sensitive_indices.map(|_| {
+            let placeholder_param_name = self.ctx.types.intern_string("__sensitive_arg__");
             let shape = FunctionShape {
-                params: vec![],
+                params: vec![tsz_solver::ParamInfo {
+                    name: Some(placeholder_param_name),
+                    type_id: TypeId::ANY,
+                    optional: true,
+                    rest: false,
+                }],
                 return_type: TypeId::ANY,
                 this_type: None,
                 type_params: vec![],
