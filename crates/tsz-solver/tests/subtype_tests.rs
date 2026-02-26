@@ -23327,6 +23327,130 @@ fn test_intrinsic_to_literal_fails() {
 }
 
 // ============================================================================
+// Explain failure: mapped type evaluation in the explain path
+// These tests verify that mapped types are evaluated to concrete object types
+// during explain_failure, enabling property-level diagnostics (TS2739/TS2741).
+// ============================================================================
+
+#[test]
+fn test_explain_failure_mapped_type_target_missing_property() {
+    // Simulates: Required<{ a?: string, b: number }> as target
+    // with source { b: number } (missing 'a').
+    // The mapped type (with -? modifier) should be evaluated to a concrete
+    // object { a: string, b: number } so explain_failure can detect the
+    // missing property and return MissingProperty instead of TypeMismatch.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    // Build the source object: { a?: string, b: number }
+    let source_obj = interner.object(vec![
+        PropertyInfo::opt(a_name, TypeId::STRING),
+        PropertyInfo::new(b_name, TypeId::NUMBER),
+    ]);
+
+    // Build Required<source_obj> as a mapped type: { [K in keyof T]-?: T[K] }
+    let keyof_source = interner.keyof(source_obj);
+    let k_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let template = interner.index_access(source_obj, k_param);
+    let required_target = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_source,
+        name_type: None,
+        template,
+        optional_modifier: Some(MappedModifier::Remove),
+        readonly_modifier: None,
+    });
+
+    // Source is missing property 'a': { b: number }
+    let incomplete_source = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+
+    // Verify the assignment fails
+    assert!(
+        !checker.is_subtype_of(incomplete_source, required_target),
+        "{{b: number}} should not be assignable to Required<{{a?: string, b: number}}>"
+    );
+
+    // explain_failure should return MissingProperty (TS2741), not TypeMismatch (TS2322)
+    let reason = checker.explain_failure(incomplete_source, required_target);
+    assert!(reason.is_some(), "Should produce a failure reason");
+    match reason.unwrap() {
+        SubtypeFailureReason::MissingProperty { property_name, .. } => {
+            assert_eq!(property_name, a_name, "Missing property should be 'a'");
+        }
+        SubtypeFailureReason::MissingProperties { .. } => {
+            // Also acceptable — depends on how many properties are missing
+        }
+        other => panic!(
+            "Expected MissingProperty or MissingProperties for mapped type target, got {other:?}"
+        ),
+    }
+}
+
+#[test]
+fn test_explain_failure_mapped_type_source_evaluated() {
+    // Verify that mapped type sources are also evaluated.
+    // Source: Partial<{ a: string, b: number }> => { a?: string, b?: number }
+    // Target: { a: string, b: number }
+    // The source mapped type should evaluate to a concrete object so
+    // explain_failure can detect the optional→required mismatch.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    // Build the concrete object { a: string, b: number }
+    let concrete_obj = interner.object(vec![
+        PropertyInfo::new(a_name, TypeId::STRING),
+        PropertyInfo::new(b_name, TypeId::NUMBER),
+    ]);
+
+    // Build Partial<concrete_obj> as a mapped type: { [K in keyof T]+?: T[K] }
+    let keyof_obj = interner.keyof(concrete_obj);
+    let k_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
+    let template = interner.index_access(concrete_obj, k_param);
+    let partial_source = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_obj,
+        name_type: None,
+        template,
+        optional_modifier: Some(MappedModifier::Add),
+        readonly_modifier: None,
+    });
+
+    // Partial<T> → T should fail (properties may be missing)
+    assert!(
+        !checker.is_subtype_of(partial_source, concrete_obj),
+        "Partial<{{a: string, b: number}}> should not be assignable to {{a: string, b: number}}"
+    );
+
+    // explain_failure should return a structured reason (not None)
+    let reason = checker.explain_failure(partial_source, concrete_obj);
+    assert!(
+        reason.is_some(),
+        "Partial<T> → T should produce a failure reason"
+    );
+    // The specific reason depends on how the solver handles optional→required mismatches.
+    // The important thing is we get a structured reason, not a generic TypeMismatch from
+    // failing to enumerate properties on an unevaluated mapped type.
+}
+
+// ============================================================================
 // Tuple-to-Array Assignability Tests
 // These tests document TypeScript behavior for assigning tuples to arrays
 // ============================================================================

@@ -107,6 +107,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolved_target = self.resolve_lazy_type(expanded);
         }
 
+        // Evaluate meta-types (Mapped, Conditional, KeyOf, etc.) to structural forms.
+        // Application expansion may produce a Mapped type (e.g., Required<Foo> →
+        // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete
+        // object type so property enumeration can generate TS2739/TS2741 diagnostics.
+        let eval_source = self.evaluate_type(resolved_source);
+        if eval_source != resolved_source {
+            resolved_source = eval_source;
+        }
+        let eval_target = self.evaluate_type(resolved_target);
+        if eval_target != resolved_target {
+            resolved_target = eval_target;
+        }
+
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
