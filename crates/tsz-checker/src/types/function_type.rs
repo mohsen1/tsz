@@ -643,7 +643,7 @@ impl<'a> CheckerState<'a> {
                 && !skip_implicit_any_return
             {
                 self.maybe_report_implicit_any_return(
-                    name_for_error,
+                    name_for_error.clone(),
                     name_node,
                     return_type,
                     has_type_annotation,
@@ -894,6 +894,12 @@ impl<'a> CheckerState<'a> {
             if is_generator && has_type_annotation {
                 let yield_type = self.get_generator_yield_type_argument(return_type);
                 self.ctx.push_yield_type(yield_type);
+            } else if is_generator && early_yield_type.is_none() && !has_type_annotation {
+                // Unannotated generator: push None so dispatch.rs defers TS7057.
+                // After body check, we'll compute the inferred yield type union
+                // and emit either TS7055/TS7025 (if yield type is any) or flush
+                // deferred TS7057 diagnostics.
+                self.ctx.push_yield_type(None);
             } else if early_yield_type.is_none() {
                 // No early push was done, push None for stack balance
                 self.ctx.push_yield_type(None);
@@ -989,7 +995,65 @@ impl<'a> CheckerState<'a> {
                         self.ctx.contextual_type = body_return_context;
                     }
                 }
+
+                // Save outer generator's yield collection state (for nested generators)
+                let saved_yield_collection =
+                    std::mem::take(&mut self.ctx.generator_yield_operand_types);
+
                 self.check_statement(body);
+
+                // For unannotated generator expressions, determine the inferred yield type
+                // and emit TS7055/TS7025 if TYield is 'any'.
+                // TS7055 and TS7057 are independent — TS7055 fires at function name when
+                // TYield is implicit any, while TS7057 fires per-expression.
+                if is_generator && !has_type_annotation && early_yield_type.is_none() {
+                    let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
+
+                    // Compute inferred yield type from collected operand types
+                    let inferred_yield = if yield_types.is_empty() {
+                        TypeId::NEVER // No yields → never
+                    } else {
+                        self.ctx.types.factory().union(yield_types)
+                    };
+
+                    // Widen and check for implicit any (mirrors infer_return_type_from_body)
+                    let widened = self.widen_literal_type(inferred_yield);
+                    let final_yield = if !self.ctx.strict_null_checks()
+                        && tsz_solver::type_queries::is_only_null_or_undefined(
+                            self.ctx.types,
+                            widened,
+                        ) {
+                        TypeId::ANY
+                    } else {
+                        widened
+                    };
+
+                    if final_yield == TypeId::ANY
+                        && self.ctx.no_implicit_any()
+                        && !self.is_js_file()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        if let Some(name) = &name_for_error {
+                            // TS7055: Named generator's yield type is implicitly 'any'
+                            self.error_at_node_msg(
+                                name_node.unwrap_or(idx),
+                                diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
+                                &[name, "any"],
+                            );
+                        } else {
+                            // TS7025: Unnamed generator expression
+                            self.error_at_node_msg(
+                                idx,
+                                diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
+                                &["any"],
+                            );
+                        }
+                    }
+                }
+
+                // Restore outer generator's yield collection state
+                self.ctx.generator_yield_operand_types = saved_yield_collection;
+
                 self.ctx.contextual_type = prev_ctx_for_body;
                 // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;

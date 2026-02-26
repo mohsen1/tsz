@@ -420,7 +420,60 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.ctx.function_depth += 1;
             // Note: we don't truncate label_stack here - labels remain visible
             // but function_depth is used to detect crosses over function boundary
+
+            // Save outer generator's yield collection state (for nested generators)
+            let saved_yield_collection =
+                std::mem::take(&mut self.ctx.generator_yield_operand_types);
+
             self.check_statement(func.body);
+
+            // For unannotated generators, determine the inferred yield type
+            // and emit TS7055 (function-level) if TYield is 'any'.
+            // TS7055 and TS7057 are independent — TS7055 fires at function name when TYield
+            // is implicit any, while TS7057 fires per-expression when yield result is any.
+            if is_generator && !has_type_annotation {
+                let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
+
+                // Compute inferred yield type from collected operand types
+                let inferred_yield = if yield_types.is_empty() {
+                    TypeId::NEVER // No yields → never
+                } else {
+                    self.ctx.types.factory().union(yield_types)
+                };
+
+                // Widen and check for implicit any (mirrors infer_return_type_from_body)
+                let widened = self.widen_literal_type(inferred_yield);
+                let final_yield = if !self.ctx.strict_null_checks()
+                    && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
+                {
+                    TypeId::ANY
+                } else {
+                    widened
+                };
+
+                if final_yield == TypeId::ANY && self.ctx.no_implicit_any() && !self.is_js_file() {
+                    // TS7055: Named generator's yield type is implicitly 'any'
+                    use crate::diagnostics::diagnostic_codes;
+                    if let Some(func_name) = self.get_function_name_from_node(func_idx) {
+                        self.error_at_node_msg(
+                            func.name,
+                            diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
+                            &[&func_name, "any"],
+                        );
+                    } else {
+                        // TS7025: Unnamed generator expression (unlikely for function declarations)
+                        self.error_at_node_msg(
+                            func_idx,
+                            diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
+                            &["any"],
+                        );
+                    }
+                }
+            }
+
+            // Restore outer generator's yield collection state
+            self.ctx.generator_yield_operand_types = saved_yield_collection;
+
             // Restore control flow context
             self.ctx.iteration_depth = saved_cf_context.0;
             self.ctx.switch_depth = saved_cf_context.1;

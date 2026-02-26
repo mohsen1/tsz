@@ -311,22 +311,59 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
 
                 if is_async_generator {
-                    tsz_solver::operations::get_async_iterable_element_type(
+                    let element = tsz_solver::operations::get_async_iterable_element_type(
                         self.checker.ctx.types,
                         expression_type,
-                    )
+                    );
+                    // Collect yield* element type for unannotated generators
+                    if self.checker.ctx.current_yield_type().is_none() {
+                        self.checker.ctx.generator_yield_operand_types.push(element);
+                    }
+                    element
                 } else {
-                    tsz_solver::operations::get_iterator_info(
+                    let info = tsz_solver::operations::get_iterator_info(
                         self.checker.ctx.types,
                         expression_type,
                         false,
-                    )
-                    .map_or(TypeId::ANY, |info| info.yield_type)
+                    );
+                    // Collect yield* element type for unannotated generators when resolvable
+                    // (skip when get_iterator_info returns None/fallback ANY)
+                    if self.checker.ctx.current_yield_type().is_none()
+                        && let Some(ref i) = info {
+                            self.checker
+                                .ctx
+                                .generator_yield_operand_types
+                                .push(i.yield_type);
+                        }
+                    info.map_or(TypeId::ANY, |i| i.yield_type)
                 }
             } else {
                 expression_type
             }
         };
+
+        // Collect yield operand type for unannotated generators (yield_type is None).
+        // After body check, the union determines the inferred yield type for
+        // TS7055/TS7025 vs TS7057 discrimination.
+        // Only collect for regular `yield expr` (not yield*), and skip when the
+        // operand is itself a yield expression — its `any` result type is the TNext
+        // fallback, not a real yielded value (e.g. `yield yield` should not make
+        // TYield = any).
+        if self.checker.ctx.current_yield_type().is_none() && !yield_expr.asterisk_token {
+            let operand_is_yield = yield_expr.expression.is_some()
+                && self
+                    .checker
+                    .ctx
+                    .arena
+                    .get(yield_expr.expression)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::YIELD_EXPRESSION);
+            if !operand_is_yield {
+                self.checker
+                    .ctx
+                    .generator_yield_operand_types
+                    .push(yielded_type);
+            }
+        }
 
         if let Some(expected_yield_type) = self.get_expected_yield_type(idx) {
             let error_node = if yield_expr.expression.is_none() {
@@ -401,9 +438,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // Emit TS7057 when noImplicitAny is enabled, the generator lacks a return type,
         // and the yield result is consumed (not discarded).
         if self.checker.ctx.no_implicit_any() && !self.expression_result_is_unused(idx) {
-            // Check if there is a contextual type that would prevent the implicit any
+            let yield_type = self.checker.ctx.current_yield_type();
             let contextual = self.checker.ctx.contextual_type;
-            if contextual.is_none() || contextual == Some(TypeId::ANY) {
+            // Suppress TS7057 when:
+            // - yield_type is Some(ANY): the yield type itself is any, so TS7055/7025 covers it
+            // - contextual type provides a non-any type
+            if yield_type != Some(TypeId::ANY)
+                && (contextual.is_none() || contextual == Some(TypeId::ANY))
+            {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.checker.error_at_node(
                     idx,
