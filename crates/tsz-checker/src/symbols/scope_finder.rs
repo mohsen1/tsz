@@ -274,6 +274,48 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true if there is any enclosing regular (non-arrow) function.
+    /// Unlike `is_in_regular_function_body`, this walks through arrow functions
+    /// since they are transparent for `arguments` capture. Returns false only if
+    /// we reach the source file root without finding any regular function.
+    pub(crate) fn has_enclosing_regular_function(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
+        let mut current = idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    // Arrow functions are transparent — keep walking up
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR =>
+                    {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Returns true if the given `arguments` reference is inside an arrow function
     /// that captures `arguments` from an outer scope (i.e., the nearest enclosing
     /// arrow does NOT have its own parameter named `arguments`).

@@ -133,9 +133,10 @@ impl<'a> CheckerState<'a> {
 
             // If not shadowed by a local variable, resolve to the built-in IArguments type.
             // This handles both regular functions and arrow functions (which are transparent
-            // for `arguments` — they capture from the enclosing scope). tsc does not error
-            // on `arguments` in arrow functions, even at the global level.
-            if !has_local_shadow {
+            // for `arguments` — they capture from the enclosing regular function).
+            // At global scope or in type contexts (interfaces, type aliases), `arguments`
+            // is not valid and should fall through to normal resolution (emitting TS2304).
+            if !has_local_shadow && self.has_enclosing_regular_function(idx) {
                 let lib_binders = self.get_lib_binders();
                 if let Some(iargs_sym) = self
                     .ctx
