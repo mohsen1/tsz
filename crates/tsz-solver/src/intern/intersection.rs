@@ -299,11 +299,16 @@ impl TypeInterner {
                             // Intersect property types using raw intersection to avoid infinite recursion
                             existing.type_id =
                                 self.intersect_types_raw2(existing.type_id, prop.type_id);
-                            existing.write_type =
-                                self.intersect_types_raw2(existing.write_type, prop.write_type);
                             existing.optional = existing.optional && prop.optional;
-                            // Intersection: readonly if ANY constituent is readonly (cumulative)
-                            existing.readonly = existing.readonly || prop.readonly;
+                            // Intersection: readonly only if ALL are readonly (writable wins)
+                            existing.readonly = existing.readonly && prop.readonly;
+                            // Write type: if writable, use read type to avoid NONE sentinels
+                            if !existing.readonly {
+                                existing.write_type = existing.type_id;
+                            } else {
+                                existing.write_type =
+                                    self.intersect_types_raw2(existing.write_type, prop.write_type);
+                            }
                         } else {
                             properties.push(prop.clone());
                         }
@@ -316,8 +321,8 @@ impl TypeInterner {
                                 key_type: existing.key_type,
                                 value_type: self
                                     .intersect_types_raw2(existing.value_type, idx.value_type),
-                                // Intersection: readonly if ANY constituent is readonly (cumulative)
-                                readonly: existing.readonly || idx.readonly,
+                                // Intersection: readonly only if ALL constituents are readonly
+                                readonly: existing.readonly && idx.readonly,
                             });
                         }
                         _ => {}
@@ -329,8 +334,8 @@ impl TypeInterner {
                                 key_type: existing.key_type,
                                 value_type: self
                                     .intersect_types_raw2(existing.value_type, idx.value_type),
-                                // Intersection: readonly if ANY constituent is readonly (cumulative)
-                                readonly: existing.readonly || idx.readonly,
+                                // Intersection: readonly only if ALL constituents are readonly
+                                readonly: existing.readonly && idx.readonly,
                             });
                         }
                         _ => {}
@@ -397,16 +402,23 @@ impl TypeInterner {
                         existing.type_id =
                             self.intersect_types_raw2(existing.type_id, prop.type_id);
                     }
-                    if existing.write_type != prop.write_type {
+                    // Merge flags: required wins over optional, readonly only if ALL readonly
+                    // For optional: only optional if ALL are optional (required wins)
+                    existing.optional = existing.optional && prop.optional;
+                    // For readonly: readonly only if ALL members have it readonly
+                    // { readonly a: number } & { a: number } = { a: number } (writable)
+                    // This matches tsc: if any member says writable, the intersection is writable
+                    existing.readonly = existing.readonly && prop.readonly;
+                    // Write type: if the merged property is writable, use the merged read
+                    // type as write_type to avoid NONE sentinels from readonly members
+                    // polluting the result (e.g., intersecting NONE & number = "error & number").
+                    // When writable, write_type == type_id (no divergent getter/setter).
+                    if !existing.readonly {
+                        existing.write_type = existing.type_id;
+                    } else if existing.write_type != prop.write_type {
                         existing.write_type =
                             self.intersect_types_raw2(existing.write_type, prop.write_type);
                     }
-                    // Merge flags: required wins over optional, readonly is cumulative
-                    // For optional: only optional if ALL are optional (required wins)
-                    existing.optional = existing.optional && prop.optional;
-                    // For readonly: readonly if ANY is readonly (readonly is cumulative)
-                    // { readonly a: number } & { a: number } = { readonly a: number }
-                    existing.readonly = existing.readonly || prop.readonly;
                     // For visibility: most restrictive wins (Private > Protected > Public)
                     // { private a: number } & { public a: number } = { private a: number }
                     existing.visibility = match (existing.visibility, prop.visibility) {
@@ -436,8 +448,8 @@ impl TypeInterner {
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
-                        // Intersection: readonly if ANY constituent is readonly (cumulative)
-                        readonly: existing.readonly || idx.readonly,
+                        // Intersection: readonly only if ALL constituents are readonly
+                        readonly: existing.readonly && idx.readonly,
                     });
                 }
                 _ => {}
@@ -455,8 +467,8 @@ impl TypeInterner {
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
                         value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
-                        // Intersection: readonly if ANY constituent is readonly (cumulative)
-                        readonly: existing.readonly || idx.readonly,
+                        // Intersection: readonly only if ALL constituents are readonly
+                        readonly: existing.readonly && idx.readonly,
                     });
                 }
                 _ => {}

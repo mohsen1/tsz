@@ -235,7 +235,7 @@ fn test_collect_properties_optionality_merging() {
 }
 
 #[test]
-fn test_collect_properties_readonly_cumulative() {
+fn test_collect_properties_readonly_mutable_wins() {
     let interner = TypeInterner::new();
     let resolver = MockResolver;
 
@@ -274,8 +274,9 @@ fn test_collect_properties_readonly_cumulative() {
     ));
     if let PropertyCollectionResult::Properties { properties, .. } = result {
         assert_eq!(properties.len(), 1);
-        // Readonly is cumulative (false || true = true)
-        assert!(properties[0].readonly);
+        // Writable wins in intersections (false && true = false)
+        // tsc: { x: string } & { readonly x: string } → writable x
+        assert!(!properties[0].readonly);
     }
 }
 
