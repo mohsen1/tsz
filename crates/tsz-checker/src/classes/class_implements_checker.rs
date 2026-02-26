@@ -138,6 +138,67 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TSC also considers members provided through declaration merging
+        // (class + interface with same name).  Look up the class symbol and
+        // check if any merged interface declarations contribute members that
+        // satisfy the abstract requirement.
+        if let Some(name_node) = self.ctx.arena.get(class_data.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let class_name = &ident.escaped_text;
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                for &decl_idx in &symbol.declarations {
+                    // Skip the class declaration itself
+                    if decl_idx == class_idx {
+                        continue;
+                    }
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    // Only consider interface declarations (declaration merging)
+                    if decl_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                        continue;
+                    }
+                    let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
+                        continue;
+                    };
+                    // Collect own members from the merged interface
+                    for &member_idx in &iface.members.nodes {
+                        if let Some(name) = self.get_member_name(member_idx) {
+                            implemented_members.insert(name);
+                        }
+                    }
+                    // Also collect inherited members from extends clauses
+                    // via the solver's resolved type
+                    if let Some(ref heritage) = iface.heritage_clauses {
+                        for &clause_idx in &heritage.nodes {
+                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                                && let Some(heritage_clause) =
+                                    self.ctx.arena.get_heritage_clause(clause_node)
+                            {
+                                for &type_idx in &heritage_clause.types.nodes {
+                                    let base_type = self.get_type_from_type_node(type_idx);
+                                    let base_type = self.evaluate_type_for_assignability(base_type);
+                                    if let Some(shape) = tsz_solver::type_queries::get_object_shape(
+                                        self.ctx.types,
+                                        base_type,
+                                    ) {
+                                        for prop in &shape.properties {
+                                            let member_name =
+                                                self.ctx.types.resolve_atom(prop.name);
+                                            implemented_members.insert(member_name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Collect abstract members from base class that are not implemented
         let mut missing_members: Vec<String> = Vec::new();
         for &member_idx in &base_class.members.nodes {
