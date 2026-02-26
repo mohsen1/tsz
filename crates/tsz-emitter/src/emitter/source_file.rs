@@ -468,6 +468,7 @@ impl<'a> Printer<'a> {
                 module_commonjs::collect_export_names_categorized(
                     self.arena,
                     &source.statements.nodes,
+                    self.ctx.options.preserve_const_enums,
                 );
             // When `export =` is present, suppress hoisted function exports
             // (exports.f = f;) since module.exports replaces them, but keep
