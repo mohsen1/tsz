@@ -1278,3 +1278,161 @@ interface Foo {
         "Expected no TS1131 for valid interface, got {ts1131_count}. Diagnostics: {diagnostics:?}",
     );
 }
+
+// =============================================================================
+// Import Defer Tests
+// =============================================================================
+
+#[test]
+fn test_import_defer_namespace_parses_clean() {
+    // `import defer * as ns from "mod"` is valid — no parse errors
+    let source = r#"import defer * as ns from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for valid defer namespace import, got {parse_errors:?}",
+    );
+}
+
+#[test]
+fn test_import_defer_as_binding_name() {
+    // `import defer from "mod"` — defer is the default import NAME, not a modifier
+    let source = r#"import defer from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors when 'defer' is used as binding name, got {parse_errors:?}",
+    );
+}
+
+#[test]
+fn test_import_dot_defer_call_no_parse_error() {
+    // `import.defer("./a")` — valid dynamic defer import, no parse error
+    let source = r#"import.defer("./a.js");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let parse_errors: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code < 2000)
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "Expected no parse errors for import.defer() call, got {parse_errors:?}",
+    );
+}
+
+#[test]
+fn test_import_dot_defer_standalone_emits_ts1005() {
+    // `import.defer` without () should emit TS1005 "'(' expected."
+    let source = r"const x = import.defer;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1005)
+        .count();
+    assert_eq!(
+        ts1005_count, 1,
+        "Expected 1 TS1005 for standalone import.defer, got {ts1005_count}",
+    );
+}
+
+#[test]
+fn test_import_dot_invalid_meta_property_ts17012() {
+    // `import.foo` (not in call) should emit TS17012
+    let source = r"const x = import.foo;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts17012_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 17012)
+        .count();
+    assert_eq!(
+        ts17012_count, 1,
+        "Expected 1 TS17012 for invalid import.foo, got {ts17012_count}",
+    );
+}
+
+#[test]
+fn test_import_dot_invalid_meta_property_call_ts18061() {
+    // `import.foo()` (in call) should emit TS18061
+    let source = r#"import.foo("./a");"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts18061_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 18061)
+        .count();
+    assert_eq!(
+        ts18061_count, 1,
+        "Expected 1 TS18061 for import.foo() call, got {ts18061_count}",
+    );
+}
+
+#[test]
+fn test_import_defer_with_default_sets_deferred_flag() {
+    // `import defer foo from "./a"` — defer is modifier, foo is default name
+    // Parser should set is_deferred = true
+    let source = r#"import defer foo from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt = sf.statements.nodes[0];
+    let stmt_node = arena.get(stmt).unwrap();
+    let import = arena.get_import_decl(stmt_node).unwrap();
+    let clause_node = arena.get(import.import_clause).unwrap();
+    let clause = arena.get_import_clause(clause_node).unwrap();
+    assert!(
+        clause.is_deferred,
+        "Expected is_deferred to be true for 'import defer foo from'"
+    );
+    assert!(
+        clause.name.is_some(),
+        "Expected default import name to be present"
+    );
+}
+
+#[test]
+fn test_import_defer_from_as_name_not_deferred() {
+    // `import defer from "./a"` — defer is the import NAME, not modifier
+    // Parser should NOT set is_deferred = true
+    let source = r#"import defer from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let stmt = sf.statements.nodes[0];
+    let stmt_node = arena.get(stmt).unwrap();
+    let import = arena.get_import_decl(stmt_node).unwrap();
+    let clause_node = arena.get(import.import_clause).unwrap();
+    let clause = arena.get_import_clause(clause_node).unwrap();
+    assert!(
+        !clause.is_deferred,
+        "Expected is_deferred to be false for 'import defer from' (defer is name)"
+    );
+}

@@ -105,6 +105,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS18058/TS18059: Check that deferred imports only use namespace binding.
+    /// Deferred imports (`import defer ...`) must use `* as ns` form.
+    /// Default imports and named imports are not allowed.
+    pub(crate) fn check_deferred_import_restrictions(&mut self, import_clause_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(import_clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        if !clause.is_deferred {
+            return;
+        }
+
+        // The import clause node starts at the `defer` keyword position.
+        // Use that as the error location (matching TSC behavior).
+        let defer_pos = clause_node.pos;
+        let defer_len = 5u32; // length of "defer"
+
+        // TS18058: Default imports are not allowed in a deferred import.
+        if clause.name.is_some() {
+            self.error_at_position(
+                defer_pos,
+                defer_len,
+                diagnostic_messages::DEFAULT_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+                diagnostic_codes::DEFAULT_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+            );
+        }
+
+        // TS18059: Named imports are not allowed in a deferred import.
+        if let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings)
+            && bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
+        {
+            self.error_at_position(
+                defer_pos,
+                defer_len,
+                diagnostic_messages::NAMED_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+                diagnostic_codes::NAMED_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+            );
+        }
+    }
+
     /// TS2823: Check that import attributes are only used with supported module options.
     pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
         use tsz_common::common::ModuleKind;
@@ -145,6 +191,10 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        // TS18058/TS18059: Validate deferred import binding restrictions.
+        // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
+        self.check_deferred_import_restrictions(import.import_clause);
 
         // TS2823: Import attributes require specific module options
         self.check_import_attributes_module_option(import.attributes);
