@@ -1165,9 +1165,13 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 {
                     let mod_normalized =
                         normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                    // tsc message: "can only be used when 'module' is set to 'preserve',
+                    // 'commonjs', or 'es2015' or later" — commonjs IS valid.
+                    // AMD, UMD, System, None are the invalid values.
                     matches!(
                         mod_normalized.as_str(),
                         "preserve"
+                            | "commonjs"
                             | "es2015"
                             | "es6"
                             | "es2020"
@@ -1179,45 +1183,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                             | "nodenext"
                     )
                 } else {
-                    // module not set — default depends on target; ES2015+ targets
-                    // default to es2015 which is compatible, but lower targets
-                    // default to commonjs which is NOT compatible.
-                    if let Some(serde_json::Value::String(target_value)) =
-                        compiler_opts.get("target")
-                    {
-                        let target_normalized = normalize_option(
-                            target_value
-                                .split(',')
-                                .next()
-                                .unwrap_or(target_value)
-                                .trim(),
-                        );
-                        matches!(
-                            target_normalized.as_str(),
-                            "es2015"
-                                | "es6"
-                                | "es2016"
-                                | "es2017"
-                                | "es2018"
-                                | "es2019"
-                                | "es2020"
-                                | "es2021"
-                                | "es2022"
-                                | "es2023"
-                                | "es2024"
-                                | "esnext"
-                        )
-                    } else {
-                        // No target set → default is ES3/ES5 → default module is CommonJS → not OK
-                        false
-                    }
+                    // module not set — default is commonjs (for ES3/ES5 targets) or
+                    // es2015/esnext for higher targets. Since commonjs is a valid pairing
+                    // with bundler, all default-module scenarios are OK.
+                    true
                 };
                 if !module_ok {
                     let start = find_value_offset_in_source(&stripped, "moduleResolution");
                     let value_len = mr_value.len() as u32 + 2; // include quotes
-                    // Use the exact message text that tsc 6.0 produces (differs slightly from
-                    // the diagnosticMessages.json template which includes 'commonjs').
-                    let msg = "Option 'bundler' can only be used when 'module' is set to 'preserve' or to 'es2015' or later.".to_string();
+                    let msg = "Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.".to_string();
                     diagnostics.push(Diagnostic::error(
                         file_path,
                         start,
@@ -3187,12 +3161,14 @@ mod tests {
 
     #[test]
     fn test_ts5095_bundler_with_commonjs() {
+        // commonjs IS a valid module setting with moduleResolution=bundler.
+        // tsc message: "can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later"
         let source = r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"bundler"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            codes.contains(&5095),
-            "Expected TS5095 for bundler+commonjs, got: {codes:?}"
+            !codes.contains(&5095),
+            "TS5095 should NOT be emitted for bundler+commonjs (commonjs is valid): {codes:?}"
         );
     }
 
