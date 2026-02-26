@@ -201,6 +201,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.application_symbols_resolved.clear();
             self.ctx.application_symbols_resolution_set.clear();
 
+            // Register Function DefIds in the interner BEFORE building the environment.
+            // This ensures `T extends Function` constraint checks during type alias
+            // processing can identify the Function interface by DefId.
+            if self.needs_boxed_type_registration() {
+                self.register_function_def_ids_early();
+            }
+
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives

@@ -105,6 +105,23 @@ pub trait TypeDatabase {
     /// void, never, and tuples composed entirely of identity-comparable types.
     /// Results are cached for O(1) lookup after first computation.
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool;
+
+    /// Get the boxed interface type for a primitive intrinsic kind.
+    ///
+    /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
+    /// from lib.d.ts. This bypasses `TypeResolver` (which may fail due to `RefCell` borrow
+    /// conflicts) by reading directly from the interner's `DashMap`.
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
+
+    /// Check if a `DefId` corresponds to a boxed type of the given kind.
+    ///
+    /// For example, checking if a `DefId` represents the `Function` interface.
+    /// This bypasses `TypeResolver` by reading directly from the interner's storage.
+    fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
+        false
+    }
 }
 
 impl TypeDatabase for TypeInterner {
@@ -346,6 +363,14 @@ impl TypeDatabase for TypeInterner {
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
         Self::is_identity_comparable_type(self, type_id)
     }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        Self::get_boxed_type(self, kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        Self::is_boxed_def_id(self, def_id, kind)
+    }
 }
 
 /// Implement `TypeResolver` for `TypeInterner` with noop resolution.
@@ -401,6 +426,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// resolution can find the correct interface type (e.g., String, Number) for
     /// primitive types, regardless of which database backend is used.
     fn register_boxed_type(&self, _kind: IntrinsicKind, _type_id: TypeId) {}
+
+    /// Register a `DefId` as belonging to a boxed type.
+    fn register_boxed_def_id(&self, _kind: IntrinsicKind, _def_id: DefId) {}
 
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
         crate::evaluation::evaluate::evaluate_conditional(self.as_type_database(), cond)
@@ -693,6 +721,10 @@ impl QueryDatabase for TypeInterner {
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
         TypeInterner::set_boxed_type(self, kind, type_id);
+    }
+
+    fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
+        TypeInterner::register_boxed_def_id(self, kind, def_id);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {

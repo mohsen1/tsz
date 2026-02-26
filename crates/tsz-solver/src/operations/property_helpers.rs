@@ -723,7 +723,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
     ) -> PropertyAccessResult {
         // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
         // This allows us to use lib.d.ts definitions instead of just hardcoded lists
-        if let Some(boxed_type) = self.db.get_boxed_type(kind) {
+        if let Some(boxed_type) = crate::def::resolver::TypeResolver::get_boxed_type(self.db, kind)
+        {
             // Resolve the property on the boxed interface type
             // This handles inheritance (e.g., String extends Object) automatically
             // and allows user-defined augmentations to lib.d.ts to work

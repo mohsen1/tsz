@@ -270,6 +270,10 @@ pub struct TypeInterner {
     /// Boxed interface types for primitives (e.g., String interface for `string`).
     /// Registered from lib.d.ts during primordial type setup.
     boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
+    /// `DefIds` known to be boxed types (e.g., the DefId for the Function interface).
+    /// Registered alongside `boxed_types` so subtype checking can identify boxed
+    /// types even when `TypeEnvironment` is unavailable.
+    boxed_def_ids: DashMap<IntrinsicKind, Vec<DefId>, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -306,6 +310,7 @@ impl TypeInterner {
             array_base_type: OnceLock::new(),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
+            boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -345,6 +350,18 @@ impl TypeInterner {
     #[inline]
     pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         self.boxed_types.get(&kind).map(|r| *r)
+    }
+
+    /// Register a DefId as belonging to a boxed type.
+    pub fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
+        self.boxed_def_ids.entry(kind).or_default().push(def_id);
+    }
+
+    /// Check if a DefId corresponds to a boxed type of the given kind.
+    pub fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.boxed_def_ids
+            .get(&kind)
+            .is_some_and(|ids| ids.contains(&def_id))
     }
 
     /// Get the object property maps, initializing on first access
