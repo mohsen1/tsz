@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-26T15:04:47Z",
-  "git_sha": "d61d9843354689af80668b656aa5280af419d2dc",
+  "timestamp": "2026-02-26T15:53:29Z",
+  "git_sha": "515df9376960343cf4ca578e574df10178f4dce3",
   "summary": {
     "total_tests": 12570,
     "passed": 9195,
@@ -16,6 +16,13 @@
       "pass_rate": 38.1
     },
     {
+      "area": "jsx",
+      "total": 195,
+      "passed": 90,
+      "failed": 105,
+      "pass_rate": 46.15
+    },
+    {
       "area": "types/mapped",
       "total": 26,
       "passed": 12,
@@ -28,13 +35,6 @@
       "passed": 7,
       "failed": 8,
       "pass_rate": 46.67
-    },
-    {
-      "area": "jsx",
-      "total": 190,
-      "passed": 90,
-      "failed": 100,
-      "pass_rate": 47.37
     },
     {
       "area": "types/contextualTypes",
@@ -70,6 +70,13 @@
       "passed": 36,
       "failed": 37,
       "pass_rate": 49.32
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 12,
+      "failed": 12,
+      "pass_rate": 50.0
     },
     {
       "area": "classes",
@@ -149,6 +156,13 @@
       "pass_rate": 55.88
     },
     {
+      "area": "controlFlow",
+      "total": 57,
+      "passed": 32,
+      "failed": 25,
+      "pass_rate": 56.14
+    },
+    {
       "area": "types/nonPrimitive",
       "total": 16,
       "passed": 9,
@@ -156,25 +170,11 @@
       "pass_rate": 56.25
     },
     {
-      "area": "controlFlow",
-      "total": 56,
-      "passed": 32,
-      "failed": 24,
-      "pass_rate": 57.14
-    },
-    {
       "area": "decorators/invalid",
       "total": 14,
       "passed": 8,
       "failed": 6,
       "pass_rate": 57.14
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 14,
-      "failed": 10,
-      "pass_rate": 58.33
     },
     {
       "area": "internalModules/moduleDeclarations",
@@ -409,17 +409,17 @@
     },
     {
       "area": "compiler",
-      "total": 6490,
-      "passed": 4831,
-      "failed": 1659,
-      "pass_rate": 74.44
+      "total": 6510,
+      "passed": 4832,
+      "failed": 1678,
+      "pass_rate": 74.22
     },
     {
       "area": "jsdoc/declarations",
-      "total": 90,
-      "passed": 67,
+      "total": 91,
+      "passed": 68,
       "failed": 23,
-      "pass_rate": 74.44
+      "pass_rate": 74.73
     },
     {
       "area": "es6/yieldExpressions",
@@ -719,7 +719,7 @@
   "top_failures": [
     {
       "code": "TS2322",
-      "count": 60
+      "count": 61
     },
     {
       "code": "TS2339",
@@ -800,6 +800,10 @@
   ],
   "not_implemented_codes": [
     {
+      "code": "TS2786",
+      "count": 9
+    },
+    {
       "code": "TS2497",
       "count": 8
     },
@@ -808,11 +812,11 @@
       "count": 7
     },
     {
-      "code": "TS7017",
-      "count": 6
+      "code": "TS2875",
+      "count": 7
     },
     {
-      "code": "TS2786",
+      "code": "TS7017",
       "count": 6
     },
     {
@@ -874,16 +878,12 @@
     {
       "code": "TS9007",
       "count": 4
-    },
-    {
-      "code": "TS7014",
-      "count": 4
     }
   ],
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 170
+      "count": 176
     },
     {
       "code": "TS1005",
@@ -891,7 +891,7 @@
     },
     {
       "code": "TS2339",
-      "count": 102
+      "count": 104
     },
     {
       "code": "TS2345",
@@ -911,7 +911,7 @@
     },
     {
       "code": "TS2741",
-      "count": 44
+      "count": 46
     },
     {
       "code": "TS2307",
@@ -926,6 +926,10 @@
       "count": 23
     },
     {
+      "code": "TS2769",
+      "count": 22
+    },
+    {
       "code": "TS2300",
       "count": 20
     },
@@ -938,19 +942,15 @@
       "count": 20
     },
     {
-      "code": "TS2769",
-      "count": 20
-    },
-    {
       "code": "TS2344",
       "count": 19
     },
     {
-      "code": "TS1134",
-      "count": 17
+      "code": "TS18048",
+      "count": 18
     },
     {
-      "code": "TS18048",
+      "code": "TS1134",
       "count": 17
     },
     {
