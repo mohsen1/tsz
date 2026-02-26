@@ -1,13 +1,29 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9204/12570 (73.2%) — full suite, fingerprint level (new framework)
+**Current score**: ~9195/12570 (73.2%) — full suite, fingerprint level (new framework)
 > Note: upstream TS2882 regression (eabafa0e1) temporarily dropped snapshot to 7116.
 > The +8 from iterable spread fix is validated against the pre-regression baseline.
 
 ---
 
 ## High Impact — Core Type System
+
+### types/mapped — Explain path mapped type evaluation (Session 2026-02-26) — DONE
+- **Area**: types/mapped (46.15% → ~50.9% at code level, 28/55 pass)
+- **Root cause**: `explain_failure_inner()` in the solver's explain path expanded Application
+  types (e.g. `Required<Foo>`) to their mapped type bodies but didn't call `evaluate_type()`
+  to reduce the mapped type to a concrete Object. This prevented property enumeration, so
+  `MissingProperty`/`MissingProperties` diagnostics (TS2739/TS2741) couldn't fire — everything
+  fell through to generic `TypeMismatch` (TS2322).
+- **Fix**: Added `evaluate_type()` calls in `explain_failure_inner()` after application expansion
+  so mapped/conditional/keyof meta-types get reduced to structural forms before property matching.
+- **Files**: `crates/tsz-solver/src/relations/subtype/explain.rs` (fix),
+  `crates/tsz-solver/tests/subtype_tests.rs` (2 new tests)
+- **Conformance**: +3 tests net improvement (mapped area remains 28/55 at code level;
+  the improvement is in diagnostic precision — TS2739/TS2741 instead of TS2322)
+- **Deferred**: `Partial<T> → T` generic rejection (needs `& {}` intersection stripping first;
+  attempted fix caused -3 regressions)
 
 ### expressions/binaryOperators — Optional property overlap RESOLVED
 - **Fixed**: `comparisonOperatorWithNoRelationshipObjectsOnOptionalProperty` (+1 test)
