@@ -1,10 +1,45 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9267/12570 (73.7%) — full suite, error-code level
-> Recovered from TS2430 regression. Previous dip was ~7129.
+**Current score**: ~6910/12226 (56.5%) — full suite, error-code level
+> Regression from remote solver changes (Lazy resolution in bypass_evaluation, KeyOf evaluation).
+> Previous peak was ~9279/12570 (73.8%) before remote changes landed.
 
 ---
+
+## Override Checking Fixes — Session 2026-02-26
+- **Area**: override (87.1% → 93.9% area, +2 tests at error-code level)
+- **Commit**: `e5bc49028` (rebased as `fe464fbc5` after snapshot)
+- **Three fixes**:
+  1. **Type-level fallback for complex heritage** (override19/20): When base class
+     comes from `CreateMixin()` or variable typed as intersection, AST class chain
+     walking fails (`base_class_idx` is None or resolves to non-class). Added fallback
+     using `base_instance_type_from_expression()` to get construct signatures, then
+     `collect_property_name_atoms_for_diagnostics()` (solver query boundary) to collect
+     property names. Enables TS4113/TS4114/TS4117 for non-trivial heritage.
+  2. **JSDoc @override variant codes** (override_js4): Added `is_jsdoc_override` field
+     to `ClassMemberInfo`. When override comes from `@override` JSDoc tag, emit
+     TS4122/TS4123 instead of TS4113/TS4117.
+  3. **Parameter property override** (overrideParameterProperty):
+     - Added `OverrideKeyword` to `has_parameter_property_modifier` so `m(override p1)`
+       triggers TS2369 in non-constructor methods.
+     - Fixed TS4113 span to point at `param_idx` (whole parameter decl) not `param.name`.
+- **Files changed**:
+  - `crates/tsz-checker/src/classes/class_checker.rs` (main changes)
+  - `crates/tsz-checker/src/classes/class_checker_compat.rs` (is_jsdoc_override field)
+  - `crates/tsz-checker/src/types/queries/core.rs` (OverrideKeyword in modifier check)
+- **Remaining override gaps** (2/33):
+  - override19/override20: Error codes correct but type name display shows expanded
+    object type instead of intersection display name (`A & { context: Context; }`) —
+    this is the known eager intersection merging issue.
+
+### Note on conformance regression
+After rebasing onto remote solver changes (commits `63bc32d67`..`7e8b444ea`), overall
+conformance dropped from ~9279/12570 (73.8%) to ~6910/12226 (56.5%). This regression
+is NOT from the override fixes. The remote solver changes (Lazy resolution in
+`bypass_evaluation`, KeyOf evaluation in relation normalization, filtering as-clauses
+in mapped types) caused widespread test failures. Override area specifically went from
+87.1% to 30.3% due to these upstream changes.
 
 ## KeyOf Normalization Fix — Session 2026-02-26
 - **Area**: types/mapped (46.2% → 46.2% area, +1 test: mappedTypeModifiers.ts)
