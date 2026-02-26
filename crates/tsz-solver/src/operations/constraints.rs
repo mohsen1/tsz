@@ -199,17 +199,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if let Some(TypeData::KeyOf(keyof_target)) =
                             self.interner.lookup(mapped.constraint)
                             && var_map.contains_key(&keyof_target)
-                                && self.constrain_reverse_mapped_type(
-                                    ctx,
-                                    var_map,
-                                    &source_obj,
-                                    &mapped,
-                                    keyof_target,
-                                ) {
-                                    return;
-                                }
-                                // Reverse inference failed (template too complex),
-                                // fall through to simple/evaluate paths
+                            && self.constrain_reverse_mapped_type(
+                                ctx,
+                                var_map,
+                                &source_obj,
+                                &mapped,
+                                keyof_target,
+                            )
+                        {
+                            return;
+                        }
+                        // Reverse inference failed (template too complex),
+                        // fall through to simple/evaluate paths
 
                         // Simple mapped type inference for { [P in K]: T }
                         // Infer constraint (K) from property name literals
@@ -1049,9 +1050,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<TypeId> {
         // Case 1: template is directly IndexAccess(T, key) → source IS the reversed value
         if let Some(TypeData::IndexAccess(obj, _idx)) = self.interner.lookup(template)
-            && obj == target_placeholder {
-                return Some(source_value);
-            }
+            && obj == target_placeholder
+        {
+            return Some(source_value);
+        }
 
         // Case 2: template is Application(F, args) and source is Application(F, args')
         // with same base → recurse into matching args to find the T[K] position
@@ -1066,9 +1068,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         let reversed =
                             self.reverse_infer_through_template(*s_arg, *t_arg, target_placeholder);
                         if let Some(rev) = reversed
-                            && rev != *s_arg {
-                                return Some(rev);
-                            }
+                            && rev != *s_arg
+                        {
+                            return Some(rev);
+                        }
                     }
                     // Single type arg shortcut (Box<T[P]> → unwrap the single arg)
                     if template_app.args.len() == 1 {
