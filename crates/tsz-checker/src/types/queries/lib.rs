@@ -569,9 +569,10 @@ impl<'a> CheckerState<'a> {
         if let Some(member_symbol) = self
             .get_cross_file_symbol(member_id)
             .or_else(|| self.ctx.binder.get_symbol(member_id))
-            && member_symbol.is_type_only {
-                return None;
-            }
+            && member_symbol.is_type_only
+        {
+            return None;
+        }
 
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
             && member_symbol.flags & symbol_flags::ALIAS != 0
