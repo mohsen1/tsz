@@ -1167,6 +1167,8 @@ impl<'a> CheckerState<'a> {
                             is_abstract: false,
                             has_override: self.has_override_modifier(&param.modifiers)
                                 || self.has_jsdoc_override_tag(param_idx),
+                            is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
+                                && self.has_jsdoc_override_tag(param_idx),
                             has_dynamic_name: false,
                             has_computed_non_literal_name: false,
                         };

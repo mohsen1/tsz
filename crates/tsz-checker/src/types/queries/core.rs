@@ -180,6 +180,10 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .has_modifier(modifiers, SyntaxKind::ReadonlyKeyword)
+            || self
+                .ctx
+                .arena
+                .has_modifier(modifiers, SyntaxKind::OverrideKeyword)
     }
 
     /// Check if a node is a private identifier.
