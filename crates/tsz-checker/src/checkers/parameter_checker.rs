@@ -569,15 +569,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Error TS2322:
     /// "Type X is not assignable to type Y."
-    ///
-    /// ## Current limitations:
-    /// - Arrow function defaults may not produce errors due to body evaluation
-    ///   returning `error` type during type computation.
-    /// - Non-function-like defaults (array literals, string literals) may produce
-    ///   incorrect errors due to type widening in cached types (contextual type
-    ///   not set during initial `infer_type_from_binding_pattern` for non-arrow
-    ///   initializers). The `type_includes_undefined` gate in `check_binding_element`
-    ///   prevents these false positives for required object properties.
     pub(crate) fn check_parameter_binding_pattern_defaults(&mut self, parameters: &[NodeIndex]) {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -625,8 +616,6 @@ impl<'a> CheckerState<'a> {
 
             // Delegate to check_binding_pattern which handles element type resolution,
             // contextual type for function-like initializers, and assignability checks.
-            // Note: check_binding_element has a type_includes_undefined gate for object
-            // patterns that prevents false positives from cached widened types.
             self.check_binding_pattern(param.name, param_type, true);
         }
     }

@@ -170,10 +170,45 @@ impl BinderState {
                         );
                     }
                 }
+                // Walk binding element initializers so that nested functions
+                // (e.g. arrow functions used as default values in destructuring)
+                // get their scopes and parameter symbols created.
+                self.bind_binding_element_initializers(arena, param.name);
             }
 
             if param.initializer.is_some() {
                 self.bind_node(arena, param.initializer);
+            }
+        }
+    }
+
+    /// Recursively walk a binding pattern and call `bind_node` on each
+    /// binding element's initializer.  This ensures that function expressions
+    /// and arrow functions used as default values inside destructuring patterns
+    /// are properly bound (scopes created, parameters declared).
+    fn bind_binding_element_initializers(&mut self, arena: &NodeArena, pattern_idx: NodeIndex) {
+        let Some(pattern_node) = arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern_data) = arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+        for &elem_idx in &pattern_data.elements.nodes {
+            let Some(elem_node) = arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem_data) = arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            // Bind the initializer expression (e.g., arrow functions as defaults)
+            if elem_data.initializer.is_some() {
+                self.bind_node(arena, elem_data.initializer);
+            }
+            // Recurse into nested binding patterns
+            if let Some(name_node) = arena.get(elem_data.name)
+                && name_node.is_binding_pattern()
+            {
+                self.bind_binding_element_initializers(arena, elem_data.name);
             }
         }
     }
