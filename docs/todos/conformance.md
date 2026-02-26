@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9239/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
-> Previously ~9236/12570 (73.5%) baseline.
+**Current score**: ~9259/12570 (73.7%) — full suite, error-code level
+> Previously ~9260/12570 (73.7%) baseline.
 
 ---
 
@@ -453,6 +453,17 @@
 - **Conformance gain**: +3 tests (classStaticBlock3, classStaticBlock4, classStaticBlock9). Net: 7698→7706 after rebase (61.2%→61.3%)
 - **Remaining TS2729 gaps**: Instance property tests (initializationOrdering1, redefinedPararameterProperty, assignParameterPropertyToPropertyDeclarationESNext/ES2022, privateNameCircularReference) need the same pattern extended to instance contexts.
 
+#### Run note (2026-02-26) — interfaces/declarationMerging area (TS2411/TS2413)
+- **Area**: interfaces/declarationMerging (24/28 → 25/28, 85.7% → 89.3%)
+- **Net gain**: +1 test (mergedInterfacesWithIndexers2)
+- **Fixed TS2411 quoting**: String literal property names in TS2411 diagnostics now preserve the original quote style (single or double). Uses `node_text()` to extract the raw source text including quotes, matching TSC's `symbolToString` behavior. Previously we stripped quotes: `'a': number` → Property 'a', now → Property ''a''.
+- **Fixed TS2413 location**: When interfaces merge across separate bodies, TS2413 was emitted from both the body with the number index (correct, line 4) AND the body with the string index (extra, line 9). Root cause: `check_index_signature_compatibility` is called per-body but sees merged solver index info. The fallback to `string_index_nodes` was unnecessary. Additionally, `duplicate_identifiers.rs` had redundant cross-body number-vs-string index checks that duplicated what `check_index_signature_compatibility` already handles. Removed both the fallback in `index_signature_checks.rs` and the redundant checks in `duplicate_identifiers.rs`.
+- **Tests added**: 5 new tests — TS2411 single-quote/double-quote/identifier quoting, TS2413 single-body emission, TS2413 no-duplication across merged bodies.
+- **Remaining failures (3 tests)**:
+  - `mergedInheritedMembersSatisfyAbstractBase`: Extra TS2515 (abstract member not satisfied despite declaration merging providing the member) + missing TS2320 (interface cannot simultaneously extend conflicting types). Needs declaration merging to be considered when checking abstract member satisfaction.
+  - `mergedInterfacesWithInheritedPrivates2`: Missing TS2341 (private property access through merged interface with inherited privates). Needs private member tracking for merged interface extends.
+  - `mergedInterfacesWithInheritedPrivates3`: Extra TS2420 (class incorrectly implements interface). TSC suppresses this when the interface has conflicting private members from extends.
+
 #### Run note (2026-02-26, session 17) — interfaces/declarationMerging area (TS2428)
 - **Area**: interfaces/declarationMerging (60.7% → 75.0%, 17/28 → 21/28, +4 in area)
 - **Net gain**: +15 tests across full suite (8710 → 8725, 69.3% → 69.4%)
@@ -811,3 +822,4 @@ All items below have been validated against the codebase (implementations + test
 | wildcard reexport ordering | Fix `resolve_cross_file_export` and `resolve_export_in_file`: check reexport chains (wildcard/named) BEFORE file_locals fallback, and collect reexported symbols for namespace imports when target has no direct exports | +5 tests |
 | TS1345 strictNullChecks | Gate void truthiness check (TS1345) on `strictNullChecks` — was unconditionally emitting | +2 tests (logicalAndOperatorWithEveryType, logicalOrOperatorWithEveryType) |
 | TS2365 mixed-orderable | Remove `is_orderable`/`OrderableVisitor` from solver `BinaryOpEvaluator` — was accepting mixed-kind comparisons like `number < string` | +1 test (comparisonOperatorWithNoRelationshipPrimitiveType) |
+| TS2411/TS2413 index sig | TS2411: preserve original quote style for string literal property names using `node_text()`. TS2413: only emit on number index nodes (remove string/container fallback); remove redundant cross-body number-vs-string checks from `duplicate_identifiers.rs` | +1 test (mergedInterfacesWithIndexers2) |
