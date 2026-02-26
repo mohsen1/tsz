@@ -752,17 +752,18 @@ impl<'a> CheckerState<'a> {
                             // another base stored in inherited_member_sources
                             if let Some((prev_heritage_idx, prev_base_name, _, _)) =
                                 inherited_member_sources.get(&member_info.name)
-                                && *prev_heritage_idx != type_idx {
-                                    self.error_at_node(
+                                && *prev_heritage_idx != type_idx
+                            {
+                                self.error_at_node(
                                         iface_data.name,
                                         &format!(
                                             "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                     );
-                                    self.pop_type_parameters(class_type_param_updates);
-                                    return;
-                                }
+                                self.pop_type_parameters(class_type_param_updates);
+                                return;
+                            }
                         } else {
                             // Public member: check type conflicts against inherited_member_sources
                             // (which contains members from previous interface AND class bases)
@@ -792,17 +793,18 @@ impl<'a> CheckerState<'a> {
                                 // Also check: public member vs non-public from another class base
                                 if let Some(prev_base_name) =
                                     inherited_non_public_class_member_sources.get(&member_info.name)
-                                    && prev_base_name != &base_name {
-                                        self.error_at_node(
+                                    && prev_base_name != &base_name
+                                {
+                                    self.error_at_node(
                                             iface_data.name,
                                             &format!(
                                                 "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                         );
-                                        self.pop_type_parameters(class_type_param_updates);
-                                        return;
-                                    }
+                                    self.pop_type_parameters(class_type_param_updates);
+                                    return;
+                                }
                                 inherited_member_sources.insert(
                                     member_info.name.clone(),
                                     (type_idx, base_name.clone(), member_type, false),
