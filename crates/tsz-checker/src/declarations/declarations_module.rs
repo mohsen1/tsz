@@ -825,7 +825,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 for other_binder in all_binders.iter() {
                     if let Some(other_sym_id) =
                         other_binder.file_locals.get(namespace_name.as_str())
-                        && let Some(other_symbol) = other_binder.get_symbol(other_sym_id)
+                        && other_sym_id != sym_id
+                        && let Some(other_symbol) = self.ctx.binder.get_symbol(other_sym_id)
                     {
                         // Check if this symbol is a non-ambient class or function
                         let is_class = (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
@@ -875,118 +876,87 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 .is_some_and(|f| f.body.is_some())
         });
 
-        // Look for a non-ambient class or function declaration among the merged declarations
+        // Check if the merged symbol has CLASS or FUNCTION flags, indicating it merges
+        // with a class or function declaration (possibly from another file).
+        let has_class_flag = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+        let has_function_flag = (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+
+        if !has_class_flag && !has_function_flag {
+            return; // No class/function merge, nothing to check
+        }
+
+        // Look for same-file class/function declarations among the merged declarations.
+        // NOTE: In merged programs, NodeIndex values from different files can collide,
+        // so self.ctx.arena.get(decl_idx) may return a wrong node for cross-file decls.
+        // We verify the node kind matches CLASS_DECLARATION or FUNCTION_DECLARATION to
+        // filter out collisions.
+        let mut found_same_file = false;
         for &decl_idx in &symbol.declarations {
             if decl_idx == module_idx {
-                continue; // Skip the current namespace declaration
+                continue;
             }
-
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
-
             let is_class = decl_node.kind == syntax_kind_ext::CLASS_DECLARATION;
             let is_function = decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
-
             if !is_class && !is_function {
                 continue;
             }
-
-            // Check if the declaration is ambient: `declare class`, or inside
-            // an ambient context (e.g. `declare module 'M' { class C {} }`)
             if self.is_ambient_declaration(decl_idx) {
                 continue;
             }
-
-            // For functions, they must have a body to be considered a value declaration
             if is_function
                 && let Some(func) = self.ctx.arena.get_function(decl_node)
                 && func.body.is_none()
             {
-                continue; // Function overload signature, not an implementation
+                continue;
             }
 
-            // Found a non-ambient class or function declaration
-            // Now check if they're in different files (TS2433) or namespace is prior (TS2434)
+            // Found a same-file non-ambient class or function.
+            // Check TS2434: namespace comes before class/function.
+            found_same_file = true;
 
-            // Get the source file of the current namespace declaration
-            let current_file = self.get_source_file_of_node(module_idx);
-            let other_file = self.get_source_file_of_node(decl_idx);
-
-            if current_file != other_file {
-                // TS2433: Different files
-                if let Some(name_node) = self.ctx.arena.get(module.name) {
-                    self.ctx.error(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
-                        diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
-                    );
-                }
-            } else {
-                // TS2434: Namespace comes before class/function in the same file.
-                // Function-order TS2434 is already handled by the global duplicate-check path;
-                // keep this path for class-order checks to avoid duplicate TS2434 diagnostics.
-                if is_function {
-                    continue;
-                }
-
-                // Skip class-order TS2434 when the namespace also merges with a function;
-                // tsc emits TS2813/TS2814 for the class conflict, not TS2434.
-                if is_class && has_merged_function {
-                    continue;
-                }
-
-                // Compare positions - only emit error if namespace is before class/function
-                let namespace_pos = self.ctx.arena.get(module_idx).map_or(0, |n| n.pos);
-                let class_or_func_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
-
-                if namespace_pos < class_or_func_pos
-                    && let Some(name_node) = self.ctx.arena.get(module.name)
-                {
-                    self.ctx.error(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
-                        diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
-                    );
-                }
+            // Function-order TS2434 is already handled by the global duplicate-check path.
+            if is_function {
+                continue;
+            }
+            // Skip class-order TS2434 when the namespace also merges with a function;
+            // tsc emits TS2813/TS2814 for the class conflict, not TS2434.
+            if is_class && has_merged_function {
+                continue;
             }
 
-            // Only report error once (for the first matching class/function)
+            let namespace_pos = self.ctx.arena.get(module_idx).map_or(0, |n| n.pos);
+            let class_or_func_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
+
+            if namespace_pos < class_or_func_pos
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+            {
+                self.ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
+                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                );
+            }
             break;
+        }
+
+        if !found_same_file {
+            // TS2433: The class/function must be in another file.
+            if let Some(name_node) = self.ctx.arena.get(module.name) {
+                self.ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
+                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
+                );
+            }
         }
     }
 
     fn is_namespace_declaration_instantiated(&self, namespace_idx: NodeIndex) -> bool {
         self.ctx.arena.is_namespace_instantiated(namespace_idx)
-    }
-
-    /// Get the source file path of a node's declaration.
-    /// Returns the file name if we can determine it, or empty string if unknown.
-    fn get_source_file_of_node(&self, node_idx: NodeIndex) -> String {
-        // Walk up to find the source file
-        let mut current = node_idx;
-        let mut fuel = 10000;
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            if fuel == 0 {
-                break;
-            }
-            fuel -= 1;
-
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-            if let Some(parent_node) = self.ctx.arena.get(parent)
-                && parent_node.kind == syntax_kind_ext::SOURCE_FILE
-                && let Some(source_file) = self.ctx.arena.get_source_file(parent_node)
-            {
-                return source_file.file_name.clone();
-            }
-            current = parent;
-        }
-        // Fallback to current file name
-        self.ctx.file_name.clone()
     }
 }
