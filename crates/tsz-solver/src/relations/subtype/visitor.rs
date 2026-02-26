@@ -16,7 +16,7 @@ use crate::types::{
 use crate::visitor::{
     TypeVisitor, array_element_type, callable_shape_id, enum_components, function_shape_id,
     intrinsic_kind, literal_value, object_shape_id, object_with_index_shape_id,
-    readonly_inner_type, tuple_list_id,
+    readonly_inner_type, string_intrinsic_components, tuple_list_id, type_param_info,
 };
 
 // =============================================================================
@@ -305,10 +305,41 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 
     fn visit_string_intrinsic(
         &mut self,
-        _kind: StringIntrinsicKind,
-        _type_arg: TypeId,
+        kind: StringIntrinsicKind,
+        type_arg: TypeId,
     ) -> Self::Output {
-        // String intrinsics are handled by evaluation
+        // Rule 1: StringIntrinsic(kind, T) <: string — always true.
+        // The type argument is always constrained to `extends string`, so the
+        // result of any string mapping is always a string.
+        if intrinsic_kind(self.checker.interner, self.target) == Some(IntrinsicKind::String) {
+            return SubtypeResult::True;
+        }
+
+        // Rule 2: StringIntrinsic(kind, S) <: StringIntrinsic(kind, T) — covariant.
+        // Same intrinsic kind: check type arguments covariantly (e.g.,
+        // Uppercase<U> <: Uppercase<T> when U <: T).
+        if let Some((t_kind, t_type_arg)) =
+            string_intrinsic_components(self.checker.interner, self.target)
+            && kind == t_kind
+        {
+            return self.checker.check_subtype(type_arg, t_type_arg);
+        }
+
+        // Rule 3: Constraint-based assignability.
+        // If the type argument is a type parameter with a constraint, evaluate
+        // the string intrinsic applied to the constraint and check that result
+        // against the target. This handles cases like:
+        //   Uppercase<T> where T extends 'foo'|'bar'  <:  'FOO'|'BAR'
+        if let Some(param_info) = type_param_info(self.checker.interner, type_arg)
+            && let Some(constraint) = param_info.constraint
+        {
+            let intrinsic_of_constraint = self.checker.interner.string_intrinsic(kind, constraint);
+            let evaluated = self.checker.evaluate_type(intrinsic_of_constraint);
+            if evaluated != self.source {
+                return self.checker.check_subtype(evaluated, self.target);
+            }
+        }
+
         SubtypeResult::False
     }
 
