@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T04:53:30Z",
-  "git_sha": "d38fb6e07a6454fba9f5eb6aaf92ea892b0be7d0",
+  "timestamp": "2026-02-26T05:18:06Z",
+  "git_sha": "f867667e81fa32ee7a5b90e3f7d40501a0494349",
   "summary": {
     "total_tests": 12570,
-    "passed": 8753,
-    "failed": 3817,
-    "pass_rate": 69.6
+    "passed": 8758,
+    "failed": 3812,
+    "pass_rate": 69.7
   },
   "areas_by_pass_rate": [
     {
@@ -44,13 +44,6 @@
       "pass_rate": 44.0
     },
     {
-      "area": "expressions/typeGuards",
-      "total": 63,
-      "passed": 28,
-      "failed": 35,
-      "pass_rate": 44.44
-    },
-    {
       "area": "externalModules/typeOnly",
       "total": 65,
       "passed": 29,
@@ -63,6 +56,13 @@
       "passed": 5,
       "failed": 6,
       "pass_rate": 45.45
+    },
+    {
+      "area": "expressions/typeGuards",
+      "total": 63,
+      "passed": 29,
+      "failed": 34,
+      "pass_rate": 46.03
     },
     {
       "area": "jsx",
@@ -149,13 +149,6 @@
       "pass_rate": 53.42
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 13,
-      "failed": 11,
-      "pass_rate": 54.17
-    },
-    {
       "area": "controlFlow",
       "total": 57,
       "passed": 31,
@@ -226,18 +219,18 @@
       "pass_rate": 57.58
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
+    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
       "failed": 5,
       "pass_rate": 58.33
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 17,
-      "failed": 12,
-      "pass_rate": 58.62
     },
     {
       "area": "jsdoc",
@@ -301,6 +294,13 @@
       "passed": 21,
       "failed": 13,
       "pass_rate": 61.76
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
     },
     {
       "area": "expressions/functionCalls",
@@ -430,10 +430,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4683,
-      "failed": 1827,
-      "pass_rate": 71.94
+      "total": 6509,
+      "passed": 4685,
+      "failed": 1824,
+      "pass_rate": 71.98
     },
     {
       "area": "expressions/binaryOperators",
@@ -887,7 +887,7 @@
     },
     {
       "code": "TS2322",
-      "count": 181
+      "count": 180
     },
     {
       "code": "TS2339",
