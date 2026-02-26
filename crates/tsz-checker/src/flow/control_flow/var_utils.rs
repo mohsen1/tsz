@@ -258,6 +258,22 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
+        // Call expression in TRUE_CONDITION: if any argument is the reference,
+        // the variable was evaluated (passed as an argument), proving assignment.
+        // This handles user-defined type predicates like `isFoo(value)`.
+        if node_data.kind == syntax_kind_ext::CALL_EXPRESSION && is_true_condition {
+            if let Some(call) = self.arena.get_call_expr(node_data)
+                && let Some(args) = &call.arguments
+            {
+                for &arg in &args.nodes {
+                    if self.is_matching_reference(arg, reference) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         if node_data.kind != syntax_kind_ext::BINARY_EXPRESSION {
             return false;
         }
