@@ -617,15 +617,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a homomorphic mapped type is assignable to a type parameter target.
     ///
-    /// `{ [K in keyof T]: T[K] }` (with any readonly/optional modifiers) is assignable
-    /// to `T` because homomorphic mapped types preserve the shape of T.
+    /// Homomorphic mapped types that preserve or narrow the shape of T are assignable:
+    /// - `{ [K in keyof T]: T[K] }` (identity) → assignable to T
+    /// - `{ readonly [K in keyof T]: T[K] }` (Readonly<T>) → assignable to T
+    /// - `{ [K in keyof T]-?: T[K] }` (Required<T>) → assignable to T
     ///
-    /// NOTE: Ideally, Partial<T> (+? modifier) should NOT be assignable to T because
-    /// it widens properties to optional. However, rejecting this currently causes
-    /// regressions because downstream code (e.g., Partial<T>[K] & {}) relies on
-    /// this path, and our solver doesn't yet handle `& {}` intersection stripping
-    /// of null/undefined. The Partial direction will be fixed when `& {}` stripping
-    /// is implemented.
+    /// But mapped types that WIDEN the shape are NOT assignable:
+    /// - `{ [K in keyof T]?: T[K] }` (Partial<T>) → NOT assignable to T
+    ///   because Partial adds optional modifiers, meaning required properties
+    ///   in T may be missing in Partial<T>.
     pub(crate) fn check_homomorphic_mapped_to_target(
         &mut self,
         mapped_id: MappedTypeId,
@@ -635,6 +635,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Must not have name remapping (as clause) — remapping can change keys
         if mapped.name_type.is_some() {
+            return false;
+        }
+
+        // Mapped types that ADD optional (+?) like Partial<T> are WIDER than T.
+        // Properties that are required in T become optional in Partial<T>,
+        // so Partial<T> cannot satisfy T's requirements.
+        if mapped.optional_modifier == Some(MappedModifier::Add) {
             return false;
         }
 
