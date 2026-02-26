@@ -304,7 +304,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if target == TypeId::NEVER {
                 SubtypeResult::False
             } else {
-                self.check_subtype_inner(source, target)
+                // Even with bypass_evaluation (used by the evaluator to prevent
+                // infinite recursion), we must still resolve Lazy(DefId) types to
+                // their structural forms. The visitor pattern resolves Lazy SOURCE
+                // types via visit_lazy, but Lazy TARGET types are never resolved
+                // by the visitor. Without this, subtype checks between types whose
+                // nested components (e.g., index signature value types) are Lazy
+                // will give incorrect results — causing simplify_union_members to
+                // incorrectly collapse distinct union members.
+                let source_resolved = self.resolve_lazy_type(source);
+                let target_resolved = self.resolve_lazy_type(target);
+                if source_resolved != source || target_resolved != target {
+                    self.check_subtype(source_resolved, target_resolved)
+                } else {
+                    self.check_subtype_inner(source, target)
+                }
             }
         } else {
             let source_eval = self.evaluate_type(source);
