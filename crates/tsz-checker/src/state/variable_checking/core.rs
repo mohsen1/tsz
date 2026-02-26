@@ -478,9 +478,14 @@ impl<'a> CheckerState<'a> {
                     let init_type = checker.get_type_of_node(var_decl.initializer);
                     checker.ctx.contextual_type = prev_context;
 
-                    // Check assignability (skip for 'any' since anything is assignable to any)
-                    // This includes strict null checks - null/undefined should NOT be assignable to non-nullable types
-                    if declared_type != TypeId::ANY && !checker.type_contains_error(declared_type) {
+                    // Check assignability (skip for 'any' since anything is assignable to any,
+                    // and skip for TypeId::ERROR since the type annotation failed to resolve).
+                    // Note: we intentionally do NOT use type_contains_error() here because it
+                    // recursively traverses all method/property types — interfaces like String
+                    // have methods that reference unresolved lib types (e.g. Intl.CollatorOptions),
+                    // causing type_contains_error to return true even though the declared type
+                    // itself (String interface) is perfectly valid for assignability checking.
+                    if declared_type != TypeId::ANY && declared_type != TypeId::ERROR {
                         if let Some((source_level, target_level)) =
                             checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
                         {
