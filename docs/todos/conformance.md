@@ -1,12 +1,45 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9201/12570 (73.2%) — full suite, error-code level (snapshot framework)
-> Previously ~8769/12570 (69.8%) baseline.
+**Current score**: ~9236/12570 (73.5%) — full suite, fingerprint level (snapshot framework)
+> Previously ~9234/12570 (73.5%) baseline.
 
 ---
 
 ## High Impact — Core Type System
+
+### TS2362/TS2363 — Per-operand arithmetic check with `any` operand — RESOLVED (Session 2026-02-26)
+- **Fixed**: `arithmeticOperatorWithTypeParameter` conformance test (+1 test, 20 fingerprints)
+- **Root cause**: When one operand of an arithmetic/bitwise operator is `any`, the solver's
+  `evaluate_arithmetic()` short-circuits to `Success(NUMBER)` (line 653 of `binary_ops.rs`),
+  preventing the checker from reaching the per-operand error path. TSC independently validates
+  each operand — an unconstrained type parameter `T` is NOT a valid arithmetic operand even
+  when the other side is `any`.
+- **Fix**: Added per-operand validity pre-checks in both the arithmetic (`*`, `/`, `%`, `-`, `**`)
+  and bitwise (`&`, `|`, `^`, `<<`, `>>`, `>>>`) paths that emit TS2362/TS2363 for individual
+  invalid operands before the evaluator call.
+- **Files**: `crates/tsz-checker/src/types/computation/binary.rs`
+- **Unit tests**: 6 new tests covering `any * T`, `T * any`, `any & T`, `any * any`,
+  `number * any`, and `any * T extends number`.
+- **Key insight**: TSC's per-operand validation model checks each operand independently against
+  `NumberLike | BigIntLike`, separate from the binary expression result type computation.
+
+### expressions/binaryOperators — remaining failures (13 failing, 80.0% pass rate)
+- **Comparison operator comparability** (~7 tests): `is_type_comparable_to()` is too strict for
+  object types with call/constructor signatures. TSC's `comparableRelation` uses different rules
+  than `assignableRelation` for call signatures — specifically, optional-parameter call signatures
+  like `{ fn(a?: Base): void }` vs `{ fn(a?: C): void }` are comparable even when Base and C
+  are unrelated. Generic signatures like `{ fn<T>(t: T): T }` vs `{ fn<T>(t: T[]): T }` are
+  also comparable. Fix requires implementing proper `comparableRelation` semantics in the solver.
+  **Solver-level fix, estimated ~100-200 LOC.**
+- **logicalOrOperatorWithTypeParameters** (1 test): `||` operator should produce `NonNullable<T> | U`
+  but we produce just `T`. NonNullable narrowing for logical OR. **Solver narrowing fix.**
+- **logicalOrExpressionIsContextuallyTyped** (1 test): Wrong position for TS2353 excess property
+  error — we point at column 5 (whole expression) instead of column 33 (the `b` property).
+- **comparisonOperatorWithOneOperandIsUndefined** (1 test): TS18050 vs TS18048 code mismatch.
+- **comparisonOperatorWithIntersectionType** (1 test): Intersection type display — we flatten
+  `{ a: 1 } & { b: number }` to `{ a: 1; b: number }` in error messages.
+- **instanceofOperator** (2 tests): Various instanceof issues including Symbol.hasInstance.
 
 ### TS2322/TS2339/TS2345 — Type mismatch / property access / argument type (ongoing)
 - **Tests**: Hundreds across the suite (TS2322: ~222, TS2339: ~47, TS2345: ~40 single-code)
