@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::TypeInterner;
+use crate::def::DefId;
 
 // =============================================================================
 // Debug Test - Verify union normalization
@@ -615,4 +616,99 @@ fn test_union_to_object_with_index_signature() {
     // We don't assert the result here, just verify it doesn't panic/crash
     // The actual behavior depends on how index signatures are handled
     let _ = result;
+}
+
+// =============================================================================
+// Regression: bypass_evaluation must resolve Lazy target types
+// =============================================================================
+// When simplify_union_members uses SubtypeChecker with bypass_evaluation=true,
+// Lazy(DefId) types nested inside ObjectWithIndex (e.g., index signature value
+// types) must still be resolved to their structural forms. Otherwise, distinct
+// callable interfaces like `(a: number) => number` vs `(a: number) => string`
+// are treated as identical, causing one union member to be incorrectly removed.
+
+#[test]
+fn test_bypass_evaluation_resolves_lazy_index_value_types() {
+    // Regression test: when simplify_union_members uses SubtypeChecker with
+    // bypass_evaluation=true, Lazy(DefId) index signature value types must
+    // still be resolved to structural forms. Without this fix, two distinct
+    // ObjectWithIndex types whose index signature values are Lazy references
+    // to different types would appear structurally identical, causing one
+    // member to be incorrectly removed from the union.
+    //
+    // Reproduces: contextualTypeWithUnionTypeIndexSignatures false TS2322
+    //   interface SomeType { (a: number): number; }
+    //   interface SomeType2 { (a: number): string; }
+    //   interface A { [k: string]: SomeType; }
+    //   interface B { [k: string]: SomeType2; }
+    //   var x: A | B = { z: a => a };  // should be OK
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // Two distinct structural types behind Lazy references.
+    // Using simple object types (not callables) for test simplicity —
+    // the key invariant is that they're *different* types behind Lazy.
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+
+    // Register as Lazy(DefId) — simulates interface declarations
+    let def_a = DefId(100);
+    let def_b = DefId(101);
+    env.insert_def(def_a, type_a);
+    env.insert_def(def_b, type_b);
+
+    let lazy_a = interner.lazy(def_a);
+    let lazy_b = interner.lazy(def_b);
+
+    // Create ObjectWithIndex types using Lazy value types:
+    //   A = { [k: string]: Lazy(100) }  -> { [k: string]: {x: number} }
+    //   B = { [k: string]: Lazy(101) }  -> { [k: string]: {x: string} }
+    let obj_a = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: lazy_a,
+            readonly: false,
+        }),
+        number_index: None,
+    });
+
+    let obj_b = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: lazy_b,
+            readonly: false,
+        }),
+        number_index: None,
+    });
+
+    // With bypass_evaluation=true and a resolver, the Lazy types should be
+    // resolved by resolve_lazy_type, so A and B should NOT be subtypes.
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    checker.bypass_evaluation = true;
+
+    // A is NOT a subtype of B (different index value types)
+    assert!(
+        !checker.is_subtype_of(obj_a, obj_b),
+        "ObjectWithIndex with Lazy(number-obj) should NOT be subtype of \
+         ObjectWithIndex with Lazy(string-obj) even with bypass_evaluation"
+    );
+
+    // B is NOT a subtype of A
+    assert!(
+        !checker.is_subtype_of(obj_b, obj_a),
+        "ObjectWithIndex with Lazy(string-obj) should NOT be subtype of \
+         ObjectWithIndex with Lazy(number-obj) even with bypass_evaluation"
+    );
 }

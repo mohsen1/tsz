@@ -7,6 +7,27 @@
 
 ---
 
+## Union Simplification Lazy Resolution Fix — Session 2026-02-26
+- **Area**: types/union (48.0% → 52.0%, +1 test at area level, +2 at full suite level)
+- **Root cause**: `simplify_union_members` in `TypeEvaluator::evaluate_union` uses
+  `SubtypeChecker` with `bypass_evaluation=true` to avoid infinite recursion. But the
+  `bypass_evaluation` path skipped ALL type evaluation, including `resolve_lazy_type`
+  for `Lazy(DefId)` types. When ObjectWithIndex types had index signature value types
+  that were `Lazy(DefId)` references to different interfaces (e.g., `SomeType` vs
+  `SomeType2`), the subtype check compared unresolved Lazy TypeIds instead of their
+  structural forms. Different interfaces sharing similar shapes before resolution
+  would appear identical, causing one union member to be incorrectly removed.
+- **Fix**: In `check_subtype`'s `bypass_evaluation` path, add `resolve_lazy_type` calls
+  for both source and target before dispatching to `check_subtype_inner`. If either
+  resolves to a different TypeId, recursively call `check_subtype` with the resolved
+  types. `resolve_lazy_type` is lightweight (DefId → TypeId lookup via resolver) and
+  doesn't trigger the evaluator recursion that `bypass_evaluation` guards against.
+- **Files**: `crates/tsz-solver/src/relations/subtype/cache.rs`
+- **Tests**: `test_bypass_evaluation_resolves_lazy_index_value_types` in `union_tests.rs`
+- **Improved tests**: `contextualTypeWithUnionTypeIndexSignatures`
+
+---
+
 ## TS5107 Deprecation Priority Fix — Session 2026-02-26
 - **Area**: node/allowJs (47.6% → 57.7% in allowJs before upstream regression)
 - **Root cause**: `@strict: false` expands to `alwaysStrict: false`, triggering TS5107
