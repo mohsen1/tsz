@@ -1,9 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8765/12570 (69.7%) — full suite, fingerprint level (new framework)
-> Note: Fresh re-run of conformance shows 7057/12570 (56.1%) due to possible TSC cache refresh or test suite update. Investigating.
-> Previously ~8725/12570 (69.4%) baseline.
+**Current score**: ~8769/12570 (69.8%) — full suite, fingerprint level (new framework)
+> Previously ~8765/12570 (69.7%) baseline.
 
 ---
 
@@ -359,6 +358,14 @@
 - **Tests added**: 6 unit tests in `tests/ts2428_tests.rs` — generic vs non-generic, same params (no error), different arity, namespace separate blocks, namespace same block.
 - **No regressions**: Zero extra TS2428 errors across the full suite.
 
+#### Run note (2026-02-26, session 18) — expressions/binaryOperators area
+- **Area**: expressions/binaryOperators (72.3% → 76.9%, 47/65 → 50/65, +3 in area)
+- **Net gain**: +4 tests across full suite (8765 → 8769, 69.7% → 69.8%)
+- **Fixed**: TS1345 void truthiness gated on strictNullChecks — `check_truthy_or_falsy_with_type()` in `callable_truthiness.rs` was unconditionally emitting TS1345 for void expressions. tsc only emits this under `strictNullChecks`. Moved the `strict_null_checks` early return before the void check (+2 tests: logicalAndOperatorWithEveryType, logicalOrOperatorWithEveryType).
+- **Fixed**: Mixed-orderable comparison bug — `is_orderable()`/`OrderableVisitor` in solver's `binary_ops.rs` checked each operand independently for orderability. Both `number` and `string` are individually orderable, so `number < string` returned `BinaryOpResult::Success` instead of `TypeError`. Removed `is_orderable` entirely; TSC requires SAME orderable kind (both number-like, both string-like, both bigint-like). Now mixed comparisons fall through to `TypeError`, and the checker's existing `is_type_comparable_to` handles the rest (+1 test: comparisonOperatorWithNoRelationshipPrimitiveType).
+- **Attempted but reverted**: Simplified checker's relational operator fallback to just `is_type_comparable_to(left, right)`. This regressed `comparisonOperatorWithNoRelationshipTypeParameter` because `is_type_comparable_to(T, number)` resolves T to apparent type `unknown`, and `number` IS assignable to `unknown`, making them "comparable" when they shouldn't be. Root cause: `is_type_comparable_to` uses bidirectional assignability which doesn't match TSC's `comparableRelation` for type parameters.
+- **Remaining binaryOperators failures (15 tests)**: Extra TS2365 on function/constructor comparisons (~6 tests, needs proper `comparableRelation` in solver), missing TS2362/TS2363 for type params (~1 test), instanceof Symbol.hasInstance (~2 tests), intersection type printing (~1 test), contextual typing location (~1 test), missing TS2365 for primitives (~3 tests, message-level diff).
+
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks
 - Also missing unary (+, -, ~) and compound (+=) symbol checks entirely
@@ -674,3 +681,5 @@ All items below have been validated against the codebase (implementations + test
 | TS5107 suppression | Suppress TS5107 deprecation diagnostics when source files have parse errors (1000-1999), matching tsc behavior | +52 tests |
 | JSX factory/fragment | TS2874 false positive fix (jsxFactory config skip + full scope chain), TS7026 Element removal, TS17016 fragment factory diagnostic | +14 tests (JSX 30.5%→31.0%) |
 | wildcard reexport ordering | Fix `resolve_cross_file_export` and `resolve_export_in_file`: check reexport chains (wildcard/named) BEFORE file_locals fallback, and collect reexported symbols for namespace imports when target has no direct exports | +5 tests |
+| TS1345 strictNullChecks | Gate void truthiness check (TS1345) on `strictNullChecks` — was unconditionally emitting | +2 tests (logicalAndOperatorWithEveryType, logicalOrOperatorWithEveryType) |
+| TS2365 mixed-orderable | Remove `is_orderable`/`OrderableVisitor` from solver `BinaryOpEvaluator` — was accepting mixed-kind comparisons like `number < string` | +1 test (comparisonOperatorWithNoRelationshipPrimitiveType) |
