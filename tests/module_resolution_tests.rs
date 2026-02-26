@@ -452,14 +452,14 @@ fn test_es_side_effect_import_unresolved() {
 }
 
 #[test]
-fn test_es_side_effect_import_unresolved_default_no_error() {
-    // With default options (noUncheckedSideEffectImports: false), unresolved
-    // side-effect imports should not produce errors (matching tsc behavior).
+fn test_es_side_effect_import_unresolved_default_emits_error() {
+    // With default options (noUncheckedSideEffectImports: true in tsc 6.0),
+    // unresolved side-effect imports should produce TS2882.
     let source = r#"import "./nonexistent";"#;
     let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
     assert!(
-        no_error_code(&diags, TS2882) && no_error_code(&diags, TS2307),
-        "Side-effect imports should be silently accepted by default, got: {diags:?}"
+        has_error_code(&diags, TS2882),
+        "Side-effect imports should emit TS2882 by default (tsc 6.0), got: {diags:?}"
     );
 }
 
