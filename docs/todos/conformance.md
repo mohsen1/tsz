@@ -1,9 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~6910/12226 (56.5%) — full suite, error-code level
-> Regression from remote solver changes (Lazy resolution in bypass_evaluation, KeyOf evaluation).
-> Previous peak was ~9279/12570 (73.8%) before remote changes landed.
+**Current score**: ~9271/12570 (73.8%) — full suite, error-code level
+> Recovered from regression. Previous low was ~6910/12226 (56.5%) due to remote solver changes.
 
 ---
 
@@ -28,10 +27,10 @@
   - `crates/tsz-checker/src/classes/class_checker.rs` (main changes)
   - `crates/tsz-checker/src/classes/class_checker_compat.rs` (is_jsdoc_override field)
   - `crates/tsz-checker/src/types/queries/core.rs` (OverrideKeyword in modifier check)
-- **Remaining override gaps** (2/33):
-  - override19/override20: Error codes correct but type name display shows expanded
-    object type instead of intersection display name (`A & { context: Context; }`) —
-    this is the known eager intersection merging issue.
+- **Remaining override gaps** (1/33):
+  - override19: Error codes correct but type display shows `InstanceType<typeof Context>`
+    instead of evaluated `Context` — solver conditional type evaluation gap (not eager
+    intersection merging). override20 is now fixed (see below).
 
 ### Note on conformance regression
 After rebasing onto remote solver changes (commits `63bc32d67`..`7e8b444ea`), overall
@@ -40,6 +39,34 @@ is NOT from the override fixes. The remote solver changes (Lazy resolution in
 `bypass_evaluation`, KeyOf evaluation in relation normalization, filtering as-clauses
 in mapped types) caused widespread test failures. Override area specifically went from
 87.1% to 30.3% due to these upstream changes.
+
+## Intersection Display Name in Override Diagnostics — Session 2026-02-26
+- **Area**: override (93.5% → 96.8%, +1 test: override20.ts)
+- **Commit**: `98c886e16`
+- **Root cause**: When a base class expression is typed as an intersection of constructors
+  (e.g., `C1 & C2`), the solver eagerly merges object types in `normalize_intersection()`.
+  By the time `format_type()` runs, the intersection identity is lost and the diagnostic
+  shows `{ m1: () => void; m2: () => void }` instead of `I1 & I2`.
+- **Fix**: Added `intersection_instance_display_name()` in `constructor_checker.rs` that:
+  1. Gets the cached constructor type and checks if it's an intersection
+  2. For each intersection member: resolves Lazy → gets raw construct return type
+  3. Uses `classify_for_lazy_resolution` to distinguish named types (preserve Lazy for
+     named display) vs structural types (resolve for object display)
+  4. Sorts names alphabetically for consistent ordering (solver sorts by TypeId internally)
+  5. Joins with ` & ` for the display string
+- **Query boundary**: Added `construct_return_type_for_display()` in
+  `query_boundaries/checkers/constructor.rs` — gets construct return type without full
+  resolution through `resolve_type_for_property_access`.
+- **Files changed**:
+  - `crates/tsz-checker/src/query_boundaries/checkers/constructor.rs` (new boundary fn)
+  - `crates/tsz-checker/src/classes/constructor_checker.rs` (intersection_instance_display_name)
+  - `crates/tsz-checker/src/classes/class_checker.rs` (use new display name at 2 sites)
+  - `crates/tsz-checker/tests/override_intersection_display_tests.rs` (2 unit tests)
+  - `crates/tsz-checker/src/lib.rs` (test module registration)
+- **Remaining gap**: override19 still fails — construct return type contains unevaluated
+  `Application(InstanceType, [TypeQuery(Context)])`. This is a solver conditional type
+  evaluation gap where `InstanceType<typeof Context>` doesn't reduce to `Context` in the
+  display path. Separate from the intersection display issue.
 
 ## KeyOf Normalization Fix — Session 2026-02-26
 - **Area**: types/mapped (46.2% → 46.2% area, +1 test: mappedTypeModifiers.ts)
