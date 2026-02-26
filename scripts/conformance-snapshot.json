@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-26T08:58:58Z",
-  "git_sha": "8477513c5f74920260977c0957c4a125f2926c07",
+  "timestamp": "2026-02-26T09:25:28Z",
+  "git_sha": "a298bfd47e13d5f3c6c0d378a007db1d1364ccfa",
   "summary": {
     "total_tests": 12570,
     "passed": 8809,
@@ -212,13 +212,6 @@
       "pass_rate": 58.33
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 17,
-      "failed": 12,
-      "pass_rate": 58.62
-    },
-    {
       "area": "jsdoc",
       "total": 249,
       "passed": 146,
@@ -282,6 +275,13 @@
       "pass_rate": 61.76
     },
     {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
+    },
+    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -291,9 +291,9 @@
     {
       "area": "classes/members",
       "total": 198,
-      "passed": 125,
-      "failed": 73,
-      "pass_rate": 63.13
+      "passed": 124,
+      "failed": 74,
+      "pass_rate": 62.63
     },
     {
       "area": "types/typeRelationships",
@@ -409,10 +409,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4697,
-      "failed": 1813,
-      "pass_rate": 72.15
+      "total": 6505,
+      "passed": 4696,
+      "failed": 1809,
+      "pass_rate": 72.19
     },
     {
       "area": "internalModules/exportDeclarations",
