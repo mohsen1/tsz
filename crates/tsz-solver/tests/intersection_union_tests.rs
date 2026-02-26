@@ -751,3 +751,129 @@ fn test_union_single_member_is_itself() {
         "Single-member union should be that member"
     );
 }
+
+// =============================================================================
+// union_literal_reduce Tests - tsc's UnionReduction.Literal behavior
+// =============================================================================
+
+#[test]
+fn test_union_literal_reduce_preserves_structural_subtypes() {
+    use crate::types::{ObjectShape, PropertyInfo};
+    use tsz_common::Atom;
+    let interner = TypeInterner::new();
+
+    // Create two object types where one is a structural subtype of the other:
+    // type A = { x: number }              (one property)
+    // type B = { x: number, y: string }   (superset of A)
+    // B is a structural subtype of A (width subtyping with overlapping properties).
+    let a = interner.object_with_index(ObjectShape {
+        properties: vec![PropertyInfo {
+            name: Atom(1), // "x"
+            type_id: TypeId::NUMBER,
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let b = interner.object_with_index(ObjectShape {
+        properties: vec![
+            PropertyInfo {
+                name: Atom(1), // "x"
+                type_id: TypeId::NUMBER,
+                ..Default::default()
+            },
+            PropertyInfo {
+                name: Atom(2), // "y"
+                type_id: TypeId::STRING,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+
+    // With full reduction (union), B should be removed because B <: A
+    let full = interner.union(vec![a, b]);
+    assert_eq!(
+        full, a,
+        "Full union reduction should collapse B into A since B <: A"
+    );
+
+    // With literal-only reduction, A | B should be preserved as a union
+    let literal = interner.union_literal_reduce(vec![a, b]);
+    assert_ne!(literal, a, "Literal-reduce should NOT collapse B into A");
+    assert_ne!(
+        literal, b,
+        "Literal-reduce should NOT collapse A | B into just B"
+    );
+    // It should be a proper union
+    assert!(
+        matches!(interner.lookup(literal), Some(TypeData::Union(_))),
+        "Literal-reduce A | B should be a Union type"
+    );
+}
+
+#[test]
+fn test_union_literal_reduce_still_absorbs_literals() {
+    let interner = TypeInterner::new();
+
+    // "hello" | string should reduce to string even in literal mode
+    let hello = interner.literal_string("hello");
+    let result = interner.union_literal_reduce(vec![hello, TypeId::STRING]);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "Literal-reduce should still absorb string literals into string"
+    );
+
+    // 42 | number should reduce to number
+    let forty_two = interner.literal_number(42.0);
+    let result = interner.union_literal_reduce(vec![forty_two, TypeId::NUMBER]);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "Literal-reduce should still absorb number literals into number"
+    );
+}
+
+#[test]
+fn test_union_literal_reduce_handles_special_cases() {
+    let interner = TypeInterner::new();
+
+    // Empty -> NEVER
+    let result = interner.union_literal_reduce(vec![]);
+    assert_eq!(result, TypeId::NEVER);
+
+    // Single member -> that member
+    let result = interner.union_literal_reduce(vec![TypeId::STRING]);
+    assert_eq!(result, TypeId::STRING);
+
+    // Contains any -> any
+    let result = interner.union_literal_reduce(vec![TypeId::STRING, TypeId::ANY]);
+    assert_eq!(result, TypeId::ANY);
+
+    // Contains unknown -> unknown
+    let result = interner.union_literal_reduce(vec![TypeId::STRING, TypeId::UNKNOWN]);
+    assert_eq!(result, TypeId::UNKNOWN);
+
+    // never removed
+    let result = interner.union_literal_reduce(vec![TypeId::STRING, TypeId::NEVER]);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_union_literal_reduce_identity_matches_regular_for_primitives() {
+    let interner = TypeInterner::new();
+
+    // For primitives like string | number, both modes should produce the same result
+    let full = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let literal = interner.union_literal_reduce(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        full, literal,
+        "Primitive unions should be identical in both modes"
+    );
+
+    // Order shouldn't matter
+    let full_rev = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    let literal_rev = interner.union_literal_reduce(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert_eq!(full_rev, literal_rev);
+    assert_eq!(full, full_rev, "Union identity should be order-independent");
+}

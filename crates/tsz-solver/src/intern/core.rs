@@ -853,9 +853,24 @@ impl TypeInterner {
         out
     }
 
-    /// Intern a union type, normalizing and deduplicating members
+    /// Intern a union type, normalizing and deduplicating members.
+    /// This performs full normalization including subtype reduction
+    /// (matching tsc's `UnionReduction.Subtype` behavior).
     pub fn union(&self, members: Vec<TypeId>) -> TypeId {
         self.union_from_iter(members)
+    }
+
+    /// Intern a union type with literal-only reduction (no subtype reduction).
+    ///
+    /// This matches tsc's `UnionReduction.Literal` behavior, which is the default
+    /// for type annotations. It absorbs literals into primitives (e.g., `"a" | string`
+    /// → `string`) but does NOT remove structural subtypes (e.g., `C | D` where
+    /// `D extends C` stays as `C | D`).
+    ///
+    /// Use this for union types from type annotations where the source-level
+    /// union structure must be preserved.
+    pub fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId {
+        self.union_literal_reduce_from_iter(members)
     }
 
     /// Intern a union type from a vector that is already sorted and deduped.
@@ -929,12 +944,38 @@ impl TypeInterner {
     where
         I: IntoIterator<Item = TypeId>,
     {
+        let flat = self.collect_union_members(members);
+        match flat.len() {
+            0 => TypeId::NEVER,
+            1 => flat[0],
+            _ => self.normalize_union(flat),
+        }
+    }
+
+    fn union_literal_reduce_from_iter<I>(&self, members: I) -> TypeId
+    where
+        I: IntoIterator<Item = TypeId>,
+    {
+        let flat = self.collect_union_members(members);
+        match flat.len() {
+            0 => TypeId::NEVER,
+            1 => flat[0],
+            _ => self.normalize_union_literal_only(flat),
+        }
+    }
+
+    fn collect_union_members<I>(&self, members: I) -> TypeListBuffer
+    where
+        I: IntoIterator<Item = TypeId>,
+    {
         let mut iter = members.into_iter();
         let Some(first) = iter.next() else {
-            return TypeId::NEVER;
+            return SmallVec::new();
         };
         let Some(second) = iter.next() else {
-            return first;
+            let mut buf = SmallVec::new();
+            buf.push(first);
+            return buf;
         };
 
         let mut flat: TypeListBuffer = SmallVec::new();
@@ -943,8 +984,7 @@ impl TypeInterner {
         for member in iter {
             self.push_union_member(&mut flat, member);
         }
-
-        self.normalize_union(flat)
+        flat
     }
 
     pub(super) fn push_union_member(&self, flat: &mut TypeListBuffer, member: TypeId) {
@@ -1049,6 +1089,54 @@ impl TypeInterner {
         if flat.len() == 1 {
             return flat[0];
         }
+
+        let list_id = self.intern_type_list(flat.into_vec());
+        self.intern(TypeData::Union(list_id))
+    }
+
+    /// Normalize a union with literal-only reduction (no subtype reduction).
+    ///
+    /// This matches tsc's `UnionReduction.Literal` behavior. It performs all the
+    /// same normalization as `normalize_union` (sort, dedup, special cases, literal
+    /// absorption) but skips the `reduce_union_subtypes` step.
+    fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
+        flat.sort_by_key(|id| Self::union_sort_key(*id));
+        flat.dedup();
+
+        if flat.contains(&TypeId::ERROR) {
+            return TypeId::ERROR;
+        }
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+        if flat.contains(&TypeId::ANY) {
+            return TypeId::ANY;
+        }
+        if flat.contains(&TypeId::UNKNOWN) {
+            return TypeId::UNKNOWN;
+        }
+        flat.retain(|id| *id != TypeId::NEVER);
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        self.absorb_literals_into_primitives(&mut flat);
+
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // NOTE: No subtype reduction here — this is the key difference from normalize_union.
+        // tsc's UnionReduction.Literal only absorbs literals into primitives.
 
         let list_id = self.intern_type_list(flat.into_vec());
         self.intern(TypeData::Union(list_id))

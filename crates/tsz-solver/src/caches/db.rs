@@ -49,6 +49,9 @@ pub trait TypeDatabase {
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId;
 
     fn union(&self, members: Vec<TypeId>) -> TypeId;
+    /// Create a union with literal-only reduction (no subtype reduction).
+    /// Matches tsc's `UnionReduction.Literal` behavior for type annotations.
+    fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId;
     fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId;
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId;
@@ -207,6 +210,10 @@ impl TypeDatabase for TypeInterner {
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
         Self::union(self, members)
+    }
+
+    fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId {
+        Self::union_literal_reduce(self, members)
     }
 
     fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {

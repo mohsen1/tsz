@@ -545,7 +545,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let b = b_norm;
 
         // 5. Structural Identity
-        // Delegate to the Judge to check bidirectional subtyping
+        // tsc uses isTypeIdenticalTo for redeclaration checking, which is stricter
+        // than bidirectional subtyping. In particular, a non-union type is NEVER
+        // identical to a union type, even if they are bidirectionally related.
+        // E.g., `C` is NOT identical to `C | D` even when `D extends C`.
+        let a_is_union = matches!(self.interner.lookup(a), Some(TypeData::Union(_)));
+        let b_is_union = matches!(self.interner.lookup(b), Some(TypeData::Union(_)));
+        if a_is_union != b_is_union {
+            return false;
+        }
+
+        // For two union types, check that they have the same constituent types
+        // (each member of one must be identical to a member of the other).
+        if a_is_union && b_is_union
+            && let (Some(TypeData::Union(a_list)), Some(TypeData::Union(b_list))) =
+                (self.interner.lookup(a), self.interner.lookup(b))
+            {
+                let a_members = self.interner.type_list(a_list);
+                let b_members = self.interner.type_list(b_list);
+                // Since both unions are sorted and deduped during interning,
+                // they should have the same members in the same order if identical
+                if a_members.len() != b_members.len() {
+                    return false;
+                }
+                return a_members
+                    .iter()
+                    .zip(b_members.iter())
+                    .all(|(a_m, b_m)| a_m == b_m);
+            }
+
+        // For non-union types, delegate to the Judge for bidirectional subtyping
         let fwd = self.subtype.is_subtype_of(a, b);
         let bwd = self.subtype.is_subtype_of(b, a);
         tracing::trace!(

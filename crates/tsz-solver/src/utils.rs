@@ -133,6 +133,16 @@ pub fn union_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
     }
 }
 
+/// Same as `union_or_single` but uses literal-only reduction (no subtype reduction).
+/// Use this for union types from type annotations to preserve source structure.
+pub fn union_or_single_literal_reduce(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
+    match types.len() {
+        0 => TypeId::NEVER,
+        1 => types[0],
+        _ => db.union_literal_reduce(types),
+    }
+}
+
 /// Reduces a vector of types to an intersection, single type, or NEVER.
 ///
 /// This helper eliminates the common pattern:

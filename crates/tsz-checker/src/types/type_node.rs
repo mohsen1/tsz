@@ -210,7 +210,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return TypeId::NEVER;
             }
 
-            return tsz_solver::utils::union_or_single(self.ctx.types, member_types);
+            // Use literal-only reduction for type annotation unions to match tsc's
+            // UnionReduction.Literal behavior. This preserves the union structure
+            // (e.g., C | D stays as C | D even when D extends C) which is important
+            // for TS2403 redeclaration checks and type display in diagnostics.
+            return tsz_solver::utils::union_or_single_literal_reduce(self.ctx.types, member_types);
         }
 
         TypeId::ERROR
