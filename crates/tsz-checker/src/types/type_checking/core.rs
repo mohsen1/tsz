@@ -759,35 +759,23 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         };
 
-        // Set contextual type for default initializers that are function-like, so
-        // parameter types can be inferred from the expected element type. This must
-        // happen unconditionally (not gated on assignability checks) because the
-        // initializer's type is computed and cached on first access — if contextual
-        // type isn't set here, the arrow's parameters will be typed as `any`.
+        // Set contextual type for default initializers so that:
+        // - Arrow/function parameters get inferred from the expected element type
+        // - Literal defaults preserve their literal type for assignability checks
+        //   (e.g. "foo" stays as "foo", not widened to string)
+        // This must happen unconditionally (not gated on assignability checks)
+        // because the initializer's type is computed and cached on first access.
         if element_data.initializer.is_some() && element_type != TypeId::ANY {
             let prev_context = self.ctx.contextual_type;
-            if let Some(init_node) = self.ctx.arena.get(element_data.initializer) {
-                let k = init_node.kind;
-                if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                {
-                    self.ctx.contextual_type = Some(element_type);
-                }
-            }
+            self.ctx.contextual_type = Some(element_type);
             let default_value_type = self.get_type_of_node(element_data.initializer);
             self.ctx.contextual_type = prev_context;
 
-            // TypeScript checks default value assignability for binding elements.
-            // For object binding patterns, only check if the property type includes
-            // undefined (the default is only reachable when the property can be
-            // missing). For array patterns, always check.
-            let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
-            if check_default_assignability
-                && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || tsz_solver::type_queries::type_includes_undefined(
-                        self.ctx.types,
-                        element_type,
-                    ))
-            {
+            // TypeScript checks default value assignability for binding elements
+            // regardless of whether the property type includes undefined.
+            // Even for required properties, if the user provides a default value,
+            // tsc still validates it against the declared type.
+            if check_default_assignability {
                 let _ = self.check_assignable_or_report(
                     default_value_type,
                     element_type,
