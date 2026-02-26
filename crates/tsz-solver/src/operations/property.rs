@@ -443,11 +443,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 use crate::objects::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
                 if resolver.is_numeric_index_name(prop_name)
-                    && let Some(ref idx) = shape.number_index {
-                        return PropertyAccessResult::from_index(
-                            self.add_undefined_if_unchecked(idx.value_type),
-                        );
-                    }
+                    && let Some(ref idx) = shape.number_index
+                {
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(idx.value_type),
+                    );
+                }
                 // Check string index signature (for static index signatures on class constructors)
                 if let Some(ref idx) = shape.string_index {
                     return PropertyAccessResult::from_index(
