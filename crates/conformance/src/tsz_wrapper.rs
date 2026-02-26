@@ -981,8 +981,17 @@ fn apply_ts5110_fixup(error_codes: &mut Vec<u32>, options: &HashMap<String, Stri
                 .unwrap_or(module)
                 .trim()
                 .to_lowercase();
-            let needs_match = resolution == "node16" || resolution == "nodenext";
-            if needs_match && module != resolution {
+            // node18 and node20 are aliases for nodenext; normalize before comparing.
+            fn canonical(s: &str) -> &str {
+                match s {
+                    "node18" | "node20" => "nodenext",
+                    other => other,
+                }
+            }
+            let res_canon = canonical(&resolution);
+            let mod_canon = canonical(&module);
+            let needs_match = res_canon == "node16" || res_canon == "nodenext";
+            if needs_match && mod_canon != res_canon {
                 error_codes.push(TS5110);
             }
         }

@@ -983,8 +983,11 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // Check compiler option value types (TS5024)
         // Collect keys that have type mismatches so we can remove them after iteration.
+        // Also track all keys that emitted TS5024 to suppress TS5101 for the same key
+        // (tsc does not emit a deprecation warning for an option that also has a type error).
         let keys_after_rename: Vec<String> = compiler_opts.keys().cloned().collect();
         let mut bad_keys: Vec<String> = Vec::new();
+        let mut ts5024_keys: Vec<String> = Vec::new();
         for key in &keys_after_rename {
             let expected_type = compiler_option_expected_type(key);
             if expected_type.is_empty() {
@@ -1016,6 +1019,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     msg,
                     diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
                 ));
+                // Track all TS5024 keys so we can suppress TS5101 for the same key.
+                ts5024_keys.push(key.clone());
                 // For boolean options with string values like "true"/"false", tsc emits
                 // TS5024 but still applies the coerced value. Our deserialize_bool_or_string
                 // handles this coercion, so don't remove these keys — only remove truly
@@ -1148,6 +1153,11 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             // No-value deprecations (TS5101): "Option '{0}' is deprecated..."
             let key_deprecations = ["baseUrl", "outFile", "downlevelIteration"];
             for key in &key_deprecations {
+                // Suppress TS5101 when TS5024 already fired for the same option:
+                // tsc does not emit a deprecation warning for options with type errors.
+                if ts5024_keys.iter().any(|k| k == key) {
+                    continue;
+                }
                 if compiler_opts.contains_key(*key) {
                     let search = format!("\"{key}\"");
                     let compiler_opts_pos = stripped.find("compilerOptions").unwrap_or(0);
@@ -1280,7 +1290,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         {
             let mod_normalized =
                 normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
-            if !matches!(mod_normalized.as_str(), "amd" | "system") {
+            // `module=none` means no module system; tsc does not report TS6082 for it.
+            if !matches!(mod_normalized.as_str(), "amd" | "system" | "none") {
                 let msg = format_message(
                     diagnostic_messages::ONLY_AMD_AND_SYSTEM_MODULES_ARE_SUPPORTED_ALONGSIDE,
                     &["outFile"],
@@ -1456,7 +1467,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     String::new() // no module set
                 };
                 match effective_module.as_str() {
-                    "none" | "amd" | "umd" | "system" | "" => "classic".to_string(),
+                    // Only map EXPLICITLY-set classic-implying module values to "classic".
+                    // When module is not set (""), tsc determines the default from target
+                    // (typically commonjs → node resolution), so do not assume "classic".
+                    "none" | "amd" | "umd" | "system" => "classic".to_string(),
                     "commonjs" => "node".to_string(),
                     "node16" => "node16".to_string(),
                     "nodenext" => "nodenext".to_string(),
@@ -1476,8 +1490,12 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 ));
             }
 
-            // Check module setting for TS5071 (none/system/umd)
-            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+            // TS5071: fires when module=none/system/umd but ONLY when effective_mr is NOT
+            // "classic". When effective_mr IS "classic" (implied or explicit), TS5070 already
+            // covers the resolveJsonModule restriction; tsc never emits both errors at once.
+            if effective_mr != "classic"
+                && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
+            {
                 let mod_normalized =
                     normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
                 if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
@@ -3683,24 +3701,51 @@ mod tests {
 
     #[test]
     fn test_ts5071_resolve_json_module_with_system_module() {
+        // module=system without explicit moduleResolution implies classic resolution →
+        // tsc emits TS5070 (not TS5071) because the moduleResolution-based check takes precedence.
         let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
+            codes.contains(&5070),
+            "Expected TS5070 (not TS5071) for resolveJsonModule with module=system (implies classic), got: {:?}",
+            codes
+        );
+        assert!(
+            !codes.contains(&5071),
+            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5071_resolve_json_module_with_system_module_explicit_resolution() {
+        // module=system with explicit non-classic moduleResolution → TS5071 fires
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
             codes.contains(&5071),
-            "Expected TS5071 for resolveJsonModule with module=system, got: {:?}",
+            "Expected TS5071 for resolveJsonModule with module=system + moduleResolution=bundler, got: {:?}",
             codes
         );
     }
 
     #[test]
     fn test_ts5071_resolve_json_module_with_none_module() {
+        // module=none without explicit moduleResolution implies classic resolution →
+        // tsc emits TS5070 (not TS5071) because the moduleResolution-based check takes precedence.
         let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"none"}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            codes.contains(&5071),
-            "Expected TS5071 for resolveJsonModule with module=none, got: {:?}",
+            codes.contains(&5070),
+            "Expected TS5070 (not TS5071) for resolveJsonModule with module=none (implies classic), got: {:?}",
+            codes
+        );
+        assert!(
+            !codes.contains(&5071),
+            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {:?}",
             codes
         );
     }
