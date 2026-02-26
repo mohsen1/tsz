@@ -1183,15 +1183,29 @@ impl ModuleResolver {
         // TS2834/TS2835 Check: In Node16/NodeNext, ESM-style imports must have explicit extensions.
         // This applies when:
         // - The resolution mode is Node16 or NodeNext
+        // - The containing file is a TypeScript file (not .js/.jsx/.mjs/.cjs)
+        //   TSC does not enforce extension requirements on JS files for relative imports,
+        //   since JS files are consumed as-is and don't go through TS module compilation.
         // - The import is ESM syntax in an ESM context:
         //   - Dynamic import() always counts as ESM regardless of file type
         //   - Static import/export only counts if the file is an ESM module
         //   - require() never triggers this check
         // - The specifier has no extension
+        let containing_is_js = {
+            let ext = ModuleExtension::from_path(Path::new(containing_file));
+            matches!(
+                ext,
+                ModuleExtension::Js
+                    | ModuleExtension::Jsx
+                    | ModuleExtension::Mjs
+                    | ModuleExtension::Cjs
+            )
+        };
         let needs_extension_check = matches!(
             self.resolution_kind,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
         ) && !specifier_has_extension
+            && !containing_is_js
             && match import_kind {
                 // Dynamic import() is always ESM, even in .cts files
                 ImportKind::DynamicImport => true,
@@ -2099,8 +2113,20 @@ impl ModuleResolver {
         match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 match self.current_package_type {
-                    Some(PackageType::Module) => &NODE16_MODULE_EXTENSION_CANDIDATES,
-                    Some(PackageType::CommonJs) => &NODE16_COMMONJS_EXTENSION_CANDIDATES,
+                    Some(PackageType::Module) => {
+                        if self.allow_js {
+                            &NODE16_MODULE_ALLOWJS_EXTENSION_CANDIDATES
+                        } else {
+                            &NODE16_MODULE_EXTENSION_CANDIDATES
+                        }
+                    }
+                    Some(PackageType::CommonJs) => {
+                        if self.allow_js {
+                            &NODE16_COMMONJS_ALLOWJS_EXTENSION_CANDIDATES
+                        } else {
+                            &NODE16_COMMONJS_EXTENSION_CANDIDATES
+                        }
+                    }
                     None => {
                         if self.allow_js {
                             &TS_JS_EXTENSION_CANDIDATES
@@ -3669,5 +3695,87 @@ mod tests {
             ImportingModuleKind::default(),
             ImportingModuleKind::CommonJs
         );
+    }
+
+    #[test]
+    fn test_node16_js_file_no_ts2834_for_relative_imports() {
+        // In Node16/NodeNext, JS files should NOT get TS2834 for extensionless
+        // relative imports. TSC does not enforce extension requirements on JS files.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_node16_js_no_ts2834");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // package.json with type=module makes the dir ESM
+        fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        fs::write(dir.join("index.js"), "import * as m from './utils';").unwrap();
+        fs::write(dir.join("utils.js"), "export const x = 1;").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            allow_js: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        // Resolve from a JS file — should succeed without TS2834
+        let result = resolver.resolve_with_kind(
+            "./utils",
+            &dir.join("index.js"),
+            Span::new(22, 30),
+            ImportKind::EsmImport,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Extensionless relative import from JS file should resolve, not emit TS2834: {result:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_node16_ts_file_still_gets_ts2834_for_relative_imports() {
+        // In Node16/NodeNext, TS files SHOULD still get TS2834/TS2835 for
+        // extensionless relative imports even when allowJs is enabled.
+        use std::fs;
+        let dir = std::env::temp_dir().join("tsz_test_node16_ts_still_ts2834");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+        fs::write(dir.join("index.ts"), "import * as m from './utils';").unwrap();
+        fs::write(dir.join("utils.js"), "export const x = 1;").unwrap();
+
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            allow_js: true,
+            ..Default::default()
+        };
+        let mut resolver = ModuleResolver::new(&options);
+
+        // Resolve from a TS file — should emit TS2835 (with suggestion)
+        let result = resolver.resolve_with_kind(
+            "./utils",
+            &dir.join("index.ts"),
+            Span::new(22, 30),
+            ImportKind::EsmImport,
+        );
+
+        assert!(
+            result.is_err(),
+            "Extensionless relative import from TS file should emit TS2834/TS2835: {result:?}"
+        );
+        let failure = result.unwrap_err();
+        let diag = failure.to_diagnostic();
+        assert!(
+            diag.code == IMPORT_PATH_NEEDS_EXTENSION
+                || diag.code == IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
+            "Expected TS2834 or TS2835, got TS{}: {}",
+            diag.code,
+            diag.message,
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

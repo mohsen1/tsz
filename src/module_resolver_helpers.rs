@@ -426,8 +426,14 @@ pub(crate) const TS_EXTENSION_CANDIDATES: [&str; 7] =
     ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 pub(crate) const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
     ["mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts"];
+pub(crate) const NODE16_MODULE_ALLOWJS_EXTENSION_CANDIDATES: [&str; 11] = [
+    "mts", "d.mts", "ts", "tsx", "d.ts", "cts", "d.cts", "mjs", "js", "jsx", "cjs",
+];
 pub(crate) const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
     ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
+pub(crate) const NODE16_COMMONJS_ALLOWJS_EXTENSION_CANDIDATES: [&str; 11] = [
+    "cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts", "cjs", "js", "jsx", "mjs",
+];
 pub(crate) const CLASSIC_EXTENSION_CANDIDATES: [&str; 7] = TS_EXTENSION_CANDIDATES;
 
 /// Extension candidates when allowJs is enabled (TypeScript + JavaScript)
