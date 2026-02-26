@@ -1058,13 +1058,14 @@ fn compile_inner(
     // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
     // file-level diagnostics (syntactic or semantic) alongside them.
     //
-    // EXCEPTION: tsc suppresses TS5107 when real file-level errors exist (preferring
-    // file errors over config warnings). We can't fully replicate this because our
-    // checker emits false-positive semantic errors that would wrongly suppress TS5107.
-    // We only suppress TS5107 for reliable grammar error ranges:
-    //   - 8xxx: JS grammar errors ("can only be used in TypeScript files") — never false positives
-    //   - 17xxx: exponentiation grammar errors (TS17006/TS17007) — from our binary checker
-    // NOT 1xxx parser errors, because our checker still has false-positive 1xxx errors.
+    // tsc suppresses TS5107 when ANY real file-level error exists (preferring file
+    // errors over config deprecation warnings). We can't do a blanket check because
+    // our checker still emits false-positive semantic errors that would wrongly
+    // suppress TS5107 in tests where tsc has no source errors.
+    //
+    // We only suppress TS5107 for error ranges that are never false positives:
+    //   - 8xxx: JS grammar errors ("can only be used in TypeScript files")
+    //   - 17xxx: exponentiation grammar errors (TS17006/TS17007)
     if has_deprecation_diagnostics {
         let has_reliable_grammar_errors = diagnostics
             .iter()
@@ -1078,7 +1079,7 @@ fn compile_inner(
                         != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
             });
         } else {
-            // No reliable file-level errors — TS5107 takes priority.
+            // No reliable file-level errors — TS5107 takes priority (fatal).
             diagnostics.clear();
         }
     }

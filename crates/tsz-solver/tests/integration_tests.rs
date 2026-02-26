@@ -1166,11 +1166,13 @@ mod lawyer_strict_mode_tests {
             key_type: TypeId::STRING,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         };
         let string_index_number = IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         };
 
         let obj_any = interner.object_with_index(ObjectShape {
@@ -1202,11 +1204,13 @@ mod lawyer_strict_mode_tests {
             key_type: TypeId::STRING,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         };
         let string_index_number = IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         };
 
         let obj_any = interner.object_with_index(ObjectShape {

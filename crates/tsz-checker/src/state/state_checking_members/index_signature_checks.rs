@@ -219,6 +219,7 @@ impl<'a> CheckerState<'a> {
                         key_type: TypeId::NUMBER,
                         value_type,
                         readonly: false,
+                        param_name: None,
                     });
                 }
             } else if param_type == TypeId::STRING {
@@ -230,6 +231,7 @@ impl<'a> CheckerState<'a> {
                         key_type: TypeId::STRING,
                         value_type,
                         readonly: false,
+                        param_name: None,
                     });
                 }
             }

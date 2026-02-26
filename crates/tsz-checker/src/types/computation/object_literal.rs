@@ -1053,6 +1053,7 @@ impl<'a> CheckerState<'a> {
                     key_type: TypeId::STRING,
                     value_type: self.ctx.types.factory().union(string_index_types),
                     readonly: false,
+                    param_name: None,
                 })
             } else {
                 None
@@ -1063,6 +1064,7 @@ impl<'a> CheckerState<'a> {
                     key_type: TypeId::NUMBER,
                     value_type: self.ctx.types.factory().union(number_index_types),
                     readonly: false,
+                    param_name: None,
                 })
             } else {
                 None

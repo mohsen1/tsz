@@ -115,6 +115,7 @@ impl<'a> CheckerState<'a> {
                 key_type: TypeId::NUMBER,
                 value_type: TypeId::STRING,
                 readonly: true,
+                param_name: None,
             });
             return Some(factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),

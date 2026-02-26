@@ -481,10 +481,24 @@ impl<'a> TypeFormatter<'a> {
         let mut parts = Vec::new();
 
         if let Some(ref idx) = shape.string_index {
-            parts.push(format!("[index: string]: {}", self.format(idx.value_type)));
+            let key_name = idx
+                .param_name
+                .map(|a| self.atom(a).to_string())
+                .unwrap_or_else(|| "index".to_owned());
+            parts.push(format!(
+                "[{key_name}: string]: {}",
+                self.format(idx.value_type)
+            ));
         }
         if let Some(ref idx) = shape.number_index {
-            parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
+            let key_name = idx
+                .param_name
+                .map(|a| self.atom(a).to_string())
+                .unwrap_or_else(|| "index".to_owned());
+            parts.push(format!(
+                "[{key_name}: number]: {}",
+                self.format(idx.value_type)
+            ));
         }
         for prop in &shape.properties {
             parts.push(self.format_property(prop));
@@ -691,6 +705,13 @@ impl<'a> TypeFormatter<'a> {
         {
             return Some(name);
         }
+        // Fall back to def-store structural lookup for type aliases and lib interfaces.
+        // User-defined interfaces preserve their symbol through merge_interface_types, so they
+        // are found via path 1 above. Anonymous types (symbol=None) cannot accidentally match
+        // named interfaces (symbol=Some(...)) via find_def_by_shape because PartialEq includes symbol.
+        // This path handles: (a) type aliases (always symbol=None), and (b) lib interfaces
+        // (built without symbol stamps, e.g. String) whose unique structural content prevents
+        // false matches.
         if let Some(def_store) = self.def_store
             && let Some(def_id) = def_store.find_def_by_shape(shape)
             && let Some(def) = def_store.get(def_id)

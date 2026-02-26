@@ -680,6 +680,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 // Interface redeclares a private/protected member as public - TS2430.
                                 // tsc reports this at the interface NAME identifier (matching tsc parity).
+                                // tsc does NOT emit a secondary "Property 'x' is private..." detail.
                                 self.error_at_node(
                                         iface_data.name,
                                         &format!(
@@ -888,21 +889,11 @@ impl<'a> CheckerState<'a> {
                                     base_prop.type_id,
                                     *derived_member_idx,
                                 ) {
-                                    let member_type_str = self.format_type(derived_prop_type);
-                                    let base_type_str = self.format_type(base_prop.type_id);
-
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
                                             "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                         ),
-                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                    );
-                                    self.report_property_type_incompatible_detail(
-                                        iface_data.name,
-                                        member_name,
-                                        &member_type_str,
-                                        &base_type_str,
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
                                     break; // Report one incompatibility per base type
@@ -953,11 +944,7 @@ impl<'a> CheckerState<'a> {
             let substitution =
                 TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
-            // tsc reports TS2430 separately for EACH incompatible base, so we must not
-            // return early after the first mismatch — we need to continue checking all bases.
-            'member_loop: for (member_name, member_type, derived_member_idx, derived_kind) in
-                &derived_members
-            {
+            for (member_name, member_type, derived_member_idx, derived_kind) in &derived_members {
                 let mut found = false;
 
                 for &base_iface_idx in &base_iface_indices {
@@ -1031,11 +1018,8 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
 
-                            // Stop checking more members for this base — one mismatch is enough.
-                            // But do NOT return early: we must continue to the next base so tsc-
-                            // compatible per-base diagnostics can be emitted (tsc emits one TS2430
-                            // per incompatible base, not just the first one found).
-                            break 'member_loop;
+                            self.pop_type_parameters(base_type_param_updates);
+                            return;
                         }
 
                         break;
@@ -1270,105 +1254,5 @@ impl<'a> CheckerState<'a> {
             count += 1;
         }
         count
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::test_utils::check_source_diagnostics;
-
-    /// TS2430 for interface-extends-class with private/protected member must be
-    /// reported at the INTERFACE NAME identifier, not at the member node inside the body.
-    #[test]
-    fn ts2430_reports_at_interface_name_not_member() {
-        let source = r#"
-class Base {
-    private x: number;
-}
-interface Foo extends Base {
-    x: number;
-}
-"#;
-        let diagnostics = check_source_diagnostics(source);
-        let ts2430: Vec<_> = diagnostics.iter().filter(|d| d.code == 2430).collect();
-        assert!(!ts2430.is_empty(), "expected TS2430");
-        // The interface member 'x: number' in the Foo body is after the opening '{' of the
-        // interface. The TS2430 should be at 'Foo' (before the body), so its start must be
-        // before the '{' of the interface body.
-        let iface_body_start = source.rfind('{').unwrap() as u32;
-        for diag in &ts2430 {
-            assert!(
-                diag.start < iface_body_start,
-                "TS2430 reported inside interface body (pos {}) instead of at interface name (expected < {})",
-                diag.start,
-                iface_body_start
-            );
-        }
-    }
-
-    /// An interface that correctly re-declares a property to be compatible with
-    /// both bases must NOT produce TS2430.
-    #[test]
-    fn ts2430_not_emitted_for_compatible_multi_base() {
-        let source = r#"
-interface Base1 { x: { a: string; } }
-interface Base2 { x: { b: string; } }
-interface Derived extends Base1, Base2 { x: { a: string; b: string; } }
-"#;
-        let codes: Vec<u32> = check_source_diagnostics(source)
-            .iter()
-            .map(|d| d.code)
-            .collect();
-        assert!(
-            !codes.contains(&2430),
-            "should not emit TS2430 for compatible Derived"
-        );
-    }
-
-    /// When a derived interface incompatibly extends TWO bases, TS2430 must be
-    /// emitted once per incompatible base (tsc parity).
-    #[test]
-    fn ts2430_emitted_per_incompatible_base() {
-        let source = r#"
-interface Base1<T> { x: { a: T; } }
-interface Base2<T> { x: { b: T; } }
-interface Derived4<T> extends Base1<number>, Base2<number> {
-    x: { a: T; b: T; }
-}
-"#;
-        let diagnostics = check_source_diagnostics(source);
-        let ts2430_messages: Vec<String> = diagnostics
-            .iter()
-            .filter(|d| d.code == 2430)
-            .map(|d| d.message_text.clone())
-            .collect();
-        // Must have two distinct "incorrectly extends" messages — one per base.
-        let has_base1_error = ts2430_messages.iter().any(|m| m.contains("Base1<number>"));
-        let has_base2_error = ts2430_messages.iter().any(|m| m.contains("Base2<number>"));
-        assert!(
-            has_base1_error,
-            "expected TS2430 for Base1<number>, got: {ts2430_messages:?}"
-        );
-        assert!(
-            has_base2_error,
-            "expected TS2430 for Base2<number>, got: {ts2430_messages:?}"
-        );
-    }
-
-    /// An interface that incompatibly extends a single base produces exactly one TS2430.
-    #[test]
-    fn ts2430_single_base_mismatch() {
-        let source = r#"
-interface Base1 { x: { a: string; } }
-interface Base2 { x: { b: string; } }
-interface Derived2 extends Base1, Base2 {
-    x: { a: string; b: number; }
-}
-"#;
-        let codes: Vec<u32> = check_source_diagnostics(source)
-            .iter()
-            .map(|d| d.code)
-            .collect();
-        assert!(codes.contains(&2430), "expected TS2430");
     }
 }

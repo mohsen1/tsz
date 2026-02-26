@@ -316,11 +316,16 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+                    let param_name = param_data
+                        .and_then(|p| self.ctx.arena.get(p.name))
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
 
                     let idx_sig = IndexSignature {
                         key_type,
                         value_type,
                         readonly,
+                        param_name,
                     };
 
                     if key_type == TypeId::NUMBER {

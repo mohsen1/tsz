@@ -171,6 +171,7 @@ impl<'a> TypeInstantiator<'a> {
             key_type: self.instantiate(idx.key_type),
             value_type: self.instantiate(idx.value_type),
             readonly: idx.readonly,
+            param_name: idx.param_name,
         })
     }
 

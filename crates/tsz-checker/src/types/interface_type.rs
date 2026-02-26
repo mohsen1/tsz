@@ -260,10 +260,17 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
                 let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+                let param_name = self
+                    .ctx
+                    .arena
+                    .get(param_data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
                 let info = IndexSignature {
                     key_type,
                     value_type,
                     readonly,
+                    param_name,
                 };
                 if key_type == TypeId::NUMBER {
                     Self::merge_index_signature(&mut number_index, info);
@@ -548,7 +555,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -565,7 +572,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -588,7 +595,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -605,7 +612,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -628,7 +635,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -639,7 +646,11 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                factory.object(properties)
+                factory.object_with_flags_and_symbol(
+                    properties,
+                    ObjectFlags::empty(),
+                    derived_shape.symbol,
+                )
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -661,7 +672,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 });
                 tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
                 result
@@ -679,7 +690,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (
@@ -701,7 +712,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
-                    symbol: None,
+                    symbol: derived_shape.symbol,
                 })
             }
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {

@@ -543,10 +543,17 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
                 let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+                let param_name = self
+                    .ctx
+                    .arena
+                    .get(param_data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
                 let info = IndexSignature {
                     key_type,
                     value_type,
                     readonly,
+                    param_name,
                 };
                 if key_type == TypeId::NUMBER {
                     number_index = Some(info);

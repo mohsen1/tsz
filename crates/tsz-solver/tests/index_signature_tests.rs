@@ -19,6 +19,7 @@ fn test_string_index_to_string_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -31,6 +32,7 @@ fn test_string_index_to_string_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -53,6 +55,7 @@ fn test_string_index_covariant_value() {
             key_type: TypeId::STRING,
             value_type: hello,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -65,6 +68,7 @@ fn test_string_index_covariant_value() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -85,6 +89,7 @@ fn test_string_index_not_subtype_incompatible_value() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -97,6 +102,7 @@ fn test_string_index_not_subtype_incompatible_value() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -122,6 +128,7 @@ fn test_object_with_props_to_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -147,6 +154,7 @@ fn test_object_with_incompatible_props_not_subtype() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -170,6 +178,7 @@ fn test_index_with_props_to_simple_object() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -196,6 +205,7 @@ fn test_number_index_to_number_index() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -208,6 +218,7 @@ fn test_number_index_to_number_index() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -228,11 +239,13 @@ fn test_string_and_number_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -244,6 +257,7 @@ fn test_string_and_number_index() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -267,6 +281,7 @@ fn test_index_signature_with_named_property() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -282,6 +297,7 @@ fn test_index_signature_with_named_property() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -305,6 +321,7 @@ fn test_index_signature_source_property_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -317,6 +334,7 @@ fn test_index_signature_source_property_mismatch() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -341,6 +359,7 @@ fn test_number_index_signature_source_property_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -353,6 +372,7 @@ fn test_number_index_signature_source_property_mismatch() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -374,6 +394,7 @@ fn test_empty_object_to_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

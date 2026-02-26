@@ -495,6 +495,7 @@ fn test_object_shape_extractors() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

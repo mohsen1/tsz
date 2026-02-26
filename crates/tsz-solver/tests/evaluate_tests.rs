@@ -4331,6 +4331,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
             key_type: TypeId::STRING,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -4391,6 +4392,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
             key_type: TypeId::NUMBER,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
     });
     let cond = ConditionalType {
@@ -4450,6 +4452,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
             key_type: TypeId::NUMBER,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
     });
     let cond = ConditionalType {
@@ -4509,6 +4512,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
             key_type: TypeId::NUMBER,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
     });
     let cond = ConditionalType {
@@ -4562,6 +4566,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
             key_type: TypeId::STRING,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -4616,6 +4621,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
             key_type: TypeId::STRING,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -4675,6 +4681,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
             key_type: TypeId::STRING,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9122,6 +9129,7 @@ fn test_conditional_infer_object_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9133,6 +9141,7 @@ fn test_conditional_infer_object_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: infer_r,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9360,6 +9369,7 @@ fn test_index_access_object_with_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9395,6 +9405,7 @@ fn test_index_access_object_with_string_index_signature_optional_property() {
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9428,6 +9439,7 @@ fn test_index_access_object_with_string_index_signature_optional_property_no_unc
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9467,6 +9479,7 @@ fn test_no_unchecked_object_index_signature_evaluate() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9492,6 +9505,7 @@ fn test_index_access_object_with_number_index_signature() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::BOOLEAN,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -9515,11 +9529,13 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
             readonly: false,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -9647,6 +9663,7 @@ fn test_index_access_with_no_unchecked_indexed_access() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -9677,6 +9694,7 @@ fn test_index_access_with_options_helper_no_unchecked_indexed_access() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -10604,6 +10622,7 @@ fn test_keyof_object_with_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::BOOLEAN,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -10631,6 +10650,7 @@ fn test_keyof_object_with_number_index_signature() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -10710,6 +10730,7 @@ fn test_keyof_union_string_index_overlap_literal() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -10736,6 +10757,7 @@ fn test_keyof_union_index_signature_intersection() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -10748,6 +10770,7 @@ fn test_keyof_union_index_signature_intersection() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -11407,11 +11430,13 @@ fn test_keyof_both_index_signatures() {
             key_type: TypeId::STRING,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         }),
         number_index: Some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -11584,6 +11609,7 @@ fn test_keyof_union_with_index_signature_and_literal() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -11615,6 +11641,7 @@ fn test_keyof_intersection_with_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -15326,6 +15353,7 @@ fn test_application_ref_expansion_with_index_signature() {
             key_type: TypeId::STRING,
             value_type: t_type,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -15352,6 +15380,7 @@ fn test_application_ref_expansion_with_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -15393,6 +15422,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
             key_type: TypeId::NUMBER,
             value_type: t_type,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -15419,6 +15449,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -23107,6 +23138,7 @@ fn test_record_string_keys() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -23138,6 +23170,7 @@ fn test_record_number_keys() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -23193,6 +23226,7 @@ fn test_record_with_object_value() {
             key_type: TypeId::STRING,
             value_type: inner_obj,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -23649,6 +23683,7 @@ fn test_record_with_union_value() {
             key_type: TypeId::STRING,
             value_type: value_union,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -23716,7 +23751,8 @@ fn test_readonly_with_index_signature() {
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
-            readonly: true, // Made readonly
+            readonly: true, // Made readonly,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -26137,6 +26173,7 @@ fn test_recursive_type_json_value() {
             key_type: TypeId::STRING,
             value_type: json_ref,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -26220,6 +26257,7 @@ fn test_recursive_type_dom_node() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -29263,6 +29301,7 @@ fn test_satisfies_record_type() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -36906,6 +36945,7 @@ fn test_infer_from_index_signature_value() {
             key_type: TypeId::STRING,
             value_type: infer_v,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -36919,6 +36959,7 @@ fn test_infer_from_index_signature_value() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -37144,6 +37185,7 @@ fn test_infer_with_keyof_constraint() {
             key_type: infer_k,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -37157,6 +37199,7 @@ fn test_infer_with_keyof_constraint() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -37882,6 +37925,7 @@ fn test_keyof_intersection_both_index_signatures() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -37895,6 +37939,7 @@ fn test_keyof_intersection_both_index_signatures() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -37919,6 +37964,7 @@ fn test_keyof_union_index_and_literal() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -40027,6 +40073,7 @@ fn test_indexed_access_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -40051,6 +40098,7 @@ fn test_indexed_access_number_index_signature() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -40076,6 +40124,7 @@ fn test_indexed_access_property_overrides_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

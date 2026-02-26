@@ -76,6 +76,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -882,6 +883,7 @@ fn test_t_subtype_of_partial_t_with_constraint() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
         symbol: None,

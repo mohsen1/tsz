@@ -1538,6 +1538,7 @@ fn test_no_unchecked_indexed_access_toggle() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -1599,6 +1600,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -2301,6 +2303,7 @@ fn test_apparent_string_number_index_assignable() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2320,6 +2323,7 @@ fn test_apparent_string_rejects_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::STRING,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -2412,6 +2416,7 @@ fn test_optional_property_rejects_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -2476,6 +2481,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -2781,6 +2787,7 @@ fn test_keyof_union_index_signature_assignable() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -2793,6 +2800,7 @@ fn test_keyof_union_index_signature_assignable() {
             key_type: TypeId::NUMBER,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
     });
 
@@ -2929,6 +2937,7 @@ fn test_weak_type_with_index_signature_not_weak() {
             key_type: TypeId::STRING,
             value_type: TypeId::ANY,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });
@@ -3665,6 +3674,7 @@ fn test_compiler_options_independent_toggles() {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
             readonly: false,
+            param_name: None,
         }),
         number_index: None,
     });

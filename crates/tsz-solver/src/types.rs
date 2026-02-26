@@ -793,7 +793,7 @@ pub enum PropertyLookup {
 
 /// Index signature information for object types
 /// Represents `{ [key: string]: ValueType }` or `{ [key: number]: ValueType }`
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 pub struct IndexSignature {
     /// The key type (usually string or number)
     pub key_type: TypeId,
@@ -801,6 +801,29 @@ pub struct IndexSignature {
     pub value_type: TypeId,
     /// Whether the index signature is readonly
     pub readonly: bool,
+    /// Original parameter name from source (cosmetic, excluded from equality/hash).
+    /// E.g., for `[x: string]: T`, this is `Some(atom("x"))`.
+    pub param_name: Option<Atom>,
+}
+
+impl PartialEq for IndexSignature {
+    fn eq(&self, other: &Self) -> bool {
+        // param_name is cosmetic (for display only) and excluded from equality
+        self.key_type == other.key_type
+            && self.value_type == other.value_type
+            && self.readonly == other.readonly
+    }
+}
+
+impl Eq for IndexSignature {}
+
+impl std::hash::Hash for IndexSignature {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // param_name is excluded from hash to match PartialEq
+        self.key_type.hash(state);
+        self.value_type.hash(state);
+        self.readonly.hash(state);
+    }
 }
 
 /// Combined index signature information for a type
