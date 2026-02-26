@@ -100,20 +100,9 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Fast path: certain primitive types cannot be meaningfully narrowed
-        // by any flow construct. Skip flow analysis for these.
-        //
-        // NOTE: STRING and NUMBER are intentionally NOT included here because
-        // user-defined type predicates can narrow them to literal subtypes
-        // (e.g., `value is "foo"` narrows `string` to `"foo"`) or branded
-        // intersections (e.g., `value is string & Tag`). BOOLEAN is also
-        // excluded since truthiness guards can narrow it to `true`/`false`.
-        if matches!(
-            declared_type,
-            TypeId::BIGINT | TypeId::SYMBOL | TypeId::UNDEFINED | TypeId::NULL | TypeId::VOID
-        ) {
-            return declared_type;
-        }
+        // Note: we intentionally do NOT skip flow narrowing for primitive types.
+        // User-defined type predicates can narrow primitives to literal unions
+        // or branded intersections (e.g., `value is "foo" | "bar"`, `value is string & Tag`).
 
         // Hot-path optimization: for property/element access expressions with an already
         // concrete primitive/literal result type, flow re-analysis at the access node is
