@@ -1132,6 +1132,14 @@ impl<'a> NarrowingContext<'a> {
             if self.is_object_typeof(resolved) {
                 return true;
             }
+            // If resolve_type couldn't fully evaluate an Application type
+            // (e.g., Record<string, any> before its definition is registered),
+            // conservatively assume it's an object type. Generic instantiations
+            // like Record<K,V>, Map<K,V>, etc. are always object types at runtime.
+            // Filtering them out would incorrectly narrow to `never`.
+            if matches!(self.db.lookup(resolved), Some(TypeData::Application(_))) {
+                return true;
+            }
             return false;
         }
 
