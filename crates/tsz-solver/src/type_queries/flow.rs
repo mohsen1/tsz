@@ -237,6 +237,44 @@ pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Lit
     }
 }
 
+/// Convert a literal/enum type to its string representation for template evaluation.
+///
+/// Returns the stringified value for:
+/// - String literals → the string value
+/// - Number literals → JS-style number formatting
+/// - Boolean literals → "true" or "false"
+/// - `BigInt` literals → the numeric string
+/// - Enum members → unwraps to the underlying literal and recurses
+/// - null/undefined → "null"/"undefined"
+///
+/// Returns `None` for non-literal types.
+pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    if type_id == TypeId::NULL {
+        return Some("null".to_string());
+    }
+    if type_id == TypeId::UNDEFINED {
+        return Some("undefined".to_string());
+    }
+    let key = db.lookup(type_id)?;
+    match key {
+        TypeData::Literal(crate::LiteralValue::String(atom))
+        | TypeData::Literal(crate::LiteralValue::BigInt(atom)) => Some(db.resolve_atom(atom)),
+        TypeData::Literal(crate::LiteralValue::Number(n)) => {
+            let v = n.0;
+            if v.fract() == 0.0 && v.abs() < 1e20 {
+                Some(format!("{}", v as i64))
+            } else {
+                Some(format!("{v}"))
+            }
+        }
+        TypeData::Literal(crate::LiteralValue::Boolean(b)) => {
+            Some(if b { "true" } else { "false" }.to_string())
+        }
+        TypeData::Enum(_, structural_type) => stringify_literal_type(db, structural_type),
+        _ => None,
+    }
+}
+
 /// Check if a type is suitable as a narrowing literal value.
 ///
 /// Returns `Some(type_id)` for types that can be used as the comparand in

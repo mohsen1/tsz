@@ -14,6 +14,7 @@ use tsz_solver::{
     NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     type_queries::{
         PredicateSignatureKind, classify_for_predicate_signature, is_narrowing_literal,
+        stringify_literal_type,
     },
 };
 
@@ -779,6 +780,13 @@ impl<'a> FlowAnalyzer<'a> {
                     _ => None,
                 }
             }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                // Template expression with substitutions like `${AnimalType.cat}`.
+                // Try to evaluate as a literal string when all parts are known literals.
+                // This enables discriminated union narrowing in switch cases like:
+                //   case `${AnimalType.cat}`: ...
+                self.literal_type_from_template_expression(idx, node)
+            }
             _ => {
                 // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword)
                 if let Some(ident) = self.arena.get_identifier(node)
@@ -805,6 +813,59 @@ impl<'a> FlowAnalyzer<'a> {
                 None
             }
         }
+    }
+
+    /// Try to evaluate a template expression to a literal string type.
+    ///
+    /// For template expressions like `` `${AnimalType.cat}` ``, examines each
+    /// span's expression type. If all expressions resolve to known literal
+    /// values (string/number/boolean literals or enum members wrapping them),
+    /// concatenates the parts and returns the resulting string literal type.
+    ///
+    /// This enables discriminated union narrowing when switch cases use
+    /// template expressions with enum values as discriminants.
+    fn literal_type_from_template_expression(
+        &self,
+        _idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<TypeId> {
+        let template = self.arena.get_template_expr(node)?;
+
+        // Get the head text (text before the first ${})
+        let head_node = self.arena.get(template.head)?;
+        let head_lit = self.arena.get_literal(head_node)?;
+        let mut result = head_lit.text.clone();
+
+        for &span_idx in &template.template_spans.nodes {
+            let span_node = self.arena.get(span_idx)?;
+            let span = self.arena.get_template_span(span_node)?;
+
+            // Get the expression type. First try node_types, then try extracting
+            // a literal type from the sub-expression AST directly (handles cases
+            // where node_types isn't populated yet during flow analysis).
+            let expr_type = if let Some(node_types) = self.node_types
+                && let Some(&ty) = node_types.get(&span.expression.0)
+            {
+                ty
+            } else {
+                // Fallback: try to extract a literal from the sub-expression
+                // via the same literal_type_from_node path (handles enum member
+                // access like AnimalType.cat directly from the AST).
+                self.literal_type_from_node(span.expression)?
+            };
+
+            // Extract the string representation of the literal type.
+            // If the expression doesn't resolve to a known literal, bail out.
+            let literal_str = stringify_literal_type(self.interner, expr_type)?;
+            result.push_str(&literal_str);
+
+            // Get the tail text (text after the } and before the next ${ or `)
+            let tail_node = self.arena.get(span.literal)?;
+            let tail_lit = self.arena.get_literal(tail_node)?;
+            result.push_str(&tail_lit.text);
+        }
+
+        Some(self.interner.literal_string(&result))
     }
 
     /// Resolve an enum member property access (e.g., `AnimalType.cat`) to its
