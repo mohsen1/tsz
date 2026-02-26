@@ -1,10 +1,42 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9271/12570 (73.8%) — full suite, error-code level
+**Current score**: ~9277/12570 (73.8%) — full suite, error-code level
 > Recovered from regression. Previous low was ~6910/12226 (56.5%) due to remote solver changes.
 
 ---
+
+## String Intrinsic Type Assignability — Session 2026-02-26
+- **Area**: types/typeAliases (targeted intrinsicTypes.ts test)
+- **Root cause**: `visit_string_intrinsic()` in the subtype visitor (`subtype/visitor.rs`)
+  returned `SubtypeResult::False` unconditionally. This meant `Uppercase<T>`,
+  `Lowercase<T>`, etc. were never recognized as subtypes of `string` or of
+  each other (even with matching kind + covariant type arg).
+- **Fix** (two locations):
+  1. **Visitor** (`visitor.rs`): Added three rules to `visit_string_intrinsic`:
+     - Rule 1: `StringIntrinsic(kind, T) <: string` — always true
+     - Rule 2: `StringIntrinsic(kind, S) <: StringIntrinsic(kind, T)` when `S <: T` (covariant)
+     - Rule 3: Constraint-based — evaluate intrinsic with type arg's constraint, check result
+  2. **Core** (`core.rs`): Added StringIntrinsic constraint check inside the target union
+     handler. This is necessary because the target union check returns early before the
+     visitor runs. Handles `Uppercase<T extends 'foo'|'bar'> <: 'FOO'|'BAR'`.
+- **Files changed**:
+  - `crates/tsz-solver/src/relations/subtype/visitor.rs` (visit_string_intrinsic)
+  - `crates/tsz-solver/src/relations/subtype/core.rs` (target union handler)
+  - `crates/tsz-solver/src/lib.rs` (test module registration)
+  - `crates/tsz-solver/tests/string_intrinsic_subtype_tests.rs` (8 unit tests)
+- **False positives eliminated**:
+  - `Uppercase<T> not assignable to string` (when T extends string)
+  - `Uppercase<U> not assignable to Uppercase<T>` (when U extends T)
+  - `Uppercase<T> not assignable to 'FOO'|'BAR'` (when T extends 'foo'|'bar')
+  - `Uppercase<U> not assignable to Uppercase<string>` (when U extends string)
+- **Net result**: +6 tests (9271→9277) at error-code level
+- **Remaining gaps in intrinsicTypes.ts**:
+  - TS2795 vs TS2304: `type MyUppercase<S extends string> = intrinsic;` — we emit TS2304
+    "Cannot find name 'intrinsic'" instead of TS2795 "intrinsic keyword can only be used
+    to declare compiler provided intrinsic types". Checker/parser issue.
+  - TS2344 message text: We display `Type '42'` but tsc displays `Type 'number'` for numeric
+    literal constraint violations. Type widening in diagnostic display issue.
 
 ## JSX Component Attribute Type Checking — Session 2026-02-26
 - **Area**: jsx (47.8% → 49.5%, +5 tests at error-code level)

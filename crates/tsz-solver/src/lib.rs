@@ -210,6 +210,9 @@ mod mapped_comprehensive_tests;
 #[path = "../tests/narrowing_comprehensive_tests.rs"]
 mod narrowing_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/string_intrinsic_subtype_tests.rs"]
+mod string_intrinsic_subtype_tests;
+#[cfg(test)]
 #[path = "../tests/template_literal_comprehensive_tests.rs"]
 mod template_literal_comprehensive_tests;
 #[cfg(test)]

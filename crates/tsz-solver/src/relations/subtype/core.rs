@@ -24,8 +24,9 @@ use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
     enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
     keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
-    object_with_index_shape_id, readonly_inner_type, template_literal_id, tuple_list_id,
-    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
+    object_with_index_shape_id, readonly_inner_type, string_intrinsic_components,
+    template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
+    unique_symbol_ref,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::limits;
@@ -457,6 +458,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && self.check_subtype(constraint, target).is_true()
             {
                 return SubtypeResult::True;
+            }
+
+            // String intrinsic constraint check: if source is a string mapping type
+            // (e.g., Uppercase<T>) whose type arg is a type parameter with a constraint,
+            // evaluate the intrinsic applied to the constraint and check that result
+            // against the whole target union.
+            // e.g., Uppercase<T> where T extends 'foo'|'bar' <: 'FOO'|'BAR'
+            if let Some((s_kind, s_type_arg)) = string_intrinsic_components(self.interner, source)
+                && let Some(param_info) = type_param_info(self.interner, s_type_arg)
+                && let Some(constraint) = param_info.constraint
+            {
+                let intrinsic_of_constraint = self.interner.string_intrinsic(s_kind, constraint);
+                let evaluated = self.evaluate_type(intrinsic_of_constraint);
+                if evaluated != source && self.check_subtype(evaluated, target).is_true() {
+                    return SubtypeResult::True;
+                }
             }
 
             // Distributive intersection factoring:
