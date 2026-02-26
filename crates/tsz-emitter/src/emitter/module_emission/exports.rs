@@ -397,6 +397,8 @@ impl<'a> Printer<'a> {
                     {
                         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
                         enum_emitter.set_indent_level(self.writer.indent_level());
+                        enum_emitter
+                            .set_preserve_const_enums(self.ctx.options.preserve_const_enums);
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }
@@ -424,6 +426,8 @@ impl<'a> Printer<'a> {
                         // exports.E = E; statement.
                         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
                         enum_emitter.set_indent_level(self.writer.indent_level());
+                        enum_emitter
+                            .set_preserve_const_enums(self.ctx.options.preserve_const_enums);
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }

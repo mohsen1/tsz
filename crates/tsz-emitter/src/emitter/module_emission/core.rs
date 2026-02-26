@@ -583,7 +583,11 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
-        crate::transforms::emit_utils::export_clause_is_type_only(self.arena, clause_node)
+        crate::transforms::emit_utils::export_clause_is_type_only(
+            self.arena,
+            clause_node,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     /// Check if this declaration is a subsequent (merged) declaration whose name
@@ -976,7 +980,11 @@ impl<'a> Printer<'a> {
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
     ) -> bool {
-        crate::transforms::emit_utils::export_decl_has_runtime_value(self.arena, export_decl)
+        crate::transforms::emit_utils::export_decl_has_runtime_value(
+            self.arena,
+            export_decl,
+            self.ctx.options.preserve_const_enums,
+        )
     }
 
     /// Check if we should emit the __esModule marker.
