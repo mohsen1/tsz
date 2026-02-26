@@ -3,10 +3,11 @@
 //! This module contains the implementation of type query functions.
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
-use crate::types::IntrinsicKind;
+use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 
 use super::classifiers::get_lazy_def_id;
+use super::data::get_type_parameter_constraint;
 use super::traversal::collect_property_name_atoms_for_diagnostics;
 
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
@@ -250,30 +251,71 @@ define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 
 /// Check if a type is valid for object spreading (`{...x}`).
 ///
+/// Matches tsc's `isValidSpreadType()` behavior:
+/// 1. Resolve type parameters to their base constraints
+/// 2. Remove definitely-falsy types (false, 0, "", null, undefined, void, never)
+/// 3. Check if remaining type is an object-like/any/instantiable type
+///
 /// Returns `true` for types that can be spread into an object literal:
 /// - `any`, `never`, `error` (always spreadable)
 /// - Object types, arrays, tuples, functions, callables, mapped types
 /// - `object` intrinsic (non-primitive)
-/// - Type parameters (spreadable by default; constraint checked separately)
-/// - Unions: all members must be spreadable
-/// - Intersections: all members must be spreadable
+/// - Type parameters whose constraint is spreadable
+/// - Unions where non-falsy members are all spreadable
+/// - Intersections where all members are spreadable
 ///
 /// Returns `false` for primitive types (`number`, `string`, `boolean`, etc.),
-/// literals, `null`, `undefined`, `void`, and `unknown`.
+/// literals that aren't definitely-falsy, `unknown`, and types that resolve
+/// to these after constraint resolution.
 pub fn is_valid_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_valid_spread_type_impl(db, type_id, 0)
+}
+
+/// Check if a type is definitely falsy (always falsy at runtime).
+///
+/// Definitely-falsy types: `null`, `undefined`, `void`, `never`,
+/// literal `false`, literal `0`/`-0`/`NaN`, literal `""`, literal `0n`.
+fn is_definitely_falsy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // null, undefined, void, never are always falsy
+    if type_id.is_nullable() || type_id == TypeId::NEVER {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Intrinsic(
+            IntrinsicKind::Void | IntrinsicKind::Null | IntrinsicKind::Undefined,
+        )) => true,
+        Some(TypeData::Literal(lit)) => match lit {
+            LiteralValue::Boolean(b) => !b,
+            LiteralValue::Number(n) => n.0 == 0.0 || n.0.is_nan(),
+            LiteralValue::String(atom) => db.resolve_atom_ref(atom).is_empty(),
+            LiteralValue::BigInt(atom) => db.resolve_atom_ref(atom).as_ref() == "0",
+        },
+        _ => false,
+    }
+}
+
+/// Resolve a type parameter to its base constraint, or return the type itself.
+/// Matches tsc's `getBaseConstraintOrType()`.
+fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    get_type_parameter_constraint(db, type_id).unwrap_or(type_id)
 }
 
 fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
     if depth > 20 {
         return true;
     }
-    match type_id {
+
+    // Step 1: Resolve type parameter to its base constraint (like tsc's getBaseConstraintOrType)
+    let resolved = get_base_constraint_or_type(db, type_id);
+
+    match resolved {
         TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
         _ => {}
     }
-    match db.lookup(type_id) {
-        // Primitives and literals are not spreadable
+
+    match db.lookup(resolved) {
+        // Primitives, null/undefined/void, literals: not spreadable on their own.
+        // (Definitely-falsy members are filtered out in the union branch instead.)
         Some(
             TypeData::Intrinsic(
                 IntrinsicKind::String
@@ -281,21 +323,33 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 | IntrinsicKind::Boolean
                 | IntrinsicKind::Bigint
                 | IntrinsicKind::Symbol
+                | IntrinsicKind::Unknown
                 | IntrinsicKind::Void
                 | IntrinsicKind::Null
-                | IntrinsicKind::Undefined
-                | IntrinsicKind::Unknown,
+                | IntrinsicKind::Undefined,
             )
             | TypeData::Literal(_),
         ) => false,
-        // Union: all members must be spreadable
+        // Union: remove definitely-falsy members, then check remaining.
+        // Matches tsc's removeDefinitelyFalsyTypes before checking.
         Some(TypeData::Union(members)) => {
             let members = db.type_list(members);
-            members
+            // Filter out definitely-falsy types, then check if all remaining are valid
+            let non_falsy: Vec<TypeId> = members
+                .iter()
+                .copied()
+                .filter(|&m| !is_definitely_falsy_type(db, m))
+                .collect();
+            // If nothing remains after removing falsy types, the spread is invalid
+            // (entirely falsy union like `false | null`)
+            if non_falsy.is_empty() {
+                return false;
+            }
+            non_falsy
                 .iter()
                 .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
         }
-        // Intersection: all members must be spreadable
+        // Intersection: all members must be spreadable (after constraint resolution)
         Some(TypeData::Intersection(members)) => {
             let members = db.type_list(members);
             members
@@ -304,7 +358,8 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
         // Everything else is spreadable: object types, arrays, tuples, functions,
-        // callables, mapped types, type parameters, lazy refs, applications, etc.
+        // callables, mapped types, type parameters (unconstrained ones reach here
+        // and are valid per tsc's InstantiableNonPrimitive), lazy refs, applications, etc.
         _ => true,
     }
 }
