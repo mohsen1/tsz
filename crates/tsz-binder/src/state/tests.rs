@@ -142,3 +142,59 @@ fn resolves_wildcard_type_only_reexports_with_provenance() {
     assert_eq!(resolved_a_value, a_sym);
     assert!(!is_type_only_value);
 }
+
+#[test]
+fn global_augmentation_namespace_appears_in_file_locals() {
+    // `declare global { namespace JSX { ... } }` inside a module declaration
+    // should make the JSX namespace visible at the file level (in file_locals),
+    // since `global` escapes the module scope.
+    let source = r#"
+declare module "react" {
+    global {
+        namespace JSX {
+            interface IntrinsicElements {
+                div: any;
+                span: any;
+            }
+        }
+    }
+}
+"#;
+    let mut parser = ParserState::new("react.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // JSX namespace should be in file_locals because it's inside `declare global`
+    let jsx_sym_id = binder
+        .file_locals
+        .get("JSX")
+        .expect("expected JSX namespace in file_locals from global augmentation");
+    let jsx_symbol = binder
+        .symbols
+        .get(jsx_sym_id)
+        .expect("expected symbol data for JSX");
+
+    // JSX should be a namespace/module
+    assert!(
+        jsx_symbol.flags & symbol_flags::NAMESPACE_MODULE != 0,
+        "JSX should have NAMESPACE_MODULE flag"
+    );
+
+    // JSX should have IntrinsicElements in its exports
+    let exports = jsx_symbol
+        .exports
+        .as_ref()
+        .expect("expected JSX to have exports");
+    assert!(
+        exports.has("IntrinsicElements"),
+        "expected IntrinsicElements in JSX exports"
+    );
+
+    // JSX should also be tracked as a global augmentation
+    assert!(
+        binder.global_augmentations.contains_key("JSX"),
+        "expected JSX in global_augmentations"
+    );
+}
