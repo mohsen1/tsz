@@ -602,26 +602,12 @@ impl<'a> CheckerState<'a> {
     /// Returns `Some(TReturn)` if the type is a Generator/AsyncGenerator/Iterator/AsyncIterator
     /// type application with at least 2 type arguments, otherwise `None`.
     pub fn get_generator_return_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        // Check if it's a type application (e.g., Generator<Y, R, N>)
-        let app = query::type_application(self.ctx.types, type_id)?;
-
-        if app.args.is_empty() {
-            return None;
+        if let Some(result) = self.get_generator_arg_direct(type_id, 1) {
+            return Some(result);
         }
 
-        // Check if base is Generator, AsyncGenerator, Iterator, or AsyncIterator
-        if !self.is_generator_like_base_type(app.base) {
-            return None;
-        }
-
-        if app.args.len() >= 2 {
-            // Generator<Y, R, N>, Iterator<T, TReturn, TNext> etc. — TReturn is args[1]
-            Some(app.args[1])
-        } else {
-            // IterableIterator<T>, AsyncIterableIterator<T> — only 1 type arg.
-            // TReturn defaults to `any` per the lib definitions.
-            Some(TypeId::ANY)
-        }
+        // Fallback: resolve through interface/class heritage clauses.
+        self.resolve_generator_arg_from_heritage(type_id, 1, 0)
     }
 
     /// Extract the `TYield` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
@@ -629,14 +615,44 @@ impl<'a> CheckerState<'a> {
     /// For `yield expr` in a generator with an explicit return annotation,
     /// `expr` must be assignable to `TYield` (the first type argument).
     pub fn get_generator_yield_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(result) = self.get_generator_arg_direct(type_id, 0) {
+            return Some(result);
+        }
+
+        // Fallback: resolve through interface/class heritage clauses.
+        self.resolve_generator_arg_from_heritage(type_id, 0, 0)
+    }
+
+    /// Extract the `TNext` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
+    ///
+    /// For yield expressions in a generator, the result type of `yield` is `TNext`
+    /// (the type passed to `.next()`). This is the third type argument (index 2).
+    pub fn get_generator_next_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(result) = self.get_generator_arg_direct(type_id, 2) {
+            return Some(result);
+        }
+
+        // Fallback: resolve through interface/class heritage clauses.
+        self.resolve_generator_arg_from_heritage(type_id, 2, 0)
+    }
+
+    /// Direct extraction of a type argument at `arg_index` from a generator-like Application type.
+    fn get_generator_arg_direct(&mut self, type_id: TypeId, arg_index: usize) -> Option<TypeId> {
         let app = query::type_application(self.ctx.types, type_id)?;
 
-        if app.args.is_empty() {
+        if app.args.is_empty() || !self.is_generator_like_base_type(app.base) {
             return None;
         }
 
-        self.is_generator_like_base_type(app.base)
-            .then(|| app.args[0])
+        if arg_index < app.args.len() {
+            Some(app.args[arg_index])
+        } else if arg_index == 1 && app.args.len() == 1 {
+            // IterableIterator<T>, AsyncIterableIterator<T> — only 1 type arg.
+            // TReturn defaults to `any` per the lib definitions.
+            Some(TypeId::ANY)
+        } else {
+            None
+        }
     }
 
     /// Check if a type is a Generator-like base type (Generator, `AsyncGenerator`,
@@ -687,6 +703,127 @@ impl<'a> CheckerState<'a> {
                 | "IterableIterator"
                 | "AsyncIterableIterator"
         )
+    }
+
+    /// Resolve through interface/class heritage clauses to extract a specific type argument
+    /// from a generator-like base type.
+    ///
+    /// For `interface I1 extends Iterator<0, 1, 2> {}`, when given the TypeId of `I1`
+    /// and `arg_index = 2`, this returns the TypeId for `2` (`TNext`).
+    ///
+    /// This enables extracting TYield/TReturn/TNext from indirect generator references
+    /// used as generator function return type annotations.
+    fn resolve_generator_arg_from_heritage(
+        &mut self,
+        type_id: TypeId,
+        arg_index: usize,
+        depth: u32,
+    ) -> Option<TypeId> {
+        // Guard against infinite recursion (e.g., circular heritage)
+        if depth > 5 {
+            return None;
+        }
+
+        // Get the DefId from a Lazy type
+        let def_id = query::lazy_def_id(self.ctx.types, type_id)?;
+        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let declarations = symbol.declarations.clone();
+
+        for decl_idx in &declarations {
+            let Some(decl_node) = self.ctx.arena.get(*decl_idx) else {
+                continue;
+            };
+
+            // Check interface declarations
+            if let Some(iface) = self.ctx.arena.get_interface(decl_node)
+                && let Some(result) =
+                    self.find_generator_arg_in_heritage(&iface.heritage_clauses, arg_index, depth)
+                {
+                    return Some(result);
+                }
+
+            // Check class declarations
+            if let Some(class) = self.ctx.arena.get_class(decl_node)
+                && let Some(result) =
+                    self.find_generator_arg_in_heritage(&class.heritage_clauses, arg_index, depth)
+                {
+                    return Some(result);
+                }
+        }
+
+        None
+    }
+
+    /// Walk heritage clauses to find a generator-like base and extract a type argument at `arg_index`.
+    ///
+    /// Heritage types are `ExpressionWithTypeArguments` nodes (e.g., `Iterator<0, 1, 2>`).
+    /// We check syntactically if the heritage expression names a generator-like type,
+    /// then extract the type argument at the requested index using `get_type_from_type_node`.
+    fn find_generator_arg_in_heritage(
+        &mut self,
+        heritage_clauses: &Option<tsz_parser::parser::base::NodeList>,
+        arg_index: usize,
+        depth: u32,
+    ) -> Option<TypeId> {
+        let heritage_clauses = heritage_clauses.as_ref()?;
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                // Heritage types are ExpressionWithTypeArguments nodes
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_data) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (expr_data.expression, expr_data.type_arguments.clone())
+                    } else {
+                        (type_idx, None)
+                    };
+
+                // Check if the base expression names a generator-like type
+                let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                    continue;
+                };
+                if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                    && Self::is_generator_like_name(&ident.escaped_text) {
+                        // Found generator-like heritage. Extract the type arg at arg_index.
+                        if let Some(type_args) = &type_arguments {
+                            if arg_index < type_args.nodes.len() {
+                                return Some(
+                                    self.get_type_from_type_node(type_args.nodes[arg_index]),
+                                );
+                            }
+                            // arg_index == 1 with only 1 arg: TReturn defaults to `any`
+                            if arg_index == 1 && type_args.nodes.len() == 1 {
+                                return Some(TypeId::ANY);
+                            }
+                        }
+                        return None; // Generator-like but missing the requested arg
+                    }
+
+                // Non-generator heritage type — resolve its type and recurse through its heritage
+                let heritage_base_type = self.get_type_of_node(expr_idx);
+                if heritage_base_type != TypeId::ERROR
+                    && let Some(result) = self.resolve_generator_arg_from_heritage(
+                        heritage_base_type,
+                        arg_index,
+                        depth + 1,
+                    ) {
+                        return Some(result);
+                    }
+            }
+        }
+
+        None
     }
 
     /// Unwrap Promise<T> to T for async function return type checking.
