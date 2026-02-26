@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7729/12570 (61.5%) — full suite, fingerprint level (new framework)
-> Previously ~7717/12570 (61.4%), improved by node/allowJs fixes and closure return type correction.
+**Current score**: ~7723/12570 (61.4%) — full suite, fingerprint level (new framework)
+> Previously ~7729/12570 (61.5%) at snapshot, ~7719 at baseline after pull.
 
 ---
 
@@ -13,6 +13,24 @@
 - **Status**: Partially implemented, ongoing solver/checker type relation work
 - **Root cause**: Core assignability, property resolution, and argument type checking gaps
 - **Difficulty**: HIGH (broad, incremental)
+
+### Closure narrowing — typeof guards for captured variables RESOLVED
+- **Fixed**: Removed blanket Rule #42 early-return in `apply_flow_narrowing` (definite.rs)
+- **Root cause**: `apply_flow_narrowing()` returned `declared_type` immediately for captured mutable
+  variables in closures, preventing local typeof guards from narrowing (e.g. `typeof x === "string" && x.length`)
+- **Fix**: Rely on `check_flow()`'s existing START node handling (core.rs:1062) which already returns
+  `initial_type` at function boundaries for captured mutable vars. Local CONDITION nodes are applied first.
+- **Impact**: Fixed false TS2339 errors in typeGuardsInFunction, jsx, intersection tests (+4-6 tests)
+
+### expressions/typeGuards — remaining TS2454/TS2322 gaps (42 failing, 33.3% pass rate)
+- **Pattern**: All remaining failures are MISSING diagnostics (extra=0)
+- **Root cause**: Missing TS2454 (used before assigned) for uninitialized `var` at global/module scope
+  → leads to missing TS2322 because we narrow when tsc wouldn't (uninitialized vars shouldn't narrow)
+- **Specific**: `var x: string | number;` without assignment → tsc treats as always `string | number`,
+  typeof guards don't narrow. We incorrectly narrow because our DAA doesn't fire at global scope.
+- **Fix needed**: `should_check_definite_assignment` in `usage.rs` may need to be adjusted for
+  global-scope `var` declarations without initializers under strictNullChecks
+- **Affected tests**: ~26 missing TS2454, ~23 missing TS2322, ~12 missing TS2564
 
 ### ~~TS2353 — Intersection freshness false positives~~ RESOLVED
 - Fixed: intersection merging now uses AND logic for FRESH_LITERAL propagation
