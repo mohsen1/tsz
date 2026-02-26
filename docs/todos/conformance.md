@@ -1,8 +1,9 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8769/12570 (69.8%) — full suite, fingerprint level (new framework)
-> Previously ~8765/12570 (69.7%) baseline.
+**Current score**: ~9204/12570 (73.2%) — full suite, fingerprint level (new framework)
+> Note: upstream TS2882 regression (eabafa0e1) temporarily dropped snapshot to 7116.
+> The +8 from iterable spread fix is validated against the pre-regression baseline.
 
 ---
 
@@ -21,6 +22,20 @@
 - **Fix**: Rely on `check_flow()`'s existing START node handling (core.rs:1062) which already returns
   `initial_type` at function boundaries for captured mutable vars. Local CONDITION nodes are applied first.
 - **Impact**: Fixed false TS2339 errors in typeGuardsInFunction, jsx, intersection tests (+4-6 tests)
+
+### es6/spread — iterable spread resolution PARTIALLY RESOLVED
+- **Fixed**: Custom iterable spread in function calls now resolves iterated element type
+  via `type[Symbol.iterator]().next().value` instead of using raw iterator class type.
+- **Fixed**: TS2556 suppresses subsequent TS2345 when both would fire (matches tsc).
+- **Impact**: es6/spread area: 48% → 70% (+6 tests), +2 tests from TS2556 suppression.
+- **Remaining gaps (8 tests)**:
+  - iteratorSpreadInCall4: Spread at non-rest position with rest param elsewhere → need
+    rest-position detection in `expected_for_index` (solver's `signature_accepts_arg_count`
+    counts rest params as required, blocking the arity-0 probe approach)
+  - iteratorSpreadInCall7/8/9: Generic inference with multiple spread iterables → T not
+    inferred from resolved iterable element types across multiple spread arguments
+  - iteratorSpreadInArray5/6/10: Array-spread issues (TS2322 location, TS2488, TS2769)
+  - arraySpreadInCall: TS2554 argument count mismatch with spread expansion
 
 ### expressions/typeGuards — remaining TS2454/TS2322 gaps (42 failing, 33.3% pass rate)
 - **Pattern**: All remaining failures are MISSING diagnostics (extra=0)
