@@ -125,6 +125,21 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1100: `eval` or `arguments` used as a function expression name in strict mode.
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            && let Some(name_idx) = name_node
+            && let Some(name_n) = self.ctx.arena.get(name_idx)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
+        {
+            let name = &ident.escaped_text;
+            if self.is_strict_mode_for_node(name_idx)
+                && crate::state_checking::is_eval_or_arguments(name)
+                && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
+            {
+                self.emit_eval_or_arguments_strict_mode_error(name_idx, name);
+            }
+        }
+
         // For nested functions/methods, push enclosing type parameters first so that
         // type parameter constraints, parameter types, and return types can reference
         // outer generic scopes.  This is needed because get_type_of_function can be

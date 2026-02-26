@@ -238,6 +238,25 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// TS1100: Cannot assign to `eval` or `arguments` in strict mode.
+    fn check_strict_mode_eval_or_arguments_assignment(&mut self, target_idx: NodeIndex) {
+        let inner = self.ctx.arena.skip_parenthesized(target_idx);
+        let Some(node) = self.ctx.arena.get(inner) else {
+            return;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return;
+        };
+        let name = &ident.escaped_text;
+        if crate::state_checking::is_eval_or_arguments(name) && self.is_strict_mode_for_node(inner)
+        {
+            self.emit_eval_or_arguments_strict_mode_error(inner, name);
+        }
+    }
+
     /// Check if assignment target is a function and emit TS2630 error.
     ///
     /// TypeScript does not allow direct assignment to functions:
@@ -417,6 +436,9 @@ impl<'a> CheckerState<'a> {
         // TS2630: Cannot assign to 'x' because it is a function.
         // This check must come after valid assignment target check but before type checking.
         let is_function_assignment = self.check_function_assignment(left_idx);
+
+        // TS1100: Cannot assign to `eval` or `arguments` in strict mode.
+        self.check_strict_mode_eval_or_arguments_assignment(left_idx);
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
@@ -758,6 +780,9 @@ impl<'a> CheckerState<'a> {
 
         // TS2629/TS2628/TS2630: Cannot assign to class/enum/function.
         let is_function_assignment = self.check_function_assignment(left_idx);
+
+        // TS1100: Cannot assign to `eval` or `arguments` in strict mode.
+        self.check_strict_mode_eval_or_arguments_assignment(left_idx);
 
         // Compound assignments read the LHS before writing, so the LHS identifier
         // must go through definite assignment analysis (TS2454). Without this,

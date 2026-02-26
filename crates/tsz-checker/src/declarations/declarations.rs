@@ -196,6 +196,32 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         }
 
+        // TS1100: `eval` or `arguments` used as a function name in strict mode.
+        // In class bodies, `arguments` is reported as TS1210 instead.
+        if !has_declare
+            && func.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(func.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = &ident.escaped_text;
+            if self.is_strict_mode_for_node(func.name)
+                && crate::state_checking::is_eval_or_arguments(name)
+                && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message =
+                    format_message(diagnostic_messages::INVALID_USE_OF_IN_STRICT_MODE, &[name]);
+                if let Some((pos, end)) = self.ctx.get_node_span(func.name) {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        message,
+                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                    );
+                }
+            }
+        }
+
         // TS1250/TS1251: Function declarations not allowed inside blocks in strict mode
         // when targeting ES3 or ES5
         self.check_strict_mode_function_in_block(func_idx);
