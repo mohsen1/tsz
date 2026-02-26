@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T16:47:30Z",
-  "git_sha": "8c63178aad7860fb7b4286878566a20d27ab7aef",
+  "timestamp": "2026-02-26T16:54:42Z",
+  "git_sha": "957bd38c77d452b1838271a11d6ab5c6f0d635be",
   "summary": {
     "total_tests": 12570,
-    "passed": 9234,
-    "failed": 3336,
+    "passed": 9236,
+    "failed": 3334,
     "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
@@ -104,6 +104,13 @@
       "total": 30,
       "passed": 16,
       "failed": 14,
+      "pass_rate": 53.33
+    },
+    {
+      "area": "references",
+      "total": 15,
+      "passed": 8,
+      "failed": 7,
       "pass_rate": 53.33
     },
     {
@@ -396,9 +403,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4843,
-      "failed": 1667,
-      "pass_rate": 74.39
+      "passed": 4849,
+      "failed": 1661,
+      "pass_rate": 74.49
     },
     {
       "area": "es6/yieldExpressions",
@@ -413,13 +420,6 @@
       "passed": 12,
       "failed": 4,
       "pass_rate": 75.0
-    },
-    {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 32,
-      "failed": 10,
-      "pass_rate": 76.19
     },
     {
       "area": "es6/unicodeExtendedEscapes",
@@ -443,11 +443,11 @@
       "pass_rate": 76.92
     },
     {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 51,
-      "failed": 14,
-      "pass_rate": 78.46
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 33,
+      "failed": 9,
+      "pass_rate": 78.57
     },
     {
       "area": "enums",
@@ -462,6 +462,13 @@
       "passed": 75,
       "failed": 20,
       "pass_rate": 78.95
+    },
+    {
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 52,
+      "failed": 13,
+      "pass_rate": 80.0
     },
     {
       "area": "expressions/commaOperator",
@@ -632,13 +639,6 @@
       "pass_rate": 93.33
     },
     {
-      "area": "references",
-      "total": 15,
-      "passed": 14,
-      "failed": 1,
-      "pass_rate": 93.33
-    },
-    {
       "area": "functions",
       "total": 18,
       "passed": 17,
@@ -742,6 +742,10 @@
       "count": 9
     },
     {
+      "code": "TS2688",
+      "count": 9
+    },
+    {
       "code": "TS2741",
       "count": 8
     },
@@ -791,10 +795,6 @@
     },
     {
       "code": "TS7006",
-      "count": 4
-    },
-    {
-      "code": "TS2882",
       "count": 4
     }
   ],
@@ -958,8 +958,8 @@
       "count": 16
     },
     {
-      "code": "TS2353",
-      "count": 14
+      "code": "TS2688",
+      "count": 15
     }
   ]
 }
