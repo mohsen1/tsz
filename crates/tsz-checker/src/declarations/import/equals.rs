@@ -364,8 +364,11 @@ impl<'a> CheckerState<'a> {
             }
             let import_has_value = has_value;
 
-            if import_has_value
-                && let Some(import_sym_id) = import_sym_id
+            // TS2440: Check if the import binding name conflicts with a local declaration.
+            // This check is independent of whether the import target has value semantics —
+            // tsc reports TS2440 whenever an import-equals name conflicts with a local
+            // declaration in the same scope (var, function, class, etc.).
+            if let Some(import_sym_id) = import_sym_id
                 && let Some(import_sym) = self.ctx.binder.symbols.get(import_sym_id)
             {
                 let has_merged_local_non_import_decl =

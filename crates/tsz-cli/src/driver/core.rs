@@ -1057,8 +1057,6 @@ fn compile_inner(
     // tsc 6.0 deprecation diagnostic handling:
     // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
     // file-level diagnostics (syntactic or semantic) alongside them.
-    // Verified from tsc cache: no test has both TS5107 and any 1000-1999 range code.
-    // When we falsely emit syntactic errors in the file, TS5107 must still take priority.
     //
     // EXCEPTION: tsc suppresses TS5107 when real file-level errors exist (preferring
     // file errors over config warnings). We can't fully replicate this because our
