@@ -1067,10 +1067,8 @@ fn compile_inner(
     // Until checker false-positive rates drop significantly, TS5107 always takes
     // priority over file-level diagnostics.
     if has_deprecation_diagnostics {
-        // Discard per-file diagnostics; keep config-level and global diagnostics.
-        diagnostics.retain(|d| {
-            (5000..6000).contains(&d.code) || d.code >= 18000 || d.file.is_empty() || d.start == 0
-        });
+        // Fatal: discard ALL source file diagnostics (syntactic + semantic).
+        diagnostics.clear();
     }
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);

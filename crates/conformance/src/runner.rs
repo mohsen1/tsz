@@ -609,7 +609,12 @@ impl Runner {
                         .and_then(|e| e.to_str())
                         .map(std::string::ToString::to_string);
 
-                    for variant in option_variants {
+                    // Run each option variant (e.g. module=commonjs, module=system).
+                    // Only the FIRST variant's diagnostics are used for comparison
+                    // because the tsc cache was generated with first-value-only
+                    // semantics for multi-value options. Non-first variants still
+                    // run for crash/timeout detection.
+                    for (variant_idx, variant) in option_variants.into_iter().enumerate() {
                         let content_clone = content.clone();
                         let filenames = parsed.directives.filenames.clone();
                         let variant_clone = variant.clone();
@@ -689,8 +694,15 @@ impl Runner {
                             return Ok((TestResult::Crashed, file_preview.take()));
                         }
 
-                        all_codes.extend(compile_result.error_codes);
-                        all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+                        // Only accumulate diagnostics from the first variant.
+                        // The tsc cache uses first-value-only for multi-value
+                        // options (module, jsx, etc.), so comparing the union
+                        // of all variants against the cache produces false
+                        // "extra" diagnostics from non-first variants.
+                        if variant_idx == 0 {
+                            all_codes.extend(compile_result.error_codes);
+                            all_fingerprints.extend(compile_result.diagnostic_fingerprints);
+                        }
                     }
 
                     // Filter out all error codes for JS files when checkJs is not enabled.

@@ -212,13 +212,15 @@ pub fn filter_incompatible_module_resolution_variants(
                     .as_deref()
                     .is_none_or(|m| matches!(m, "node16" | "node18" | "node20")),
                 Some("nodenext") => module.as_deref().is_none_or(|m| m == "nodenext"),
-                // `bundler` requires `preserve` or ES2015+ — filter out incompatible
-                // module values that would produce TS5095 errors the cache never saw
-                // (the cache generator only tests the first comma-separated value).
+                // `bundler` requires `preserve`, `commonjs`, or ES2015+ — filter out
+                // incompatible module values that would produce TS5095 errors the
+                // cache never saw (the cache generator only tests the first
+                // comma-separated value).
                 Some("bundler") => module.as_deref().is_none_or(|m| {
                     matches!(
                         m,
                         "preserve"
+                            | "commonjs"
                             | "es2015"
                             | "es6"
                             | "es2020"
