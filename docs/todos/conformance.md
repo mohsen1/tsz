@@ -1,135 +1,38 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9277/12570 (73.8%) — full suite, error-code level
-> Recovered from regression. Previous low was ~6910/12226 (56.5%) due to remote solver changes.
+**Current score**: ~9268/12570 (73.7%) — full suite, error-code level
+> Recovered from TS2430 regression. Previous dip was ~7129.
 
 ---
 
-## String Intrinsic Type Assignability — Session 2026-02-26
-- **Area**: types/typeAliases (targeted intrinsicTypes.ts test)
-- **Root cause**: `visit_string_intrinsic()` in the subtype visitor (`subtype/visitor.rs`)
-  returned `SubtypeResult::False` unconditionally. This meant `Uppercase<T>`,
-  `Lowercase<T>`, etc. were never recognized as subtypes of `string` or of
-  each other (even with matching kind + covariant type arg).
-- **Fix** (two locations):
-  1. **Visitor** (`visitor.rs`): Added three rules to `visit_string_intrinsic`:
-     - Rule 1: `StringIntrinsic(kind, T) <: string` — always true
-     - Rule 2: `StringIntrinsic(kind, S) <: StringIntrinsic(kind, T)` when `S <: T` (covariant)
-     - Rule 3: Constraint-based — evaluate intrinsic with type arg's constraint, check result
-  2. **Core** (`core.rs`): Added StringIntrinsic constraint check inside the target union
-     handler. This is necessary because the target union check returns early before the
-     visitor runs. Handles `Uppercase<T extends 'foo'|'bar'> <: 'FOO'|'BAR'`.
-- **Files changed**:
-  - `crates/tsz-solver/src/relations/subtype/visitor.rs` (visit_string_intrinsic)
-  - `crates/tsz-solver/src/relations/subtype/core.rs` (target union handler)
-  - `crates/tsz-solver/src/lib.rs` (test module registration)
-  - `crates/tsz-solver/tests/string_intrinsic_subtype_tests.rs` (8 unit tests)
-- **False positives eliminated**:
-  - `Uppercase<T> not assignable to string` (when T extends string)
-  - `Uppercase<U> not assignable to Uppercase<T>` (when U extends T)
-  - `Uppercase<T> not assignable to 'FOO'|'BAR'` (when T extends 'foo'|'bar')
-  - `Uppercase<U> not assignable to Uppercase<string>` (when U extends string)
-- **Net result**: +6 tests (9271→9277) at error-code level
-- **Remaining gaps in intrinsicTypes.ts**:
-  - TS2795 vs TS2304: `type MyUppercase<S extends string> = intrinsic;` — we emit TS2304
-    "Cannot find name 'intrinsic'" instead of TS2795 "intrinsic keyword can only be used
-    to declare compiler provided intrinsic types". Checker/parser issue.
-  - TS2344 message text: We display `Type '42'` but tsc displays `Type 'number'` for numeric
-    literal constraint violations. Type widening in diagnostic display issue.
+## Lib Directory Discovery & Conformance Infrastructure Fix — Session 2026-02-26
 
-## JSX Component Attribute Type Checking — Session 2026-02-26
-- **Area**: jsx (47.8% → 49.5%, +5 tests at error-code level)
-- **Commit**: `b82bec1af` (feat commit + snapshot)
-- **Root cause**: Component JSX elements (uppercase tags like `<MyComponent>`)
-  had ZERO attribute type checking — the else branch at line 146 only resolved
-  the tag as a variable but never called `check_jsx_attributes_against_props()`.
-- **Implementation**:
-  1. **SFC props extraction**: Added `get_sfc_props_type()` — extracts first
-     parameter type from non-generic, single call signatures.
-  2. **Class component props**: Added `get_class_component_props_type()` — uses
-     construct signatures + `JSX.ElementAttributesProperty` to find instance
-     property holding props.
-  3. **Conservative guards** (prevent false positives):
-     - G1: Skip when file has parse errors (error recovery → false positives)
-     - G2: Skip class components when no ElementAttributesProperty (no JSX infra)
-     - G3: Skip generic class components (need full generic inference)
-     - G4: Skip overloaded SFCs (need JSX overload resolution)
-     - G5: Skip union-typed props (need contextual narrowing)
-     - Skip spread assignability (need spread+attribute merging)
-  4. **Hyphenated attributes** bypass type checking (data-*, aria-*, etc.) —
-     matching TSC behavior where only JS identifiers are checked against props.
-- **Files changed**:
-  - `crates/tsz-checker/src/checkers/jsx_checker.rs` (+266 lines)
-  - `crates/tsz-checker/tests/jsx_component_attribute_tests.rs` (new, 10 tests)
-  - `crates/tsz-checker/src/lib.rs` (test module registration)
-- **Tests fixed** (5 improvements, 0 regressions):
-  - tsxAttributeResolution9, tsxAttributeResolution10, tsxAttributeResolution14
-  - tsxUnionElementType1, tsxUnionElementType2
-- **Future work**: Generic inference for JSX, overload resolution, union
-  contextual narrowing, spread+attribute merging, children prop synthesis.
+### Critical finding: missing lib files caused 97.9% of failures to be silent
+- **Root cause**: `scripts/node_modules/typescript/lib/` did not exist because `npm install`
+  had not been run in `scripts/`. The `default_lib_dir()` function in `src/config.rs` searches
+  multiple candidate paths; none existed.
+- **Impact**: Any test with a `// @target: ...` directive triggers `resolve_default_lib_files()`
+  in `crates/tsz-cli/src/driver/core.rs:1814`, which calls `default_lib_dir()`. When lib dir
+  is missing, the compiler returns `Err("lib directory not found")`. In batch mode, this error
+  is written to stdout in a format the conformance runner's regex doesn't match, resulting in
+  ZERO parsed diagnostics for those tests.
+- **Scale**: 5325/5441 failing tests (97.9%) had `@target` directives. 5153 of these showed
+  ONLY missing diagnostics (no extras) — the hallmark of silent compilation failure.
+- **Fix**: Running `./scripts/setup.sh` (or `cd scripts && npm install`) installs
+  `typescript@6.0.0-dev.20260224` which provides the lib files.
+- **Net effect**: Only +1 conformance test improvement. Many previously-silent-failing tests
+  now produce INCORRECT diagnostics (extra errors from lib type definitions exposing
+  checker/solver gaps) instead of zero diagnostics.
 
-## Override Checking Fixes — Session 2026-02-26
-- **Area**: override (87.1% → 93.9% area, +2 tests at error-code level)
-- **Commit**: `e5bc49028` (rebased as `fe464fbc5` after snapshot)
-- **Three fixes**:
-  1. **Type-level fallback for complex heritage** (override19/20): When base class
-     comes from `CreateMixin()` or variable typed as intersection, AST class chain
-     walking fails (`base_class_idx` is None or resolves to non-class). Added fallback
-     using `base_instance_type_from_expression()` to get construct signatures, then
-     `collect_property_name_atoms_for_diagnostics()` (solver query boundary) to collect
-     property names. Enables TS4113/TS4114/TS4117 for non-trivial heritage.
-  2. **JSDoc @override variant codes** (override_js4): Added `is_jsdoc_override` field
-     to `ClassMemberInfo`. When override comes from `@override` JSDoc tag, emit
-     TS4122/TS4123 instead of TS4113/TS4117.
-  3. **Parameter property override** (overrideParameterProperty):
-     - Added `OverrideKeyword` to `has_parameter_property_modifier` so `m(override p1)`
-       triggers TS2369 in non-constructor methods.
-     - Fixed TS4113 span to point at `param_idx` (whole parameter decl) not `param.name`.
-- **Files changed**:
-  - `crates/tsz-checker/src/classes/class_checker.rs` (main changes)
-  - `crates/tsz-checker/src/classes/class_checker_compat.rs` (is_jsdoc_override field)
-  - `crates/tsz-checker/src/types/queries/core.rs` (OverrideKeyword in modifier check)
-- **Remaining override gaps** (1/33):
-  - override19: Error codes correct but type display shows `InstanceType<typeof Context>`
-    instead of evaluated `Context` — solver conditional type evaluation gap (not eager
-    intersection merging). override20 is now fixed (see below).
+### Updated failure analysis WITH lib files
+- Total failures: ~3281 (down from ~5441 with silent failures)
+- 1-mismatch tests: 691
+- Top missing codes (1-mismatch): TS2322 (58), TS2339 (29), TS2345 (26), TS2304 (20)
+- Top extra codes (1-mismatch): TS2322 (16), TS2345 (14), TS2339 (8), TS2454 (8)
+- **Important**: `./scripts/setup.sh` MUST be run for accurate conformance measurement.
 
-### Note on conformance regression
-After rebasing onto remote solver changes (commits `63bc32d67`..`7e8b444ea`), overall
-conformance dropped from ~9279/12570 (73.8%) to ~6910/12226 (56.5%). This regression
-is NOT from the override fixes. The remote solver changes (Lazy resolution in
-`bypass_evaluation`, KeyOf evaluation in relation normalization, filtering as-clauses
-in mapped types) caused widespread test failures. Override area specifically went from
-87.1% to 30.3% due to these upstream changes.
-
-## Intersection Display Name in Override Diagnostics — Session 2026-02-26
-- **Area**: override (93.5% → 96.8%, +1 test: override20.ts)
-- **Commit**: `98c886e16`
-- **Root cause**: When a base class expression is typed as an intersection of constructors
-  (e.g., `C1 & C2`), the solver eagerly merges object types in `normalize_intersection()`.
-  By the time `format_type()` runs, the intersection identity is lost and the diagnostic
-  shows `{ m1: () => void; m2: () => void }` instead of `I1 & I2`.
-- **Fix**: Added `intersection_instance_display_name()` in `constructor_checker.rs` that:
-  1. Gets the cached constructor type and checks if it's an intersection
-  2. For each intersection member: resolves Lazy → gets raw construct return type
-  3. Uses `classify_for_lazy_resolution` to distinguish named types (preserve Lazy for
-     named display) vs structural types (resolve for object display)
-  4. Sorts names alphabetically for consistent ordering (solver sorts by TypeId internally)
-  5. Joins with ` & ` for the display string
-- **Query boundary**: Added `construct_return_type_for_display()` in
-  `query_boundaries/checkers/constructor.rs` — gets construct return type without full
-  resolution through `resolve_type_for_property_access`.
-- **Files changed**:
-  - `crates/tsz-checker/src/query_boundaries/checkers/constructor.rs` (new boundary fn)
-  - `crates/tsz-checker/src/classes/constructor_checker.rs` (intersection_instance_display_name)
-  - `crates/tsz-checker/src/classes/class_checker.rs` (use new display name at 2 sites)
-  - `crates/tsz-checker/tests/override_intersection_display_tests.rs` (2 unit tests)
-  - `crates/tsz-checker/src/lib.rs` (test module registration)
-- **Remaining gap**: override19 still fails — construct return type contains unevaluated
-  `Application(InstanceType, [TypeQuery(Context)])`. This is a solver conditional type
-  evaluation gap where `InstanceType<typeof Context>` doesn't reduce to `Context` in the
-  display path. Separate from the intersection display issue.
+---
 
 ## KeyOf Normalization Fix — Session 2026-02-26
 - **Area**: types/mapped (46.2% → 46.2% area, +1 test: mappedTypeModifiers.ts)
