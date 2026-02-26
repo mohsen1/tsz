@@ -98,19 +98,18 @@ impl<'a> CheckerState<'a> {
                 || expr_type == TypeId::STRING
                 || expr_type == TypeId::NUMBER)
                 && let Some(sym_id) = self.resolve_identifier_symbol(expression_idx)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && symbol.value_declaration.is_some()
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.value_declaration.is_some()
+            {
+                let decl_idx = symbol.value_declaration;
+                if self.ctx.arena.is_const_variable_declaration(decl_idx)
+                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && let Some(decl_data) = self.ctx.arena.get_variable_declaration(decl_node)
+                    && !decl_data.type_annotation.is_some()
                 {
-                    let decl_idx = symbol.value_declaration;
-                    if self.ctx.arena.is_const_variable_declaration(decl_idx)
-                        && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                            && let Some(decl_data) =
-                                self.ctx.arena.get_variable_declaration(decl_node)
-                            && !decl_data.type_annotation.is_some()
-                        {
-                            return false; // const without type annotation → non-dynamic
-                        }
+                    return false; // const without type annotation → non-dynamic
                 }
+            }
             return true; // Widened type (string/number/symbol with annotation or let/var) → dynamic
         }
 
@@ -669,10 +668,11 @@ impl<'a> CheckerState<'a> {
                         break;
                     };
                     if rn.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                        && let Some(paren) = self.ctx.arena.get_parenthesized(rn) {
-                            resolved_expr_idx = paren.expression;
-                            continue;
-                        }
+                        && let Some(paren) = self.ctx.arena.get_parenthesized(rn)
+                    {
+                        resolved_expr_idx = paren.expression;
+                        continue;
+                    }
                     break;
                 }
 
