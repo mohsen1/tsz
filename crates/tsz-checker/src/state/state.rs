@@ -346,6 +346,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // When TS2454 was emitted for this node, check_flow_usage already returned
+        // the declared type. Re-narrowing would override that with the narrowed type,
+        // hiding assignment errors (TS2322) that tsc correctly emits.
+        if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };

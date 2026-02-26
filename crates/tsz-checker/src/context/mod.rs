@@ -263,6 +263,12 @@ pub struct CheckerContext<'a> {
     /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
     pub call_type_predicates: crate::control_flow::CallPredicateMap,
 
+    /// Nodes where TS2454 (used before assigned) was emitted.
+    /// When TS2454 fires, `check_flow_usage` returns the declared type (un-narrowed).
+    /// The second narrowing pass in `get_type_of_node` must NOT re-narrow these nodes,
+    /// otherwise the declared type gets overridden with the narrowed type.
+    pub daa_error_nodes: FxHashSet<u32>,
+
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
