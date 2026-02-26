@@ -295,7 +295,20 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_export_default_expression(&mut self, expr_idx: NodeIndex) {
-        // Synthesize a _default variable for expression exports
+        // If the expression is a simple identifier, emit `export default <name>;` directly.
+        // This matches tsc behavior for `export default foo;` where `foo` is declared in scope.
+        if let Some(expr_node) = self.arena.get(expr_idx) {
+            if expr_node.kind == SyntaxKind::Identifier as u16 {
+                self.write_indent();
+                self.write("export default ");
+                self.emit_node(expr_idx);
+                self.write(";");
+                self.write_line();
+                return;
+            }
+        }
+
+        // For complex expressions, synthesize a _default variable
         // First, emit: declare const _default: <type>;
         self.write_indent();
         self.write("declare const _default: ");
@@ -992,6 +1005,18 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&import_eq.modifiers, SyntaxKind::ExportKeyword);
         let is_public_exported = is_exported && !already_exported;
+
+        // Elide non-exported import equals declarations that are not used by the public API
+        if !is_exported && !already_exported {
+            // When no usage tracking is available, non-exported `import = require(...)`
+            // declarations are almost always value-level and not needed in .d.ts output.
+            if self.used_symbols.is_none() {
+                return;
+            }
+            if !self.should_emit_public_api_dependency(import_eq.import_clause) {
+                return;
+            }
+        }
 
         // Only write indent if not already exported (caller handles indent for exported case)
         if !already_exported {

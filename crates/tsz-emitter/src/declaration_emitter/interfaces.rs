@@ -22,7 +22,9 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self
             .arena
             .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&iface.modifiers) {
+        if !self.should_emit_public_api_member(&iface.modifiers)
+            && !self.should_emit_public_api_dependency(iface.name)
+        {
             return;
         }
 

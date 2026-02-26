@@ -488,19 +488,24 @@ impl<'a> DeclarationEmitter<'a> {
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
         for comment in &source_file.comments {
-            // Extract the comment text from the source file
             let text = &source_file.text[comment.pos as usize..comment.end as usize];
 
             // Triple-slash directives start with ///
             if let Some(stripped) = text.strip_prefix("///") {
                 let trimmed = stripped.trim_start();
 
-                // Check if this is a directive we should preserve
-                if trimmed.starts_with("<reference")
-                    || trimmed.starts_with("<amd-module")
-                    || trimmed.starts_with("<amd-dependency")
-                {
-                    self.write(text);
+                // In declaration emit, tsc does NOT copy source `/// <reference>` directives.
+                // It generates needed type/lib references itself during declaration emit.
+                // Only preserve `<amd-module>` and `<amd-dependency>` directives.
+                if trimmed.starts_with("<amd-module") || trimmed.starts_with("<amd-dependency") {
+                    // Normalize: ensure space before /> (tsc normalizes this)
+                    let normalized = if text.ends_with("/>") && !text.ends_with(" />") {
+                        let base = &text[..text.len() - 2];
+                        format!("{base} />")
+                    } else {
+                        text.to_string()
+                    };
+                    self.write(&normalized);
                     self.write_line();
                 }
             }
@@ -583,7 +588,9 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
 
-        if !self.should_emit_public_api_member(&func.modifiers) {
+        if !self.should_emit_public_api_member(&func.modifiers)
+            && !self.should_emit_public_api_dependency(func.name)
+        {
             return;
         }
 
@@ -679,7 +686,9 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self
             .arena
             .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&class.modifiers) {
+        if !self.should_emit_public_api_member(&class.modifiers)
+            && !self.should_emit_public_api_dependency(class.name)
+        {
             return;
         }
         let is_abstract = self
@@ -1003,10 +1012,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write("constructor(");
-        // Set flag to strip accessibility modifiers from constructor parameters
-        self.in_constructor_params = true;
-        self.emit_parameters(&ctor.parameters);
-        self.in_constructor_params = false;
+        // tsc strips parameters from private constructors in .d.ts output
+        let is_private = ctor.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateKeyword as u16)
+            })
+        });
+        if !is_private {
+            // Set flag to strip accessibility modifiers from constructor parameters
+            self.in_constructor_params = true;
+            self.emit_parameters(&ctor.parameters);
+            self.in_constructor_params = false;
+        }
         self.write(");");
         self.write_line();
     }
@@ -1250,7 +1269,9 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self
             .arena
             .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
-        if !self.should_emit_public_api_member(&enum_data.modifiers) {
+        if !self.should_emit_public_api_member(&enum_data.modifiers)
+            && !self.should_emit_public_api_dependency(enum_data.name)
+        {
             return;
         }
         let is_const = self
@@ -1549,7 +1570,28 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&var_stmt.modifiers) {
-            return;
+            // Check if any individual variable is referenced by the public API
+            let has_dependency = var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        {
+                            self.should_emit_public_api_dependency(decl.name)
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            });
+            if !has_dependency {
+                return;
+            }
         }
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
