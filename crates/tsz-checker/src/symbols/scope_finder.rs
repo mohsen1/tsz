@@ -1137,9 +1137,10 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
                     if let Some(class) = self.ctx.arena.get_class(parent_node)
-                        && self.has_declare_modifier(&class.modifiers) {
-                            return true;
-                        }
+                        && self.has_declare_modifier(&class.modifiers)
+                    {
+                        return true;
+                    }
                     return false;
                 }
 
@@ -1148,16 +1149,17 @@ impl<'a> CheckerState<'a> {
                     if let Some(prop) = self.ctx.arena.get_property_decl(parent_node)
                         && (self.has_abstract_modifier(&prop.modifiers)
                             || self.has_declare_modifier(&prop.modifiers))
-                        {
-                            return true;
-                        }
+                    {
+                        return true;
+                    }
                     current = parent_idx;
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
                     if let Some(method) = self.ctx.arena.get_method_decl(parent_node)
-                        && self.has_abstract_modifier(&method.modifiers) {
-                            return true;
-                        }
+                        && self.has_abstract_modifier(&method.modifiers)
+                    {
+                        return true;
+                    }
                     current = parent_idx;
                 }
 
