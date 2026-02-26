@@ -8,11 +8,22 @@ use super::*;
 impl<'a> Completions<'a> {
     pub(super) fn is_member_context(&self, offset: u32) -> bool {
         if offset > 0 {
-            self.source_text
-                .as_bytes()
-                .get((offset - 1) as usize)
-                .copied()
-                .is_some_and(|ch| ch == b'.')
+            let bytes = self.source_text.as_bytes();
+            let prev = bytes.get((offset - 1) as usize).copied();
+            if prev == Some(b'.') {
+                // Check this isn't `..` (spread) or a number literal like `1.`
+                // A `?.` counts — the char before offset-1 would be `?`
+                // but that's still a member context
+                let before_dot = if offset >= 2 {
+                    bytes.get((offset - 2) as usize).copied()
+                } else {
+                    None
+                };
+                // Exclude `..` (spread operator or rest)
+                before_dot != Some(b'.')
+            } else {
+                false
+            }
         } else {
             false
         }

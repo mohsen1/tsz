@@ -560,12 +560,22 @@ impl<'a> Completions<'a> {
             break;
         }
 
-        if cursor == 0 || bytes[(cursor - 1) as usize] != b'.' {
+        if cursor == 0 {
+            return None;
+        }
+        // Check for `.` or `?.` (optional chaining)
+        if bytes[(cursor - 1) as usize] != b'.' {
             return None;
         }
 
         let dot = cursor - 1;
-        let mut ident_end = dot;
+        // Skip the `?` in `?.` (optional chaining)
+        let scan_from = if dot > 0 && bytes[(dot - 1) as usize] == b'?' {
+            dot - 1
+        } else {
+            dot
+        };
+        let mut ident_end = scan_from;
         while ident_end > 0 && bytes[(ident_end - 1) as usize].is_ascii_whitespace() {
             ident_end -= 1;
         }
