@@ -890,6 +890,26 @@ fn test_call_tuple_rest_with_fixed_tail() {
 }
 
 #[test]
+fn test_property_access_on_never_returns_never() {
+    // never is the bottom type — all property accesses are vacuously valid
+    // and return never (the code is unreachable). tsc does not emit TS2339 on never.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let result = evaluator.resolve_property_access(TypeId::NEVER, "anything");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NEVER),
+        _ => panic!("Property access on never should succeed with never, got {result:?}"),
+    }
+
+    let result = evaluator.resolve_property_access(TypeId::NEVER, "nonexistent");
+    match result {
+        PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NEVER),
+        _ => panic!("Any property on never should return never, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_property_access_object() {
     let interner = TypeInterner::new();
     let evaluator = PropertyAccessEvaluator::new(&interner);

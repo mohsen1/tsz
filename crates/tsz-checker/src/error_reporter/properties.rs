@@ -23,11 +23,13 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::contains_type_parameters;
         use tsz_solver::type_queries;
 
-        // Suppress error if type is ERROR/ANY or an Error type wrapper
-        // This prevents cascading errors when accessing properties on error types
+        // Suppress error if type is ERROR/ANY/NEVER or an Error type wrapper
+        // This prevents cascading errors when accessing properties on error types.
+        // NEVER is the bottom type (unreachable code) — tsc allows all property access on never.
         // NOTE: We do NOT suppress for UNKNOWN - accessing properties on unknown should error (TS2339)
         if type_id == TypeId::ERROR
             || type_id == TypeId::ANY
+            || type_id == TypeId::NEVER
             || tsz_solver::is_error_type(self.ctx.types, type_id)
         {
             return;
@@ -213,6 +215,7 @@ impl<'a> CheckerState<'a> {
         if object_type == TypeId::ANY
             || object_type == TypeId::ERROR
             || object_type == TypeId::UNKNOWN
+            || object_type == TypeId::NEVER
         {
             return;
         }
