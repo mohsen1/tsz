@@ -1,128 +1,12 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9235/12570 (73.5%) — full suite, fingerprint level (new framework)
-> Note: `noUncheckedSideEffectImports` default changed to `true` (matching tsc 6.0)
-> causes TS2882 on many tests with side-effect imports, dropping from ~9210 to ~7116.
-> Score recovered after fixing TS2882 regression.
+**Current score**: ~9201/12570 (73.2%) — full suite, error-code level (snapshot framework)
+> Previously ~8769/12570 (69.8%) baseline.
 
 ---
 
 ## High Impact — Core Type System
-
-### override — Modifier ordering (TS1029) and ambient context (TS1040) — DONE (Session 2026-02-26)
-- **Area**: override (23/31 → 26/31 = 83.9%)
-- **Root cause 1**: Parser modifier ordering had `override` and `readonly` positions swapped.
-  The `readonly` check condition included `seen_override`, treating `override readonly p: any`
-  (correct order in tsc) as an error. This emitted spurious TS1029 "'readonly' modifier must
-  precede 'async' modifier." with wrong message text.
-- **Root cause 2**: Missing TS1040 "'override' modifier cannot be used in an ambient context"
-  for `override declare` (and `declare override`) on class member properties. The parser only
-  checked TS1040 for `async` in ambient context, not for `override`.
-- **Fix**: (1) Removed `seen_override` from readonly ordering condition. (2) Added `seen_declare`
-  tracking and TS1040 checks in both `DeclareKeyword` and `OverrideKeyword` handlers.
-- **Files**: `crates/tsz-parser/src/parser/state_statements_class_members.rs` (~20 lines changed)
-- **Tests**: 9 new unit tests in `crates/tsz-parser/tests/modifier_ordering_tests.rs`
-- **Conformance**: +3 tests (override5, override7, overrideKeywordOrder)
-- **Remaining override gaps** (5 tests):
-  - **override19, override20**: Mixin/complex `extends` expressions (e.g. `CreateMixin(Context, A)`)
-    not resolved — emits TS4112 "class doesn't extend" instead of TS4113/TS4117. SOLVER gap.
-  - **overrideParameterProperty**: Missing TS2369 "parameter property in non-constructor". CHECKER gap.
-  - **override_js3**: Missing TS8009 "override only in TypeScript files". CHECKER gap (JS-specific).
-  - **override_js4**: Should emit TS4123 (JSDoc @override variant) not TS4117. CHECKER gap.
-
-
-### jsx — Global augmentation namespace resolution (Session 2026-02-26) — DONE
-- **Area**: jsx (46.15% → ~46.8% at error-code level in JSX; +24 tests overall)
-- **Root cause**: `declare global { namespace JSX { ... } }` inside `declare module "react"`
-  in react16.d.ts placed the JSX namespace symbol only in the module scope. The binder's
-  `declare_symbol()` only adds to `file_locals` when the current scope is `SourceFile`.
-  Since the global block is nested inside the react module, the scope is Module, not
-  SourceFile. `file_locals` is the gateway through which symbols propagate across files
-  during the multi-file merge in `parallel.rs`, so JSX was invisible to the checker.
-- **Fix**: After `declare_symbol` for namespace declarations inside `global { ... }` blocks,
-  also set the symbol in `file_locals`. This matches TypeScript's semantics where `declare
-  global` escapes the enclosing module scope.
-- **Files**: `crates/tsz-binder/src/modules/binding.rs` (3-line fix + comment),
-  `crates/tsz-binder/src/state/tests.rs` (1 new test)
-- **Conformance**: +24 tests net (9195 → 9219 on original base; 9232 on rebased base with
-  other session fixes merged). Eliminated ~23 false-positive TS7026 diagnostics in JSX tests.
-- **Remaining JSX gaps**: TS2322 missing=39, TS2786 (not implemented), TS2769 (not implemented),
-  TS2875 (not implemented), TS7026 extra=17 (remaining tests with legitimately missing
-  IntrinsicElements or tests using `@jsxImportSource` which may need separate namespace
-  resolution path)
-
-### Async function expression/arrow return type unwrapping — RESOLVED (Session 2026-02-26)
-- **Fixed**: `arrowFunctionParsingGenericInObject` (+5 fingerprint-level tests)
-- **Root cause**: `evaluate_application_type()` in `function_type.rs` expands `Promise<T>` into
-  its structural object form before `unwrap_promise_type()` runs. The unwrap only recognises
-  `Application` variants, so it silently fails for function expressions and arrow functions.
-  Function declarations (in `statement_callback_bridge.rs`) don't call `evaluate_application_type`,
-  which is why they worked.
-- **Fix**: (1) Use pre-expansion `annotated_return_type` as input to `unwrap_promise_type()`.
-  (2) Use already-unwrapped `body_return_type` for expression-body checking instead of
-  raw `annotated_return_type`.
-- **Files**: `crates/tsz-checker/src/types/function_type.rs`
-- **Unit tests**: 4 new tests covering async arrow (expression + block body), async function
-  expression, and async generic arrow.
-
-### types/mapped — Explain path mapped type evaluation (Session 2026-02-26) — DONE
-- **Area**: types/mapped (46.15% → ~50.9% at code level, 28/55 pass)
-- **Root cause**: `explain_failure_inner()` in the solver's explain path expanded Application
-  types (e.g. `Required<Foo>`) to their mapped type bodies but didn't call `evaluate_type()`
-  to reduce the mapped type to a concrete Object. This prevented property enumeration, so
-  `MissingProperty`/`MissingProperties` diagnostics (TS2739/TS2741) couldn't fire — everything
-  fell through to generic `TypeMismatch` (TS2322).
-- **Fix**: Added `evaluate_type()` calls in `explain_failure_inner()` after application expansion
-  so mapped/conditional/keyof meta-types get reduced to structural forms before property matching.
-- **Files**: `crates/tsz-solver/src/relations/subtype/explain.rs` (fix),
-  `crates/tsz-solver/tests/subtype_tests.rs` (2 new tests)
-- **Conformance**: +3 tests net improvement (mapped area remains 28/55 at code level;
-  the improvement is in diagnostic precision — TS2739/TS2741 instead of TS2322)
-- **Deferred**: `Partial<T> → T` generic rejection (needs `& {}` intersection stripping first;
-  attempted fix caused -3 regressions)
-
-### expressions/binaryOperators — Optional property overlap RESOLVED
-- **Fixed**: `comparisonOperatorWithNoRelationshipObjectsOnOptionalProperty` (+1 test)
-- **Root cause**: `types_have_no_overlap()` and `is_type_comparable_to()` used bidirectional
-  assignability as proxy for overlap. `{b?: number}` and `{b?: string}` are NOT assignable
-  to each other, but DO overlap at `{}` (both optional props can be absent).
-- **Fix**: Added `objects_with_all_optional_common_props_overlap()` helper to checker
-  (`enum_utils.rs` + `assignability_checker.rs`). Resolves `Lazy(DefId)` via
-  `evaluate_type_with_resolution()` then checks if all properties are optional.
-- **Files**: `crates/tsz-checker/src/types/utilities/enum_utils.rs`,
-  `crates/tsz-checker/src/assignability/assignability_checker.rs`
-
-### Inference priority — bad inference lower priority than good inference (NOT YET FIXED)
-- **Test**: `badInferenceLowerPriorityThanGoodInference.ts`
-- **Status**: Investigated, root cause identified, fix requires solver changes
-- **Root cause**: When inferring `A` from `Foo<A>` where `a: { BLAH: 33 }` gives `A = { BLAH: number }`
-  and `b: (x: A) => void` gives no useful inference (contravariant position), our solver creates a
-  union type `{ BLAH: number } | A` instead of preferring the covariant inference. tsc gives lower
-  priority to inferences from contravariant positions when good inferences exist from covariant positions.
-- **Fix needed**: Solver inference priority system — contravariant position inferences should be
-  de-prioritized when covariant inferences are available. This is a fundamental solver change.
-- **Estimated LOC**: 50-100 lines in solver inference module
-
-### expressions/binaryOperators — Generic function type comparability (NOT YET FIXED)
-- **Tests**: `comparisonOperatorWithNoRelationshipObjectsOnInstantiatedCallSignature`,
-  `comparisonOperatorWithNoRelationshipObjectsOnInstantiatedConstructorSignature`
-- **Status**: Investigated, root cause identified, fix requires solver changes
-- **Root cause**: `is_type_comparable_to()` falls back to `is_assignable_to()`, which
-  returns false for `{fn<T>(x: T): T}` vs `{fn(): string}`. In tsc, the comparable
-  relation instantiates generic functions (infers `T=string` from return type) making
-  them assignable. Our solver doesn't perform generic instantiation during
-  assignability checking.
-- **Solver function**: `SubtypeChecker::check_subtype()` or function signature comparison
-  in `crates/tsz-solver/src/relations/subtype/rules/functions.rs`
-- **What tsc does**: In `structuredTypeRelatedTo` with `comparableRelation`, tsc
-  instantiates generic call signatures against the target's concrete signature,
-  inferring type parameter values. If instantiation succeeds, the types are comparable.
-- **Estimated LOC**: ~50-100 lines in solver's function signature comparison
-- **Impact**: Would fix 2 tests and potentially many other generic-function-related
-  comparability checks across the suite.
-- **Difficulty**: MEDIUM-HIGH (requires understanding generic instantiation during
-  relation checks, not just during call expression checking)
 
 ### TS2322/TS2339/TS2345 — Type mismatch / property access / argument type (ongoing)
 - **Tests**: Hundreds across the suite (TS2322: ~222, TS2339: ~47, TS2345: ~40 single-code)
@@ -137,20 +21,6 @@
 - **Fix**: Rely on `check_flow()`'s existing START node handling (core.rs:1062) which already returns
   `initial_type` at function boundaries for captured mutable vars. Local CONDITION nodes are applied first.
 - **Impact**: Fixed false TS2339 errors in typeGuardsInFunction, jsx, intersection tests (+4-6 tests)
-
-### es6/spread — iterable spread resolution PARTIALLY RESOLVED
-- **Fixed**: Custom iterable spread in function calls now resolves iterated element type
-  via `type[Symbol.iterator]().next().value` instead of using raw iterator class type.
-- **Fixed**: TS2556 suppresses subsequent TS2345 when both would fire (matches tsc).
-- **Impact**: es6/spread area: 48% → 70% (+6 tests), +2 tests from TS2556 suppression.
-- **Remaining gaps (8 tests)**:
-  - iteratorSpreadInCall4: Spread at non-rest position with rest param elsewhere → need
-    rest-position detection in `expected_for_index` (solver's `signature_accepts_arg_count`
-    counts rest params as required, blocking the arity-0 probe approach)
-  - iteratorSpreadInCall7/8/9: Generic inference with multiple spread iterables → T not
-    inferred from resolved iterable element types across multiple spread arguments
-  - iteratorSpreadInArray5/6/10: Array-spread issues (TS2322 location, TS2488, TS2769)
-  - arraySpreadInCall: TS2554 argument count mismatch with spread expansion
 
 ### expressions/typeGuards — remaining TS2454/TS2322 gaps (42 failing, 33.3% pass rate)
 - **Pattern**: All remaining failures are MISSING diagnostics (extra=0)
@@ -665,9 +535,22 @@
 
 ## Other Open Issues
 
-### TS2320 — Interface extension remaining gaps
-- Class visibility conflicts (`extends C, C2` with public/private x) — not detected
-- Generic vs non-generic signatures need identity comparison instead of mutual assignability
+### TS2320 — Interface extension remaining gaps (10/20 passing)
+- **FIXED**: Class base public member type conflicts now detected (class_checker_compat.rs)
+- **FIXED**: Class base visibility conflicts (public vs private/protected) now detected
+- **FIXED**: Generic class base type parameter substitution for member comparison
+- **FIXED**: Qualified name in error messages — now uses resolved symbol name (matches tsc)
+- **Remaining**: 10 of 20 tests still fail:
+  - `complexRecursiveCollections` — very complex recursive types
+  - `genericAndNonGenericInheritedSignature1/2` — need identity check instead of mutual
+    assignability for call signatures (`f(x: any): any` vs `f<T>(x: T): T`)
+  - `mergedInheritedMembersSatisfyAbstractBase` — class+interface declaration merging:
+    need to include class's extended base members when checking interface TS2320
+  - `mergedInterfacesWithInheritedPrivates3` — extra TS2420 emitted
+  - `interfaceExtendingClassWithPrivates2/Protecteds2` — wrong TS2430 location (pointing
+    at member instead of interface name on extends clause) + missing TS2341/TS2445
+  - `interfaceDeclaration1` — missing TS2717 (different error code)
+  - `multipleBaseInterfaesWithIncompatibleProperties` — partial pass
 - `exactOptionalPropertyTypes` compiler option not yet supported
 - **Difficulty**: MEDIUM-HIGH
 

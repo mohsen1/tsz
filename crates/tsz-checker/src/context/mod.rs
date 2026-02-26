@@ -366,6 +366,10 @@ pub struct CheckerContext<'a> {
     pub symbol_resolution_stack: Vec<SymbolId>,
     /// O(1) lookup set for symbol resolution stack.
     pub symbol_resolution_set: FxHashSet<SymbolId>,
+    /// Tracks module specifiers whose namespace types are currently being computed.
+    /// Prevents infinite recursion when circular module imports eagerly resolve all exports
+    /// (e.g. react's `prop-types` ↔ `react` cycle in react16.d.ts).
+    pub module_namespace_resolution_set: FxHashSet<String>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.

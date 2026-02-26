@@ -569,7 +569,13 @@ impl BinderState {
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
-            self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
+            let sym_id = self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
+
+            // Hoist global augmentation interfaces to file_locals for cross-file visibility.
+            // Same rationale as namespace hoisting in bind_module_declaration.
+            if self.in_global_augmentation && sym_id.is_some() {
+                self.file_locals.set(name.to_string(), sym_id);
+            }
         }
     }
 
