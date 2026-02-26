@@ -451,22 +451,17 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
+        // TypeScript does NOT narrow `any` with instanceof — it stays `any`
+        // regardless of the constructor. The `any` type represents a deliberate
+        // opt-out of the type system, so instanceof should not restrict it.
+        if type_id == TypeId::ANY {
+            return type_id;
+        }
+
         // Extract instance type from constructor expression (AST -> TypeId)
         let instance_type = self
             .instance_type_from_constructor(bin.right)
             .unwrap_or(TypeId::OBJECT);
-
-        // TypeScript rule: "any" is not narrowed when target type is "Function" or "Object"
-        if type_id == TypeId::ANY {
-            let right_idx = self.skip_parenthesized(bin.right);
-            if let Some(constructor_node) = self.arena.get(right_idx)
-                && constructor_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(ident) = self.arena.get_identifier(constructor_node)
-                && (ident.escaped_text == "Function" || ident.escaped_text == "Object")
-            {
-                return type_id;
-            }
-        }
 
         // Delegate to solver via unified narrow_type API
         let env_borrow;

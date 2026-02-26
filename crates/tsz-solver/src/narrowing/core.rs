@@ -1197,6 +1197,13 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::Instanceof(instance_type) => {
+                // TypeScript does NOT narrow `any` with instanceof — it stays `any`
+                // regardless of the constructor or branch. The `any` type represents a
+                // deliberate opt-out of the type system.
+                if source_type == TypeId::ANY {
+                    return source_type;
+                }
+
                 if sense {
                     // Positive: x instanceof Class
                     // Special case: `unknown` instanceof X narrows to X (or object if X unknown)

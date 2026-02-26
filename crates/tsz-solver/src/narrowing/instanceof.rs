@@ -132,11 +132,11 @@ impl<'a> NarrowingContext<'a> {
 
         // Now narrow based on the sense (positive or negative)
         if sense {
-            // CRITICAL: instanceof DOES narrow any/unknown (unlike equality checks)
+            // TypeScript does NOT narrow `any` with instanceof — it stays `any`.
+            // Only `unknown` is narrowed to the instance type.
             if resolved_source == TypeId::ANY {
-                // any narrows to the instance type with instanceof
-                trace!("Narrowing any to instance type via instanceof");
-                return instance_type;
+                trace!("instanceof: any stays any (not narrowed)");
+                return TypeId::ANY;
             }
 
             if resolved_source == TypeId::UNKNOWN {
@@ -212,6 +212,12 @@ impl<'a> NarrowingContext<'a> {
             }
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
+
+            // `any` is not narrowed by instanceof (positive or negative)
+            if resolved_source == TypeId::ANY {
+                return TypeId::ANY;
+            }
+
             // For unions, exclude members that are subtypes of the instance type
             if let Some(members_id) = union_list_id(self.db, resolved_source) {
                 let members = self.db.type_list(members_id);
@@ -260,8 +266,12 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // any/unknown narrow to instance type with instanceof
-        if resolved_source == TypeId::ANY || resolved_source == TypeId::UNKNOWN {
+        // TypeScript does NOT narrow `any` with instanceof — it stays `any`.
+        // Only `unknown` is narrowed to the instance type.
+        if resolved_source == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if resolved_source == TypeId::UNKNOWN {
             return instance_type;
         }
 
