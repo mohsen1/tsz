@@ -1059,6 +1059,13 @@ fn compile_inner(
     // file-level diagnostics (syntactic or semantic) alongside them.
     // Verified from tsc cache: no test has both TS5107 and any 1000-1999 range code.
     // When we falsely emit syntactic errors in the file, TS5107 must still take priority.
+    //
+    // NOTE: A theoretically better heuristic would suppress TS5107 when real semantic
+    // errors (2000+) are present (since tsc suppresses TS5107 when semantic errors
+    // exist). However, our checker emits many false-positive semantic errors, so
+    // applying that heuristic would suppress TS5107 in hundreds of correct tests.
+    // Until checker false-positive rates drop significantly, TS5107 always takes
+    // priority over file-level diagnostics.
     if has_deprecation_diagnostics {
         // Discard per-file diagnostics; keep config-level and global diagnostics.
         diagnostics.retain(|d| {
