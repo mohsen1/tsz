@@ -688,17 +688,29 @@ impl<'a> CheckerState<'a> {
                 || expr_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
                 || expr_node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
             {
-                // Prefer flow-aware value-space type at the query site.
-                // This keeps `typeof expr` aligned with control-flow narrowing.
-                // BUT skip Lazy types - those indicate circular reference (e.g., `typeof A`
-                // inside class A's body). Lazy types resolve to the instance type via
-                // resolve_lazy, but typeof needs the constructor type. Fall through to
-                // create a TypeQuery(SymbolRef) which resolves correctly.
-                let expr_type = flow_type_for_query_expr(self);
-                let is_lazy =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type).is_some();
-                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
-                    return expr_type;
+                // Skip flow resolution for type-only imports — evaluating them as
+                // expressions would emit a false TS1361.  They are handled below
+                // via resolve_type_symbol_for_lowering which creates a TypeQuery.
+                let is_type_only_import = expr_node.kind
+                    == tsz_scanner::SyntaxKind::Identifier as u16
+                    && self
+                        .resolve_identifier_symbol(type_query.expr_name)
+                        .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
+
+                if !is_type_only_import {
+                    // Prefer flow-aware value-space type at the query site.
+                    // This keeps `typeof expr` aligned with control-flow narrowing.
+                    // BUT skip Lazy types - those indicate circular reference (e.g., `typeof A`
+                    // inside class A's body). Lazy types resolve to the instance type via
+                    // resolve_lazy, but typeof needs the constructor type. Fall through to
+                    // create a TypeQuery(SymbolRef) which resolves correctly.
+                    let expr_type = flow_type_for_query_expr(self);
+                    let is_lazy =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type)
+                            .is_some();
+                    if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
+                        return expr_type;
+                    }
                 }
             }
         }
@@ -740,13 +752,25 @@ impl<'a> CheckerState<'a> {
             let typequery_type = factory.type_query(SymbolRef(sym_id));
             trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
             typequery_type
-        } else if self
-            .resolve_type_symbol_for_lowering(type_query.expr_name)
-            .is_some()
+        } else if let Some(type_sym_id) =
+            self.resolve_type_symbol_for_lowering(type_query.expr_name)
         {
-            let name = name_text.as_deref().unwrap_or("<unknown>");
-            self.error_type_only_value_at(name, type_query.expr_name);
-            return TypeId::ERROR;
+            // Check if this is a type-only import (import type { A }).
+            // tsc allows `typeof A` on type-only imports in type annotations
+            // because typeof in a type position is a compile-time type query,
+            // not a runtime value access. Resolve the type instead of erroring.
+            let is_type_only_import = self
+                .resolve_identifier_symbol(type_query.expr_name)
+                .is_some_and(|sym_id| self.alias_resolves_to_type_only(sym_id));
+
+            if is_type_only_import {
+                
+                factory.type_query(SymbolRef(type_sym_id))
+            } else {
+                let name = name_text.as_deref().unwrap_or("<unknown>");
+                self.error_type_only_value_at(name, type_query.expr_name);
+                return TypeId::ERROR;
+            }
         } else if let Some(name) = name_text {
             if is_identifier {
                 // Handle global intrinsics that may not have symbols in the binder

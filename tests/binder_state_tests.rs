@@ -2283,6 +2283,43 @@ import type Type3 from 'module';
 }
 
 #[test]
+fn test_type_only_import_merges_with_local_value() {
+    use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
+    use crate::parser::ParserState;
+
+    let source = r#"
+import type { A } from 'module';
+const A: A = "a";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let a_sym_id = binder.file_locals.get("A").expect("A should exist");
+    let a_symbol = binder.get_symbol(a_sym_id).expect("A symbol should exist");
+
+    // The merged symbol should have both ALIAS and VALUE flags
+    assert!(
+        (a_symbol.flags & symbol_flags::ALIAS) != 0,
+        "A should have ALIAS flag from import type, flags: {:#x}",
+        a_symbol.flags
+    );
+    assert!(
+        (a_symbol.flags & symbol_flags::VALUE) != 0,
+        "A should have VALUE flag from const declaration, flags: {:#x}",
+        a_symbol.flags
+    );
+    // is_type_only should still be true (from the import), but the VALUE flag
+    // means the checker will not treat it as type-only in value contexts
+    assert!(a_symbol.is_type_only);
+}
+
+#[test]
 fn test_re_export_from_module() {
     use crate::binder::BinderState;
     use crate::binder::symbol_flags;

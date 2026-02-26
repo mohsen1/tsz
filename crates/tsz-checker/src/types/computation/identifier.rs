@@ -247,6 +247,12 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                // Don't emit TS1361 for computed property names in type/ambient
+                // contexts (interfaces, type literals, abstract members, declare
+                // class members). These don't emit runtime code.
+                if self.is_in_ambient_computed_property_context() {
+                    return TypeId::ERROR;
+                }
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
