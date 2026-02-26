@@ -945,7 +945,17 @@ impl<'a> CheckerState<'a> {
                             }
                             None
                         })
-                        .unwrap_or_else(|| self.get_type_of_node(body));
+                        .unwrap_or_else(|| {
+                            // Set contextual type to the return type annotation so that
+                            // literal expressions in the body (e.g. `(): "foo" => "foo"`)
+                            // preserve their literal types instead of widening.
+                            let prev_ctx = self.ctx.contextual_type;
+                            self.ctx.contextual_type = Some(expected_return_type);
+                            self.clear_type_cache_recursive(body);
+                            let t = self.get_type_of_node(body);
+                            self.ctx.contextual_type = prev_ctx;
+                            t
+                        });
                     self.check_assignable_or_report(actual_return, expected_return_type, body);
                 }
             }
