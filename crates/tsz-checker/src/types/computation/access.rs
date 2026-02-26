@@ -757,9 +757,10 @@ impl<'a> CheckerState<'a> {
         // K extends keyof T (type param whose constraint is keyof T)
         if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
             && let Some(constraint) = param_info.constraint
-                && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint) {
-                    return keyof_inner == type_param;
-                }
+            && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint)
+        {
+            return keyof_inner == type_param;
+        }
         false
     }
 
