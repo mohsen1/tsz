@@ -118,7 +118,12 @@ impl<'a> Printer<'a> {
                     let Some(prop) = self.arena.get_property_decl(member_node) else {
                         continue;
                     };
-                    (&prop.modifiers, prop.name, true)
+                    // Auto-accessor properties (with `accessor` keyword) are treated
+                    // like accessors, not properties, for __decorate purposes (emit null, not void 0).
+                    let is_auto_accessor = self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                    (&prop.modifiers, prop.name, !is_auto_accessor)
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.arena.get_accessor(member_node) else {

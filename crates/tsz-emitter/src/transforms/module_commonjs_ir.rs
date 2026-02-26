@@ -33,6 +33,7 @@ use tsz_scanner::SyntaxKind;
 pub struct CommonJsTransformContext<'a> {
     arena: &'a NodeArena,
     module_counter: u32,
+    preserve_const_enums: bool,
 }
 
 impl<'a> CommonJsTransformContext<'a> {
@@ -40,7 +41,13 @@ impl<'a> CommonJsTransformContext<'a> {
         Self {
             arena,
             module_counter: 0,
+            preserve_const_enums: false,
         }
+    }
+
+    pub const fn with_preserve_const_enums(mut self, preserve: bool) -> Self {
+        self.preserve_const_enums = preserve;
+        self
     }
 
     /// Transform a source file's statements to `CommonJS` IR
@@ -48,7 +55,9 @@ impl<'a> CommonJsTransformContext<'a> {
         // Collect export names for initialization
         let (_func_exports, other_exports, _default_func_export) =
             crate::transforms::module_commonjs::collect_export_names_categorized(
-                self.arena, statements,
+                self.arena,
+                statements,
+                self.preserve_const_enums,
             );
 
         // Transform statements
