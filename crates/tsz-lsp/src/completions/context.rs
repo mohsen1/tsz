@@ -503,9 +503,11 @@ impl<'a> Completions<'a> {
                 }
                 // Also check grandparent (VariableDeclaration -> VariableDeclarationList -> VariableStatement)
                 if let Some(gext) = self.arena.get_extended(parent)
-                    && gext.parent.is_some() && self.has_declare_child(gext.parent, declare_kind) {
-                        return true;
-                    }
+                    && gext.parent.is_some()
+                    && self.has_declare_child(gext.parent, declare_kind)
+                {
+                    return true;
+                }
             }
         }
         false
