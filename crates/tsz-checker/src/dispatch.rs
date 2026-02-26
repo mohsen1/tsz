@@ -880,7 +880,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     } else if let Some(satisfies_type) =
                         self.checker.jsdoc_satisfies_annotation_for_node(idx)
                     {
+                        // Set contextual type for JSDoc @satisfies, matching the
+                        // `satisfies` expression handler behavior.
+                        let prev_contextual_type = self.checker.ctx.contextual_type;
+                        self.checker.ctx.contextual_type = Some(satisfies_type);
                         let expr_type = self.checker.get_type_of_node(paren.expression);
+                        self.checker.ctx.contextual_type = prev_contextual_type;
                         let _ = self.checker.check_satisfies_assignable_or_report(
                             expr_type,
                             satisfies_type,
