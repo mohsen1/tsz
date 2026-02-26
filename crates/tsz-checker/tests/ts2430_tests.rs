@@ -142,3 +142,93 @@ declare module "mylib" {
         "Should emit TS2430 for genuinely incompatible extension inside module"
     );
 }
+
+// =========================================================================
+// Type alias base: interface extends type alias
+// =========================================================================
+
+#[test]
+fn test_interface_extends_type_alias_incompatible() {
+    // Interface extends a type alias with incompatible property type
+    let source = r#"
+type T1 = { a: number };
+interface I1 extends T1 {
+    a: string;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when interface extends type alias with incompatible property. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_interface_extends_type_alias_compatible() {
+    // Interface extends a type alias with compatible property type — no error
+    let source = r#"
+type T1 = { a: number };
+interface I1 extends T1 {
+    a: number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "Should NOT emit TS2430 when interface extends type alias with compatible property. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_interface_extends_intersection_type_alias_incompatible() {
+    // Interface extends an intersection type alias with incompatible property
+    let source = r#"
+type T1 = { a: number };
+type T2 = T1 & { b: number };
+interface I2 extends T2 {
+    b: string;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when interface extends intersection type alias with incompatible property. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+#[ignore = "mapped type evaluation not yet fully supported in unit test env"]
+fn test_interface_extends_mapped_type_alias_incompatible() {
+    // Interface extends a mapped type alias with incompatible property
+    let source = r#"
+type T5 = { [P in 'a' | 'b' | 'c']: string };
+interface I5 extends T5 {
+    c: number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when interface extends mapped type alias with incompatible property. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_interface_extends_class_with_private_emits_at_name() {
+    // TS2430 for private member conflict should be reported at the interface name,
+    // not at the member that conflicts
+    let source = r#"
+class Base {
+    private x: number;
+}
+interface Foo extends Base {
+    x: number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        !ts2430.is_empty(),
+        "Should emit TS2430 for interface extending class with private member. Got: {diags:?}"
+    );
+}

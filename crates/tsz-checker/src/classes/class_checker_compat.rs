@@ -621,7 +621,7 @@ impl<'a> CheckerState<'a> {
                     );
 
                     // Check if any interface member redeclares a private/protected class member
-                    for (member_name, _, derived_member_idx, _) in &derived_members {
+                    for (member_name, _, _derived_member_idx, _) in &derived_members {
                         for &class_member_idx in &class_data.members.nodes {
                             let Some(class_member_node) = self.ctx.arena.get(class_member_idx)
                             else {
@@ -679,15 +679,16 @@ impl<'a> CheckerState<'a> {
                                 && is_private_or_protected
                             {
                                 // Interface redeclares a private/protected member as public - TS2430
+                                // TSC reports this at the interface name, not the member
                                 self.error_at_node(
-                                        *derived_member_idx,
+                                        iface_data.name,
                                         &format!(
                                             "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
 
-                                if let Some((pos, end)) = self.get_node_span(*derived_member_idx) {
+                                if let Some((pos, end)) = self.get_node_span(iface_data.name) {
                                     self.error(
                                                     pos,
                                                     end - pos,
@@ -814,6 +815,112 @@ impl<'a> CheckerState<'a> {
                     }
 
                     self.pop_type_parameters(class_type_param_updates);
+                }
+
+                // If the base is neither an interface nor a class, it may be a type alias
+                // (e.g., `interface I extends T1 { ... }` where `type T1 = { a: number }`).
+                // Resolve the base type and check property compatibility.
+                if base_class_idx.is_none() {
+                    // Resolve the base type. For non-generic type aliases,
+                    // get_type_of_symbol returns the resolved type directly.
+                    // For generic aliases with type arguments, build an Application
+                    // using DefId-first resolution so the evaluator can instantiate.
+                    let base_type = if let Some(args) = type_arguments {
+                        let type_arg_ids: Vec<TypeId> = args
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect();
+                        if !type_arg_ids.is_empty() {
+                            // Generic: Application(Lazy(DefId), [args])
+                            let def_id = self.ctx.get_or_create_def_id(base_sym_id);
+                            let factory = self.ctx.types.factory();
+                            let lazy_type = factory.lazy(def_id);
+                            let app = factory.application(lazy_type, type_arg_ids);
+                            self.evaluate_type_with_env(app)
+                        } else {
+                            self.get_type_of_symbol(base_sym_id)
+                        }
+                    } else {
+                        self.get_type_of_symbol(base_sym_id)
+                    };
+
+                    if base_type != TypeId::ERROR {
+                        // Check each derived member against the base type's properties
+                        for (member_name, member_type, derived_member_idx, _derived_kind) in
+                            &derived_members
+                        {
+                            // Look up the property in the base type
+                            let base_prop = tsz_solver::type_queries::find_property_in_type_by_str(
+                                self.ctx.types,
+                                base_type,
+                                member_name,
+                            );
+
+                            // For intersection types, search each member
+                            let base_prop = base_prop.or_else(|| {
+                                if let Some(members) =
+                                    tsz_solver::type_queries::get_intersection_members(
+                                        self.ctx.types,
+                                        base_type,
+                                    )
+                                {
+                                    for &member in &members {
+                                        let prop =
+                                            tsz_solver::type_queries::find_property_in_type_by_str(
+                                                self.ctx.types,
+                                                member,
+                                                member_name,
+                                            );
+                                        if prop.is_some() {
+                                            return prop;
+                                        }
+                                    }
+                                }
+                                None
+                            });
+
+                            if let Some(base_prop) = base_prop {
+                                // Extract the derived property's raw type from its ObjectShape
+                                // (get_type_of_interface_member returns ObjectShape { name: type },
+                                // but we need the raw property type for comparison with base)
+                                let derived_prop_type =
+                                    tsz_solver::type_queries::find_property_in_type_by_str(
+                                        self.ctx.types,
+                                        *member_type,
+                                        member_name,
+                                    )
+                                    .map(|p| p.type_id)
+                                    .unwrap_or(*member_type);
+
+                                if should_report_member_type_mismatch(
+                                    self,
+                                    derived_prop_type,
+                                    base_prop.type_id,
+                                    *derived_member_idx,
+                                ) {
+                                    let member_type_str = self.format_type(derived_prop_type);
+                                    let base_type_str = self.format_type(base_prop.type_id);
+
+                                    self.error_at_node(
+                                        iface_data.name,
+                                        &format!(
+                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                        ),
+                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                    );
+                                    self.report_property_type_incompatible_detail(
+                                        iface_data.name,
+                                        member_name,
+                                        &member_type_str,
+                                        &base_type_str,
+                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                    );
+                                    break; // Report one incompatibility per base type
+                                }
+                            }
+                        }
+                    }
                 }
 
                 continue;
