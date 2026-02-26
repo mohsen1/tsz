@@ -3401,3 +3401,59 @@ foo(...arr);
         "Should not emit TS2345 for compatible array spread. Got: {diagnostics:?}"
     );
 }
+
+// ========================================================================
+// Reverse mapped type inference tests
+// ========================================================================
+
+#[test]
+fn test_reverse_mapped_type_boxified_unbox() {
+    // Core test: inferring T from Boxified<T> by reversing Box<T[P]> wrapper
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        type Box<T> = { value: T; }
+        type Boxified<T> = { [P in keyof T]: Box<T[P]>; }
+        declare function unboxify<T extends object>(obj: Boxified<T>): T;
+        let b = { a: { value: 42 } as Box<number>, b: { value: "hello" } as Box<string> };
+        let v = unboxify(b);
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "unboxify with Boxified<T> should not produce TS2345. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_reverse_mapped_type_no_regression_contravariant() {
+    // Contravariant function template: { [K in keyof T]: (val: T[K]) => boolean }
+    // Reverse inference should NOT fire (can't reverse through function types),
+    // so this should produce no errors.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        declare function conforms<T>(source: { [K in keyof T]: (val: T[K]) => boolean }): (value: T) => boolean;
+        conforms({ foo: (v: string) => false });
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "conforms with function template should not produce TS2322. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_reverse_mapped_type_no_regression_func_template() {
+    // Mapped type with Func<T[K]> template — reverse should fail gracefully
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        type Func<T> = () => T;
+        type Mapped<T> = { [K in keyof T]: Func<T[K]> };
+        declare function reproduce<T>(options: Mapped<T>): T;
+        reproduce({ name: () => { return 123 } });
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2769),
+        "reproduce with Func template should not produce TS2769. Got: {diagnostics:?}"
+    );
+}
