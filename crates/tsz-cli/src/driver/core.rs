@@ -1060,15 +1060,25 @@ fn compile_inner(
     // Verified from tsc cache: no test has both TS5107 and any 1000-1999 range code.
     // When we falsely emit syntactic errors in the file, TS5107 must still take priority.
     //
-    // NOTE: A theoretically better heuristic would suppress TS5107 when real semantic
-    // errors (2000+) are present (since tsc suppresses TS5107 when semantic errors
-    // exist). However, our checker emits many false-positive semantic errors, so
-    // applying that heuristic would suppress TS5107 in hundreds of correct tests.
-    // Until checker false-positive rates drop significantly, TS5107 always takes
-    // priority over file-level diagnostics.
+    // EXCEPTION: tsc suppresses TS5107 when real file-level errors exist (preferring
+    // file errors over config warnings). We can't fully replicate this because our
+    // checker emits false-positive semantic errors that would wrongly suppress TS5107.
+    // However, JS grammar errors (TS8xxx: "can only be used in TypeScript files") are
+    // reliable and never false positives, so we suppress TS5107 when 8xxx errors exist.
     if has_deprecation_diagnostics {
-        // Fatal: discard ALL source file diagnostics (syntactic + semantic).
-        diagnostics.clear();
+        let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
+        if has_js_grammar_errors {
+            // Real JS grammar errors take priority — drop TS5107 from config diagnostics.
+            config_diagnostics.retain(|d| {
+                d.code
+                    != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+                    && d.code
+                        != diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+            });
+        } else {
+            // No reliable file-level errors — TS5107 takes priority.
+            diagnostics.clear();
+        }
     }
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
