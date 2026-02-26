@@ -1776,10 +1776,17 @@ impl Server {
                 } else {
                     "substring"
                 };
+                // Filter out internal "let" modifier from kind_modifiers
+                let kind_mods = sym
+                    .kind_modifiers
+                    .split(',')
+                    .filter(|m| !m.is_empty() && *m != "let")
+                    .collect::<Vec<_>>()
+                    .join(",");
                 result.push(serde_json::json!({
                     "name": sym.name,
                     "kind": kind,
-                    "kindModifiers": "",
+                    "kindModifiers": kind_mods,
                     "matchKind": match_kind,
                     "isCaseSensitive": is_case_sensitive,
                     "file": file_path,
