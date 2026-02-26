@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T17:15:45Z",
-  "git_sha": "0b3e66ba5fa9557df972faab2ecfd918ac113919",
+  "timestamp": "2026-02-26T17:23:05Z",
+  "git_sha": "c6b348d078e9a53aaf82fdfc1b95c553f591d9db",
   "summary": {
     "total_tests": 12570,
-    "passed": 9235,
-    "failed": 3335,
+    "passed": 9238,
+    "failed": 3332,
     "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
@@ -93,13 +93,6 @@
       "pass_rate": 52.0
     },
     {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 9,
-      "failed": 8,
-      "pass_rate": 52.94
-    },
-    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 16,
@@ -182,6 +175,13 @@
       "passed": 7,
       "failed": 5,
       "pass_rate": 58.33
+    },
+    {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 10,
+      "failed": 7,
+      "pass_rate": 58.82
     },
     {
       "area": "jsdoc",
@@ -275,6 +275,13 @@
       "pass_rate": 64.74
     },
     {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 19,
+      "failed": 10,
+      "pass_rate": 65.52
+    },
+    {
       "area": "classes/members",
       "total": 198,
       "passed": 130,
@@ -315,13 +322,6 @@
       "passed": 24,
       "failed": 11,
       "pass_rate": 68.57
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 20,
-      "failed": 9,
-      "pass_rate": 68.97
     },
     {
       "area": "es6/shorthandPropertyAssignment",
@@ -402,8 +402,8 @@
     },
     {
       "area": "compiler",
-      "total": 6509,
-      "passed": 4847,
+      "total": 6510,
+      "passed": 4848,
       "failed": 1662,
       "pass_rate": 74.47
     },
@@ -420,13 +420,6 @@
       "passed": 12,
       "failed": 4,
       "pass_rate": 75.0
-    },
-    {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 32,
-      "failed": 10,
-      "pass_rate": 76.19
     },
     {
       "area": "es6/unicodeExtendedEscapes",
@@ -450,11 +443,11 @@
       "pass_rate": 76.92
     },
     {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 51,
-      "failed": 14,
-      "pass_rate": 78.46
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 33,
+      "failed": 9,
+      "pass_rate": 78.57
     },
     {
       "area": "enums",
@@ -469,6 +462,13 @@
       "passed": 75,
       "failed": 20,
       "pass_rate": 78.95
+    },
+    {
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 52,
+      "failed": 13,
+      "pass_rate": 80.0
     },
     {
       "area": "expressions/commaOperator",
