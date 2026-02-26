@@ -1398,3 +1398,90 @@ fn test_ts2322_noimplicitany_nullish_initializer_mutation_is_not_assignability_e
         "Expected no TS2322 for mutable noImplicitAny variable with undefined initializer, got: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// Generic Mapped Type Assignability Tests (TS2322)
+// =============================================================================
+
+#[test]
+fn test_ts2322_inline_partial_not_assignable_to_type_param() {
+    // Inline mapped type with optional modifier should NOT be assignable to T.
+    // This is equivalent to Partial<T> <: T which should fail because
+    // Partial makes properties optional, so required properties may be missing.
+    let source = r#"
+        type MyPartial<T> = { [K in keyof T]?: T[K] };
+        function f<T>(z: MyPartial<T>, y: T) {
+            y = z;
+        }
+    "#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 for MyPartial<T> assigned to T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2322_identity_mapped_type_assignable_to_type_param() {
+    // Identity mapped type { [K in keyof T]: T[K] } (no modifier) should be assignable to T.
+    let source = r#"
+        type Identity<T> = { [K in keyof T]: T[K] };
+        function f<T>(z: Identity<T>, y: T) {
+            y = z;
+        }
+    "#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "Identity<T> should be assignable to T (no TS2322), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2322_readonly_mapped_type_assignable_to_type_param() {
+    // Readonly mapped type should be assignable to T (readonly doesn't affect assignability).
+    let source = r#"
+        type MyReadonly<T> = { readonly [K in keyof T]: T[K] };
+        function f<T>(z: MyReadonly<T>, y: T) {
+            y = z;
+        }
+    "#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "MyReadonly<T> should be assignable to T (no TS2322), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2322_type_param_assignable_to_inline_partial() {
+    // T should be assignable to Partial<T> (T provides all required properties,
+    // Partial only adds optionality).
+    let source = r#"
+        type MyPartial<T> = { [K in keyof T]?: T[K] };
+        function f<T>(z: MyPartial<T>, y: T) {
+            z = y;
+        }
+    "#;
+
+    let diagnostics = with_lib_contexts(source, "test.ts", CheckerOptions::default());
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "T should be assignable to MyPartial<T> (no TS2322), got: {diagnostics:?}"
+    );
+}
