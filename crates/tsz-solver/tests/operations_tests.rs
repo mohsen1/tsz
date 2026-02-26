@@ -8536,3 +8536,97 @@ fn test_union_call_incompatible_param_types() {
         "Union of callable types should NOT be NotCallable, got {result:?}"
     );
 }
+
+/// Regression test for Application-Application mapped type inference.
+///
+/// Models the pattern from mappedTypes3.ts:
+///   type Wrapped<T> = { [K in keyof T]: T[K] }
+///   declare function unwrap<T>(obj: Wrapped<T>): T;
+///   interface Bacon { isPerfect: boolean; weight: number; }
+///   unwrap(x as Wrapped<Bacon>) // should infer T = Bacon
+///
+/// Without the fix, evaluating both Applications first loses the type argument
+/// relationship: source becomes a concrete Object and target becomes a Mapped type.
+/// The Object→Mapped handler can't reverse-infer T from keyof constraints.
+/// The fix detects matching bases where target evaluates to Mapped and uses direct
+/// argument unification to capture T = Bacon.
+#[test]
+fn test_infer_application_to_mapped_type_direct_arg_unification() {
+    use crate::TypeEnvironment;
+
+    let interner = TypeInterner::new();
+
+    // T type parameter (for Wrapped<T> alias)
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    // K type parameter (for mapped type iteration)
+    let k_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    // Build mapped type body: { [K in keyof T]: T[K] }
+    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let t_k = interner.intern(TypeData::IndexAccess(t_type, k_type));
+    let mapped_body = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: t_k,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Register as type alias: type Wrapped<T> = { [K in keyof T]: T[K] }
+    let wrapped_def = DefId(100);
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(wrapped_def, mapped_body, vec![t_param.clone()]);
+
+    // Build Wrapped<T> and Wrapped<Bacon> as Application types
+    let wrapped_base = interner.lazy(wrapped_def);
+
+    // Bacon interface: { isPerfect: boolean; weight: number }
+    let bacon = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("isPerfect"), TypeId::BOOLEAN),
+        PropertyInfo::new(interner.intern_string("weight"), TypeId::NUMBER),
+    ]);
+
+    // Wrapped<Bacon> — the argument type
+    let wrapped_bacon = interner.application(wrapped_base, vec![bacon]);
+
+    // function unwrap<T>(obj: Wrapped<T>): T
+    let wrapped_t = interner.application(wrapped_base, vec![t_type]);
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("obj")),
+            type_id: wrapped_t,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Infer: unwrap(wrapped_bacon) should infer T = Bacon
+    let mut checker = CompatChecker::with_resolver(&interner, &env);
+    let result = infer_generic_function(&interner, &mut checker, &func, &[wrapped_bacon]);
+
+    // T should be inferred as Bacon (the concrete object type)
+    assert_eq!(
+        result, bacon,
+        "T should be inferred as Bacon via direct arg unification through mapped type Application"
+    );
+}
