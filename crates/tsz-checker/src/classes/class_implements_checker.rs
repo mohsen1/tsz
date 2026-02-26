@@ -27,30 +27,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn report_property_type_incompatible_detail(
-        &mut self,
-        node_idx: NodeIndex,
-        member_name: &str,
-        source_type: &str,
-        target_type: &str,
-        code: u32,
-    ) {
-        if let Some((pos, end)) = self.get_node_span(node_idx) {
-            self.error(
-                pos,
-                end - pos,
-                format!("Types of property '{member_name}' are incompatible."),
-                code,
-            );
-            self.error(
-                pos,
-                end - pos,
-                format!("Type '{source_type}' is not assignable to type '{target_type}'."),
-                code,
-            );
-        }
-    }
-
     /// Check that non-abstract class implements all abstract members from base class (error 2654).
     /// Reports "Non-abstract class 'X' is missing implementations for the following members of 'Y': {members}."
     pub(crate) fn check_abstract_member_implementations(

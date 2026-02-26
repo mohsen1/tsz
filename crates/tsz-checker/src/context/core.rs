@@ -217,9 +217,21 @@ impl<'a> CheckerContext<'a> {
 
     /// Add an error diagnostic (with deduplication).
     /// Diagnostics with the same (start, code) are only emitted once.
+    /// Exception: TS2430 uses (start ^ `message_hash`, code) to allow multiple
+    /// "incorrectly extends" errors at the same interface name when an interface
+    /// incompatibly extends several distinct bases.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
         // Check if we've already emitted this diagnostic
-        let key = (start, code);
+        let key = if code == 2430 {
+            // TS2430: an interface can fail to correctly extend multiple bases, each producing
+            // a separate diagnostic at the same name position with a different message.
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            message.hash(&mut hasher);
+            (start ^ (hasher.finish() as u32), code)
+        } else {
+            (start, code)
+        };
         if self.emitted_diagnostics.contains(&key) {
             return;
         }
@@ -243,17 +255,26 @@ impl<'a> CheckerContext<'a> {
 
     /// Push a diagnostic with deduplication.
     /// Diagnostics with the same (start, code) are only emitted once.
-    /// Exception: TS2318 (missing global type) at position 0 uses message hash
-    /// to allow multiple distinct global type errors.
+    /// Exceptions:
+    /// - TS2318 (missing global type) at position 0 uses message hash to allow multiple distinct
+    ///   global type errors.
+    /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
+    ///   multiple per-base diagnostics at the same interface name position.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
-        // For TS2318 at position 0, include message hash in key to allow distinct errors
-        // (e.g., "Cannot find global type 'Array'" vs "Cannot find global type 'Object'")
         let key = if diag.code == 2318 && diag.start == 0 {
-            // Use a hash of the message to distinguish different TS2318 errors
+            // TS2318 at position 0: use message hash to distinguish different global type errors
+            // (e.g., "Cannot find global type 'Array'" vs "Cannot find global type 'Object'")
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             diag.message_text.hash(&mut hasher);
             (hasher.finish() as u32, diag.code)
+        } else if diag.code == 2430 {
+            // TS2430: an interface can incorrectly extend multiple bases, each producing a
+            // separate diagnostic at the same name position with a different message.
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            diag.message_text.hash(&mut hasher);
+            (diag.start ^ (hasher.finish() as u32), diag.code)
         } else {
             (diag.start, diag.code)
         };
