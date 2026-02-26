@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use crate::types::{IndexInfo, IndexSignature, ObjectShapeId};
+use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{TypeDatabase, TypeId};
@@ -63,6 +63,11 @@ impl<'a> TypeVisitor for StringIndexResolver<'a> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        shape.string_index.as_ref().map(|idx| idx.value_type)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
         shape.string_index.as_ref().map(|idx| idx.value_type)
     }
 
@@ -114,6 +119,11 @@ impl<'a> TypeVisitor for NumberIndexResolver<'a> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        shape.number_index.as_ref().map(|idx| idx.value_type)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
         shape.number_index.as_ref().map(|idx| idx.value_type)
     }
 
@@ -177,6 +187,14 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
         }
     }
 
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        match self.kind {
+            IndexKind::String => shape.string_index.as_ref().is_some_and(|idx| idx.readonly),
+            IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
+        }
+    }
+
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let types = self.db.type_list(crate::types::TypeListId(list_id));
         // Union: any member being readonly makes it readonly
@@ -228,6 +246,14 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        IndexInfo {
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+        }
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
         IndexInfo {
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),

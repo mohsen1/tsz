@@ -5,7 +5,7 @@
 
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::evaluate_type;
-use crate::types::{ObjectShapeId, PropertyInfo, TypeData, TypeId};
+use crate::types::{CallableShapeId, ObjectShapeId, PropertyInfo, TypeData, TypeId};
 use crate::utils;
 
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
@@ -45,6 +45,9 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
         }
         Some(TypeData::ObjectWithIndex(shape_id)) => {
             indexed_object_property_is_readonly(interner, shape_id, prop_name)
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            callable_property_is_readonly(interner, shape_id, prop_name)
         }
         Some(TypeData::Union(types)) => {
             // For unions: property is readonly if it's readonly in ANY constituent type
@@ -88,6 +91,36 @@ fn indexed_object_property_is_readonly(
     prop_name: &str,
 ) -> bool {
     let shape = interner.object_shape(shape_id);
+    let prop_atom = interner.intern_string(prop_name);
+
+    // Check named property first
+    if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
+        return prop.readonly;
+    }
+
+    // Check string index signature for ALL property names
+    if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
+        return true;
+    }
+
+    // Check numeric index signature for numeric properties
+    if is_numeric_index_name(prop_name)
+        && shape.number_index.as_ref().is_some_and(|idx| idx.readonly)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Check if a property on a callable type is readonly.
+/// Checks both named properties and index signatures (for static index signatures on classes).
+fn callable_property_is_readonly(
+    interner: &dyn TypeDatabase,
+    shape_id: CallableShapeId,
+    prop_name: &str,
+) -> bool {
+    let shape = interner.callable_shape(shape_id);
     let prop_atom = interner.intern_string(prop_name);
 
     // Check named property first

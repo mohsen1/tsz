@@ -6,45 +6,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Report TS2506: Circular class inheritance (class C extends C).
-    pub(crate) fn error_circular_class_inheritance(
-        &mut self,
-        extends_expr_idx: NodeIndex,
-        class_idx: NodeIndex,
-    ) {
-        // Get the class name for the error message
-        let class_name = if let Some(class_node) = self.ctx.arena.get(class_idx)
-            && let Some(class) = self.ctx.arena.get_class(class_node)
-            && class.name.is_some()
-            && let Some(name_node) = self.ctx.arena.get(class.name)
-        {
-            self.ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|id| id.escaped_text.clone())
-        } else {
-            None
-        };
-
-        let name = class_name.unwrap_or_else(|| String::from("<class>"));
-
-        let Some(loc) = self.get_source_location(extends_expr_idx) else {
-            return;
-        };
-
-        let message = format_message(
-            diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-            &[&name],
-        );
-
-        self.ctx.error(
-            loc.start,
-            loc.length(),
-            message,
-            diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-        );
-    }
-
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
     pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {

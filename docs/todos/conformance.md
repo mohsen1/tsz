@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~8687/12570 (69.1%) — full suite, fingerprint level (new framework)
-> Previously ~8683/12570 baseline after rebase.
+**Current score**: ~8725/12570 (69.4%) — full suite, fingerprint level (new framework)
+> Previously ~8687/12570 (69.1%) baseline.
 
 ---
 
@@ -330,6 +330,15 @@
 - **Dead code discovery**: `state/state_checking_members/property_init.rs` exists as an untracked file but is NOT in `mod.rs` — dead code. The real compiled implementation is `types/type_checking/property_init.rs`.
 - **Conformance gain**: +3 tests (classStaticBlock3, classStaticBlock4, classStaticBlock9). Net: 7698→7706 after rebase (61.2%→61.3%)
 - **Remaining TS2729 gaps**: Instance property tests (initializationOrdering1, redefinedPararameterProperty, assignParameterPropertyToPropertyDeclarationESNext/ES2022, privateNameCircularReference) need the same pattern extended to instance contexts.
+
+#### Run note (2026-02-26, session 17) — interfaces/declarationMerging area (TS2428)
+- **Area**: interfaces/declarationMerging (60.7% → 75.0%, 17/28 → 21/28, +4 in area)
+- **Net gain**: +15 tests across full suite (8710 → 8725, 69.3% → 69.4%)
+- **Fixed**: TS2428 ("All declarations of 'X' must have identical type parameters") was not firing for interfaces declared in separate namespace blocks with the same name.
+- **Root cause**: `check_duplicate_identifiers()` in `duplicate_identifiers.rs` grouped interface declarations by the `NodeIndex` of their enclosing `MODULE_DECLARATION`. Two separate `namespace M {}` blocks have different `NodeIndex` values even though the binder merges them into one `SymbolId`. This meant interfaces in separate blocks were never compared.
+- **Fix**: Created `get_enclosing_namespace_symbol()` that resolves `NodeIndex → SymbolId` via `binder.node_symbols`. Changed grouping key from `NodeIndex` to `SymbolId` so separate namespace blocks with the same symbol are correctly treated as the same scope.
+- **Tests added**: 6 unit tests in `tests/ts2428_tests.rs` — generic vs non-generic, same params (no error), different arity, namespace separate blocks, namespace same block.
+- **No regressions**: Zero extra TS2428 errors across the full suite.
 
 ### ~~TS2469 — Symbol operator errors~~ RESOLVED
 - Was using wrong diagnostic constant (TS2736 instead of TS2469) for all binary operator symbol checks

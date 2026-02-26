@@ -61,12 +61,10 @@ impl<'a> CheckerState<'a> {
                             )
                         };
                         if from_idx_sig {
-                            self.error_readonly_index_signature_at(
-                                object_type,
-                                access.name_or_argument,
-                            );
+                            // tsc anchors TS2542 at the full element access expression
+                            self.error_readonly_index_signature_at(object_type, target_idx);
                         } else {
-                            self.error_readonly_property_at(&name, access.name_or_argument);
+                            self.error_readonly_property_at(&name, target_idx);
                         }
                         return true;
                     }

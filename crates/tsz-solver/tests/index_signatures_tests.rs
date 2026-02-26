@@ -1,6 +1,6 @@
 use super::*;
 use crate::intern::TypeInterner;
-use crate::types::{ObjectFlags, ObjectShape};
+use crate::types::{CallableShape, ObjectFlags, ObjectShape};
 
 #[test]
 fn test_resolve_string_index() {
@@ -171,4 +171,142 @@ fn test_has_index_signature_with_both_indexes() {
     let resolver = IndexSignatureResolver::new(&db);
     assert!(resolver.has_index_signature(obj, IndexKind::String));
     assert!(resolver.has_index_signature(obj, IndexKind::Number));
+}
+
+/// Callable types (class constructors) with static index signatures should
+/// resolve string and number index signatures correctly.
+#[test]
+fn test_callable_string_index_resolution() {
+    let db = TypeInterner::new();
+    let callable = db.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        number_index: None,
+        ..CallableShape::default()
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(
+        resolver.resolve_string_index(callable),
+        Some(TypeId::NUMBER),
+        "callable with string index should resolve string index"
+    );
+    assert_eq!(
+        resolver.resolve_number_index(callable),
+        None,
+        "callable with only string index should not resolve number index"
+    );
+}
+
+#[test]
+fn test_callable_number_index_resolution() {
+    let db = TypeInterner::new();
+    let callable = db.callable(CallableShape {
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+        }),
+        ..CallableShape::default()
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(
+        resolver.resolve_string_index(callable),
+        None,
+        "callable with only number index should not resolve string index"
+    );
+    assert_eq!(
+        resolver.resolve_number_index(callable),
+        Some(TypeId::STRING),
+        "callable with number index should resolve number index"
+    );
+}
+
+#[test]
+fn test_callable_readonly_index_signatures() {
+    let db = TypeInterner::new();
+
+    let callable_readonly = db.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: true,
+        }),
+        ..CallableShape::default()
+    });
+
+    let callable_mutable = db.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+        }),
+        ..CallableShape::default()
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert!(
+        resolver.is_readonly(callable_readonly, IndexKind::String),
+        "readonly string index on callable should be detected"
+    );
+    assert!(
+        resolver.is_readonly(callable_readonly, IndexKind::Number),
+        "readonly number index on callable should be detected"
+    );
+    assert!(
+        !resolver.is_readonly(callable_mutable, IndexKind::String),
+        "mutable string index on callable should not be readonly"
+    );
+    assert!(
+        !resolver.is_readonly(callable_mutable, IndexKind::Number),
+        "mutable number index on callable should not be readonly"
+    );
+}
+
+#[test]
+fn test_callable_index_info_collection() {
+    let db = TypeInterner::new();
+    let callable = db.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+        }),
+        ..CallableShape::default()
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    let info = resolver.get_index_info(callable);
+    assert!(info.string_index.is_some(), "should have string index");
+    assert!(info.number_index.is_some(), "should have number index");
+    assert_eq!(
+        info.string_index.as_ref().unwrap().value_type,
+        TypeId::NUMBER
+    );
+    assert_eq!(
+        info.number_index.as_ref().unwrap().value_type,
+        TypeId::STRING
+    );
+    assert!(info.string_index.as_ref().unwrap().readonly);
+    assert!(!info.number_index.as_ref().unwrap().readonly);
 }
