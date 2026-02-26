@@ -8,10 +8,12 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Non-ambient class extending a type-only symbol (interface) should emit TS2693.
-/// `class U extends I {}` where I is an interface → TS2693.
+/// Non-ambient class extending a type-only symbol (interface) should emit TS2689,
+/// NOT TS2693.  tsc uses the more specific TS2689 ("Cannot extend an interface")
+/// in heritage clause context.
+/// `class U extends I {}` where I is an interface → TS2689.
 #[test]
-fn class_extends_interface_emits_ts2693() {
+fn class_extends_interface_emits_ts2689() {
     let source = r"
 interface I { x: number; }
 class U extends I {}
@@ -33,21 +35,41 @@ class U extends I {}
 
     checker.check_source_file(root);
 
-    // Should emit TS2693 for using interface as value in class extends
+    // Should emit TS2689 (not TS2693) for class extending interface
+    let ts2689_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2689)
+        .count();
+    assert!(
+        ts2689_count >= 1,
+        "Expected TS2689 for class extending interface, got {} errors: {:?}",
+        ts2689_count,
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| format!("TS{}: {}", d.code, d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // TS2693 should NOT be emitted — tsc suppresses it in heritage clause context
     let ts2693_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 2693)
         .count();
-    assert!(
-        ts2693_count >= 1,
-        "Expected TS2693 for class extending interface, got {} errors: {:?}",
+    assert_eq!(
         ts2693_count,
+        0,
+        "Expected no TS2693 for class extending interface (TS2689 is sufficient), got: {:?}",
         checker
             .ctx
             .diagnostics
             .iter()
+            .filter(|d| d.code == 2693)
             .map(|d| format!("TS{}: {}", d.code, d.message_text))
             .collect::<Vec<_>>()
     );

@@ -1134,22 +1134,11 @@ impl<'a> CheckerState<'a> {
             };
 
             if parent_node.kind == HERITAGE_CLAUSE {
-                // Reached heritage clause. Only suppress TS1361/TS2693 for
-                // interface/type alias heritage (type context) and ambient class
-                // heritage (declare class — no runtime code), NOT for non-ambient
-                // class heritage (value context where the base constructor is needed).
-                if let Some(h_ext) = self.ctx.arena.get_extended(parent_idx)
-                    && let Some(grandparent) = self.ctx.arena.get(h_ext.parent)
-                {
-                    // Non-ambient class extends is a value context — don't suppress.
-                    if (grandparent.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || grandparent.kind == syntax_kind_ext::CLASS_EXPRESSION)
-                        && !self.ctx.arena.is_in_ambient_context(h_ext.parent)
-                    {
-                        return false;
-                    }
-                }
-                // Interface/type alias heritage or ambient class — suppress.
+                // Suppress TS2693 in ALL heritage clause contexts.
+                // The heritage checker emits more specific errors:
+                //   - TS2689 for class extending an interface
+                //   - TS2507 for non-constructable base expression
+                // tsc never emits TS2693 for heritage clause expressions.
                 return true;
             }
 
