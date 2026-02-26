@@ -172,6 +172,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.write(", null);");
             }
+            self.write_line();
         }
     }
 
