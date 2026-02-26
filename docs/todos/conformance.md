@@ -1,8 +1,34 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9268/12570 (73.7%) — full suite, error-code level
-> Recovered from TS2430 regression. Previous dip was ~7129.
+**Current score**: ~9284/12570 (73.9%) — full suite, error-code level
+> Up from 9268 after never-type and any-suppression fixes.
+
+---
+
+## Solver Fixes — Session 2026-02-26 (continued)
+
+### Fix 1: Property access on `never` type (+14 tests, 9268→9282)
+- **Root cause**: `IntrinsicKind::Never` returned `PropertyNotFound` in solver's property access evaluator.
+  In tsc, `never` is the bottom type — all property accesses vacuously succeed and return `never`.
+- **Solver fix**: Changed `IntrinsicKind::Never` to return `PropertyAccessResult::simple(TypeId::NEVER)`.
+- **Checker fix**: Added `TypeId::NEVER` suppression in `error_property_not_exist_at` (TS2339) and
+  `error_no_index_signature_at` (TS7053).
+- **Impact**: Eliminated 54 false "Property X does not exist on type 'never'" fingerprints.
+
+### Fix 2: `any` suppression decoupled from `strictFunctionTypes` (+2 tests, 9282→9284)
+- **Root cause**: `allow_any_suppression = !config.strict_function_types && !config.sound_mode`.
+  When `strictFunctionTypes` was true (i.e., `@strict: true`), `any` no longer bypassed structural
+  checks. But in tsc, `any` is ALWAYS assignable regardless of `strictFunctionTypes`.
+- **Fix**: Changed to `allow_any_suppression = !config.sound_mode`. The `strictFunctionTypes` flag
+  only affects function parameter contravariance, not `any` propagation.
+
+### Analysis of remaining gaps
+- 311 tests fail with ONLY extra diagnostics (no missing); top false positive codes:
+  - TS2322 (27 tests single-extra), TS2454 (18), TS2345 (16), TS2339 (11)
+- TS2454 tests: mix of flow analysis gaps (`var` vs `let` checking, type guard narrowing)
+- TS2322 tests: diverse causes (keyof, mapped types, recursive types, Promise, null)
+- Lowest-rate conformance areas: jsx (46.7%), types/mapped (50%), types/union (52%)
 
 ---
 
