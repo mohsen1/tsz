@@ -111,3 +111,171 @@ fn parse_declare_export_function_as_single_statement() {
         "declare export function should produce a FUNCTION_DECLARATION"
     );
 }
+
+// =====================================================================
+// Export/Import specifier type-only modifier disambiguation tests
+// =====================================================================
+
+/// Helper: get the first export specifier from an export declaration
+fn get_first_export_specifier(
+    arena: &crate::parser::node::NodeArena,
+    stmt_idx: NodeIndex,
+) -> Option<&crate::parser::node::SpecifierData> {
+    let node = arena.get(stmt_idx)?;
+    let export_decl = arena.get_export_decl(node)?;
+    let clause_node = arena.get(export_decl.export_clause)?;
+    let named_exports = arena.get_named_imports(clause_node)?;
+    let first = *named_exports.elements.nodes.first()?;
+    let spec_node = arena.get(first)?;
+    arena.get_specifier(spec_node)
+}
+
+#[test]
+fn export_type_as_identifier_not_modifier() {
+    // `export { type }` — `type` is the name, NOT a type-only modifier
+    let (parser, root) = parse_source("export { type };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        !spec.is_type_only,
+        "export {{ type }} should NOT be type-only"
+    );
+}
+
+#[test]
+fn export_type_something_is_type_only() {
+    // `export { type something }` — type-only export of `something`
+    let (parser, root) = parse_source("export { type something };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        spec.is_type_only,
+        "export {{ type something }} should be type-only"
+    );
+    assert!(
+        spec.property_name.is_none(),
+        "should have no property_name (no rename)"
+    );
+}
+
+#[test]
+fn export_type_as_is_type_only() {
+    // `export { type as }` — type-only export of `as`
+    let (parser, root) = parse_source("export { type as };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        spec.is_type_only,
+        "export {{ type as }} should be type-only"
+    );
+}
+
+#[test]
+fn export_type_as_as_is_rename_not_type_only() {
+    // `export { type as as }` — NOT type-only, renames `type` to `as`
+    let (parser, root) = parse_source("export { type as as };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        !spec.is_type_only,
+        "export {{ type as as }} should NOT be type-only"
+    );
+    assert!(
+        spec.property_name.is_some(),
+        "should have property_name (rename from type to as)"
+    );
+}
+
+#[test]
+fn export_type_as_as_bar_is_type_only_rename() {
+    // `export { type as as bar }` — type-only export of `as` renamed to `bar`
+    let (parser, root) = parse_source("export { type as as bar };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        spec.is_type_only,
+        "export {{ type as as bar }} should be type-only"
+    );
+    assert!(
+        spec.property_name.is_some(),
+        "should have property_name (rename as -> bar)"
+    );
+}
+
+#[test]
+fn export_type_type_as_foo_is_type_only_rename() {
+    // `export { type type as foo }` — type-only export of `type` renamed to `foo`
+    let (parser, root) = parse_source("export { type type as foo };");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    let spec = get_first_export_specifier(arena, sf.statements.nodes[0]).unwrap();
+    assert!(
+        spec.is_type_only,
+        "export {{ type type as foo }} should be type-only"
+    );
+    assert!(
+        spec.property_name.is_some(),
+        "should have property_name (rename type -> foo)"
+    );
+}
+
+#[test]
+fn import_type_something_is_type_only() {
+    // `import { type something } from './mod'` — type-only import of `something`
+    let (parser, root) = parse_source("import { type something } from './mod';");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "should parse without errors"
+    );
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+    // Get the import specifier from the import clause
+    let node = arena.get(sf.statements.nodes[0]).unwrap();
+    let import = arena.get_import_decl(node).unwrap();
+    let clause_node = arena.get(import.import_clause).unwrap();
+    let clause = arena.get_import_clause(clause_node).unwrap();
+    let bindings_node = arena.get(clause.named_bindings).unwrap();
+    let named = arena.get_named_imports(bindings_node).unwrap();
+    let spec_node = arena.get(named.elements.nodes[0]).unwrap();
+    let spec = arena.get_specifier(spec_node).unwrap();
+    assert!(
+        spec.is_type_only,
+        "import {{ type something }} should be type-only"
+    );
+}

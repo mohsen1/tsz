@@ -633,6 +633,39 @@ impl<'a> CheckerState<'a> {
 
     /// Check `export { x };` (local named exports)
     /// Emits TS2661 if exporting a non-local declaration.
+    /// TS2207: The 'type' modifier cannot be used on a named export when 'export type' is
+    /// used on its export statement. E.g., `export type { type X as Y }` is invalid because
+    /// the specifier-level `type` modifier conflicts with the statement-level `export type`.
+    pub(crate) fn check_type_modifier_on_type_only_export(
+        &mut self,
+        named_exports_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
+            return;
+        };
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return;
+        };
+
+        for &specifier_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if specifier.is_type_only {
+                self.error_at_node(
+                    specifier_idx,
+                    "The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement.",
+                    diagnostic_codes::THE_TYPE_MODIFIER_CANNOT_BE_USED_ON_A_NAMED_EXPORT_WHEN_EXPORT_TYPE_IS_USED_ON_I,
+                );
+            }
+        }
+    }
+
     pub(crate) fn check_local_named_exports(
         &mut self,
         named_exports_idx: tsz_parser::parser::NodeIndex,

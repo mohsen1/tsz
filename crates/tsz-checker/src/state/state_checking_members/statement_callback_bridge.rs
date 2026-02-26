@@ -700,15 +700,23 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     }
                 }
 
-                if export_decl.module_specifier.is_none()
-                    && !self.is_inside_namespace_declaration(export_idx)
-                    && self
-                        .ctx
-                        .arena
-                        .get(clause_idx)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
+                if self
+                    .ctx
+                    .arena
+                    .get(clause_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
                 {
-                    self.check_local_named_exports(clause_idx);
+                    // TS2207: Check for specifier-level `type` modifier when
+                    // `export type { ... }` is used at the statement level.
+                    if export_decl.is_type_only {
+                        self.check_type_modifier_on_type_only_export(clause_idx);
+                    }
+
+                    if export_decl.module_specifier.is_none()
+                        && !self.is_inside_namespace_declaration(export_idx)
+                    {
+                        self.check_local_named_exports(clause_idx);
+                    }
                 }
             }
         }

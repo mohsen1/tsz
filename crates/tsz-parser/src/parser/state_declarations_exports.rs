@@ -11,7 +11,7 @@ use crate::parser::{
     node::{
         BlockData, CaseClauseData, CatchClauseData, ExportAssignmentData, ExportDeclData,
         ExprStatementData, IfStatementData, LiteralData, LoopData, NamedImportsData, ReturnData,
-        SpecifierData, SwitchData, TryData, VariableData, VariableDeclarationData,
+        SwitchData, TryData, VariableData, VariableDeclarationData,
     },
     syntax_kind_ext,
 };
@@ -489,46 +489,11 @@ impl ParserState {
         )
     }
 
-    // Parse export specifier: x or x as y
+    // Parse export specifier: x or x as y, with type-only modifier disambiguation.
+    // Follows tsc's parseImportOrExportSpecifier algorithm for handling the ambiguous
+    // `type` keyword that can be either a modifier or an identifier name.
     pub(crate) fn parse_export_specifier(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        let mut is_type_only = false;
-
-        // Check for "type" keyword
-        if self.is_token(SyntaxKind::TypeKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            // type-only if followed by identifier or string literal (ES2022)
-            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::StringLiteral) {
-                is_type_only = true;
-            } else {
-                self.scanner.restore_state(snapshot);
-                self.current_token = current;
-            }
-        }
-
-        let first_name = self.parse_specifier_identifier_name();
-
-        // Check for "as" alias
-        let (property_name, name) = if self.parse_optional(SyntaxKind::AsKeyword) {
-            let alias = self.parse_specifier_identifier_name();
-            (first_name, alias)
-        } else {
-            (NodeIndex::NONE, first_name)
-        };
-
-        let end_pos = self.token_end();
-        self.arena.add_specifier(
-            syntax_kind_ext::EXPORT_SPECIFIER,
-            start_pos,
-            end_pos,
-            SpecifierData {
-                is_type_only,
-                property_name,
-                name,
-            },
-        )
+        self.parse_import_or_export_specifier(syntax_kind_ext::EXPORT_SPECIFIER)
     }
 
     // Parse exported declaration (export function, export class, etc.)
