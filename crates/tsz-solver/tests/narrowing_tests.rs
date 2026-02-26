@@ -1246,3 +1246,28 @@ fn test_narrow_by_typeof_indexed_access() {
     let expected = interner.intersection2(indexed_access, function_type);
     assert_eq!(narrowed, expected);
 }
+
+#[test]
+fn test_narrow_by_typeof_object_with_index_signature() {
+    // Simulates: typeof x === "object" where x: string | { [key: string]: any }
+    // The ObjectWithIndex type (like Record<string, any>) must survive "object" narrowing.
+    let interner = TypeInterner::new();
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![TypeId::STRING, record_type]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "object");
+
+    // typeof "object" should keep the ObjectWithIndex member, not narrow to never
+    assert_eq!(narrowed, record_type);
+}

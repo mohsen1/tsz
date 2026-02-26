@@ -1124,7 +1124,12 @@ impl<'a> NarrowingContext<'a> {
             if source == TypeId::NULL {
                 return true;
             }
-            if self.is_object_typeof(source) {
+            // Resolve Lazy/Application types (e.g., Record<string, any>) before
+            // checking object-likeness. Without this, unevaluated type aliases
+            // and generic applications are not recognized as object types and
+            // get incorrectly filtered out during typeof "object" narrowing.
+            let resolved = self.resolve_type(source);
+            if self.is_object_typeof(resolved) {
                 return true;
             }
             return false;
