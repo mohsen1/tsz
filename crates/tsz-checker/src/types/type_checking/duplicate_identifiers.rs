@@ -1343,21 +1343,13 @@ impl<'a> CheckerState<'a> {
                     merged_properties.entry(name).or_insert(property_type);
                 }
 
-                // Check declaration-local index signatures against already-seen signatures.
-                if let Some(local_number) = local_number_index {
-                    if let Some(existing_string) = merged_string_index {
-                        let number_str = self.format_type(local_number);
-                        let string_str = self.format_type(existing_string);
-                        if !self.is_assignable_to(local_number, existing_string) {
-                            self.error_at_node_msg(
-                                local_number_index_node,
-                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                                &["number", &number_str, "string", &string_str],
-                            );
-                        }
-                    }
-
-                    if let Some(existing_number) = merged_number_index {
+                // Check declaration-local index signatures against already-seen
+                // same-kind signatures.  Number-vs-string (TS2413) cross-checks
+                // are handled by check_index_signature_compatibility which sees
+                // the merged solver index info and always reports on the number
+                // index node (matching TSC).
+                if let Some(local_number) = local_number_index
+                    && let Some(existing_number) = merged_number_index {
                         let local_str = self.format_type(local_number);
                         let existing_str = self.format_type(existing_number);
                         if !self.is_assignable_to(local_number, existing_number)
@@ -1370,10 +1362,9 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                }
 
-                if let Some(local_string) = local_string_index {
-                    if let Some(existing_string) = merged_string_index {
+                if let Some(local_string) = local_string_index
+                    && let Some(existing_string) = merged_string_index {
                         let local_str = self.format_type(local_string);
                         let existing_str = self.format_type(existing_string);
                         if !self.is_assignable_to(local_string, existing_string)
@@ -1386,19 +1377,6 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-
-                    if let Some(existing_number) = merged_number_index {
-                        let string_str = self.format_type(local_string);
-                        let existing_str = self.format_type(existing_number);
-                        if !self.is_assignable_to(existing_number, local_string) {
-                            self.error_at_node_msg(
-                                local_string_index_node,
-                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                                &["number", &existing_str, "string", &string_str],
-                            );
-                        }
-                    }
-                }
 
                 if merged_number_index.is_none()
                     && let Some(local_number) = local_number_index
