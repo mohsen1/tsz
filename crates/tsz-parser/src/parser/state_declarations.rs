@@ -1885,38 +1885,83 @@ impl ParserState {
         )
     }
 
-    /// Parse import specifier: x or x as y or "str" as y
-    pub(crate) fn parse_import_specifier(&mut self) -> NodeIndex {
+    /// Check if current token can start a module export name (identifier, keyword, or string literal).
+    fn can_parse_module_export_name(&self) -> bool {
+        self.is_identifier_or_keyword() || self.is_token(SyntaxKind::StringLiteral)
+    }
+
+    /// Parse an import or export specifier with correct type-only modifier disambiguation.
+    ///
+    /// Matches tsc's `parseImportOrExportSpecifier` algorithm which handles the ambiguous
+    /// `type` keyword that can be either a type-only modifier or an identifier name.
+    ///
+    /// Disambiguation rules (from tsc):
+    /// - `{ type }` → not type-only, name=type
+    /// - `{ type as }` → type-only, name=as
+    /// - `{ type as as }` → NOT type-only, name=as, propertyName=type (rename)
+    /// - `{ type as as as }` → type-only, name=as, propertyName=as
+    /// - `{ type as something }` → NOT type-only, name=something, propertyName=type (rename)
+    /// - `{ type something }` → type-only, name=something
+    /// - `{ type something as alias }` → type-only, name=alias, propertyName=something
+    pub(crate) fn parse_import_or_export_specifier(&mut self, kind: u16) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
+        let mut property_name = NodeIndex::NONE;
+        let mut can_parse_as_keyword = true;
 
-        // Check for "type" keyword
-        if self.is_token(SyntaxKind::TypeKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            // type-only if followed by identifier or string literal (ES2022)
-            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::StringLiteral) {
+        // Remember if the first token is `type` keyword BEFORE parsing it
+        let first_token_is_type = self.is_token(SyntaxKind::TypeKeyword);
+
+        // Parse the first name (could be `type` or any other identifier)
+        let mut name = self.parse_specifier_identifier_name();
+
+        // If the first name was `type`, disambiguate whether it's a modifier or a name
+        if first_token_is_type {
+            if self.is_token(SyntaxKind::AsKeyword) {
+                // { type as ...? }
+                let first_as = self.parse_specifier_identifier_name();
+                if self.is_token(SyntaxKind::AsKeyword) {
+                    // { type as as ...? }
+                    let second_as = self.parse_specifier_identifier_name();
+                    if self.can_parse_module_export_name() {
+                        // { type as as something } → type-only, propertyName=as, name=something
+                        is_type_only = true;
+                        property_name = first_as;
+                        name = self.parse_specifier_identifier_name();
+                        can_parse_as_keyword = false;
+                    } else {
+                        // { type as as } → NOT type-only, propertyName=type, name=as
+                        property_name = name;
+                        name = second_as;
+                        can_parse_as_keyword = false;
+                    }
+                } else if self.can_parse_module_export_name() {
+                    // { type as something } → NOT type-only, propertyName=type, name=something
+                    property_name = name;
+                    can_parse_as_keyword = false;
+                    name = self.parse_specifier_identifier_name();
+                } else {
+                    // { type as } → type-only, name=as
+                    is_type_only = true;
+                    name = first_as;
+                }
+            } else if self.can_parse_module_export_name() {
+                // { type something ...? } → type-only, name=something
                 is_type_only = true;
-            } else {
-                self.scanner.restore_state(snapshot);
-                self.current_token = current;
+                name = self.parse_specifier_identifier_name();
             }
+            // else: { type } → not type-only, name=type
         }
 
-        let first_name = self.parse_specifier_identifier_name();
-
-        // Check for "as" alias
-        let (property_name, name) = if self.parse_optional(SyntaxKind::AsKeyword) {
-            let alias = self.parse_specifier_identifier_name();
-            (first_name, alias)
-        } else {
-            (NodeIndex::NONE, first_name)
-        };
+        // Handle trailing `as alias` rename
+        if can_parse_as_keyword && self.parse_optional(SyntaxKind::AsKeyword) {
+            property_name = name;
+            name = self.parse_specifier_identifier_name();
+        }
 
         let end_pos = self.token_end();
         self.arena.add_specifier(
-            syntax_kind_ext::IMPORT_SPECIFIER,
+            kind,
             start_pos,
             end_pos,
             SpecifierData {
@@ -1925,6 +1970,12 @@ impl ParserState {
                 name,
             },
         )
+    }
+
+    /// Parse import specifier: x or x as y or "str" as y, with type-only modifier
+    /// disambiguation. Uses shared logic with export specifier parsing.
+    pub(crate) fn parse_import_specifier(&mut self) -> NodeIndex {
+        self.parse_import_or_export_specifier(syntax_kind_ext::IMPORT_SPECIFIER)
     }
 
     // Export declarations and control flow statements → state_declarations_exports.rs

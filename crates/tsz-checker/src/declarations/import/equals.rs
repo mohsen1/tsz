@@ -108,6 +108,17 @@ impl<'a> CheckerState<'a> {
         // Use get_require_module_specifier so both StringLiteral and recovered require-call
         // representations are handled consistently.
         let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
+
+        // TS1392: An import alias cannot use 'import type'.
+        // Only applies to namespace alias forms like `import type Foo = ns.Foo`.
+        // `import type X = require("...")` is valid since TS 3.8.
+        if import.is_type_only && require_module_specifier.is_none() {
+            self.error_at_node(
+                stmt_idx,
+                "An import alias cannot use 'import type'",
+                diagnostic_codes::AN_IMPORT_ALIAS_CANNOT_USE_IMPORT_TYPE,
+            );
+        }
         let mut force_module_not_found = false;
         let mut force_module_not_found_as_2307 = false;
         if require_module_specifier.is_some()
