@@ -85,6 +85,12 @@ impl<'a> CheckerState<'a> {
                 object_type
             };
 
+        // Save the pre-resolution object type. When the object is a type parameter,
+        // resolve_type_for_property_access replaces it with its constraint. But for
+        // generic indexed access (e.g., U[keyof T] where U extends T), we need to
+        // keep the original type parameter to produce the correct deferred type.
+        let pre_resolution_object_type = object_type;
+
         let literal_string = self.get_literal_string_from_node(access.name_or_argument);
         let numeric_string_index = literal_string
             .as_deref()
@@ -561,6 +567,40 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut result_type = result_type.unwrap_or_else(|| {
+            if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+                && self.is_generic_index_type(index_type)
+            {
+                // Case 1: U resolved to a DIFFERENT type parameter T (its constraint).
+                // Produce a deferred IndexAccess(U, index) to preserve the distinction
+                // between U[K] and T[K] for assignability.
+                // Exception: when constraint is concrete (e.g., Record<K, number>),
+                // let normal resolution proceed so T[K] resolves to number.
+                if pre_resolution_object_type != object_type_for_access
+                    && tsz_solver::visitor::is_type_parameter(
+                        self.ctx.types,
+                        object_type_for_access,
+                    )
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+                // Case 2: T resolved to itself (unconstrained type param) and the
+                // index is known to be a valid key for T. Produce deferred IndexAccess
+                // since the solver's is_indexable rejects bare type parameters.
+                // Valid indices for T: keyof T (directly), or K extends keyof T.
+                if pre_resolution_object_type == object_type_for_access
+                    && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+            }
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 
@@ -688,6 +728,39 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    /// Check if an index type is "generic" — i.e., it cannot be resolved to a
+    /// concrete property key and must remain deferred in an `IndexAccess` type.
+    ///
+    /// Generic index types include: keyof T, type parameters, indexed access types,
+    /// and conditional types.
+    fn is_generic_index_type(&self, index_type: TypeId) -> bool {
+        use tsz_solver::visitor;
+        visitor::is_type_parameter(self.ctx.types, index_type)
+            || visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
+            || visitor::is_index_access_type(self.ctx.types, index_type)
+            || visitor::is_conditional_type(self.ctx.types, index_type)
+    }
+
+    /// Check if an index type is known to be a valid key for a given type parameter.
+    ///
+    /// Returns true for:
+    /// - `keyof T` where T is the target type param (direct keyof)
+    /// - `K extends keyof T` where T is the target type param (constrained key)
+    fn is_valid_index_for_type_param(&self, index_type: TypeId, type_param: TypeId) -> bool {
+        use tsz_solver::visitor;
+        // Direct keyof T
+        if let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, index_type) {
+            return keyof_inner == type_param;
+        }
+        // K extends keyof T (type param whose constraint is keyof T)
+        if let Some(param_info) = visitor::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+                && let Some(keyof_inner) = visitor::keyof_inner_type(self.ctx.types, constraint) {
+                    return keyof_inner == type_param;
+                }
+        false
     }
 
     /// Get the type of the `super` keyword.

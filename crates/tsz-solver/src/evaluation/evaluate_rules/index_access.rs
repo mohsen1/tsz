@@ -118,24 +118,48 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
+                // Recursive constraint — defer to avoid infinite loop.
+                Some(
+                    self.evaluator
+                        .interner()
+                        .index_access(self.object_type, self.index_type),
+                )
+            } else if self.is_generic_index() && self.is_constraint_type_parameter(constraint) {
+                // When the index is generic AND the constraint is another type parameter,
+                // keep the indexed access deferred. This preserves the distinction between
+                // U[K] and T[K] when U extends T — if we substituted the constraint,
+                // both would collapse to T[K] and assignability would trivially pass.
+                //
+                // When the constraint is concrete (e.g., Record<K, number>), we still
+                // substitute so T[K] properly resolves to number.
                 Some(
                     self.evaluator
                         .interner()
                         .index_access(self.object_type, self.index_type),
                 )
             } else {
+                // Concrete constraint or concrete index — use the constraint to resolve.
                 Some(
                     self.evaluator
                         .recurse_index_access(constraint, self.index_type),
                 )
             }
         } else {
+            // No constraint — produce a deferred IndexAccess.
             Some(
                 self.evaluator
                     .interner()
                     .index_access(self.object_type, self.index_type),
             )
         }
+    }
+
+    /// Check if a constraint type is itself a type parameter.
+    fn is_constraint_type_parameter(&self, constraint: TypeId) -> bool {
+        matches!(
+            self.evaluator.interner().lookup(constraint),
+            Some(TypeData::TypeParameter(_))
+        )
     }
 }
 
