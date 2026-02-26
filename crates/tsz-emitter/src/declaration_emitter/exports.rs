@@ -297,8 +297,8 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_export_default_expression(&mut self, expr_idx: NodeIndex) {
         // If the expression is a simple identifier, emit `export default <name>;` directly.
         // This matches tsc behavior for `export default foo;` where `foo` is declared in scope.
-        if let Some(expr_node) = self.arena.get(expr_idx) {
-            if expr_node.kind == SyntaxKind::Identifier as u16 {
+        if let Some(expr_node) = self.arena.get(expr_idx)
+            && expr_node.kind == SyntaxKind::Identifier as u16 {
                 self.write_indent();
                 self.write("export default ");
                 self.emit_node(expr_idx);
@@ -306,7 +306,6 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write_line();
                 return;
             }
-        }
 
         // For complex expressions, synthesize a _default variable
         // First, emit: declare const _default: <type>;

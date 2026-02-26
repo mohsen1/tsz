@@ -563,6 +563,16 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         self.propagate_cross_file_target(parent_sym_id, member_id);
 
+        // Check is_type_only on the original export specifier BEFORE alias
+        // resolution, since `export type { A }` sets is_type_only on the
+        // export wrapper, not on the target class/function symbol.
+        if let Some(member_symbol) = self
+            .get_cross_file_symbol(member_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_id))
+            && member_symbol.is_type_only {
+                return None;
+            }
+
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
             && member_symbol.flags & symbol_flags::ALIAS != 0
         {

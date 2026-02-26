@@ -440,15 +440,22 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(member_sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
             {
-                let parent_sym_id = member_symbol.parent;
-                if let Some(parent_symbol) = self
-                    .get_cross_file_symbol(parent_sym_id)
-                    .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                    && (parent_symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                // Skip type-only members (e.g., `export type { A }`).
+                // These should not be resolved as values; let the code fall
+                // through to TS2339 "property doesn't exist" handling.
+                if !member_symbol.is_type_only
+                    && !self.symbol_member_is_type_only(member_sym_id, Some(property_name))
                 {
-                    let member_type = self.get_type_of_symbol(member_sym_id);
-                    if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
-                        return self.apply_flow_narrowing(idx, member_type);
+                    let parent_sym_id = member_symbol.parent;
+                    if let Some(parent_symbol) = self
+                        .get_cross_file_symbol(parent_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                        && (parent_symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                    {
+                        let member_type = self.get_type_of_symbol(member_sym_id);
+                        if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
+                            return self.apply_flow_narrowing(idx, member_type);
+                        }
                     }
                 }
             }

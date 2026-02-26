@@ -260,53 +260,13 @@ impl<'a> CheckerState<'a> {
                 has_type && !has_value
             }
 
-            NamespaceMemberKind::ModuleNamespace(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
-                let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
-                    return false;
-                };
-
-                if symbol.flags & symbol_flags::MODULE == 0 {
-                    return false;
-                }
-
-                let member_id = match symbol
-                    .exports
-                    .as_ref()
-                    .and_then(|exports| exports.get(property_name))
-                    .or_else(|| {
-                        symbol
-                            .members
-                            .as_ref()
-                            .and_then(|members| members.get(property_name))
-                    }) {
-                    Some(member_id) => member_id,
-                    None => return false,
-                };
-
-                let resolved_member_id = if let Some(member_symbol) =
-                    self.get_cross_file_symbol(member_id)
-                    && member_symbol.flags & symbol_flags::ALIAS != 0
-                {
-                    let mut visited_aliases = Vec::new();
-                    self.resolve_alias_symbol(member_id, &mut visited_aliases)
-                        .unwrap_or(member_id)
-                } else {
-                    member_id
-                };
-
-                if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
-                    return true;
-                }
-
-                let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id) else {
-                    return false;
-                };
-
-                let has_value =
-                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
-                has_type && !has_value
+            NamespaceMemberKind::ModuleNamespace(_sym_ref) => {
+                // For module namespace imports (`import * as ns from './mod'`),
+                // type-only exports are completely absent from the value namespace.
+                // tsc emits TS2339 ("property doesn't exist"), not TS2693
+                // ("only refers to a type"). Return false here so the caller
+                // falls through to the normal TS2339 path.
+                false
             }
 
             // Handle Callable types from merged class+namespace or function+namespace symbols

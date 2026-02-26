@@ -1072,8 +1072,22 @@ impl<'a> CheckerState<'a> {
             };
 
             if parent_node.kind == HERITAGE_CLAUSE {
-                // Reached heritage clause without encountering a call expression.
-                // This identifier IS the direct type reference.
+                // Reached heritage clause. Only suppress TS1361/TS2693 for
+                // interface/type alias heritage (type context) and ambient class
+                // heritage (declare class — no runtime code), NOT for non-ambient
+                // class heritage (value context where the base constructor is needed).
+                if let Some(h_ext) = self.ctx.arena.get_extended(parent_idx)
+                    && let Some(grandparent) = self.ctx.arena.get(h_ext.parent)
+                {
+                    // Non-ambient class extends is a value context — don't suppress.
+                    if (grandparent.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || grandparent.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                        && !self.ctx.arena.is_in_ambient_context(h_ext.parent)
+                    {
+                        return false;
+                    }
+                }
+                // Interface/type alias heritage or ambient class — suppress.
                 return true;
             }
 
