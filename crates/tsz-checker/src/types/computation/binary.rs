@@ -704,6 +704,45 @@ impl<'a> CheckerState<'a> {
                                 );
                     }
 
+                    // TS2362/TS2363: Per-operand validity check for bitwise operators.
+                    // Same issue as arithmetic: when one operand is `any`, the evaluator
+                    // returns Success but tsc still validates the other operand individually.
+                    if !emitted_nullish_error {
+                        let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
+                        let right_any_like =
+                            eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
+
+                        if (left_any_like || right_any_like)
+                            && left_type != TypeId::ERROR
+                            && right_type != TypeId::ERROR
+                        {
+                            if left_any_like
+                                && !evaluator.is_arithmetic_operand(eval_right)
+                                && !self.is_enum_type(right_type)
+                                && let Some(loc) = self.get_source_location(right_idx) {
+                                    self.ctx.diagnostics.push(Diagnostic::error(
+                                        self.ctx.file_name.clone(),
+                                        loc.start,
+                                        loc.length(),
+                                        "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                                        crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                    ));
+                                }
+                            if right_any_like
+                                && !evaluator.is_arithmetic_operand(eval_left)
+                                && !self.is_enum_type(left_type)
+                                && let Some(loc) = self.get_source_location(left_idx) {
+                                    self.ctx.diagnostics.push(Diagnostic::error(
+                                        self.ctx.file_name.clone(),
+                                        loc.start,
+                                        loc.length(),
+                                        "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                                        crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                    ));
+                                }
+                        }
+                    }
+
                     let result = evaluator.evaluate(eval_left, eval_right, op_str);
                     let result_type = match result {
                         BinaryOpResult::Success(result_type) => result_type,
@@ -878,6 +917,45 @@ impl<'a> CheckerState<'a> {
             // passing to the solver. e.g., DeepPartial<number> | number → number
             let eval_left = self.evaluate_type_for_binary_ops(left_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
+
+            // TS2362/TS2363: Per-operand validity check for arithmetic operators.
+            // When one operand is `any`, the evaluator returns Success(NUMBER) but tsc
+            // still requires the OTHER operand to be a valid arithmetic type (any, number,
+            // bigint, or enum). Without this pre-check, `any * T` silently passes.
+            if is_arithmetic_op && op_str != "+" && !emitted_nullish_error {
+                let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
+                let right_any_like = eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
+
+                if (left_any_like || right_any_like)
+                    && left_type != TypeId::ERROR
+                    && right_type != TypeId::ERROR
+                {
+                    if left_any_like
+                        && !evaluator.is_arithmetic_operand(eval_right)
+                        && !self.is_enum_type(right_type)
+                        && let Some(loc) = self.get_source_location(right_idx) {
+                            self.ctx.diagnostics.push(Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                loc.start,
+                                loc.length(),
+                                "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                                crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                            ));
+                        }
+                    if right_any_like
+                        && !evaluator.is_arithmetic_operand(eval_left)
+                        && !self.is_enum_type(left_type)
+                        && let Some(loc) = self.get_source_location(left_idx) {
+                            self.ctx.diagnostics.push(Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                loc.start,
+                                loc.length(),
+                                "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                            ));
+                        }
+                }
+            }
 
             // For relational operators, widen literal/enum types to their base types
             // before comparison (matching tsc's getBaseTypeOfLiteralTypeForComparison).
@@ -1421,6 +1499,84 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.code == 2365),
             "Expected TS2365 for objects with incompatible required properties, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2363_any_times_type_parameter() {
+        // When left operand is `any` and right is a type parameter T,
+        // tsc emits TS2363 for the right-hand side. The evaluator returns
+        // Success(number) for `any * T`, but T is not a valid arithmetic operand.
+        let diags = check_source_diagnostics("function f<T>(t: T) { let a: any; var r = a * t; }");
+        assert!(
+            diags.iter().any(|d| d.code == 2363),
+            "Expected TS2363 for type parameter in `any * T`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2362_type_parameter_times_any() {
+        // When left operand is a type parameter T and right is `any`,
+        // tsc emits TS2362 for the left-hand side.
+        let diags = check_source_diagnostics("function f<T>(t: T) { let a: any; var r = t * a; }");
+        assert!(
+            diags.iter().any(|d| d.code == 2362),
+            "Expected TS2362 for type parameter in `T * any`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2363_any_bitwise_and_type_parameter() {
+        // Bitwise operators also require per-operand checks:
+        // `any & T` should emit TS2363 for T.
+        let diags = check_source_diagnostics("function f<T>(t: T) { let a: any; var r = a & t; }");
+        assert!(
+            diags.iter().any(|d| d.code == 2363),
+            "Expected TS2363 for type parameter in `any & T`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2362_for_any_times_any() {
+        // `any * any` should NOT emit TS2362 or TS2363 — both operands are valid.
+        let diags =
+            check_source_diagnostics("function f() { let a: any; let b: any; var r = a * b; }");
+        let has_2362_or_2363 = diags.iter().any(|d| d.code == 2362 || d.code == 2363);
+        assert!(
+            !has_2362_or_2363,
+            "Should NOT emit TS2362/TS2363 for `any * any`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2362_for_number_times_any() {
+        // `number * any` should NOT emit any arithmetic errors.
+        let diags =
+            check_source_diagnostics("function f() { let a: number; let b: any; var r = a * b; }");
+        let has_2362_or_2363 = diags.iter().any(|d| d.code == 2362 || d.code == 2363);
+        assert!(
+            !has_2362_or_2363,
+            "Should NOT emit TS2362/TS2363 for `number * any`, got: {:?}",
+            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_ts2363_for_constrained_type_parameter() {
+        // `any * T` where T extends number should NOT emit TS2363
+        // because constrained T is a valid arithmetic operand.
+        let diags = check_source_diagnostics(
+            "function f<T extends number>(t: T) { let a: any; var r = a * t; }",
+        );
+        let has_2363 = diags.iter().any(|d| d.code == 2363);
+        assert!(
+            !has_2363,
+            "Should NOT emit TS2363 for `any * T` where T extends number, got: {:?}",
             diags.iter().map(|d| d.code).collect::<Vec<_>>()
         );
     }
