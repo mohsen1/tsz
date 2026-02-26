@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T04:34:03Z",
-  "git_sha": "7e49fc4bca797a8ba14a7bdf671de77a9fbe5863",
+  "timestamp": "2026-02-26T04:53:30Z",
+  "git_sha": "d38fb6e07a6454fba9f5eb6aaf92ea892b0be7d0",
   "summary": {
     "total_tests": 12570,
-    "passed": 8748,
-    "failed": 3822,
+    "passed": 8753,
+    "failed": 3817,
     "pass_rate": 69.6
   },
   "areas_by_pass_rate": [
@@ -35,13 +35,6 @@
       "passed": 6,
       "failed": 9,
       "pass_rate": 40.0
-    },
-    {
-      "area": "importDefer",
-      "total": 17,
-      "passed": 7,
-      "failed": 10,
-      "pass_rate": 41.18
     },
     {
       "area": "types/spread",
@@ -352,6 +345,13 @@
       "pass_rate": 64.29
     },
     {
+      "area": "importDefer",
+      "total": 17,
+      "passed": 11,
+      "failed": 6,
+      "pass_rate": 64.71
+    },
+    {
       "area": "types/import",
       "total": 12,
       "passed": 8,
@@ -430,9 +430,9 @@
     },
     {
       "area": "compiler",
-      "total": 6508,
-      "passed": 4682,
-      "failed": 1826,
+      "total": 6510,
+      "passed": 4683,
+      "failed": 1827,
       "pass_rate": 71.94
     },
     {
