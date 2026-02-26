@@ -1,20 +1,13 @@
 {
-  "timestamp": "2026-02-26T16:54:42Z",
-  "git_sha": "957bd38c77d452b1838271a11d6ab5c6f0d635be",
+  "timestamp": "2026-02-26T17:21:35Z",
+  "git_sha": "9b346a576050ad69d690f012e8bc2776d5be145a",
   "summary": {
     "total_tests": 12570,
-    "passed": 9236,
-    "failed": 3334,
+    "passed": 9239,
+    "failed": 3331,
     "pass_rate": 73.5
   },
   "areas_by_pass_rate": [
-    {
-      "area": "node/allowJs",
-      "total": 21,
-      "passed": 8,
-      "failed": 13,
-      "pass_rate": 38.1
-    },
     {
       "area": "types/mapped",
       "total": 26,
@@ -44,6 +37,13 @@
       "pass_rate": 47.37
     },
     {
+      "area": "node/allowJs",
+      "total": 21,
+      "passed": 10,
+      "failed": 11,
+      "pass_rate": 47.62
+    },
+    {
       "area": "types/union",
       "total": 25,
       "passed": 12,
@@ -56,13 +56,6 @@
       "passed": 32,
       "failed": 33,
       "pass_rate": 49.23
-    },
-    {
-      "area": "node",
-      "total": 73,
-      "passed": 36,
-      "failed": 37,
-      "pass_rate": 49.32
     },
     {
       "area": "types/intersection",
@@ -100,6 +93,13 @@
       "pass_rate": 52.0
     },
     {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 9,
+      "failed": 8,
+      "pass_rate": 52.94
+    },
+    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 16,
@@ -112,6 +112,13 @@
       "passed": 8,
       "failed": 7,
       "pass_rate": 53.33
+    },
+    {
+      "area": "node",
+      "total": 73,
+      "passed": 39,
+      "failed": 34,
+      "pass_rate": 53.42
     },
     {
       "area": "transpile",
@@ -175,13 +182,6 @@
       "passed": 7,
       "failed": 5,
       "pass_rate": 58.33
-    },
-    {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 10,
-      "failed": 7,
-      "pass_rate": 58.82
     },
     {
       "area": "jsdoc",
@@ -403,9 +403,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4849,
-      "failed": 1661,
-      "pass_rate": 74.49
+      "passed": 4848,
+      "failed": 1662,
+      "pass_rate": 74.47
     },
     {
       "area": "es6/yieldExpressions",
