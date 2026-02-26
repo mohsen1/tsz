@@ -1271,13 +1271,29 @@ impl<'a> CheckerState<'a> {
                 self.error_type_only_value_at(name, error_node);
                 return TypeId::ERROR;
             }
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::VALUE) == 0
-            {
-                self.error_type_only_value_at(name, error_node);
-                return TypeId::ERROR;
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                if (symbol.flags & symbol_flags::VALUE) == 0 {
+                    self.error_type_only_value_at(name, error_node);
+                    return TypeId::ERROR;
+                }
+                // In TypeScript, `typeof globalThis` only exposes `var`-declared
+                // globals (FUNCTION_SCOPED_VARIABLE) and function/class declarations.
+                // Block-scoped variables (let/const) are NOT properties of globalThis.
+                if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                    && symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
+                {
+                    self.error_property_not_exist_on_global_this(name, error_node);
+                    return TypeId::ERROR;
+                }
             }
             return self.get_type_of_symbol(sym_id);
+        }
+
+        // Self-reference: `globalThis.globalThis` resolves to typeof globalThis itself.
+        // Since typeof globalThis is currently modeled as ANY, return ANY to avoid
+        // false TS2318 errors. tsc would resolve this as a readonly property.
+        if name == "globalThis" {
+            return TypeId::ANY;
         }
 
         if self.is_known_global_value_name(name) {
@@ -1293,8 +1309,26 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        self.error_property_not_exist_at(name, TypeId::ANY, error_node);
-        TypeId::ERROR
+        // For truly unknown properties, return ANY to maintain compatibility with
+        // JS expando patterns (e.g., `globalThis.alpha = 4` in checkJs mode).
+        // Emitting TS2339 here would require `typeof globalThis` to be a proper
+        // object type rather than ANY, which is a larger refactor.
+        TypeId::ANY
+    }
+
+    /// Emit TS2339: "Property 'X' does not exist on type 'typeof globalThis'."
+    /// Used when accessing a property on `globalThis` that either doesn't exist
+    /// or is a block-scoped (let/const) declaration not accessible via globalThis.
+    fn error_property_not_exist_on_global_this(&mut self, name: &str, error_node: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        self.error_at_node(
+            error_node,
+            &format_message(
+                diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                &[name, "typeof globalThis"],
+            ),
+            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        );
     }
 
     /// Format a type as a human-readable string for error messages and diagnostics.
