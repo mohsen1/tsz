@@ -442,6 +442,23 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
+            // Stop at scope boundaries — never walk through function-like nodes
+            // or class bodies into the enclosing scope.
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::CLASS_DECLARATION
+            ) {
+                break;
+            }
+
             if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
                 && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
                 && self.is_assignment_operator(binary.operator_token)
