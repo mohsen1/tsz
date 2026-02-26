@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T08:51:01Z",
-  "git_sha": "fbbebb1dddf37337764e60e8107f15f9fe6ee5fa",
+  "timestamp": "2026-02-26T08:58:58Z",
+  "git_sha": "8477513c5f74920260977c0957c4a125f2926c07",
   "summary": {
     "total_tests": 12570,
-    "passed": 8804,
-    "failed": 3766,
-    "pass_rate": 70.0
+    "passed": 8809,
+    "failed": 3761,
+    "pass_rate": 70.1
   },
   "areas_by_pass_rate": [
     {
@@ -16,18 +16,18 @@
       "pass_rate": 37.5
     },
     {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 10,
-      "failed": 16,
-      "pass_rate": 38.46
-    },
-    {
       "area": "generators",
       "total": 15,
       "passed": 6,
       "failed": 9,
       "pass_rate": 40.0
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 11,
+      "failed": 15,
+      "pass_rate": 42.31
     },
     {
       "area": "node/allowJs",
@@ -114,18 +114,18 @@
       "pass_rate": 51.58
     },
     {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 9,
-      "failed": 8,
-      "pass_rate": 52.94
-    },
-    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 16,
       "failed": 14,
       "pass_rate": 53.33
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 13,
+      "failed": 11,
+      "pass_rate": 54.17
     },
     {
       "area": "controlFlow",
@@ -205,13 +205,6 @@
       "pass_rate": 57.58
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 14,
-      "failed": 10,
-      "pass_rate": 58.33
-    },
-    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -219,11 +212,25 @@
       "pass_rate": 58.33
     },
     {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 17,
+      "failed": 12,
+      "pass_rate": 58.62
+    },
+    {
       "area": "jsdoc",
       "total": 249,
       "passed": 146,
       "failed": 103,
       "pass_rate": 58.63
+    },
+    {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 10,
+      "failed": 7,
+      "pass_rate": 58.82
     },
     {
       "area": "classes/classDeclarations",
@@ -275,13 +282,6 @@
       "pass_rate": 61.76
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -310,13 +310,6 @@
       "pass_rate": 63.68
     },
     {
-      "area": "classes/constructorDeclarations",
-      "total": 39,
-      "passed": 25,
-      "failed": 14,
-      "pass_rate": 64.1
-    },
-    {
       "area": "moduleResolution",
       "total": 42,
       "passed": 27,
@@ -336,6 +329,13 @@
       "passed": 11,
       "failed": 6,
       "pass_rate": 64.71
+    },
+    {
+      "area": "classes/constructorDeclarations",
+      "total": 39,
+      "passed": 26,
+      "failed": 13,
+      "pass_rate": 66.67
     },
     {
       "area": "types/import",
@@ -410,16 +410,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4696,
-      "failed": 1814,
-      "pass_rate": 72.14
-    },
-    {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 47,
-      "failed": 18,
-      "pass_rate": 72.31
+      "passed": 4697,
+      "failed": 1813,
+      "pass_rate": 72.15
     },
     {
       "area": "internalModules/exportDeclarations",
@@ -483,6 +476,13 @@
       "passed": 73,
       "failed": 22,
       "pass_rate": 76.84
+    },
+    {
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 50,
+      "failed": 15,
+      "pass_rate": 76.92
     },
     {
       "area": "es6/templates",
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS5107",
-      "count": 269
+      "count": 266
     },
     {
       "code": "TS2322",
