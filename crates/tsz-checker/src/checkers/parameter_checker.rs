@@ -556,6 +556,82 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Binding Pattern Default Value Validation for Parameters
+    // =========================================================================
+
+    /// Check that default values in destructuring parameter patterns are assignable
+    /// to the declared property types.
+    ///
+    /// For `function f({ show: showRename = v => v }: Show)`, the default value
+    /// `v => v` must be checked against `Show.show`'s type `(x: number) => string`.
+    /// This is analogous to `check_binding_pattern` for variable declarations, but
+    /// for function parameters.
+    ///
+    /// ## Error TS2322:
+    /// "Type X is not assignable to type Y."
+    ///
+    /// ## Current limitations:
+    /// - Arrow function defaults may not produce errors due to body evaluation
+    ///   returning `error` type during type computation.
+    /// - Non-function-like defaults (array literals, string literals) may produce
+    ///   incorrect errors due to type widening in cached types (contextual type
+    ///   not set during initial `infer_type_from_binding_pattern` for non-arrow
+    ///   initializers). The `type_includes_undefined` gate in `check_binding_element`
+    ///   prevents these false positives for required object properties.
+    pub(crate) fn check_parameter_binding_pattern_defaults(&mut self, parameters: &[NodeIndex]) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Only process binding patterns (destructuring)
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                continue;
+            }
+
+            // Get the parameter type: from type annotation or from cached symbol type
+            let param_type = if param.type_annotation.is_some() {
+                let t = self.get_type_from_type_node(param.type_annotation);
+                if t == TypeId::ANY || t == TypeId::ERROR {
+                    continue;
+                }
+                t
+            } else {
+                // Try to get cached type from symbol
+                let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(param.name)
+                    .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
+                else {
+                    continue;
+                };
+                let t = self.get_type_of_symbol(sym_id);
+                if t == TypeId::ANY || t == TypeId::UNKNOWN || t == TypeId::ERROR {
+                    continue;
+                }
+                t
+            };
+
+            // Delegate to check_binding_pattern which handles element type resolution,
+            // contextual type for function-like initializers, and assignability checks.
+            // Note: check_binding_element has a type_includes_undefined gate for object
+            // patterns that prevents false positives from cached widened types.
+            self.check_binding_pattern(param.name, param_type, true);
+        }
+    }
+
+    // =========================================================================
     // Rest Parameter Type Validation
     // =========================================================================
 
@@ -655,5 +731,110 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod binding_pattern_defaults_tests {
+    use crate::test_utils::check_source_codes;
+
+    /// Positive test: arrow function default correctly typed via contextual type.
+    /// `v => v.toString()` returns string, matching `(x: number) => string`.
+    #[test]
+    fn arrow_default_matching_signature_no_error() {
+        let codes = check_source_codes(
+            "interface Show { show: (x: number) => string; }
+             function f({ show = v => v.toString() }: Show) {}",
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for matching arrow default: {codes:?}"
+        );
+    }
+
+    /// Positive test: renamed property with arrow default, correct return type.
+    #[test]
+    fn renamed_property_arrow_default_no_error() {
+        let codes = check_source_codes(
+            r#"interface Show { show: (x: number) => string; }
+               function f2({ "show": showRename = v => v.toString() }: Show) {}"#,
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for matching renamed arrow default: {codes:?}"
+        );
+    }
+
+    /// Positive test: string literal default matches union type.
+    #[test]
+    fn string_literal_default_matches_union_no_error() {
+        let codes = check_source_codes(
+            r#"interface StringUnion { prop: "foo" | "bar"; }
+               function h({ prop = "foo" }: StringUnion) {}"#,
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for matching string literal default: {codes:?}"
+        );
+    }
+
+    /// Positive test: tuple default matches tuple type.
+    #[test]
+    fn tuple_default_matches_tuple_type_no_error() {
+        let codes = check_source_codes(
+            "interface Tuples { prop: [string, number]; }
+             function g({ prop = [\"hello\", 1234] }: Tuples) {}",
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for matching tuple default: {codes:?}"
+        );
+    }
+
+    /// Optional property default — `check_binding_element` validates when
+    /// element type includes undefined.
+    #[test]
+    fn optional_property_default_assignable_no_error() {
+        let codes = check_source_codes(
+            "interface Opts { name?: string; }
+             function f({ name = \"default\" }: Opts) {}",
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for assignable optional property default: {codes:?}"
+        );
+    }
+
+    /// The `check_parameter_binding_pattern_defaults` infrastructure is called
+    /// for function declarations with binding pattern parameters.
+    #[test]
+    fn parameter_binding_check_called_for_function_decl() {
+        // This should not panic or crash — verifies the call path works.
+        let codes = check_source_codes(
+            "interface Config { debug?: boolean; }
+             function init({ debug = false }: Config) {}",
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for boolean default: {codes:?}"
+        );
+    }
+
+    /// Nested object binding pattern with defaults.
+    #[test]
+    fn nested_object_binding_no_error_when_matching() {
+        let codes = check_source_codes(
+            "interface Show { show: (x: number) => string; }
+             interface Nested { nested: Show }
+             function ff({ nested = { show: v => v.toString() } }: Nested) {}",
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 for matching nested default: {codes:?}"
+        );
     }
 }

@@ -54,7 +54,22 @@ impl<'a> CheckerState<'a> {
                         self.get_binding_element_type(pattern_idx, i, parent_type, element_data);
 
                     if element_data.initializer.is_some() {
+                        // Set contextual type for function-like initializers so that
+                        // arrow function parameters get inferred from the element type.
+                        // Without this, `v => v` in `{ show = v => v }` would cache
+                        // `(v: any) => any` instead of `(v: number) => number`.
+                        // Note: only set for arrow/function expressions to avoid JSX
+                        // attribute regressions with array/string literal widening.
+                        let prev_ctx = self.ctx.contextual_type;
+                        if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN
+                            && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
+                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                {
+                                    self.ctx.contextual_type = Some(element_type);
+                                }
                         let init_type = self.get_type_of_node(element_data.initializer);
+                        self.ctx.contextual_type = prev_ctx;
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
                         } else if !self.is_assignable_to(init_type, element_type) {
@@ -90,7 +105,11 @@ impl<'a> CheckerState<'a> {
             let mut elements = Vec::new();
 
             for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-                if element_idx.is_none() {
+                let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
                     elements.push(tsz_solver::TupleElement {
                         type_id: TypeId::ANY,
                         optional: true,
@@ -100,60 +119,103 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if let Some(element_node) = self.ctx.arena.get(element_idx) {
-                    if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                        elements.push(tsz_solver::TupleElement {
-                            type_id: TypeId::ANY,
-                            optional: true,
-                            rest: false,
-                            name: None,
-                        });
-                        continue;
-                    }
+                if let Some(element_data) = self.ctx.arena.get_binding_element(element_node) {
+                    let mut element_type =
+                        self.get_binding_element_type(pattern_idx, i, parent_type, element_data);
 
-                    if let Some(element_data) = self.ctx.arena.get_binding_element(element_node) {
-                        let mut element_type = self.get_binding_element_type(
-                            pattern_idx,
-                            i,
-                            parent_type,
-                            element_data,
-                        );
-
-                        if element_data.initializer.is_some() {
-                            let init_type = self.get_type_of_node(element_data.initializer);
-                            if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
-                                element_type = init_type;
-                            } else if !self.is_assignable_to(init_type, element_type) {
-                                element_type = self
-                                    .ctx
-                                    .types
-                                    .factory()
-                                    .union(vec![element_type, init_type]);
-                            }
-                        } else if element_type == TypeId::ANY
-                            && let Some(name_node) = self.ctx.arena.get(element_data.name)
-                            && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                        {
+                    if element_data.initializer.is_some() {
+                        // Set contextual type for function-like initializers
+                        let prev_ctx = self.ctx.contextual_type;
+                        if element_type != TypeId::ANY && element_type != TypeId::UNKNOWN
+                            && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
+                                && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                {
+                                    self.ctx.contextual_type = Some(element_type);
+                                }
+                        let init_type = self.get_type_of_node(element_data.initializer);
+                        self.ctx.contextual_type = prev_ctx;
+                        if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
+                            element_type = init_type;
+                        } else if !self.is_assignable_to(init_type, element_type) {
                             element_type = self
-                                .infer_type_from_binding_pattern(element_data.name, element_type);
+                                .ctx
+                                .types
+                                .factory()
+                                .union(vec![element_type, init_type]);
                         }
-
-                        let is_optional =
-                            element_data.initializer.is_some() || element_data.dot_dot_dot_token;
-
-                        elements.push(tsz_solver::TupleElement {
-                            type_id: element_type,
-                            optional: is_optional,
-                            rest: element_data.dot_dot_dot_token,
-                            name: None,
-                        });
+                    } else if element_type == TypeId::ANY
+                        && let Some(name_node) = self.ctx.arena.get(element_data.name)
+                        && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                    {
+                        element_type =
+                            self.infer_type_from_binding_pattern(element_data.name, element_type);
                     }
+
+                    let is_optional =
+                        element_data.initializer.is_some() || element_data.dot_dot_dot_token;
+
+                    elements.push(tsz_solver::TupleElement {
+                        type_id: element_type,
+                        optional: is_optional,
+                        rest: element_data.dot_dot_dot_token,
+                        name: None,
+                    });
                 }
             }
+
             return factory.tuple(elements);
         }
-
         TypeId::ANY
+    }
+}
+
+#[cfg(test)]
+mod binding_contextual_type_tests {
+    use crate::test_utils::check_source_codes;
+
+    /// The contextual type fix ensures arrow function initializers in binding
+    /// patterns get their parameter types inferred from the element type.
+    /// Without this fix, `v => v.toString()` would be typed as `(v: any) => any`
+    /// instead of `(v: number) => string`.
+    #[test]
+    fn arrow_in_binding_pattern_gets_contextual_type() {
+        // This should not produce TS7006 (implicit any) because the arrow
+        // parameter `v` should be contextually typed as `number`.
+        let codes = check_source_codes(
+            "interface Show { show: (x: number) => string; }
+             function f({ show = v => v.toString() }: Show) {}",
+        );
+        assert!(
+            !codes.contains(&7006),
+            "Arrow param should not be implicit any: {codes:?}"
+        );
+    }
+
+    /// Variable declaration with arrow function default in binding pattern.
+    #[test]
+    fn var_decl_arrow_binding_gets_contextual_type() {
+        let codes = check_source_codes(
+            "interface SI { stringIdentity(s: string): string; }
+             let { stringIdentity: id = arg => arg }: SI = { stringIdentity: x => x };",
+        );
+        assert!(
+            !codes.contains(&7006),
+            "Arrow param in var decl binding should not be implicit any: {codes:?}"
+        );
+    }
+
+    /// Function expression default in binding pattern gets contextual type.
+    #[test]
+    fn function_expr_binding_gets_contextual_type() {
+        let codes = check_source_codes(
+            "interface Fn { handler: (x: number) => number; }
+             function f({ handler = function(x) { return x; } }: Fn) {}",
+        );
+        assert!(
+            !codes.contains(&7006),
+            "Function expr param in binding should not be implicit any: {codes:?}"
+        );
     }
 }

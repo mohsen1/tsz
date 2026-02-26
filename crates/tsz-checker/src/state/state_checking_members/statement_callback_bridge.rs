@@ -277,6 +277,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check that parameter default values are assignable to declared types (TS2322)
             self.check_parameter_initializers(&func.parameters.nodes);
 
+            // Check binding element defaults in destructuring parameters (TS2322)
+            // e.g., function f({ show: x = v => v }: Show) — validate x's default
+            self.check_parameter_binding_pattern_defaults(&func.parameters.nodes);
+
             if !has_type_annotation {
                 // Suppress definite assignment errors during return type inference.
                 // The function body will be checked again below, and that's when
