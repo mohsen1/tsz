@@ -773,8 +773,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
-        // Determine max param count and rest status
-        let any_has_rest = all_signatures.iter().any(|(_, _, rest)| *rest);
+        // Determine max param count for iterating all positions
         let max_param_count = all_signatures
             .iter()
             .map(|(params, _, _)| params.len())
@@ -836,10 +835,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let max_allowed = if any_has_rest {
-            None // Unbounded when any member has rest params
-        } else {
-            Some(max_param_count)
+        // Compute max_allowed using tsc's Phase 1 matching semantics:
+        // The member(s) with the highest min_required become the "base" of the
+        // combined signature (all other members' signatures partially match them
+        // because their min ≤ base.min). The combined inherits the base member's
+        // parameter shape for determining max_allowed.
+        //
+        // - If any base member has rest → unlimited (None)
+        // - Otherwise → max of base members' param counts
+        // - If all members have the same min, they're all base members → use
+        //   existing max_param_count / any_has_rest logic
+        let max_allowed = {
+            // Compute per-member min_required
+            let member_mins: Vec<usize> = all_signatures
+                .iter()
+                .map(|(params, _, _)| {
+                    params
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| p.is_required() && !p.rest)
+                        .map(|(i, _)| i + 1)
+                        .max()
+                        .unwrap_or(0)
+                })
+                .collect();
+
+            let max_min = *member_mins.iter().max().unwrap_or(&0);
+
+            // Collect base members (those with the highest min_required)
+            let base_has_rest = all_signatures
+                .iter()
+                .zip(member_mins.iter())
+                .any(|((_, _, has_rest), &m_min)| m_min == max_min && *has_rest);
+            let base_max_params = all_signatures
+                .iter()
+                .zip(member_mins.iter())
+                .filter(|&(_, &m_min)| m_min == max_min)
+                .map(|((params, _, _), _)| params.len())
+                .max()
+                .unwrap_or(0);
+
+            if base_has_rest {
+                None // Base member(s) have rest → unlimited
+            } else {
+                Some(base_max_params)
+            }
         };
 
         // Union all return types
