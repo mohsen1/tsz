@@ -69,16 +69,17 @@ impl<'a> CheckerState<'a> {
         trace!(?narrowed_type, "flow narrowing result");
 
         // Check definite assignment for block-scoped variables without initializers.
-        // Only emit TS2454 when the flow analysis did NOT narrow the type — meaning
-        // we're not in a type-guarded branch that implies the variable has a value.
-        // This matches tsc behavior where typeof/instanceof guards suppress TS2454
-        // in their narrowed branches.
-        if narrowed_type == declared_type
-            && should_report_variable_use_before_assignment(self, idx, declared_type, sym_id)
-        {
+        // TS2454 is checked INDEPENDENTLY of narrowing. When a variable is used
+        // before assignment, we emit TS2454 and return the declared type (not the
+        // narrowed type). The definite assignment analysis itself handles typeof/
+        // instanceof true branches — those are treated as proof that the variable
+        // has a value, so TS2454 is suppressed in those branches.
+        if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
-            // Return declared type (same as narrowed here since they're equal)
+            // Return the declared type — narrowing is not trustworthy when the
+            // variable might be uninitialized (e.g., typeof false branch where
+            // the variable could be undefined).
             trace!("Definite assignment error, returning declared type");
             return declared_type;
         }

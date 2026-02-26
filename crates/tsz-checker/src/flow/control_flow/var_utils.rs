@@ -10,6 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::FlowAnalyzer;
@@ -133,7 +134,13 @@ impl<'a> FlowAnalyzer<'a> {
                     results.iter().all(|&r| r)
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL | flow_flags::CONDITION) {
-                if let Some(&ant) = flow.antecedent.first() {
+                // typeof/instanceof guards prove the variable has a value in the
+                // "positive sense" branch. For `===`/`==` that's TRUE_CONDITION;
+                // for `!==`/`!=` that's FALSE_CONDITION (double negative → positive).
+                // instanceof is always positive in TRUE_CONDITION.
+                if self.condition_proves_assignment(flow, reference) {
+                    true
+                } else if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
                     } else {
@@ -211,6 +218,103 @@ impl<'a> FlowAnalyzer<'a> {
         cache.extend(local_cache);
 
         final_result
+    }
+
+    /// Check if a CONDITION flow node proves the reference variable is assigned.
+    ///
+    /// typeof/instanceof guards prove a variable has a value in the "positive
+    /// sense" branch:
+    /// - `typeof x === "string"` + `TRUE_CONDITION` → x is assigned (typeof returned "string")
+    /// - `typeof x !== "string"` + `FALSE_CONDITION` → x is assigned (double negative)
+    /// - `typeof x !== "string"` + `TRUE_CONDITION` → x might be uninitialized
+    /// - `x instanceof C` + `TRUE_CONDITION` → x is assigned
+    fn condition_proves_assignment(
+        &self,
+        flow: &tsz_binder::FlowNode,
+        reference: NodeIndex,
+    ) -> bool {
+        let is_true_condition = flow.has_any_flags(flow_flags::TRUE_CONDITION)
+            && !flow.has_any_flags(flow_flags::FALSE_CONDITION);
+        let is_false_condition = flow.has_any_flags(flow_flags::FALSE_CONDITION)
+            && !flow.has_any_flags(flow_flags::TRUE_CONDITION);
+
+        if !is_true_condition && !is_false_condition {
+            return false;
+        }
+
+        self.expr_proves_assignment(flow.node, is_true_condition, is_false_condition, reference)
+    }
+
+    /// Check if an expression node (possibly compound via `&&`/`||`) proves
+    /// that `reference` has been assigned a value.
+    fn expr_proves_assignment(
+        &self,
+        condition: NodeIndex,
+        is_true_condition: bool,
+        is_false_condition: bool,
+        reference: NodeIndex,
+    ) -> bool {
+        let Some(node_data) = self.arena.get(condition) else {
+            return false;
+        };
+
+        if node_data.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+
+        let Some(bin) = self.arena.get_binary_expr(node_data) else {
+            return false;
+        };
+
+        // `&&`: TRUE_CONDITION means both operands are true, so either
+        // proving assignment is sufficient.
+        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16 && is_true_condition {
+            return self.expr_proves_assignment(bin.left, true, false, reference)
+                || self.expr_proves_assignment(bin.right, true, false, reference);
+        }
+
+        // `||`: FALSE_CONDITION means both operands are false, so either
+        // proving assignment (in negative sense) is sufficient.
+        if bin.operator_token == SyntaxKind::BarBarToken as u16 && is_false_condition {
+            return self.expr_proves_assignment(bin.left, false, true, reference)
+                || self.expr_proves_assignment(bin.right, false, true, reference);
+        }
+
+        // instanceof: `x instanceof C` → TRUE_CONDITION proves assignment
+        if bin.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+            return is_true_condition && self.is_matching_reference(bin.left, reference);
+        }
+
+        // typeof: check operator polarity
+        let is_positive_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
+        let is_negative_equality = bin.operator_token
+            == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+
+        if !is_positive_equality && !is_negative_equality {
+            return false;
+        }
+
+        // Determine if this is the "positive sense" branch:
+        // - `=== "type"` + TRUE_CONDITION → positive
+        // - `!== "type"` + FALSE_CONDITION → positive (double negative)
+        let is_positive_sense = (is_positive_equality && is_true_condition)
+            || (is_negative_equality && is_false_condition);
+
+        if !is_positive_sense {
+            return false;
+        }
+
+        // Check if either side is a typeof expression targeting the reference
+        if let Some(typeof_operand) = self.get_typeof_operand(bin.left) {
+            return self.is_matching_reference(typeof_operand, reference);
+        }
+        if let Some(typeof_operand) = self.get_typeof_operand(bin.right) {
+            return self.is_matching_reference(typeof_operand, reference);
+        }
+
+        false
     }
 
     /// Check if an assignment node is a compound read-write operation.
