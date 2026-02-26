@@ -353,6 +353,11 @@ impl<'a> CheckerState<'a> {
                                 // This is a spread of a non-tuple array type
                                 // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
                                 self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                // Push ANY to suppress subsequent TS2345 — tsc
+                                // only reports TS2556 here.
+                                arg_types.push(TypeId::ANY);
+                                effective_index += 1;
+                                continue;
                             }
                             // Continue processing - push the element type for assignability checking
                             if let Some(elem_type) =
@@ -363,6 +368,33 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                         }
+                    }
+
+                    // Handle non-array, non-tuple iterables (custom iterator classes).
+                    // Resolve the iterated element type via the iterator protocol:
+                    // type[Symbol.iterator]().next().value
+                    if self.is_iterable_type(spread_type) {
+                        let element_type = self.for_of_element_type(spread_type);
+
+                        // TS2556 check: A non-tuple spread is only valid at
+                        // a rest parameter position.
+                        let current_expected = expected_for_index(effective_index, expanded_count);
+                        let target_accepts_spread = current_expected.is_none()
+                            || current_expected.is_some_and(|t| t == TypeId::ANY)
+                            || expected_for_index(usize::MAX / 2, expanded_count).is_some();
+                        if !target_accepts_spread {
+                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            // When TS2556 is emitted, push ANY to suppress a
+                            // subsequent TS2345 — tsc only reports TS2556 here.
+                            arg_types.push(TypeId::ANY);
+                            effective_index += 1;
+                            continue;
+                        }
+
+                        // Push the iterated element type, not the raw iterator class type
+                        arg_types.push(element_type);
+                        effective_index += 1;
+                        continue;
                     }
 
                     // Otherwise just push the spread type as-is

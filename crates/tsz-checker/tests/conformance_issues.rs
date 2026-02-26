@@ -3357,3 +3357,47 @@ eval = 1;
         "Expected TS1100 for 'eval = 1' in strict mode. Got: {diagnostics:?}"
     );
 }
+
+// =========================================================================
+// Iterable spread in function calls — TS2556 / TS2345
+// =========================================================================
+
+#[test]
+fn test_array_spread_in_non_rest_param_emits_ts2556() {
+    // Spreading a non-tuple array into a non-rest parameter must emit TS2556.
+    // When TS2556 is emitted, no TS2345 should be emitted alongside it.
+    let source = r#"
+function foo(s: number) { }
+declare var arr: number[];
+foo(...arr);
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        has_error(&diagnostics, 2556),
+        "Expected TS2556 for array spread to non-rest param. Got: {diagnostics:?}"
+    );
+    // Should NOT also emit TS2345 when TS2556 is reported
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Should not emit TS2345 alongside TS2556. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_spread_in_rest_param_no_error() {
+    // Spreading an array into a rest parameter should not emit TS2556.
+    let source = r#"
+function foo(...s: number[]) { }
+declare var arr: number[];
+foo(...arr);
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2556),
+        "Should not emit TS2556 for array spread to rest param. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Should not emit TS2345 for compatible array spread. Got: {diagnostics:?}"
+    );
+}
