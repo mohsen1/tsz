@@ -15,15 +15,25 @@ pub(crate) fn get_contextual_signature(
     tsz_solver::get_contextual_signature_with_compat_checker(db, type_id)
 }
 
-/// Get the construct signature of a type, including generic ones.
+/// Get the construct signature of a type, preferring a generic one.
 /// Used for two-pass inference in `new` expressions where the construct
 /// signature may have type parameters that need to be inferred.
+///
+/// For overloaded constructors (e.g. `Map` with `new()` and `new<K,V>(entries?)`),
+/// we prefer the generic signature so that `is_generic_new` is set correctly
+/// and proper contextual types are provided to array/object literal arguments.
 pub(crate) fn get_construct_signature(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
     let sigs = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
-    let sig = sigs.first()?;
+    // Prefer a generic signature (one with type parameters) over a non-generic one.
+    // This ensures that overloaded constructors like Map's `new<K,V>(entries?)` trigger
+    // proper contextual typing for array/object literal arguments.
+    let sig = sigs
+        .iter()
+        .find(|s| !s.type_params.is_empty())
+        .or_else(|| sigs.first())?;
     Some(FunctionShape {
         type_params: sig.type_params.clone(),
         params: sig.params.clone(),

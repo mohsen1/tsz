@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-26T01:08:09Z",
-  "git_sha": "6c708880c4e1754ef9a9b2088762765e4bae3262",
+  "timestamp": "2026-02-26T01:33:35Z",
+  "git_sha": "e02cd8764231cf72edb21bb0c846615932efb82c",
   "summary": {
     "total_tests": 12570,
-    "passed": 8711,
-    "failed": 3859,
+    "passed": 8710,
+    "failed": 3860,
     "pass_rate": 69.3
   },
   "areas_by_pass_rate": [
@@ -177,13 +177,6 @@
       "pass_rate": 53.42
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 13,
-      "failed": 11,
-      "pass_rate": 54.17
-    },
-    {
       "area": "es6/for-ofStatements",
       "total": 59,
       "passed": 32,
@@ -268,11 +261,25 @@
       "pass_rate": 58.23
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
+    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
       "failed": 5,
       "pass_rate": 58.33
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 17,
+      "failed": 12,
+      "pass_rate": 58.62
     },
     {
       "area": "expressions/contextualTyping",
@@ -322,13 +329,6 @@
       "passed": 21,
       "failed": 13,
       "pass_rate": 61.76
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
     },
     {
       "area": "classes/members",
@@ -452,9 +452,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4681,
-      "failed": 1829,
-      "pass_rate": 71.9
+      "passed": 4680,
+      "failed": 1830,
+      "pass_rate": 71.89
     },
     {
       "area": "types/objectTypeLiteral",

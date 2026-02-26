@@ -131,9 +131,13 @@ pub fn is_array_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Array(_)))
 }
 
-/// Check if a type is a tuple type.
+/// Check if a type is a tuple type (including readonly tuples wrapped in `ReadonlyType`).
 pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(types.lookup(type_id), Some(TypeData::Tuple(_)))
+    match types.lookup(type_id) {
+        Some(TypeData::Tuple(_)) => true,
+        Some(TypeData::ReadonlyType(inner)) => is_tuple_type(types, inner),
+        _ => false,
+    }
 }
 
 /// Check if a type is a type parameter.

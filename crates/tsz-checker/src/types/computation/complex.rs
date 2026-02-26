@@ -452,11 +452,39 @@ impl<'a> CheckerState<'a> {
             "New expression: two-pass inference check"
         );
 
-        let ctx_helper = ContextualTypeContext::with_expected_and_options(
-            self.ctx.types,
-            constructor_type,
-            self.ctx.compiler_options.no_implicit_any,
-        );
+        // When the constructor has a generic signature, use that signature's function shape as the
+        // contextual type source. This is needed for overloaded constructors like Map where the first
+        // signature is non-generic (`new(): Map<any,any>`) but a later one is generic
+        // (`new<K,V>(entries?): Map<K,V>`). Without this, `ParameterForCallExtractor` would skip all
+        // generic construct signatures and return no contextual type, causing array/object literals
+        // passed as arguments to be over-widened (e.g. `[["",true]]` → `(string|boolean)[][]`
+        // instead of `[string, boolean][]`).
+        let ctx_helper = if is_generic_new && let Some(ref shape) = constructor_shape {
+            // Build a Function type from the generic signature so that
+            // `ParameterForCallExtractor::visit_function` can extract param types directly,
+            // bypassing the Callable-level logic that skips generic construct signatures.
+            let factory = self.ctx.types.factory();
+            let func_type = factory.function(tsz_solver::FunctionShape {
+                params: shape.params.clone(),
+                return_type: shape.return_type,
+                this_type: shape.this_type,
+                type_params: shape.type_params.clone(),
+                type_predicate: shape.type_predicate.clone(),
+                is_constructor: true,
+                is_method: false,
+            });
+            ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                func_type,
+                self.ctx.compiler_options.no_implicit_any,
+            )
+        } else {
+            ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                constructor_type,
+                self.ctx.compiler_options.no_implicit_any,
+            )
+        };
         let check_excess_properties = true;
 
         let arg_types = if is_generic_new {

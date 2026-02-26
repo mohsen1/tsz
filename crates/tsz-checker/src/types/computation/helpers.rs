@@ -208,12 +208,9 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
         });
 
-        let tuple_context = match applicable_contextual_type {
-            Some(applicable) => {
-                tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)
-            }
-            None => None,
-        };
+        let tuple_context = applicable_contextual_type.and_then(|applicable| {
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)
+        });
 
         // Use the applicable (narrowed) type for contextual typing when available,
         // falling back to the full resolved contextual type
