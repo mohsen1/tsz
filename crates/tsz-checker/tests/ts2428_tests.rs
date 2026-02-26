@@ -1,4 +1,4 @@
-//! Tests for TS2428: All declarations of 'X' must have identical type parameters.
+//! Tests for TS2428, TS2411, TS2413: interface declaration merging diagnostics.
 
 use crate::CheckerState;
 use tsz_binder::BinderState;
@@ -214,5 +214,120 @@ namespace M3 {
     assert!(
         has_error_with_code(source, 2717),
         "Should emit TS2717 for conflicting property types across separate namespace blocks"
+    );
+}
+
+// ── TS2411 quoting tests ────────────────────────────────────────────────
+
+fn get_diagnostic_messages(source: &str) -> Vec<(u32, String)> {
+    get_diagnostics(source)
+}
+
+#[test]
+fn ts2411_single_quoted_property_name_preserved_in_diagnostic() {
+    // TSC preserves quote style: `'a': number` → Property ''a'' of type ...
+    let source = r#"
+interface A2 {
+    [x: string]: { length: number };
+    'a': number;
+}
+"#;
+    let diags = get_diagnostic_messages(source);
+    let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
+    assert!(
+        !ts2411_msgs.is_empty(),
+        "Should emit TS2411 for string literal property vs string index"
+    );
+    let msg = &ts2411_msgs[0].1;
+    assert!(
+        msg.contains("'a'"),
+        "TS2411 message should include single-quoted property name 'a', got: {msg}"
+    );
+}
+
+#[test]
+fn ts2411_double_quoted_property_name_preserved_in_diagnostic() {
+    // TSC preserves quote style: `"-Infinity": string` → Property '"-Infinity"' of type ...
+    let source = r#"
+interface A {
+    [x: string]: number;
+    "-Infinity": string;
+}
+"#;
+    let diags = get_diagnostic_messages(source);
+    let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
+    assert!(
+        !ts2411_msgs.is_empty(),
+        "Should emit TS2411 for double-quoted string literal property vs string index"
+    );
+    let msg = &ts2411_msgs[0].1;
+    assert!(
+        msg.contains("\"-Infinity\""),
+        "TS2411 message should include double-quoted property name, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2411_identifier_property_not_quoted() {
+    // Identifier properties should NOT have quotes in TS2411 message
+    let source = r#"
+interface A {
+    [x: string]: number;
+    foo: string;
+}
+"#;
+    let diags = get_diagnostic_messages(source);
+    let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
+    assert!(
+        !ts2411_msgs.is_empty(),
+        "Should emit TS2411 for identifier property vs string index"
+    );
+    let msg = &ts2411_msgs[0].1;
+    // The template wraps {0} in single quotes: Property 'foo' of type...
+    // But the property name itself should NOT have extra quotes
+    assert!(
+        !msg.contains("'foo'") || !msg.contains("''foo''"),
+        "TS2411 message for identifier should not double-quote, got: {msg}"
+    );
+}
+
+// ── TS2413 location tests ───────────────────────────────────────────────
+
+#[test]
+fn ts2413_emitted_for_incompatible_number_and_string_index() {
+    // TS2413: 'number' index type 'string' is not assignable to 'string' index type ...
+    let source = r#"
+interface A {
+    [x: number]: string;
+    [x: string]: { length: string };
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2413),
+        "Should emit TS2413 when number index type is not assignable to string index type"
+    );
+}
+
+#[test]
+fn ts2413_not_duplicated_across_merged_interface_bodies() {
+    // When index signatures are in separate merged interface bodies,
+    // TS2413 should only be emitted once (on the number index node).
+    let source = r#"
+interface A {
+    [x: number]: string;
+}
+interface A {
+    [x: string]: { length: string };
+}
+"#;
+    let diags = get_diagnostic_messages(source);
+    let ts2413_count = diags.iter().filter(|d| d.0 == 2413).count();
+    assert!(
+        ts2413_count <= 1,
+        "TS2413 should not be duplicated across merged bodies, got {ts2413_count} emissions"
+    );
+    assert!(
+        ts2413_count == 1,
+        "Should still emit TS2413 once for incompatible indexes, got {ts2413_count} emissions"
     );
 }

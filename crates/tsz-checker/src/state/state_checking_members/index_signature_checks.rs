@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         members: &[NodeIndex],
         iface_type: TypeId,
-        container_node: NodeIndex,
+        _container_node: NodeIndex,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -285,36 +285,24 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2413: 'number' index type '{0}' is not assignable to 'string' index type '{1}'.
+        // TSC always reports this on the number index signature node — it is the
+        // number index that violates the string index contract.  When this function
+        // is called per-body (merged interfaces), only the body that contains the
+        // number index signature should emit TS2413; the other body has no local
+        // number_index_nodes so we skip the error to avoid a duplicate at the wrong
+        // location.
         if let Some(number_idx) = &index_info.number_index
             && let Some(string_idx) = &index_info.string_index
+            && !number_index_nodes.is_empty()
         {
             let is_assignable = self.is_assignable_to(number_idx.value_type, string_idx.value_type);
             if !is_assignable {
                 let num_value_str = self.format_type(number_idx.value_type);
                 let str_value_str = self.format_type(string_idx.value_type);
 
-                let mut reported = false;
                 for &node_idx in &number_index_nodes {
                     self.error_at_node_msg(
                             node_idx,
-                            crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                            &["number", &num_value_str, "string", &str_value_str],
-                        );
-                    reported = true;
-                }
-                if !reported {
-                    for &node_idx in &string_index_nodes {
-                        self.error_at_node_msg(
-                                node_idx,
-                                crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                                &["number", &num_value_str, "string", &str_value_str],
-                            );
-                        reported = true;
-                    }
-                }
-                if !reported && container_node != NodeIndex::NONE {
-                    self.error_at_node_msg(
-                            container_node,
                             crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                             &["number", &num_value_str, "string", &str_value_str],
                         );
@@ -449,6 +437,19 @@ impl<'a> CheckerState<'a> {
 
             let is_numeric_property = prop_name.parse::<f64>().is_ok();
 
+            // TSC preserves the original quote style for string-literal property
+            // names in TS2411 diagnostics (e.g. `'a': number` → `''a''`,
+            // `"-Infinity": string` → `'"-Infinity"'`).  Identifiers and numeric
+            // literals are left bare.  We use the raw source text to match TSC.
+            let diag_prop_name = if let Some(name_node) = self.ctx.arena.get(name_idx)
+                && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            {
+                self.node_text(name_idx)
+                    .unwrap_or_else(|| prop_name.clone())
+            } else {
+                prop_name.clone()
+            };
+
             // Check against number index signature first (for numeric properties)
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
@@ -460,7 +461,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     name_idx,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, "number", &index_type_str],
+                    &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
                 );
             }
 
@@ -475,7 +476,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     name_idx,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, "string", &index_type_str],
+                    &[&diag_prop_name, &prop_type_str, "string", &index_type_str],
                 );
             }
         }
