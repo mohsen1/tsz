@@ -615,8 +615,9 @@ impl<'a> CheckerState<'a> {
                 // This catches class C extends C, class D<T> extends D<T>, etc.
                 if let Some(current_sym) = current_sym {
                     if base_sym_id == current_sym || canonical_base_sym == Some(current_sym) {
-                        // Self-referential inheritance - emit error and stop
-                        self.error_circular_class_inheritance(expr_idx, class_idx);
+                        // Self-referential inheritance - stop processing.
+                        // TS2506 is emitted by the dedicated cycle detection in
+                        // class_inheritance.rs, which anchors at the class name (matching tsc).
                         break;
                     }
 
