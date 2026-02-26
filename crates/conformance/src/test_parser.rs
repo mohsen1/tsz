@@ -141,54 +141,28 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
 
 /// Expand directives with comma-separated values into multiple option variants.
 ///
-/// Some harness directives (e.g. module, moduleResolution) represent multiple runs.
+/// Currently returns a single variant using the first comma-separated value
+/// for each non-list option.  This matches the cache generator behavior
+/// (generate-tsc-cache.rs), which also takes only the first value via
+/// `convert_options_to_tsconfig`.
+///
+/// Previously, "module", "moduleresolution", and "jsx" were expanded into
+/// separate variants, but the cache generator was never updated to do the
+/// same.  This caused false-positive diagnostics (e.g. TS5107 for
+/// module=System, TS5095 for moduleResolution=bundler) because the runner
+/// produced diagnostics from non-first variants that had no cache counterpart.
 pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
-    // NOTE: "target" is intentionally excluded. The cache generator
-    // (generate-tsc-cache.rs / generate-tsc-cache-fast.mjs) takes only the
-    // first comma-separated value for non-list options like target, so the
-    // runner must do the same to produce matching error-code sets.
+    // The cache generator takes only the first comma-separated value for all
+    // non-list options (see convert_options_to_tsconfig line 628).  The runner
+    // must do the same to produce matching diagnostic sets.
     //
-    // Boolean options like "alwaysstrict" and "nolib" are also excluded:
-    // the cache generator does not expand them and instead passes the raw
-    // multi-value string (e.g. "true, false") to convert_options_to_tsconfig,
-    // which takes the first comma-separated value as a JSON string (not bool).
-    // tsc then emits TS5024 for the non-boolean value.  Expanding them here
-    // would convert each value to a JSON bool, suppressing the TS5024 that
-    // the cache expects.
-    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "jsx"];
-
-    let mut variants = vec![options.clone()];
-    for key in MULTI_VALUE_KEYS {
-        let Some(value) = options.get(*key) else {
-            continue;
-        };
-        let values: Vec<String> = value
-            .split(',')
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .map(std::string::ToString::to_string)
-            .collect();
-        if values.len() <= 1 {
-            if let Some(v) = values.first() {
-                for variant in &mut variants {
-                    variant.insert((*key).to_string(), v.clone());
-                }
-            }
-            continue;
-        }
-
-        let mut next_variants = Vec::new();
-        for variant in &variants {
-            for v in &values {
-                let mut next = variant.clone();
-                next.insert((*key).to_string(), v.clone());
-                next_variants.push(next);
-            }
-        }
-        variants = next_variants;
-    }
-
-    variants
+    // Boolean options like "alwaysstrict" and "nolib" are also NOT expanded:
+    // the cache generator passes the raw multi-value string (e.g. "true, false")
+    // to convert_options_to_tsconfig, which takes the first comma-separated
+    // value as a JSON string (not bool).  tsc then emits TS5024 for the
+    // non-boolean value.  Expanding them here would convert each value to a
+    // JSON bool, suppressing the TS5024 that the cache expects.
+    vec![options.clone()]
 }
 
 /// Filter out option variants that are incompatible with moduleResolution rules.
