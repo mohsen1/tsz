@@ -243,9 +243,9 @@ impl<'a> CheckerState<'a> {
         let module_name = &literal.text;
         let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
         let is_side_effect_import = !has_import_clause;
-        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
-            return;
-        }
+        // Note: side-effect imports (import "module") must NOT return early here even when
+        // no_unchecked_side_effect_imports=false. They need to reach the resolution error check
+        // so TS2882 can be emitted for unresolved modules. We return early AFTER that check.
         let is_type_only_import = self
             .ctx
             .arena
@@ -390,6 +390,14 @@ impl<'a> CheckerState<'a> {
                 self.ctx.import_resolution_stack.pop();
                 return;
             }
+        }
+
+        // For side-effect imports (import "module") in default mode (no_unchecked_side_effect_imports=false),
+        // we only check resolution errors (TS2882 above). Skip member/export validation which
+        // requires import bindings. If we reach here, the module resolved successfully.
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            self.ctx.import_resolution_stack.pop();
+            return;
         }
 
         // Check if module was successfully resolved
