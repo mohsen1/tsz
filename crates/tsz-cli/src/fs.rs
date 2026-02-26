@@ -153,6 +153,8 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
             || pattern.ends_with(".jsx")
             || pattern.ends_with(".mts")
             || pattern.ends_with(".cts")
+            || pattern.ends_with(".mjs")
+            || pattern.ends_with(".cjs")
         {
             expanded.push(pattern.clone());
             continue;
