@@ -484,12 +484,40 @@ impl<'a> CheckerState<'a> {
 
                 let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 else {
-                    // Check if the base expression has a type parameter type (mixin pattern).
-                    // e.g., `class extends base` where `base: T extends Constructor<{}>`.
-                    let expr_type = self.get_type_of_node(expr_idx);
-                    if tsz_solver::visitor::type_param_info(self.ctx.types, expr_type).is_some() {
-                        base_type_param = Some(expr_type);
+                    // Mixin pattern detection: check if the base expression is typed
+                    // as a type parameter (e.g., `class extends base` where `base: T`).
+                    //
+                    // The type_parameter_scope may be empty here because this code
+                    // runs during symbol type computation (compute_type_of_symbol),
+                    // not during the function body walk. We need to temporarily push
+                    // the enclosing function's type parameters into scope so that
+                    // type annotations can resolve `T` in `superClass: T`.
+                    //
+                    // IMPORTANT: We cannot use get_type_of_node(expr_idx) because
+                    // node_types may already have cached `any` for the identifier
+                    // from an earlier resolution when type params weren't in scope.
+                    // Instead, resolve the parameter's type annotation directly via
+                    // get_type_from_type_node, which has smart caching that
+                    // re-resolves TYPE_REFERENCE nodes when type_parameter_scope
+                    // is non-empty.
+                    let enclosing_type_param_updates =
+                        self.push_enclosing_function_type_params(class_idx);
+
+                    // Resolve the base expression's type annotation directly,
+                    // bypassing node_types/symbol_types caches.
+                    if let Some(annotation_type_id) =
+                        self.resolve_param_type_annotation(base_sym_id)
+                        && tsz_solver::visitor::type_param_info(self.ctx.types, annotation_type_id)
+                            .is_some()
+                        {
+                            base_type_param = Some(annotation_type_id);
+                        }
+
+                    // Pop the temporary type parameters
+                    if !enclosing_type_param_updates.is_empty() {
+                        self.pop_type_parameters(enclosing_type_param_updates);
                     }
+
                     if let Some(base_constructor_type) =
                         self.base_constructor_type_from_expression(expr_idx, type_arguments)
                     {
@@ -802,5 +830,79 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect(),
         )
+    }
+
+    /// Push enclosing function's type parameters into scope temporarily.
+    ///
+    /// When computing a class constructor type during symbol resolution
+    /// (`compute_type_of_symbol`), the `type_parameter_scope` may be empty
+    /// because we're not inside the function body walk. This method walks
+    /// up the AST from the class node to find the enclosing function and
+    /// pushes its type parameters into scope, returning the updates needed
+    /// to pop them later.
+    fn push_enclosing_function_type_params(
+        &mut self,
+        class_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        // If type_parameter_scope already has entries, no need to push
+        if !self.ctx.type_parameter_scope.is_empty() {
+            return Vec::new();
+        }
+
+        // Walk up the AST to find the enclosing function
+        let mut current = class_idx;
+        for _ in 0..20 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return Vec::new();
+            };
+            let parent = ext.parent;
+            if !parent.is_some() {
+                return Vec::new();
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return Vec::new();
+            };
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+            {
+                if let Some(func) = self.ctx.arena.get_function(parent_node)
+                    && func.type_parameters.is_some() {
+                        let (_, updates) = self.push_type_parameters(&func.type_parameters);
+                        return updates;
+                    }
+                return Vec::new();
+            }
+
+            current = parent;
+        }
+        Vec::new()
+    }
+
+    /// Resolve a parameter symbol's type annotation directly, bypassing
+    /// `node_types/symbol_types` caches.
+    ///
+    /// Used for mixin pattern detection where the parameter's type may
+    /// have been cached as `any` before type parameters were in scope.
+    fn resolve_param_type_annotation(&mut self, sym_id: tsz_binder::SymbolId) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration;
+        if !value_decl.is_some() {
+            return None;
+        }
+        let node = self.ctx.arena.get(value_decl)?;
+        // Check if the declaration is a parameter with a type annotation
+        if let Some(param) = self.ctx.arena.get_parameter(node)
+            && param.type_annotation.is_some() {
+                return Some(self.get_type_from_type_node(param.type_annotation));
+            }
+        // Also check variable declarations (e.g., const-declared parameter aliases)
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+            && var_decl.type_annotation.is_some() {
+                return Some(self.get_type_from_type_node(var_decl.type_annotation));
+            }
+        None
     }
 }
