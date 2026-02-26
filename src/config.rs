@@ -428,19 +428,36 @@ pub fn resolve_compiler_options(
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Match tsc: when --module is omitted, default depends on target.
-        // ES2015+ targets default to ES2015 modules; lower targets default to CommonJS.
-        // IMPORTANT: When target is not explicitly set in tsconfig, tsc defaults the
-        // target to ES3 (which is pre-ES2015), so the module defaults to CommonJS.
-        // tsz's PrinterOptions::default().target is ESNext (for emitting modern code),
-        // but that should NOT influence the module/resolution default when target was
-        // omitted from the tsconfig — in that case we must use CommonJS to match tsc.
-        let default_module =
-            if options.target.is_some() && resolved.printer.target.supports_es2015() {
-                ModuleKind::ES2015
-            } else {
-                ModuleKind::CommonJS
-            };
+        // Match tsc 6.0: when --module is omitted, default depends on target.
+        // tsc 6.0 changed the defaults from tsc 5.x (verified via getEmitModuleKind):
+        //   target=undefined  → ES2022  (tsc 5.x: CommonJS)
+        //   target=ES3        → ES2022  (tsc 5.x: CommonJS)
+        //   target=ES5        → CommonJS (unchanged)
+        //   target=ES2015..ES2019 → ES2015 (unchanged)
+        //   target=ES2020..ES2021 → ES2020 (unchanged)
+        //   target=ES2022..ES2025 → ES2022 (unchanged)
+        //   target=ESNext     → ESNext (unchanged)
+        let default_module = if let Some(_target_str) = options.target.as_deref() {
+            match resolved.printer.target {
+                ScriptTarget::ES5 => ModuleKind::CommonJS,
+                ScriptTarget::ES2015
+                | ScriptTarget::ES2016
+                | ScriptTarget::ES2017
+                | ScriptTarget::ES2018
+                | ScriptTarget::ES2019 => ModuleKind::ES2015,
+                ScriptTarget::ES2020 | ScriptTarget::ES2021 => ModuleKind::ES2020,
+                ScriptTarget::ES2022
+                | ScriptTarget::ES2023
+                | ScriptTarget::ES2024
+                | ScriptTarget::ES2025
+                // ES3: tsc 6.0 changed this from CommonJS to ES2022
+                | ScriptTarget::ES3 => ModuleKind::ES2022,
+                ScriptTarget::ESNext => ModuleKind::ESNext,
+            }
+        } else {
+            // No target specified: tsc 6.0 defaults to ES2022
+            ModuleKind::ES2022
+        };
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;
     }
@@ -3022,7 +3039,7 @@ mod tests {
     #[test]
     fn test_module_not_explicitly_set_defaults_from_target() {
         // When module is not specified, it's computed from target.
-        // module_explicitly_set should be false so TS1202 is suppressed.
+        // module_explicitly_set is false (module was derived, not explicit).
         let json = r#"{"compilerOptions":{"target":"es2015"}}"#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
