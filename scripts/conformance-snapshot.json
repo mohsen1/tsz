@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-26T03:28:47Z",
-  "git_sha": "db6a4f5cd36990bf4ff1c0f3905ae4d2ee8ac5fc",
+  "timestamp": "2026-02-26T03:47:51Z",
+  "git_sha": "df8d9f96a3c5a59c252da0bc59ab19b99b13f365",
   "summary": {
     "total_tests": 12570,
-    "passed": 8733,
-    "failed": 3837,
-    "pass_rate": 69.5
+    "passed": 8744,
+    "failed": 3826,
+    "pass_rate": 69.6
   },
   "areas_by_pass_rate": [
     {
@@ -34,13 +34,6 @@
       "total": 15,
       "passed": 6,
       "failed": 9,
-      "pass_rate": 40.0
-    },
-    {
-      "area": "expressions/assignmentOperator",
-      "total": 10,
-      "passed": 4,
-      "failed": 6,
       "pass_rate": 40.0
     },
     {
@@ -170,13 +163,6 @@
       "pass_rate": 53.42
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 13,
-      "failed": 11,
-      "pass_rate": 54.17
-    },
-    {
       "area": "controlFlow",
       "total": 57,
       "passed": 31,
@@ -252,6 +238,13 @@
       "passed": 145,
       "failed": 104,
       "pass_rate": 58.23
+    },
+    {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
     },
     {
       "area": "internalModules/moduleDeclarations",
@@ -359,13 +352,6 @@
       "pass_rate": 64.1
     },
     {
-      "area": "es7/exponentiationOperator",
-      "total": 42,
-      "passed": 27,
-      "failed": 15,
-      "pass_rate": 64.29
-    },
-    {
       "area": "moduleResolution",
       "total": 42,
       "passed": 27,
@@ -408,11 +394,11 @@
       "pass_rate": 68.57
     },
     {
-      "area": "expressions/binaryOperators",
-      "total": 65,
-      "passed": 45,
-      "failed": 20,
-      "pass_rate": 69.23
+      "area": "expressions/assignmentOperator",
+      "total": 10,
+      "passed": 7,
+      "failed": 3,
+      "pass_rate": 70.0
     },
     {
       "area": "classes/propertyMemberDeclarations",
@@ -457,11 +443,25 @@
       "pass_rate": 71.95
     },
     {
+      "area": "expressions/binaryOperators",
+      "total": 65,
+      "passed": 47,
+      "failed": 18,
+      "pass_rate": 72.31
+    },
+    {
       "area": "interfaces/declarationMerging",
       "total": 26,
       "passed": 19,
       "failed": 7,
       "pass_rate": 73.08
+    },
+    {
+      "area": "es7/exponentiationOperator",
+      "total": 42,
+      "passed": 31,
+      "failed": 11,
+      "pass_rate": 73.81
     },
     {
       "area": "jsdoc/declarations",
@@ -478,18 +478,18 @@
       "pass_rate": 74.82
     },
     {
-      "area": "es6/Symbols",
-      "total": 95,
-      "passed": 72,
-      "failed": 23,
-      "pass_rate": 75.79
-    },
-    {
       "area": "expressions/unaryOperators",
       "total": 58,
       "passed": 44,
       "failed": 14,
       "pass_rate": 75.86
+    },
+    {
+      "area": "es6/Symbols",
+      "total": 95,
+      "passed": 73,
+      "failed": 22,
+      "pass_rate": 76.84
     },
     {
       "area": "es6/functionDeclarations",
