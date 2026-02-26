@@ -1393,6 +1393,26 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // TS5067: Invalid value for 'jsxFactory' — must be a valid identifier or qualified name.
+        // A qualified name is one or more identifiers separated by dots (e.g. React.createElement, h).
+        // Spaces, = signs, and other non-identifier characters make the value invalid.
+        if let Some(serde_json::Value::String(jsx_factory_val)) = compiler_opts.get("jsxFactory")
+            && !is_valid_identifier_or_qualified_name(jsx_factory_val)
+        {
+            let start = find_value_offset_in_source(&stripped, "jsxFactory");
+            let msg = format_message(
+                diagnostic_messages::INVALID_VALUE_FOR_JSXFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+                &[jsx_factory_val.as_str()],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                jsx_factory_val.len() as u32 + 2, // include surrounding quotes
+                msg,
+                diagnostic_codes::INVALID_VALUE_FOR_JSXFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+            ));
+        }
+
         // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
         // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
         // Note: moduleResolution: bundler implies resolveJsonModule=true even when not explicitly set.
@@ -1577,6 +1597,31 @@ const fn option_is_truthy(value: Option<&serde_json::Value>) -> bool {
         // String options (like jsxFactory, reactNamespace) are truthy when present
         Some(_) => true,
     }
+}
+
+/// Check if a string is a valid TypeScript identifier or qualified name.
+/// A qualified name is one or more identifiers separated by dots: `A.B.C`.
+/// Used to validate `jsxFactory` option values (TS5067).
+fn is_valid_identifier_or_qualified_name(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    for segment in s.split('.') {
+        if segment.is_empty() {
+            return false;
+        }
+        let mut chars = segment.chars();
+        match chars.next() {
+            Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
+            _ => return false,
+        }
+        for c in chars {
+            if !c.is_alphanumeric() && c != '_' && c != '$' {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Find the byte offset of a JSON key within the source text.
