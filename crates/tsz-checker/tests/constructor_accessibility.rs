@@ -366,8 +366,8 @@ fn test_no_specific_error(source: &str, forbidden_code: u32) {
     );
 }
 
-/// Test that super() in if/else branches satisfies TS2377.
-/// Derived class constructors with super() in control flow should NOT emit TS2377.
+/// Test that `super()` in if/else branches satisfies TS2377.
+/// Derived class constructors with `super()` in control flow should NOT emit TS2377.
 #[test]
 fn test_super_call_in_if_else_no_ts2377() {
     test_no_specific_error(
@@ -387,7 +387,7 @@ fn test_super_call_in_if_else_no_ts2377() {
     );
 }
 
-/// Test that super() in try/catch satisfies TS2377.
+/// Test that `super()` in try/catch satisfies TS2377.
 #[test]
 fn test_super_call_in_try_catch_no_ts2377() {
     test_no_specific_error(
@@ -409,7 +409,7 @@ fn test_super_call_in_try_catch_no_ts2377() {
     );
 }
 
-/// Test that super() in an expression context (object literal value) satisfies TS2377.
+/// Test that `super()` in an expression context (object literal value) satisfies TS2377.
 #[test]
 fn test_super_call_in_expression_no_ts2377() {
     test_no_specific_error(
@@ -425,7 +425,7 @@ fn test_super_call_in_expression_no_ts2377() {
     );
 }
 
-/// Test that a constructor with NO super() in a derived class DOES emit TS2377.
+/// Test that a constructor with NO `super()` in a derived class DOES emit TS2377.
 #[test]
 fn test_missing_super_call_emits_ts2377() {
     test_constructor_accessibility(

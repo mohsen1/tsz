@@ -3543,8 +3543,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5069),
-            "Expected TS5069 for emitDeclarationOnly without declaration, got: {:?}",
-            codes
+            "Expected TS5069 for emitDeclarationOnly without declaration, got: {codes:?}"
         );
     }
 
@@ -3555,8 +3554,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5069),
-            "Should NOT emit TS5069 when declaration is true, got: {:?}",
-            codes
+            "Should NOT emit TS5069 when declaration is true, got: {codes:?}"
         );
     }
 
@@ -3567,8 +3565,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5069),
-            "Should NOT emit TS5069 when composite is true, got: {:?}",
-            codes
+            "Should NOT emit TS5069 when composite is true, got: {codes:?}"
         );
     }
 
@@ -3579,8 +3576,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5069),
-            "Expected TS5069 for declarationMap without declaration, got: {:?}",
-            codes
+            "Expected TS5069 for declarationMap without declaration, got: {codes:?}"
         );
     }
 
@@ -3591,15 +3587,13 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5053),
-            "Expected TS5053 for sourceMap with inlineSourceMap, got: {:?}",
-            codes
+            "Expected TS5053 for sourceMap with inlineSourceMap, got: {codes:?}"
         );
         // tsc emits twice (at each key position)
         let count = codes.iter().filter(|&&c| c == 5053).count();
         assert_eq!(
             count, 2,
-            "Expected 2 TS5053 diagnostics (one per key), got: {}",
-            count
+            "Expected 2 TS5053 diagnostics (one per key), got: {count}"
         );
     }
 
@@ -3610,8 +3604,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5053),
-            "Should NOT emit TS5053 for sourceMap alone, got: {:?}",
-            codes
+            "Should NOT emit TS5053 for sourceMap alone, got: {codes:?}"
         );
     }
 
@@ -3622,8 +3615,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5053),
-            "Expected TS5053 for allowJs with isolatedDeclarations, got: {:?}",
-            codes
+            "Expected TS5053 for allowJs with isolatedDeclarations, got: {codes:?}"
         );
     }
 
@@ -3681,8 +3673,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5070),
-            "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {:?}",
-            codes
+            "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {codes:?}"
         );
     }
 
@@ -3694,8 +3685,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5070),
-            "Expected TS5070 for resolveJsonModule with module=amd (implies classic), got: {:?}",
-            codes
+            "Expected TS5070 for resolveJsonModule with module=amd (implies classic), got: {codes:?}"
         );
     }
 
@@ -3708,13 +3698,11 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5070),
-            "Expected TS5070 (not TS5071) for resolveJsonModule with module=system (implies classic), got: {:?}",
-            codes
+            "Expected TS5070 (not TS5071) for resolveJsonModule with module=system (implies classic), got: {codes:?}"
         );
         assert!(
             !codes.contains(&5071),
-            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {:?}",
-            codes
+            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {codes:?}"
         );
     }
 
@@ -3726,8 +3714,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5071),
-            "Expected TS5071 for resolveJsonModule with module=system + moduleResolution=bundler, got: {:?}",
-            codes
+            "Expected TS5071 for resolveJsonModule with module=system + moduleResolution=bundler, got: {codes:?}"
         );
     }
 
@@ -3740,13 +3727,11 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5070),
-            "Expected TS5070 (not TS5071) for resolveJsonModule with module=none (implies classic), got: {:?}",
-            codes
+            "Expected TS5070 (not TS5071) for resolveJsonModule with module=none (implies classic), got: {codes:?}"
         );
         assert!(
             !codes.contains(&5071),
-            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {:?}",
-            codes
+            "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {codes:?}"
         );
     }
 
@@ -3757,8 +3742,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5098),
-            "Expected TS5098 for resolvePackageJsonExports with classic moduleResolution, got: {:?}",
-            codes
+            "Expected TS5098 for resolvePackageJsonExports with classic moduleResolution, got: {codes:?}"
         );
     }
 
@@ -3769,8 +3753,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5098),
-            "Should NOT emit TS5098 with bundler moduleResolution, got: {:?}",
-            codes
+            "Should NOT emit TS5098 with bundler moduleResolution, got: {codes:?}"
         );
     }
 

@@ -438,15 +438,57 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             }
-            // TS17006: Unary expression not allowed as left-hand side of `**`.
-            // `-x ** y` is ambiguous, so TSC forbids it. The parser produces
-            // Binary(PrefixUnary(-, x), **, y), so check if left_idx is a unary.
+            // TS17006/TS17007: Certain expressions not allowed as left-hand side of `**`.
+            // `-x ** y` is ambiguous; `<T>x ** y` is also forbidden by the grammar.
+            // When these grammar errors fire, skip remaining type-checks to prevent
+            // false-positive arithmetic diagnostics (e.g., TS2362 from `typeof x`).
             if op_kind == SyntaxKind::AsteriskAsteriskToken as u16 {
-                if let Some(left_node) = self.ctx.arena.get(left_idx)
-                    && left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-                    && let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node)
+                let mut lhs_grammar_error = false;
+                if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                    if left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        && let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node)
+                    {
+                        // TS17006: Unary expression (-, +, ~, !, typeof, void, delete) as LHS.
+                        let op_name = match left_unary.operator {
+                            k if k == SyntaxKind::MinusToken as u16 => Some("-"),
+                            k if k == SyntaxKind::PlusToken as u16 => Some("+"),
+                            k if k == SyntaxKind::TildeToken as u16 => Some("~"),
+                            k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
+                            k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
+                            k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                            k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
+                            _ => None,
+                        };
+                        if let Some(op_name) = op_name {
+                            self.error_at_node_msg(
+                                left_idx,
+                                crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                                &[op_name],
+                            );
+                            lhs_grammar_error = true;
+                        }
+                    } else if left_node.kind == syntax_kind_ext::TYPE_ASSERTION {
+                        // TS17007: `<T>x ** y` is not allowed.
+                        self.error_at_node_msg(
+                            left_idx,
+                            crate::diagnostics::diagnostic_codes::A_TYPE_ASSERTION_EXPRESSION_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN_EXPONENTI,
+                            &[],
+                        );
+                        lhs_grammar_error = true;
+                    }
+                }
+                // Case 2: parent of `**` is a forbidden unary (e.g. `delete(x ** y)`).
+                // These expressions are ambiguous in the grammar, so tsc emits TS17006
+                // pointing to the parent unary expression rather than the `**` LHS.
+                // Examples: `delete temp ** 3` → `delete(temp ** 3)`, `!(3 ** 4)`.
+                if !lhs_grammar_error
+                    && let Some(parent_idx) =
+                        self.ctx.arena.get_extended(node_idx).map(|e| e.parent)
+                    && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                    && parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    && let Some(parent_unary) = self.ctx.arena.get_unary_expr(parent_node)
                 {
-                    let op_name = match left_unary.operator {
+                    let parent_op_name = match parent_unary.operator {
                         k if k == SyntaxKind::MinusToken as u16 => Some("-"),
                         k if k == SyntaxKind::PlusToken as u16 => Some("+"),
                         k if k == SyntaxKind::TildeToken as u16 => Some("~"),
@@ -456,13 +498,20 @@ impl<'a> CheckerState<'a> {
                         k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
                         _ => None,
                     };
-                    if let Some(op_name) = op_name {
+                    if let Some(op_name) = parent_op_name {
                         self.error_at_node_msg(
-                                    left_idx,
-                                    crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
-                                    &[op_name],
-                                );
+                            parent_idx,
+                            crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                            &[op_name],
+                        );
+                        lhs_grammar_error = true;
                     }
+                }
+                if lhs_grammar_error {
+                    // Skip arithmetic type-checking to avoid false-positive diagnostics
+                    // caused by the grammar-error expression types (e.g., typeof -> string).
+                    type_stack.push(TypeId::ERROR);
+                    continue;
                 }
 
                 // TS2791: bigint exponentiation requires target >= ES2016.
