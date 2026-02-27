@@ -1153,7 +1153,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && !generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
                                     asserted_type,
-                                );
+                                )
+                                // Suppress TS2352 when the assertion node is near a
+                                // parse error — the type assertion may be a parser
+                                // recovery artifact (e.g. `@g<number> class C {}`
+                                // parsed as `<number>class C {}` when decorators are
+                                // disabled).
+                                && !self.checker.node_has_nearby_parse_error(idx);
 
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
