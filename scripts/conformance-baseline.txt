@@ -1509,7 +1509,6 @@ FAIL TypeScript/tests/cases/compiler/typeParameterAsBaseClass.ts
 FAIL TypeScript/tests/cases/compiler/typeParameterDiamond2.ts
 FAIL TypeScript/tests/cases/compiler/typeParameterDiamond4.ts
 FAIL TypeScript/tests/cases/compiler/typeParameterExtendsPrimitive.ts
-FAIL TypeScript/tests/cases/compiler/typeParameterLeak.ts
 FAIL TypeScript/tests/cases/compiler/typeParametersAndParametersInComputedNames.ts
 FAIL TypeScript/tests/cases/compiler/typeParametersShouldNotBeEqual2.ts
 FAIL TypeScript/tests/cases/compiler/typeParamExtendsOtherTypeParam.ts
@@ -2974,7 +2973,6 @@ FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeErrors2.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeInferenceErrors.ts
-FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeOverlappingStringEnumKeys.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
 FAIL TypeScript/tests/cases/conformance/types/mapped/mappedTypesArraysTuples.ts
@@ -3035,7 +3033,6 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/union
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
-FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/genericTypeReferenceWithoutTypeArgument.ts
@@ -7150,7 +7147,6 @@ PASS TypeScript/tests/cases/compiler/recursiveCloduleReference.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalCrash1.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalCrash2.ts
 PASS TypeScript/tests/cases/compiler/recursiveConditionalEvaluationNonInfinite.ts
-PASS TypeScript/tests/cases/compiler/recursiveConditionalTypes2.ts
 PASS TypeScript/tests/cases/compiler/recursiveExcessPropertyChecks.ts
 PASS TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType7.ts
 PASS TypeScript/tests/cases/compiler/recursiveFunctionTypes1.ts
@@ -7835,6 +7831,7 @@ PASS TypeScript/tests/cases/compiler/typeParameterFixingWithContextSensitiveArgu
 PASS TypeScript/tests/cases/compiler/typeParameterFixingWithContextSensitiveArguments5.ts
 PASS TypeScript/tests/cases/compiler/typeParameterHasSelfAsConstraint.ts
 PASS TypeScript/tests/cases/compiler/typeParameterInConstraint1.ts
+PASS TypeScript/tests/cases/compiler/typeParameterLeak.ts
 PASS TypeScript/tests/cases/compiler/typeParameterListWithTrailingComma1.ts
 PASS TypeScript/tests/cases/compiler/typeParameterOrderReversal.ts
 PASS TypeScript/tests/cases/compiler/typeParametersInStaticAccessors.ts
@@ -11925,6 +11922,7 @@ PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeAsClauseRelations
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeIndexSignatureModifiers.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeModifiers.ts
+PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeOverlappingStringEnumKeys.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypeProperties.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/mapped/mappedTypes2.ts
@@ -12067,6 +12065,7 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
+PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts

@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-27T05:50:57Z",
-  "git_sha": "2657b77596b5f0b684d02330376d2b6fdbb4a177",
+  "timestamp": "2026-02-27T05:57:49Z",
+  "git_sha": "dd171fd15174585bf8e5d46d30fcbea8a89b8f29",
   "summary": {
     "total_tests": 12570,
-    "passed": 9331,
-    "failed": 3239,
+    "passed": 9333,
+    "failed": 3237,
     "pass_rate": 74.2
   },
   "areas_by_pass_rate": [
@@ -14,13 +14,6 @@
       "passed": 7,
       "failed": 8,
       "pass_rate": 46.67
-    },
-    {
-      "area": "types/mapped",
-      "total": 26,
-      "passed": 13,
-      "failed": 13,
-      "pass_rate": 50.0
     },
     {
       "area": "types/conditional",
@@ -84,6 +77,13 @@
       "passed": 8,
       "failed": 7,
       "pass_rate": 53.33
+    },
+    {
+      "area": "types/mapped",
+      "total": 26,
+      "passed": 14,
+      "failed": 12,
+      "pass_rate": 53.85
     },
     {
       "area": "transpile",
@@ -219,13 +219,6 @@
       "pass_rate": 60.61
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -280,6 +273,13 @@
       "passed": 123,
       "failed": 67,
       "pass_rate": 64.74
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 19,
+      "failed": 10,
+      "pass_rate": 65.52
     },
     {
       "area": "types/primitives",
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 156
+      "count": 157
     },
     {
       "code": "TS2339",
