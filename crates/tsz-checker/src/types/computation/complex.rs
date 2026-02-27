@@ -647,16 +647,19 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                // Determine which error to emit:
-                // - TS2555: "Expected at least N arguments" only for rest params (unbounded)
-                // - TS2554: "Expected N arguments" or "Expected N-M arguments" otherwise
-                if actual < expected_min && expected_max.is_none() {
-                    // Too few arguments with rest parameters (unbounded) - use TS2555
-                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
-                } else {
-                    // Use TS2554 for exact count, range, or too many args
-                    let max = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(expected_min, max, actual, idx, args);
+                // Suppress TS2554/TS2555 when parse errors exist to avoid cascading diagnostics
+                if !self.ctx.has_parse_errors {
+                    // Determine which error to emit:
+                    // - TS2555: "Expected at least N arguments" only for rest params (unbounded)
+                    // - TS2554: "Expected N arguments" or "Expected N-M arguments" otherwise
+                    if actual < expected_min && expected_max.is_none() {
+                        // Too few arguments with rest parameters (unbounded) - use TS2555
+                        self.error_expected_at_least_arguments_at(expected_min, actual, idx);
+                    } else {
+                        // Use TS2554 for exact count, range, or too many args
+                        let max = expected_max.unwrap_or(expected_min);
+                        self.error_argument_count_mismatch_at(expected_min, max, actual, idx, args);
+                    }
                 }
                 // Recover with the constructor instance type so downstream checks
                 // (e.g. property access TS2339) still run after arity diagnostics.
@@ -668,13 +671,15 @@ impl<'a> CheckerState<'a> {
                 expected_low,
                 expected_high,
             } => {
-                self.error_at_node(
-                    idx,
-                    &format!(
-                        "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
-                    ),
-                    diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
-                );
+                if !self.ctx.has_parse_errors {
+                    self.error_at_node(
+                        idx,
+                        &format!(
+                            "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
+                        ),
+                        diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
+                    );
+                }
                 TypeId::ERROR
             }
             CallResult::ArgumentTypeMismatch {
