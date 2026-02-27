@@ -995,9 +995,10 @@ impl<'a> NarrowingContext<'a> {
             return true;
         }
         if let Some(def_id) = lazy_def_id(self.db, type_id)
-            && db.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Object) {
-                return true;
-            }
+            && db.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Object)
+        {
+            return true;
+        }
         false
     }
 
