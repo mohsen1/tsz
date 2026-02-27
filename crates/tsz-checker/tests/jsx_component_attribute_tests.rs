@@ -3,6 +3,7 @@
 //! Verifies that TS2322 (type mismatch) and TS2741 (missing required property)
 //! are correctly emitted for JSX component attributes.
 
+use std::sync::Arc;
 use tsz_checker::CheckerState;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::diagnostic_codes;
@@ -457,4 +458,173 @@ var CustomTag = "h1";
         ),
         "Should NOT emit TS2604 for string-typed JSX tag, got: {diags:?}"
     );
+}
+
+// =============================================================================
+// Class component attribute checking (DEBUG)
+// =============================================================================
+
+#[test]
+fn test_class_component_direct_constructor_emits_ts2322() {
+    // Class component with direct constructor taking P — type params should be instantiated
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P> {{
+    props: P;
+    constructor(props: P);
+    render(): JSX.Element;
+}}
+interface Prop {{
+    x: false;
+}}
+class Poisoned extends Component<Prop> {{
+    render() {{
+        return <div>Hello</div>;
+    }}
+}}
+let p = <Poisoned x />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Debug: eprintln!("ALL DIAGNOSTICS: {:?}", diags);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for boolean not assignable to false, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_class_component_optional_constructor_emits_ts2322() {
+    // React-style: constructor(props?: P, context?: any) — should still check props
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P, S> {{
+    props: P & {{ children?: any }};
+    state: S;
+    constructor(props?: P, context?: any);
+    render(): JSX.Element | null;
+}}
+interface Prop {{
+    x: false;
+}}
+class Poisoned extends Component<Prop, {{}}> {{
+    render() {{
+        return <div>Hello</div>;
+    }}
+}}
+let p = <Poisoned x />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Debug: eprintln!("ALL DIAGNOSTICS: {:?}", diags);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for boolean not assignable to false (React-style class), got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// Cross-file: import React = require('react') with ambient module
+// =============================================================================
+
+/// Helper to compile a multi-file JSX project and return diagnostics for the main file.
+fn cross_file_jsx_diagnostics(lib_source: &str, main_source: &str) -> Vec<(u32, String)> {
+    // Parse and bind lib file (react.d.ts equivalent)
+    let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
+    let root_lib = parser_lib.parse_source_file();
+    let mut binder_lib = tsz_binder::BinderState::new();
+    binder_lib.bind_source_file(parser_lib.get_arena(), root_lib);
+
+    // Parse and bind main file
+    let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
+    let root_main = parser_main.parse_source_file();
+    let mut binder_main = tsz_binder::BinderState::new();
+    binder_main.bind_source_file(parser_main.get_arena(), root_main);
+
+    let arena_lib = Arc::new(parser_lib.get_arena().clone());
+    let arena_main = Arc::new(parser_main.get_arena().clone());
+    let binder_lib = Arc::new(binder_lib);
+    let binder_main = Arc::new(binder_main);
+
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_main), Arc::clone(&arena_lib)]);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_main), Arc::clone(&binder_lib)]);
+
+    let options = CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        ..CheckerOptions::default()
+    };
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        "file.tsx".to_string(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+
+    checker.check_source_file(root_main);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn test_cross_file_import_require_export_equals() {
+    // Simulate: declare module "react" { export = __React; }
+    // with: import React = require('react')
+    let lib_source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+}
+declare namespace __React {
+    class Component<P, S = {}> {
+        props: P & { children?: any };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "react" {
+    export = __React;
+}
+"#;
+
+    let main_source = r#"
+import React = require('react');
+
+interface Prop {
+    x: false;
+}
+class Poisoned extends React.Component<Prop, {}> {
+    render() {
+        return <div>Hello</div>;
+    }
+}
+
+let p = <Poisoned x />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    // The export= resolution should work — no TS2307 "Cannot find module"
+    assert!(
+        !has_code(&diags, 2307),
+        "Should not emit TS2307 for resolvable ambient module, got: {diags:?}"
+    );
+    // TODO: full TS2322 for class component props requires cross-file class heritage
+    // resolution which is a deeper issue. For now, verify module resolution works.
 }

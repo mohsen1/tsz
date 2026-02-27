@@ -998,6 +998,15 @@ impl<'a> CheckerState<'a> {
                         let module_is_non_module_entity = self
                             .ctx
                             .module_resolves_to_non_module_entity(&module_specifier);
+                        // Record cross-file symbol targets so delegate_cross_arena_symbol_resolution
+                        // can find the correct arena for symbols from ambient modules.
+                        for (name, &sym_id) in exports_table.iter() {
+                            self.record_cross_file_symbol_if_needed(
+                                sym_id,
+                                name,
+                                &module_specifier,
+                            );
+                        }
                         let export_equals_type = exports_table
                             .get("export=")
                             .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
