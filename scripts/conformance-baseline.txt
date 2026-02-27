@@ -236,7 +236,6 @@ FAIL TypeScript/tests/cases/compiler/declarationEmitExportAssignedNamespaceNoTri
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends4.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionWithNonlocalPrivateUniqueSymbol.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitForGlobalishSpecifierSymlink2.ts
-FAIL TypeScript/tests/cases/compiler/declarationEmitHasTypesRefOnNamespaceUse.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitHigherOrderRetainedGenerics.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitInvalidExport.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitInvalidReferenceAllowJs.ts
@@ -532,7 +531,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1417,7 +1415,6 @@ FAIL TypeScript/tests/cases/compiler/tooFewArgumentsInGenericFunctionTypedArgume
 FAIL TypeScript/tests/cases/compiler/tooManyTypeParameters1.ts
 FAIL TypeScript/tests/cases/compiler/topFunctionTypeNotCallable.ts
 FAIL TypeScript/tests/cases/compiler/TransportStream.ts
-FAIL TypeScript/tests/cases/compiler/tripleSlashTypesReferenceWithMissingExports.ts
 FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion2.ts
 FAIL TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion3.ts
 FAIL TypeScript/tests/cases/compiler/truthinessPromiseCoercion.ts
@@ -1430,7 +1427,6 @@ FAIL TypeScript/tests/cases/compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx
 FAIL TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
-FAIL TypeScript/tests/cases/compiler/tsxResolveExternalModuleExportsTypes.ts
 FAIL TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts
 FAIL TypeScript/tests/cases/compiler/tupleTypes.ts
@@ -2699,13 +2695,7 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOf
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement5.ts
 FAIL TypeScript/tests/cases/conformance/pedantic/noUncheckedIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/pedantic/noUncheckedIndexedAccessDestructuring.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-1.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-10.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-14.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-15.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-2.ts
 FAIL TypeScript/tests/cases/conformance/references/library-reference-5.ts
-FAIL TypeScript/tests/cases/conformance/references/library-reference-8.ts
 FAIL TypeScript/tests/cases/conformance/salsa/assignmentToVoidZero1.ts
 FAIL TypeScript/tests/cases/conformance/salsa/assignmentToVoidZero2.ts
 FAIL TypeScript/tests/cases/conformance/salsa/chainedPrototypeAssignment.ts
@@ -4370,6 +4360,7 @@ PASS TypeScript/tests/cases/compiler/declarationEmitGenericTypeParamerSerializat
 PASS TypeScript/tests/cases/compiler/declarationEmitGenericTypeParamerSerialization2.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitGenericTypeParamerSerialization3.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitGlobalThisPreserved.ts
+PASS TypeScript/tests/cases/compiler/declarationEmitHasTypesRefOnNamespaceUse.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitImportInExportAssignmentModule.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitIndexTypeArray.ts
 PASS TypeScript/tests/cases/compiler/declarationEmitIndexTypeNotFound.ts
@@ -5430,6 +5421,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -7617,6 +7609,7 @@ PASS TypeScript/tests/cases/compiler/transformsElideNullUndefinedType.ts
 PASS TypeScript/tests/cases/compiler/transitiveTypeArgumentInference1.ts
 PASS TypeScript/tests/cases/compiler/tripleSlashInCommentNotParsed.ts
 PASS TypeScript/tests/cases/compiler/tripleSlashReferenceAbsoluteWindowsPath.ts
+PASS TypeScript/tests/cases/compiler/tripleSlashTypesReferenceWithMissingExports.ts
 PASS TypeScript/tests/cases/compiler/trivialSubtypeReductionNoStructuralCheck.ts
 PASS TypeScript/tests/cases/compiler/trivialSubtypeReductionNoStructuralCheck2.ts
 PASS TypeScript/tests/cases/compiler/truthinessCallExpressionCoercion.ts
@@ -11475,13 +11468,19 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript6/Symbols/parserSymbolP
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/Symbols/parserSymbolProperty7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/Symbols/parserSymbolProperty8.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/Symbols/parserSymbolProperty9.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-1.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-10.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-11.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-12.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-13.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-14.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-15.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-2.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-3.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-4.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-6.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-7.ts
+PASS TypeScript/tests/cases/conformance/references/library-reference-8.ts
 PASS TypeScript/tests/cases/conformance/references/library-reference-scoped-packages.ts
 PASS TypeScript/tests/cases/conformance/salsa/annotatedThisPropertyInitializerDoesntNarrow.ts
 PASS TypeScript/tests/cases/conformance/salsa/binderUninitializedModuleExportsAssignment.ts
