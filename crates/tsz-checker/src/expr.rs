@@ -140,8 +140,9 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// - `context_type`: Optional contextual type hint for downward inference
     fn compute_type_impl(&mut self, idx: NodeIndex, _context_type: Option<TypeId>) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
-            // Return UNKNOWN instead of ANY to expose missing nodes as errors
-            return TypeId::UNKNOWN;
+            // Return ERROR for missing arena nodes (typically cross-file references)
+            // to suppress cascading false diagnostics like TS18046.
+            return TypeId::ERROR;
         };
 
         match node.kind {

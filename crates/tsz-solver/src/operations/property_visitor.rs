@@ -560,8 +560,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
                     nullable_causes.push(cause);
                 }
-                // PropertyNotFound: if ANY member is missing the property, the property does not exist on the Union
+                // PropertyNotFound: if a non-empty-object member is missing the property,
+                // the property does not exist on the union. Empty object types ({}) are
+                // treated as partial — they don't block access to properties that exist
+                // on other union members (matching tsc behavior).
                 PropertyAccessResult::PropertyNotFound { .. } => {
+                    if crate::is_empty_object_type(self.interner(), member) {
+                        // Empty object: treat as partial, property yields undefined
+                        valid_results.push(TypeId::UNDEFINED);
+                        valid_write_results.push(TypeId::UNDEFINED);
+                        all_from_index = false;
+                        continue;
+                    }
                     return Some(PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type_for_error(),
                         property_name: prop_atom,
