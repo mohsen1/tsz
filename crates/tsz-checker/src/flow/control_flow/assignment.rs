@@ -21,6 +21,11 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         widen_literals_for_destructuring: bool,
     ) -> Option<TypeId> {
+        tracing::trace!(
+            "get_assigned_type called: assignment_node={:?} target={:?}",
+            assignment_node,
+            target
+        );
         let node = self.arena.get(assignment_node)?;
 
         // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
@@ -179,6 +184,11 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
+                tracing::trace!(
+                    "get_assigned_type: node_types HIT for rhs {:?} -> {:?}",
+                    rhs,
+                    rhs_type
+                );
                 // Only apply assignment-based "killing definition" narrowing when
                 // the write itself is compatible. For invalid assignments, TypeScript
                 // reports the assignment error but keeps subsequent reads at the

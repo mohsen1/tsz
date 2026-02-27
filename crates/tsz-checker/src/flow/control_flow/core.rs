@@ -877,6 +877,13 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|nt| nt.get(&sym.value_declaration.0).copied())
                                 });
                             let narrowing_base = declared_type.unwrap_or(initial_type);
+                            tracing::trace!(
+                                "killing def: initial={:?} declared={:?} base={:?} assigned={:?}",
+                                initial_type,
+                                declared_type,
+                                narrowing_base,
+                                assigned_type
+                            );
                             self.narrow_assignment(narrowing_base, assigned_type)
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
