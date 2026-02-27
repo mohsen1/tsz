@@ -785,6 +785,192 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            let ct = &text[comment.pos as usize..comment.end as usize];
+            if ct.starts_with("/**") {
+                let si = {
+                    let cp = comment.pos as usize;
+                    let mut ls = cp;
+                    if ls > 0 {
+                        let mut i = ls;
+                        while i > 0 {
+                            i -= 1;
+                            if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                                ls = i + 1;
+                                break;
+                            }
+                            if i == 0 {
+                                ls = 0;
+                            }
+                        }
+                    }
+                    let mut w = 0usize;
+                    for &b in &bytes[ls..cp] {
+                        if b == b' ' || b == b'\t' {
+                            w += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    w
+                };
+                self.write_indent();
+                if ct.contains('\n') {
+                    let mut first = true;
+                    for line in ct.split('\n') {
+                        if first {
+                            self.write(line.trim_end());
+                            first = false;
+                        } else {
+                            self.write_line();
+                            let s = line.trim_end();
+                            let bs = s.as_bytes();
+                            let mut sk = 0;
+                            for &b in bs.iter().take(si) {
+                                if b == b' ' || b == b'\t' {
+                                    sk += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.write_indent();
+                            self.write(&s[sk..]);
+                        }
+                    }
+                } else {
+                    self.write(ct);
+                }
+                self.write_line();
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = param_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            let ct = &text[comment.pos as usize..comment.end as usize];
+            if ct.starts_with("/*") {
+                self.write(ct);
+                self.write(" ");
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    pub(crate) fn skip_comments_in_node(&mut self, pos: u32, end: u32) {
+        let ae = self.find_node_code_end(pos, end);
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].pos < ae {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn find_node_code_end(&self, pos: u32, end: u32) -> u32 {
+        let Some(ref text) = self.source_file_text else {
+            return end;
+        };
+        let bytes = text.as_bytes();
+        let s = pos as usize;
+        let e = std::cmp::min(end as usize, bytes.len());
+        if s >= e {
+            return end;
+        }
+        let mut d: i32 = 0;
+        let mut lt: Option<usize> = None;
+        let mut i = s;
+        while i < e {
+            match bytes[i] {
+                b'{' => {
+                    d += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    d -= 1;
+                    if d == 0 {
+                        lt = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b';' => {
+                    if d == 0 {
+                        lt = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let q = bytes[i];
+                    i += 1;
+                    while i < e {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                        } else if bytes[i] == q {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'/' if i + 1 < e && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < e && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < e && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < e {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        lt.map_or(end, |x| x as u32)
+    }
+
     pub(crate) fn queue_source_mapping(&mut self, node: &Node) {
         if !self.writer.has_source_map() {
             self.pending_source_pos = None;
@@ -872,6 +1058,23 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             None
         }
+    }
+
+    /// Try to find type for a function by looking up both the declaration node and name node.
+    /// The binder may map the function declaration node rather than the name identifier,
+    /// so we try both.
+    pub(crate) fn get_type_via_symbol_for_func(
+        &self,
+        func_idx: NodeIndex,
+        name_node: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let cache = self.type_cache.as_ref()?;
+        let binder = self.binder?;
+        // Try the name node first, then the function declaration node itself
+        let symbol_id = binder
+            .get_node_symbol(name_node)
+            .or_else(|| binder.get_node_symbol(func_idx))?;
+        cache.symbol_types.get(&symbol_id).copied()
     }
 
     pub(crate) fn infer_fallback_type_text(&self, node_id: NodeIndex) -> Option<String> {

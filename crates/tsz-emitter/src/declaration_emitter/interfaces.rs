@@ -55,6 +55,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Members
         for &member_idx in &iface.members.nodes {
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
             self.emit_interface_member(member_idx);
         }
 
