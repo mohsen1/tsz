@@ -74,6 +74,7 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
     type_id: TypeId,
     arg_types: &[TypeId],
     force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
 ) -> CallResult {
     tsz_solver::operations::resolve_new_with_checker(
         db,
@@ -81,6 +82,7 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
         type_id,
         arg_types,
         force_bivariant_callbacks,
+        contextual_type,
     )
 }
 

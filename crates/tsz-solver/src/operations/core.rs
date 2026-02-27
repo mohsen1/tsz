@@ -1553,9 +1553,11 @@ pub fn resolve_new_with_checker<C: AssignabilityChecker>(
     type_id: TypeId,
     arg_types: &[TypeId],
     force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
 ) -> CallResult {
     let mut evaluator = CallEvaluator::new(interner, checker);
     evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
+    evaluator.set_contextual_type(contextual_type);
     evaluator.resolve_new(type_id, arg_types)
 }
 

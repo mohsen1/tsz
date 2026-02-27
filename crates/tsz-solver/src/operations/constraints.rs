@@ -357,6 +357,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     }
+                } else if placeholder_count == 0 {
+                    // No placeholder members in the target union, but the SOURCE may
+                    // contain placeholders (e.g., from contextual return type seeding).
+                    // Example: `Promise<__infer_0> <: Obj | PromiseLike<Obj>` —
+                    // try constraining source against each non-nullish target member
+                    // so structural decomposition can extract inference candidates.
+                    member_visited.clear();
+                    if self.type_contains_placeholder(source, var_map, &mut member_visited) {
+                        let t_members_copy = t_members.to_vec();
+                        for member in t_members_copy {
+                            if !is_nullish(member) {
+                                self.constrain_types(ctx, var_map, source, member, priority);
+                            }
+                        }
+                    }
                 }
             }
             (Some(TypeData::Array(s_elem)), Some(TypeData::Array(t_elem))) => {
@@ -949,6 +964,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         evaluated_target,
                         priority,
                     );
+                    // For same-base Applications at ReturnType priority, also constrain
+                    // type arguments directly. Structural decomposition through evaluated
+                    // Objects may fail for interfaces like Promise<T> where methods (then)
+                    // have their own generic signatures that block inference. Restricting
+                    // to ReturnType priority preserves variance for parameter inference.
+                    if s_app.base == t_app.base
+                        && s_app.args.len() == t_app.args.len()
+                        && priority == crate::types::InferencePriority::ReturnType
+                    {
+                        for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                            self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
+                        }
+                    }
                 } else if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
