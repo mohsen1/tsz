@@ -241,6 +241,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
             }
 
+            // Enum type used as mapped constraint: check the member union.
+            // For `enum E { A = "a", B = "b" }`, members is the union `E.A | E.B`.
+            // Recurse into the member union to check if prop_name matches.
+            TypeData::Enum(_def_id, members) => {
+                self.is_key_in_mapped_constraint(members, prop_name)
+            }
+
+            // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
+            // The evaluator may not fully resolve type aliases used as mapped constraints,
+            // so we resolve the DefId to get the underlying type and check that.
+            TypeData::Lazy(def_id) => {
+                if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner())
+                    && resolved != evaluated {
+                        return self.is_key_in_mapped_constraint(resolved, prop_name);
+                    }
+                // Couldn't resolve further — be conservative and accept
+                true
+            }
+
             TypeData::Intrinsic(crate::types::IntrinsicKind::String)
             | TypeData::KeyOf(_)
             | TypeData::TypeParameter(_)

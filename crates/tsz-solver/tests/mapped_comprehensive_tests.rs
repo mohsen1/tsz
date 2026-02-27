@@ -8,6 +8,7 @@
 //! - Readonly modifiers: +readonly, -readonly
 
 use super::*;
+use crate::def::DefId;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::types::{MappedModifier, MappedType, PropertyInfo, TypeData, TypeParamInfo};
@@ -616,6 +617,91 @@ fn test_mapped_type_preserves_property_order() {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 3);
         // Note: Properties are sorted by name in object construction
+    } else {
+        panic!("Expected object type, got {:?}", interner.lookup(result));
+    }
+}
+
+// =============================================================================
+// Enum Union Constraint Tests
+// =============================================================================
+
+#[test]
+fn test_mapped_type_enum_union_constraint_with_overlapping_keys() {
+    // Reproduces the mappedTypeOverlappingStringEnumKeys.ts scenario:
+    //   enum TerrestrialAnimalTypes { CAT = "cat", DOG = "dog" }
+    //   enum AlienAnimalTypes { CAT = "cat" }
+    //   type AnimalTypes = TerrestrialAnimalTypes | AlienAnimalTypes
+    //   type CatMap = { [V in AnimalTypes]: ... }
+    //
+    // The constraint is a Union of Enum members. extract_mapped_keys must:
+    // 1. Unwrap Enum(DefId, inner) to reach the literal string values
+    // 2. Recursively extract Union members within each enum group
+    // 3. Deduplicate overlapping keys ("cat" appears in both enums)
+    let interner = TypeInterner::new();
+
+    let enum_terrestrial_def = DefId(100);
+    let enum_alien_def = DefId(200);
+
+    // TerrestrialAnimalTypes.CAT = "cat", TerrestrialAnimalTypes.DOG = "dog"
+    let cat_lit = interner.literal_string("cat");
+    let dog_lit = interner.literal_string("dog");
+    let terr_cat = interner.intern(TypeData::Enum(enum_terrestrial_def, cat_lit));
+    let terr_dog = interner.intern(TypeData::Enum(enum_terrestrial_def, dog_lit));
+
+    // AlienAnimalTypes.CAT = "cat"
+    let alien_cat = interner.intern(TypeData::Enum(enum_alien_def, cat_lit));
+
+    // AnimalTypes = TerrestrialAnimalTypes | AlienAnimalTypes
+    // = (TerrestrialAnimalTypes.CAT | TerrestrialAnimalTypes.DOG) | AlienAnimalTypes.CAT
+    let animal_types = interner.union(vec![terr_cat, terr_dog, alien_cat]);
+
+    // Create: { [V in AnimalTypes]: number }
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: animal_types,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+    let result = evaluate_type(&interner, mapped_id);
+
+    // Should produce { cat: number, dog: number } (2 properties, not 3)
+    // because "cat" is deduplicated from both enums
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        assert_eq!(
+            shape.properties.len(),
+            2,
+            "Expected 2 properties (cat, dog) after dedup, got {:?}",
+            shape
+                .properties
+                .iter()
+                .map(|p| interner.resolve_atom(p.name))
+                .collect::<Vec<_>>()
+        );
+
+        let names: Vec<_> = shape
+            .properties
+            .iter()
+            .map(|p| interner.resolve_atom(p.name))
+            .collect();
+        assert!(names.contains(&"cat".to_string()));
+        assert!(names.contains(&"dog".to_string()));
+
+        for prop in &shape.properties {
+            assert_eq!(prop.type_id, TypeId::NUMBER);
+        }
     } else {
         panic!("Expected object type, got {:?}", interner.lookup(result));
     }
