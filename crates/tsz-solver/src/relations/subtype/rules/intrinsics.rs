@@ -397,4 +397,77 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         false
     }
+
+    /// Check if `target` is the boxed wrapper type for the given intrinsic kind.
+    ///
+    /// Checks both the resolver and the interner (fallback) because the resolver
+    /// may not always have boxed types registered (e.g., when `TypeEnvironment`
+    /// is populated after the interner). When the registered boxed TypeId differs
+    /// from the target (different interning paths for the same interface), falls
+    /// back to a structural subtype check: `boxed_type` <: target.
+    pub(crate) fn is_target_boxed_type(&mut self, target: TypeId, kind: IntrinsicKind) -> bool {
+        // 1. Check resolver registry (identity)
+        if self.resolver.is_boxed_type_id(target, kind) {
+            return true;
+        }
+        if self
+            .resolver
+            .get_boxed_type(kind)
+            .is_some_and(|b| b == target)
+        {
+            return true;
+        }
+        // 2. Check target Lazy DefId
+        if lazy_def_id(self.interner, target)
+            .is_some_and(|def_id| self.resolver.is_boxed_def_id(def_id, kind))
+        {
+            return true;
+        }
+        // 3. Interner fallback: the interner stores boxed types from register_boxed_type.
+        //    The TypeId may differ from the target (different interning paths), so if
+        //    identity doesn't match, do a structural subtype check.
+        if let Some(boxed) = self.interner.get_boxed_type(kind) {
+            if boxed == target {
+                return true;
+            }
+            // Structural fallback: check if the known boxed type is a subtype of target.
+            // This handles cases where the same String interface has multiple TypeIds.
+            if self.check_subtype(boxed, target).is_true() {
+                return true;
+            }
+            // Shape-level equivalence check: when both types are ObjectWithIndex shapes
+            // from the same interface but with different interning (e.g., different
+            // [Symbol.iterator] TypeIds due to separate resolution paths), compare by
+            // property names + count as a proxy for interface identity.
+            if let (Some(b_sid), Some(t_sid)) = (
+                object_with_index_shape_id(self.interner, boxed),
+                object_with_index_shape_id(self.interner, target),
+            ) {
+                let b_shape = self.interner.object_shape(b_sid);
+                let t_shape = self.interner.object_shape(t_sid);
+                if b_shape.properties.len() == t_shape.properties.len()
+                    && b_shape
+                        .properties
+                        .iter()
+                        .zip(t_shape.properties.iter())
+                        .all(|(b, t)| b.name == t.name)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Map an intrinsic kind to its boxable equivalent (primitives with wrapper interfaces).
+pub(crate) const fn boxable_intrinsic_kind(kind: IntrinsicKind) -> Option<IntrinsicKind> {
+    match kind {
+        IntrinsicKind::String
+        | IntrinsicKind::Number
+        | IntrinsicKind::Boolean
+        | IntrinsicKind::Bigint
+        | IntrinsicKind::Symbol => Some(kind),
+        _ => None,
+    }
 }

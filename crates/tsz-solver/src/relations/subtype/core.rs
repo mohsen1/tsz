@@ -107,6 +107,7 @@ impl AnyPropagationMode {
 // TypeResolver, NoopResolver, and TypeEnvironment are defined in def/resolver.rs
 pub use crate::def::resolver::{NoopResolver, TypeEnvironment, TypeResolver};
 
+use super::rules::intrinsics::boxable_intrinsic_kind;
 use super::visitor::SubtypeVisitor;
 
 /// Subtype checking context.
@@ -351,6 +352,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
+
+        // Primitive-to-boxed-wrapper assignability: `string -> String`, `number -> Number`, etc.
+        // Must run BEFORE apparent_primitive_shape_for_type which would do a structural
+        // comparison that fails (the apparent shape of `string` doesn't structurally match `String`).
+        if let Some(s_kind) = intrinsic_kind(self.interner, source)
+            && let Some(kind) = boxable_intrinsic_kind(s_kind)
+                && self.is_target_boxed_type(target, kind) {
+                    return SubtypeResult::True;
+                }
+
+        // Also handle string/number/boolean literals -> boxed wrapper
+        if let Some(lit) = literal_value(self.interner, source) {
+            let kind = match lit {
+                LiteralValue::String(_) => Some(IntrinsicKind::String),
+                LiteralValue::Number(_) => Some(IntrinsicKind::Number),
+                LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
+                LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
+            };
+            if let Some(kind) = kind
+                && self.is_target_boxed_type(target, kind) {
+                    return SubtypeResult::True;
+                }
+        }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
