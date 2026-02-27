@@ -665,21 +665,8 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
-    /// Report TS2350: "Only a void function can be called with the 'new' keyword."
-    pub fn error_non_void_function_called_with_new_at(&mut self, idx: NodeIndex) {
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            loc.start,
-            loc.length(),
-            diagnostic_messages::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD
-                .to_string(),
-            diagnostic_codes::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD,
-        ));
-    }
+    /// TS2350 was removed in tsc 6.0 — no longer emitted.
+    pub const fn error_non_void_function_called_with_new_at(&mut self, _idx: NodeIndex) {}
 
     /// Report TS2721/TS2722/TS2723: "Cannot invoke an object which is possibly 'null'/'undefined'/'null or undefined'."
     /// Emitted when strictNullChecks is on and the callee type includes null/undefined.
