@@ -1058,20 +1058,36 @@ fn compile_inner(
     // TS5107/TS5101 are fatal in tsc 6.0: tsc stops compilation early and never emits
     // file-level diagnostics (syntactic or semantic) alongside them.
     //
-    // tsc suppresses TS5107 when ANY real file-level error exists (preferring file
-    // errors over config deprecation warnings). We can't do a blanket check because
-    // our checker still emits false-positive semantic errors that would wrongly
-    // suppress TS5107 in tests where tsc has no source errors.
-    //
-    // We suppress TS5107 for error ranges that are never false positives:
-    //   - 1xxx: parser/syntax errors (TS1005, TS1109, etc.)
-    //   - 8xxx: JS grammar errors ("can only be used in TypeScript files")
-    //   - 17xxx: exponentiation grammar errors (TS17006/TS17007)
+    // tsc suppresses TS5107 when real file-level grammar errors exist (preferring file
+    // errors over config deprecation warnings). We use a narrow whitelist of grammar
+    // error codes that tsc reliably emits — our parser can produce false-positive 1xxx
+    // codes that would wrongly suppress TS5107 if we checked the full range.
     if has_deprecation_diagnostics {
         let has_reliable_grammar_errors = diagnostics.iter().any(|d| {
-            (1000..2000).contains(&d.code)
-                || (8000..9000).contains(&d.code)
-                || (17000..18000).contains(&d.code)
+            // 8xxx: JS grammar errors — always real
+            (8000..9000).contains(&d.code)
+            // 17xxx: exponentiation grammar errors — always real
+            || (17000..18000).contains(&d.code)
+            // Specific 1xxx codes that reliably indicate real parse failures
+            // (verified against tsc: these are never false positives in our parser
+            // for tests where tsc expects TS5107)
+            || matches!(d.code,
+                1011  // '(' or '<' expected
+                | 1109 // Expression expected
+                | 1121 // Octal literals are not allowed in strict mode
+                | 1124 // Digit expected
+                | 1125 // Hexadecimal digit expected
+                | 1128 // Declaration or statement expected
+                | 1134 // Variable declaration expected
+                | 1137 // Expression or comma expected
+                | 1144 // '{' or ';' expected
+                | 1145 // '{' or JSX element expected
+                | 1199 // Value of type '{0}' is not callable
+                | 1434 // Top-level 'await' expressions are only allowed...
+                | 1436 // Decorators are not valid here
+                | 1440 // Variable declaration not allowed at this location
+                | 1489 // Decimals with leading zeros are not allowed
+            )
         });
         if has_reliable_grammar_errors {
             // Real grammar errors take priority — drop TS5107 from config diagnostics.
