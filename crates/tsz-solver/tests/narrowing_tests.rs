@@ -1273,3 +1273,60 @@ fn test_narrow_by_typeof_object_with_index_signature() {
     // typeof "object" should keep the ObjectWithIndex member, not narrow to never
     assert_eq!(narrowed, record_type);
 }
+
+// =============================================================================
+// TypeId::OBJECT (non-primitive `object` type) typeof narrowing tests
+// =============================================================================
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_number_yields_never() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "number"` where `a: object` → never
+    // object is not a number type, so narrowing should produce never
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_object_yields_object() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "object"` where `a: object` → object
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "object");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}
+
+#[test]
+fn test_narrow_object_or_null_by_typeof_negation_object_yields_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof b !== "object"` where `b: object | null` → never
+    // Both `object` (typeof === "object") and `null` (typeof === "object") are excluded
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_or_string_by_typeof_negation_object_yields_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "object"` where `x: object | string` → string
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::STRING]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_object_by_typeof_negation_number_keeps_object() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "number"` where `x: object` → object
+    // object is not a number, so it survives the exclusion
+    let narrowed = ctx.narrow_by_typeof_negation(TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}

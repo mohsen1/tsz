@@ -25,8 +25,11 @@ impl<'a> CheckerState<'a> {
 
         // Suppress error if type is ERROR/ANY/NEVER or an Error type wrapper
         // This prevents cascading errors when accessing properties on error types.
-        // NEVER is the bottom type (unreachable code) — tsc allows all property access on never.
-        // NOTE: We do NOT suppress for UNKNOWN - accessing properties on unknown should error (TS2339)
+        // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
+        // NEVER: tsc does emit TS2339 for property access on `never`, but our solver sometimes
+        // produces `never` where tsc doesn't (e.g., incorrect typeof narrowing for some type params).
+        // Until those solver bugs are fixed, we suppress TS2339 on `never` to avoid false positives.
+        // TODO: Remove NEVER from suppression once solver narrowing produces fewer false `never` types.
         if type_id == TypeId::ERROR
             || type_id == TypeId::ANY
             || type_id == TypeId::NEVER
