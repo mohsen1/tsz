@@ -1356,6 +1356,32 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside a module augmentation
+    /// (`declare module "string" { ... }`).  Module augmentations have a
+    /// `MODULE_DECLARATION` ancestor whose name is a string literal.
+    pub(crate) fn is_inside_module_augmentation(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(mod_data) = self.ctx.arena.get_module_at(current)
+                    && let Some(name_node) = self.ctx.arena.get(mod_data.name)
+                        && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                            return true;
+                        }
+        }
+        false
+    }
+
     /// Check if a node is inside a `declare global { ... }` augmentation block.
     pub(crate) fn is_inside_global_augmentation(&self, node_idx: NodeIndex) -> bool {
         use tsz_parser::parser::flags::node_flags;

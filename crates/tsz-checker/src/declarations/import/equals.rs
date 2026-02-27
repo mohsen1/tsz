@@ -301,7 +301,7 @@ impl<'a> CheckerState<'a> {
             // The binder can merge non-mergeable declarations into the import symbol,
             // so detect conflicts directly on the import symbol's declarations first.
 
-            let mut resolved_flags = 0;
+            let mut resolved_flags = 0u32;
             let mut resolved_decls = Vec::new();
 
             if let Some(import_decl) = self
@@ -314,8 +314,8 @@ impl<'a> CheckerState<'a> {
                     if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
                         self.resolve_identifier_symbol(target_node)
                     } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-                        // For qualified names like A.B.C, we need to resolve the whole thing
-                        self.resolve_identifier_symbol(target_node)
+                        // For qualified names like A.B.C, we need to resolve the whole chain
+                        self.resolve_qualified_symbol(target_node)
                     } else {
                         None
                     }
@@ -380,18 +380,38 @@ impl<'a> CheckerState<'a> {
                         if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
                             return false;
                         }
-                        let in_same_scope = if let Some(import_scope_id) = import_scope {
-                            self.ctx
-                                .binder
-                                .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                == Some(import_scope_id)
-                        } else {
-                            true
+                        // Scope check: merged namespace blocks have separate ScopeIds
+                        // but share the same container symbol. Compare container
+                        // symbols to allow merged namespaces while excluding
+                        // module augmentations and other unrelated scopes.
+                        let decl_scope = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                            let parent = ext.parent;
+                            if parent.is_some() {
+                                self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                            } else {
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
+                            }
+                        });
+                        let in_same_scope = match (import_scope, decl_scope) {
+                            (Some(a), Some(b)) if a == b => true,
+                            (Some(a), Some(b)) => {
+                                let sym_a =
+                                    self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                        self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                    });
+                                let sym_b =
+                                    self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                        self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                    });
+                                sym_a.is_some() && sym_a == sym_b
+                            }
+                            _ => true,
                         };
                         if !in_same_scope {
                             return false;
                         }
-
                         self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
                             decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                         })
@@ -402,8 +422,26 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         &[name],
                     );
+                    // Use the parent EXPORT_DECLARATION node if this import-equals
+                    // is wrapped in one (e.g. `export import q = M1.s`), so the
+                    // error span starts at `export` matching tsc behaviour.
+                    let error_node = self
+                        .ctx
+                        .arena
+                        .get_extended(stmt_idx)
+                        .and_then(|ext| {
+                            let p = ext.parent;
+                            self.ctx.arena.get(p).and_then(|pn| {
+                                if pn.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                    Some(p)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .unwrap_or(stmt_idx);
                     self.error_at_node(
-                        stmt_idx,
+                        error_node,
                         &message,
                         diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                     );
@@ -470,8 +508,23 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],
                         );
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get_extended(stmt_idx)
+                            .and_then(|ext| {
+                                let p = ext.parent;
+                                self.ctx.arena.get(p).and_then(|pn| {
+                                    if pn.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                        Some(p)
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                            .unwrap_or(stmt_idx);
                         self.error_at_node(
-                            stmt_idx,
+                            error_node,
                             &message,
                             diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         );
