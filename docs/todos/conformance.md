@@ -1,7 +1,42 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9230/12570 (73.4%) — full suite, error-code level
+**Current score**: ~9456/12570 (75.2%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27 — generators area: TS7057 yield implicit-any contextual typing
+
+### Area: generators (53.3% → 66.7%, 8→10 passing of 15)
+
+**Fixed**: TS7057 false positives for yield expressions used as function call arguments.
+
+#### Root cause
+`argument_needs_contextual_type()` in `call_checker.rs` did not include `YIELD_EXPRESSION`,
+so the call checker cleared `contextual_type` to `None` for yield arguments. This meant
+TS7057 always fired for yield in function calls, even when the parameter type provided
+meaningful contextual typing (e.g., overloaded calls or explicit type arguments).
+
+#### Three-part fix
+1. **call_checker.rs**: Added `YIELD_EXPRESSION` to `argument_needs_contextual_type` so
+   yield arguments receive contextual typing from the parameter type.
+2. **dispatch.rs**: Added `yield_is_in_binding_pattern_initializer()` to suppress TS7057
+   when yield is in a destructuring initializer (`const [a, b] = yield`).
+3. **dispatch.rs**: Added `yield_is_direct_call_argument()` + `is_type_parameter_like` check
+   to distinguish concrete contextual types (suppress TS7057) from type parameters in call
+   arguments (allow TS7057). A type parameter from a variable annotation (`const a: T = yield 0`)
+   IS valid context; a type parameter from a generic call (`f2<T>(yield)` where param is T) is NOT.
+
+#### Tests flipped
+- `generatorImplicitAny.ts` — was: 1 extra TS7057 at overloaded call
+- `generatorReturnTypeInference.ts` — was: 2 extra TS7057 at overloaded/generic calls
+
+#### Remaining 5 failures (not TS7057 related)
+- `generatorAssignability.ts` — Missing TS2763/2764/2765/2766 (iterator next/delegate iteration errors, not implemented)
+- `generatorReturnContextualType.ts` — TS2322 fingerprint: `Awaited<{ x: string }>` vs `{ x: string }` (wrong Awaited wrapping)
+- `generatorReturnTypeFallback.2.ts` — Missing TS2318 "Cannot find global type 'IterableIterator'"
+- `generatorReturnTypeInferenceNonStrict.ts` — Missing TS7055 at `g003` (yield* [] inference), fingerprint-level TS7057 diffs
+- `generatorYieldContextualType.ts` — False positive TS2322+TS2345 (excess property/assignability issue)
 
 ---
 
