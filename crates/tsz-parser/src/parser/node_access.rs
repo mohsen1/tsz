@@ -29,8 +29,8 @@ use super::node::{
 use super::syntax_kind_ext::{
     ARRAY_BINDING_PATTERN, ARROW_FUNCTION, AS_EXPRESSION, BINARY_EXPRESSION, BLOCK,
     CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, DEBUGGER_STATEMENT, ENUM_DECLARATION,
-    EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, EXPRESSION_STATEMENT,
-    FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_TYPE,
+    EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, FUNCTION_DECLARATION,
+    FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION, IMPORT_TYPE,
     INDEX_SIGNATURE, INTERFACE_DECLARATION, METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK,
     MODULE_DECLARATION, NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN,
     PARAMETER, PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
@@ -345,17 +345,21 @@ impl NodeArena {
     }
 
     /// Check if a statement inside a module block is a runtime value declaration.
+    ///
+    /// Uses tsc's inverse logic: a module is uninstantiated if it contains ONLY
+    /// type-level declarations (interfaces, type aliases, non-exported imports).
+    /// Any other statement (try, if, for, expression, variable, etc.) makes the
+    /// module instantiated.
     fn is_runtime_module_statement(&self, node: &Node, node_idx: NodeIndex) -> bool {
         match node.kind {
-            k if k == VARIABLE_STATEMENT
-                || k == FUNCTION_DECLARATION
-                || k == CLASS_DECLARATION
-                || k == ENUM_DECLARATION
-                || k == EXPRESSION_STATEMENT
-                || k == EXPORT_ASSIGNMENT =>
-            {
-                true
-            }
+            // Type-only declarations — never instantiate a module
+            k if k == INTERFACE_DECLARATION || k == TYPE_ALIAS_DECLARATION => false,
+
+            // Import declarations — non-instantiated (they don't produce runtime code
+            // in the namespace itself, even if exported)
+            k if k == IMPORT_DECLARATION || k == IMPORT_EQUALS_DECLARATION => false,
+
+            // Export declarations — check what's being exported
             k if k == EXPORT_DECLARATION => {
                 if let Some(export_decl) = self.get_export_decl(node)
                     && let Some(clause) = self.get(export_decl.export_clause)
@@ -377,8 +381,13 @@ impl NodeArena {
                     false
                 }
             }
+
+            // Nested namespace — recurse
             k if k == MODULE_DECLARATION => self.is_namespace_instantiated(node_idx),
-            _ => false,
+
+            // Everything else (variables, functions, classes, enums, try/catch, if,
+            // for, while, switch, expression statements, etc.) is runtime code
+            _ => true,
         }
     }
 
