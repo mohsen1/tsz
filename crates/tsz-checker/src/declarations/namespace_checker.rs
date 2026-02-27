@@ -56,6 +56,11 @@ impl<'a> CheckerState<'a> {
             let is_duplicate =
                 props.contains_key(&name_atom) || (check_prototype && name == "prototype");
             if is_duplicate {
+                // Report TS2300 on the class/function static member that conflicts.
+                // TSC reports "Duplicate identifier" on BOTH the class static member
+                // and the namespace export when they share the same name.
+                self.report_duplicate_on_class_static_member(sym_id, name);
+
                 if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
                     let decl_node = export_symbol.value_declaration;
                     if decl_node != NodeIndex::NONE {
@@ -85,6 +90,49 @@ impl<'a> CheckerState<'a> {
                     parent_id: None,
                 },
             );
+        }
+    }
+
+    /// Report TS2300 on the class static member that conflicts with a namespace export.
+    fn report_duplicate_on_class_static_member(&mut self, sym_id: SymbolId, name: &str) {
+        use tsz_binder::symbol_flags;
+        use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_parser::syntax_kind_ext;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            let Some(class) = self.ctx.arena.get_class(node) else {
+                continue;
+            };
+
+            for &member_idx in &class.members.nodes {
+                if let Some(member_sym_id) = self.ctx.binder.get_node_symbol(member_idx)
+                    && let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id)
+                    && member_symbol.escaped_name == name
+                    && (member_symbol.flags & symbol_flags::STATIC) != 0
+                {
+                    let error_node = self
+                        .get_declaration_name_node(member_idx)
+                        .unwrap_or(member_idx);
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[name],
+                    );
+                    return;
+                }
+            }
         }
     }
 
