@@ -273,19 +273,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report an argument not assignable error using solver diagnostics with source tracking.
+    /// When solver failure analysis identifies a specific reason (e.g. missing property),
+    /// the detailed diagnostic is emitted as related information matching tsc's behavior.
     pub fn error_argument_not_assignable_at(
         &mut self,
         arg_type: TypeId,
         param_type: TypeId,
         idx: NodeIndex,
     ) {
-        tracing::debug!(
-            "error_argument_not_assignable_at: File name: {}",
-            self.ctx.file_name
-        );
-
         // Suppress cascading errors when either type is ERROR, ANY, or UNKNOWN
-
         if arg_type == TypeId::ERROR || param_type == TypeId::ERROR {
             return;
         }
@@ -295,22 +291,139 @@ impl<'a> CheckerState<'a> {
         if arg_type == TypeId::UNKNOWN || param_type == TypeId::UNKNOWN {
             return;
         }
-        if let Some(loc) = self.get_source_location(idx) {
-            let arg_str = self.format_type_for_assignability_message(arg_type);
-            let param_str = self.format_type_for_assignability_message(param_type);
-            let message = format_message(
-                diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-                &[&arg_str, &param_str],
-            );
-            tracing::debug!("File name: {}", self.ctx.file_name);
-            // TODO: tsc emits elaboration (missing properties, callable, type mismatch) as related information
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-            ));
+        let Some(loc) = self.get_source_location(idx) else {
+            return;
+        };
+        let arg_str = self.format_type_for_assignability_message(arg_type);
+        let param_str = self.format_type_for_assignability_message(param_type);
+        let message = format_message(
+            diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            &[&arg_str, &param_str],
+        );
+        let mut diag = Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message,
+            diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+        );
+
+        // Run failure analysis to produce elaboration as related information,
+        // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
+        // related diagnostics under the primary TS2345.
+        let analysis = self.analyze_assignability_failure(arg_type, param_type);
+        if let Some(ref reason) = analysis.failure_reason
+            && let Some(related) =
+                self.build_related_from_failure_reason(reason, arg_type, param_type, idx)
+        {
+            diag.related_information.push(related);
+        }
+
+        self.ctx.diagnostics.push(diag);
+    }
+
+    /// Build a `DiagnosticRelatedInformation` from a solver failure reason.
+    /// Returns `None` if the reason doesn't map to a related diagnostic.
+    fn build_related_from_failure_reason(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        _source: TypeId,
+        _target: TypeId,
+        idx: NodeIndex,
+    ) -> Option<DiagnosticRelatedInformation> {
+        use tsz_solver::SubtypeFailureReason;
+
+        let (start, length) = self.get_node_span(idx)?;
+
+        match reason {
+            SubtypeFailureReason::MissingProperty {
+                property_name,
+                source_type,
+                target_type,
+            } => {
+                // Don't emit TS2741 for primitives or wrapper built-ins
+                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                    return None;
+                }
+                let tgt_str = self.format_type(*target_type);
+                if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
+                    return None;
+                }
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                if prop_name.starts_with("__private_brand") {
+                    return None;
+                }
+                let src_str = self.format_type(*source_type);
+                let msg = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop_name, &src_str, &tgt_str],
+                );
+                Some(DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length: length.saturating_sub(start),
+                    message_text: msg,
+                })
+            }
+            SubtypeFailureReason::MissingProperties {
+                property_names,
+                source_type,
+                target_type,
+            } => {
+                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                    return None;
+                }
+                let tgt_str = self.format_type(*target_type);
+                if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
+                    return None;
+                }
+                let src_str = self.format_type(*source_type);
+                let names: Vec<String> = property_names
+                    .iter()
+                    .map(|a| self.ctx.types.resolve_atom_ref(*a).to_string())
+                    .collect();
+                let count = names.len();
+                if count <= 4 {
+                    // TS2739: Type 'X' is missing the following properties from type 'Y': a, b, c
+                    let props_str = names.join(", ");
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        &[&src_str, &tgt_str, &props_str],
+                    );
+                    Some(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Error,
+                        code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: length.saturating_sub(start),
+                        message_text: msg,
+                    })
+                } else {
+                    // TS2740: Type 'X' is missing the following properties from type 'Y': a, b, c, and N more.
+                    let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
+                    let more = count - 4;
+                    let props_str = format!("{}, and {} more.", shown.join(", "), more);
+                    let msg = format_message(
+                        diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        &[&src_str, &tgt_str, &props_str],
+                    );
+                    Some(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Error,
+                        code: diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
+                        file: self.ctx.file_name.clone(),
+                        start,
+                        length: length.saturating_sub(start),
+                        message_text: msg,
+                    })
+                }
+            }
+            SubtypeFailureReason::PropertyTypeMismatch { .. } => {
+                // Could elaborate property mismatches in the future, but skip for now
+                None
+            }
+            _ => None,
         }
     }
 

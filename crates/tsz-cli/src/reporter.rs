@@ -274,14 +274,9 @@ impl Reporter {
     }
 
     /// Format related information in non-pretty mode.
+    /// tsc format: `  message` (no file/line/code prefix — just indented text).
     fn format_related_plain(&mut self, out: &mut String, related: &DiagnosticRelatedInformation) {
-        let file_display = self.relative_path(&related.file);
-        if let Some((line, col)) = self.position_for(&related.file, related.start) {
-            out.push_str(&format!("  {file_display}({line},{col})"));
-        } else if !related.file.is_empty() {
-            out.push_str(&format!("  {file_display}"));
-        }
-        out.push_str(": ");
+        out.push_str("  ");
         let message = self.translate_message(related.code, &related.message_text);
         out.push_str(&message);
     }

@@ -479,7 +479,8 @@ impl<'a> CheckerState<'a> {
                         {
                             let instantiated =
                                 instantiate_type(self.ctx.types, param_type, &substitution);
-                            Some(self.evaluate_type_with_env(instantiated))
+                            let evaluated = self.evaluate_type_with_env(instantiated);
+                            Some(evaluated)
                         } else {
                             None
                         };

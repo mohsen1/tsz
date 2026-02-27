@@ -159,8 +159,10 @@ impl<'a> CheckerState<'a> {
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
-                        let ctx_type = self.evaluate_contextual_type(ctx_type);
-                        self.ctx.types.contextual_property_type(ctx_type, &name)
+                        let ctx_type_evaluated = self.evaluate_contextual_type(ctx_type);
+                        self.ctx
+                            .types
+                            .contextual_property_type(ctx_type_evaluated, &name)
                     } else {
                         None
                     };

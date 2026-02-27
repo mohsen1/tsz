@@ -80,6 +80,15 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
+                // The global `Object` interface has properties (toString, valueOf,
+                // constructor, etc.) but is "wide" enough that tsc skips excess
+                // property checking when it appears in a union.  Detect it by
+                // checking whether ALL property names are standard Object.prototype
+                // methods.  Similarly, skip for `Function` (has bind, call, apply, etc.).
+                if self.is_global_object_or_function_shape(&shape) {
+                    return;
+                }
+
                 target_shapes.push(shape.clone());
 
                 if self.is_subtype_of(source, member) {
@@ -198,12 +207,13 @@ impl<'a> CheckerState<'a> {
                     }
                     target_shapes.push(shape.clone());
                 } else {
-                    // If an intersection member has no object shape and is a type parameter,
-                    // conditional, or application type, it may accept arbitrary properties.
-                    // Skip excess property checking entirely — same logic as union handling.
-                    if query::is_type_parameter_like(self.ctx.types, resolved_member)
-                        || resolved_member == TypeId::OBJECT
-                    {
+                    // If an intersection member has no object shape, it may accept
+                    // arbitrary properties — skip excess checking.  This covers type
+                    // parameters, the `object` intrinsic, unresolved conditional types,
+                    // and generic application types.
+                    // Only skip for non-primitive types (primitives like `string` that
+                    // don't have an object shape should not suppress the check).
+                    if !tsz_solver::is_primitive_type(self.ctx.types, resolved_member) {
                         return;
                     }
                 }
@@ -445,6 +455,50 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    /// Detect whether an object shape represents the global `Object` or `Function`
+    /// interface (or similar built-in prototypes).  These types have only inherited
+    /// method properties (toString, valueOf, constructor, bind, call, apply, …)
+    /// and should suppress excess property checking when they appear as union members.
+    fn is_global_object_or_function_shape(&self, shape: &tsz_solver::ObjectShape) -> bool {
+        // Object.prototype methods:
+        static OBJECT_PROTO: &[&str] = &[
+            "constructor",
+            "toString",
+            "toLocaleString",
+            "valueOf",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ];
+        // Function.prototype methods (superset of Object):
+        static FUNCTION_PROTO: &[&str] = &[
+            "apply",
+            "call",
+            "bind",
+            "toString",
+            "length",
+            "arguments",
+            "caller",
+            "prototype",
+            "constructor",
+            "toLocaleString",
+            "valueOf",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            // Symbol-keyed members are ignored by name check
+        ];
+
+        if shape.properties.is_empty() {
+            return false;
+        }
+
+        shape.properties.iter().all(|prop| {
+            let name = self.ctx.types.resolve_atom_ref(prop.name);
+            OBJECT_PROTO.contains(&name.as_ref()) || FUNCTION_PROTO.contains(&name.as_ref())
+        })
     }
 
     fn explicit_object_literal_property_names_for_spread(
