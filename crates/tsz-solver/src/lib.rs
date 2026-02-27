@@ -189,6 +189,12 @@ mod async_promise_comprehensive_tests;
 mod class_comprehensive_tests;
 // compound_assignment_tests: loaded from operations/compound_assignment.rs
 #[cfg(test)]
+#[path = "tests/classify_array_like_tests.rs"]
+mod classify_array_like_tests;
+#[cfg(test)]
+#[path = "tests/computed_prop_name_tests.rs"]
+mod computed_prop_name_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
 #[cfg(test)]

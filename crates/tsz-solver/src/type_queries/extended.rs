@@ -469,6 +469,17 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeData::Intersection(members_id)) => {
             ArrayLikeKind::Intersection(db.type_list(members_id).to_vec())
         }
+        // Homomorphic mapped types over array-like sources preserve array structure.
+        // e.g., `{ [K in keyof T]: T[K] }` where `T extends readonly unknown[]`
+        // is still array-like because it maps over an array/tuple.
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.mapped_type(mapped_id);
+            if let Some(TypeData::KeyOf(source)) = db.lookup(mapped.constraint) {
+                classify_array_like(db, source)
+            } else {
+                ArrayLikeKind::Other
+            }
+        }
         _ => ArrayLikeKind::Other,
     }
 }

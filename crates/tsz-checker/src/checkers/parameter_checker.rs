@@ -700,34 +700,43 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let factory = self.ctx.types.factory();
-                let any_array = factory.array(TypeId::ANY);
-                let readonly_any_array = factory.readonly_type(any_array);
+                // Use is_array_like_type first — it properly resolves type parameter
+                // constraints (e.g., `T extends any[]` is recognized as array-like).
+                // Fall back to assignability for custom array subclasses (e.g.,
+                // `CoolArray<T> extends Array<T>` which is structurally array-like
+                // but not recognized by classify_array_like as a raw Array/Tuple).
+                if !self.is_array_like_type(declared_type) {
+                    let factory = self.ctx.types.factory();
+                    let any_array = factory.array(TypeId::ANY);
+                    let readonly_any_array = factory.readonly_type(any_array);
 
-                if !self.is_assignable_to(declared_type, readonly_any_array) {
-                    self.error_at_node(
-                        param.type_annotation,
-                        "A rest parameter must be of an array type.",
-                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                    );
+                    if !self.is_assignable_to(declared_type, readonly_any_array) {
+                        self.error_at_node(
+                            param.type_annotation,
+                            "A rest parameter must be of an array type.",
+                            diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                        );
+                    }
                 }
             } else if param.initializer.is_some() {
                 // No type annotation, but has initializer (e.g., `...bar = 0`).
                 // Infer the type from the initializer.
                 let init_type = self.get_type_of_node(param.initializer);
-                let factory = self.ctx.types.factory();
-                let any_array = factory.array(TypeId::ANY);
-                let readonly_any_array = factory.readonly_type(any_array);
                 if init_type != TypeId::ANY
                     && init_type != TypeId::UNKNOWN
                     && init_type != TypeId::ERROR
-                    && !self.is_assignable_to(init_type, readonly_any_array)
+                    && !self.is_array_like_type(init_type)
                 {
-                    self.error_at_node(
-                        param_idx,
-                        "A rest parameter must be of an array type.",
-                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                    );
+                    let factory = self.ctx.types.factory();
+                    let any_array = factory.array(TypeId::ANY);
+                    let readonly_any_array = factory.readonly_type(any_array);
+                    if !self.is_assignable_to(init_type, readonly_any_array) {
+                        self.error_at_node(
+                            param_idx,
+                            "A rest parameter must be of an array type.",
+                            diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                        );
+                    }
                 }
             }
         }
