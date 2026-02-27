@@ -77,6 +77,7 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
                 || k == syntax_kind_ext::CALL_EXPRESSION
                 || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::YIELD_EXPRESSION
         )
     }
 

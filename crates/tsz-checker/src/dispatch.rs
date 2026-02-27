@@ -493,9 +493,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             let contextual = self.checker.ctx.contextual_type;
             // Suppress TS7057 when:
             // - yield_type is Some(ANY): the yield type itself is any, so TS7055/7025 covers it
-            // - contextual type provides a non-any type
+            // - contextual type provides a concrete non-any, non-type-parameter type
+            //   (a type parameter like T doesn't provide meaningful context — the yield
+            //   result will still be inferred as any)
+            // - yield is the initializer of a destructuring variable declaration (TSC derives
+            //   a contextual type from the binding pattern, suppressing TS7057)
+            let contextual_is_concrete = contextual.is_some_and(|t| {
+                if t == TypeId::ANY {
+                    return false;
+                }
+                // A type parameter from a call argument (e.g. f2<T>(yield) where param is T)
+                // doesn't provide meaningful context — T gets inferred as any from the yield.
+                // But a type parameter from a variable annotation (e.g. const a: T = yield 0)
+                // IS a valid contextual type that suppresses TS7057.
+                if tsz_solver::type_queries::is_type_parameter_like(self.checker.ctx.types, t)
+                    && self.yield_is_direct_call_argument(idx)
+                {
+                    return false;
+                }
+                true
+            });
             if yield_type != Some(TypeId::ANY)
-                && (contextual.is_none() || contextual == Some(TypeId::ANY))
+                && !contextual_is_concrete
+                && !self.yield_is_in_binding_pattern_initializer(idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.checker.error_at_node(
@@ -570,6 +590,59 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
             return false;
         }
+    }
+
+    /// Check if a yield expression is the initializer of a variable declaration
+    /// with a destructuring binding pattern (object or array). TSC derives a
+    /// contextual type from the binding pattern, so TS7057 is suppressed.
+    fn yield_is_in_binding_pattern_initializer(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.checker.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(var_decl) = self
+            .checker
+            .ctx
+            .arena
+            .get(parent_idx)
+            .and_then(|p| self.checker.ctx.arena.get_variable_declaration(p))
+        else {
+            return false;
+        };
+        // Check if the yield is the direct initializer
+        if var_decl.initializer != idx {
+            return false;
+        }
+        // Check if the variable name is a binding pattern
+        self.checker
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .is_some_and(|name_node| {
+                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            })
+    }
+
+    /// Check if a yield expression is a direct argument of a call or new expression.
+    fn yield_is_direct_call_argument(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.checker.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent) = self.checker.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent.kind == syntax_kind_ext::CALL_EXPRESSION
+            || parent.kind == syntax_kind_ext::NEW_EXPRESSION
+        {
+            // Check if yield is in the arguments list (not the callee expression)
+            if let Some(call) = self.checker.ctx.arena.get_call_expr(parent)
+                && let Some(ref args) = call.arguments {
+                    return args.nodes.contains(&idx);
+                }
+        }
+        false
     }
 
     /// Dispatch type computation based on node kind.

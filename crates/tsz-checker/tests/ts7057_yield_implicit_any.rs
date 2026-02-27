@@ -216,3 +216,121 @@ function* g() {
         "yield in for-statement init/increment should not trigger TS7057"
     );
 }
+
+// =========================================================================
+// TS7057 should NOT fire when yield is contextually typed by function args
+// =========================================================================
+
+#[test]
+fn no_ts7057_yield_in_typed_function_call() {
+    // f<string>(yield) — yield is contextually typed by explicit type argument
+    let source = r#"
+declare function f<T>(value: T): void;
+function* g() {
+    f<string>(yield);
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield in call with explicit type arg should not trigger TS7057"
+    );
+}
+
+#[test]
+fn no_ts7057_yield_in_overloaded_function_call() {
+    // f1(yield 1) — yield is contextually typed by overload parameter
+    let source = r#"
+declare function f1(x: string): void;
+declare function f1(x: number): void;
+function* g() {
+    const x = f1(yield 1);
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield in overloaded call should not trigger TS7057"
+    );
+}
+
+// =========================================================================
+// TS7057 should NOT fire when yield is in destructuring initializer
+// =========================================================================
+
+#[test]
+fn no_ts7057_yield_in_array_destructuring() {
+    // const [a, b] = yield — yield contextually typed by binding pattern
+    let source = r#"
+function* g() {
+    const [a = 1, b = 2] = yield;
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield in array destructuring initializer should not trigger TS7057"
+    );
+}
+
+#[test]
+fn no_ts7057_yield_in_object_destructuring() {
+    // const {x} = yield — yield contextually typed by binding pattern
+    let source = r#"
+function* g() {
+    const {x, y} = yield;
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield in object destructuring initializer should not trigger TS7057"
+    );
+}
+
+#[test]
+fn ts7057_still_fires_for_untyped_simple_variable() {
+    // const value = yield — NO contextual type, TS7057 should still fire
+    let source = r#"
+function* g() {
+    const value = yield;
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        1,
+        "yield in simple untyped variable should still trigger TS7057"
+    );
+}
+
+#[test]
+fn no_ts7057_yield_with_type_param_variable_annotation() {
+    // const a: T = yield 0 — type param from variable annotation provides valid context
+    let source = r#"
+function* g307<T>() {
+    const a: T = yield 0;
+    return a;
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        0,
+        "yield assigned to type-param-annotated variable should not trigger TS7057"
+    );
+}
+
+#[test]
+fn ts7057_fires_for_generic_call_argument() {
+    // f2(yield 1) where f2<T>(x: T) — T is inferred from yield (any), so TS7057 fires
+    let source = r#"
+declare function f2<T>(x: T): T;
+function* g204() {
+    const x = f2(yield 1);
+}
+"#;
+    assert_eq!(
+        count_ts7057(source),
+        1,
+        "yield in generic call argument should trigger TS7057"
+    );
+}
