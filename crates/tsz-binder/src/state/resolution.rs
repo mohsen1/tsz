@@ -460,9 +460,9 @@ impl BinderState {
         // This handles `declare module "react" { export = __React; }`.
         if sym.import_name.is_none()
             && let Some(resolved) = self.resolve_import_with_reexports(module_specifier, "export=")
-            {
-                return Some(resolved);
-            }
+        {
+            return Some(resolved);
+        }
 
         None
     }
