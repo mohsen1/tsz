@@ -799,13 +799,9 @@ pub(super) fn create_binder_from_bound_file(
                 .entry(name.clone())
                 .or_default()
                 .extend(decls.iter().map(|aug| {
-                    // Tag each augmentation with its source file's arena and file name
-                    // so the checker can read declaration nodes from the correct arena
-                    // and emit cross-file diagnostics with the correct file path.
-                    tsz::binder::GlobalAugmentation::with_arena_and_file(
+                    tsz::binder::GlobalAugmentation::with_arena(
                         aug.node,
                         Arc::clone(&other_file.arena),
-                        other_file.file_name.clone(),
                     )
                 }));
         }
