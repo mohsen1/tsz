@@ -355,6 +355,18 @@ impl ParserState {
             );
         }
 
+        // TS1433: Neither decorators nor modifiers may be applied to 'this' parameters.
+        // Error points at the decorator/modifier position (start_pos), not the 'this' keyword.
+        if self.is_token(SyntaxKind::ThisKeyword) && modifiers.is_some() {
+            let this_end = self.token_end();
+            self.parse_error_at(
+                start_pos,
+                this_end - start_pos,
+                "Neither decorators nor modifiers may be applied to 'this' parameters.",
+                diagnostic_codes::NEITHER_DECORATORS_NOR_MODIFIERS_MAY_BE_APPLIED_TO_THIS_PARAMETERS,
+            );
+        }
+
         // Parse parameter name - can be an identifier, keyword, or binding pattern
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
@@ -869,13 +881,13 @@ impl ParserState {
                 }
             }
             _ => {
-                // TS1206: Decorators are not valid on expression statements
+                // TS1146: When decorators are followed by a non-declaration token,
+                // tsc emits "Declaration expected" rather than "Decorators are not valid here"
+                // because the decorator implies the user intended to write a declaration.
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    start_pos,
-                    0,
-                    "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                self.parse_error_at_current_token(
+                    "Declaration expected.",
+                    diagnostic_codes::DECLARATION_EXPECTED,
                 );
                 self.parse_expression_statement()
             }
