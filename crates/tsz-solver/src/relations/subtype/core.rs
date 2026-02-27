@@ -358,9 +358,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // comparison that fails (the apparent shape of `string` doesn't structurally match `String`).
         if let Some(s_kind) = intrinsic_kind(self.interner, source)
             && let Some(kind) = boxable_intrinsic_kind(s_kind)
-                && self.is_target_boxed_type(target, kind) {
-                    return SubtypeResult::True;
-                }
+            && self.is_target_boxed_type(target, kind)
+        {
+            return SubtypeResult::True;
+        }
 
         // Also handle string/number/boolean literals -> boxed wrapper
         if let Some(lit) = literal_value(self.interner, source) {
@@ -371,9 +372,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
             };
             if let Some(kind) = kind
-                && self.is_target_boxed_type(target, kind) {
-                    return SubtypeResult::True;
-                }
+                && self.is_target_boxed_type(target, kind)
+            {
+                return SubtypeResult::True;
+            }
         }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(source) {

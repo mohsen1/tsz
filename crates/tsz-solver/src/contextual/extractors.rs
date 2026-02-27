@@ -719,10 +719,17 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         } else if param_types.len() == 1 {
             Some(param_types[0])
         } else {
-            // Multiple different parameter types
-            // If noImplicitAny is false, fall back to `any` (return None)
-            // If noImplicitAny is true, create a union type
-            self.no_implicit_any.then(|| self.db.union(param_types))
+            // Multiple call signatures with potentially different parameter types.
+            // If all signatures agree on the same type, use it.
+            // Otherwise, tsc provides no contextual type (returns None), which causes
+            // TS7006 to be reported when noImplicitAny is enabled. We must NOT create
+            // a union of the parameter types, as that would suppress TS7006 incorrectly.
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                Some(first)
+            } else {
+                None
+            }
         }
     }
 
