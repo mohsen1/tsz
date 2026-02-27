@@ -92,6 +92,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index: i,
                     expected: param_type,
                     actual: *arg_type,
+                    // NOTE: fallback_return is ERROR here; the caller
+                    // (resolve_function_call / resolve_union_call) overrides
+                    // it with the actual return type when appropriate.
                     fallback_return: TypeId::ERROR,
                 });
             }

@@ -674,7 +674,7 @@ impl<'a> CheckerState<'a> {
                 index,
                 expected,
                 actual,
-                ..
+                fallback_return,
             } => {
                 if index < args.len() {
                     let arg_idx = args[index];
@@ -690,7 +690,11 @@ impl<'a> CheckerState<'a> {
                         let _ = self.check_argument_assignable_or_report(actual, expected, arg_idx);
                     }
                 }
-                TypeId::ERROR
+                if fallback_return != TypeId::ERROR {
+                    fallback_return
+                } else {
+                    TypeId::ERROR
+                }
             }
             CallResult::TypeParameterConstraintViolation {
                 inferred_type,
