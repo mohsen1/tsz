@@ -312,10 +312,11 @@ impl<'a> CheckerState<'a> {
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
 
-                // Instantiate the constraint with type arguments up to and including the
-                // current parameter so self-referential constraints are validated.
+                // Instantiate the constraint with all provided type arguments so that
+                // forward-referencing constraints (e.g., `T extends U` where U comes
+                // after T) are fully resolved before validation.
                 let mut subst = tsz_solver::TypeSubstitution::new();
-                for (j, p) in type_params.iter().take(i + 1).enumerate() {
+                for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
                         subst.insert(p.name, arg);
                     }

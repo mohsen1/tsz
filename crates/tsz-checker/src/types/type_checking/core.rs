@@ -205,7 +205,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut seen_names = rustc_hash::FxHashSet::default();
+        let mut seen_names: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
         for &member_idx in &enum_decl.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -238,15 +239,29 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check for duplicate
-            if seen_names.contains(&name_text) {
-                self.error_at_node_msg(
-                    member.name,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    &[&name_text],
-                );
-            } else {
-                seen_names.insert(name_text);
+            // Check for duplicate — report on both first and subsequent occurrences
+            match seen_names.entry(name_text.clone()) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Report on the first occurrence (only once)
+                    let first_name_idx = *entry.get();
+                    if first_name_idx != NodeIndex::NONE {
+                        self.error_at_node_msg(
+                            first_name_idx,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[&name_text],
+                        );
+                        *entry.into_mut() = NodeIndex::NONE;
+                    }
+                    // Report on this (duplicate) occurrence
+                    self.error_at_node_msg(
+                        member.name,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[&name_text],
+                    );
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(member.name);
+                }
             }
         }
     }
