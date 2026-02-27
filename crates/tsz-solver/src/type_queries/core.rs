@@ -290,6 +290,12 @@ fn is_definitely_falsy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             LiteralValue::String(atom) => db.resolve_atom_ref(atom).is_empty(),
             LiteralValue::BigInt(atom) => db.resolve_atom_ref(atom).as_ref() == "0",
         },
+        // Intersection: if ANY member is definitely falsy, the intersection is falsy.
+        // e.g., `T & undefined` is always falsy because the value must be undefined.
+        Some(TypeData::Intersection(members)) => {
+            let members = db.type_list(members);
+            members.iter().any(|&m| is_definitely_falsy_type(db, m))
+        }
         _ => false,
     }
 }
