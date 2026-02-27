@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-27T04:29:52Z",
-  "git_sha": "a231c94f9ec262c69e36543a63d6ce4f733d3415",
+  "timestamp": "2026-02-27T05:50:57Z",
+  "git_sha": "2657b77596b5f0b684d02330376d2b6fdbb4a177",
   "summary": {
     "total_tests": 12570,
-    "passed": 9326,
-    "failed": 3244,
+    "passed": 9331,
+    "failed": 3239,
     "pass_rate": 74.2
   },
   "areas_by_pass_rate": [
@@ -70,13 +70,6 @@
       "passed": 10,
       "failed": 9,
       "pass_rate": 52.63
-    },
-    {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 9,
-      "failed": 8,
-      "pass_rate": 52.94
     },
     {
       "area": "internalModules/DeclarationMerging",
@@ -177,6 +170,13 @@
       "pass_rate": 58.33
     },
     {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 10,
+      "failed": 7,
+      "pass_rate": 58.82
+    },
+    {
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 23,
@@ -217,6 +217,13 @@
       "passed": 20,
       "failed": 13,
       "pass_rate": 60.61
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
     },
     {
       "area": "expressions/functionCalls",
@@ -273,13 +280,6 @@
       "passed": 123,
       "failed": 67,
       "pass_rate": 64.74
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 19,
-      "failed": 10,
-      "pass_rate": 65.52
     },
     {
       "area": "types/primitives",
@@ -401,18 +401,18 @@
       "pass_rate": 74.75
     },
     {
-      "area": "compiler",
-      "total": 6509,
-      "passed": 4881,
-      "failed": 1628,
-      "pass_rate": 74.99
-    },
-    {
       "area": "expressions/typeSatisfaction",
       "total": 16,
       "passed": 12,
       "failed": 4,
       "pass_rate": 75.0
+    },
+    {
+      "area": "compiler",
+      "total": 6510,
+      "passed": 4884,
+      "failed": 1626,
+      "pass_rate": 75.02
     },
     {
       "area": "es6/unicodeExtendedEscapes",
@@ -478,13 +478,6 @@
       "pass_rate": 82.42
     },
     {
-      "area": "es6/templates",
-      "total": 178,
-      "passed": 147,
-      "failed": 31,
-      "pass_rate": 82.58
-    },
-    {
       "area": "parser/ecmascript6",
       "total": 84,
       "passed": 70,
@@ -497,6 +490,13 @@
       "passed": 10,
       "failed": 2,
       "pass_rate": 83.33
+    },
+    {
+      "area": "es6/templates",
+      "total": 178,
+      "passed": 149,
+      "failed": 29,
+      "pass_rate": 83.71
     },
     {
       "area": "es6/functionDeclarations",
@@ -891,7 +891,7 @@
     },
     {
       "code": "TS1005",
-      "count": 108
+      "count": 107
     },
     {
       "code": "TS2345",
