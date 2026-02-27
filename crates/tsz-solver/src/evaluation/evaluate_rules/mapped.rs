@@ -235,11 +235,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         //   Partial<[number, string]> should be [number?, string?] (Tuple)
         //   Partial<number[]> should be (number | undefined)[] (Array)
         //
-        // CRITICAL: Only preserve if there's NO name remapping (as clause).
-        // Name remapping breaks homomorphism and degrades to plain object.
+        // Preserve if there's NO name remapping, OR if the name type is an identity
+        // mapping (as K where K is the iteration variable). Identity `as` clauses
+        // don't change keys so the mapped type is still homomorphic.
+        // Example: { [K in keyof T as K]: T[K] } is equivalent to { [K in keyof T]: T[K] }
         if let Some(source) = source_object {
-            // Name remapping breaks homomorphism - don't preserve structure
-            if mapped.name_type.is_none() {
+            let is_identity_or_no_name = mapped.name_type.is_none()
+                || mapped.name_type.is_some_and(|nt| {
+                    matches!(
+                        self.interner().lookup(nt),
+                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
+                    )
+                });
+            if is_identity_or_no_name {
                 // Resolve the source to check if it's an Array or Tuple
                 // Use evaluate() to resolve Lazy types (interfaces/classes)
                 let resolved = self.evaluate(source);
@@ -726,8 +734,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // to a union of string literals. The template still has the original structure
         // `T[P]` with the concrete object. Verify by computing `keyof obj` and
         // comparing with the constraint.
-        // Key remapping (`as` clause / name_type) breaks homomorphism.
-        if mapped.name_type.is_none()
+        // Key remapping (`as` clause / name_type) breaks homomorphism,
+        // UNLESS the name type is an identity mapping (as K where K is the param).
+        let is_identity_or_no_name = mapped.name_type.is_none()
+            || mapped.name_type.is_some_and(|nt| {
+                matches!(
+                    self.interner().lookup(nt),
+                    Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
+                )
+            });
+        if is_identity_or_no_name
             && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
             && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
             && param.name == mapped.type_param.name

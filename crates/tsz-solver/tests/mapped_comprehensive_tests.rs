@@ -706,3 +706,109 @@ fn test_mapped_type_enum_union_constraint_with_overlapping_keys() {
         panic!("Expected object type, got {:?}", interner.lookup(result));
     }
 }
+
+// =============================================================================
+// Identity Name Type (as K) Array Preservation Tests
+// =============================================================================
+
+#[test]
+fn test_identity_name_type_preserves_array_structure() {
+    // type Mappy<T extends unknown[]> = { [K in keyof T as K]: T[K] }
+    // Mappy<number[]> should evaluate to number[] (Array), NOT a plain object.
+    // The `as K` is an identity transformation and should be treated the same
+    // as no name type for homomorphic array preservation.
+    let interner = TypeInterner::new();
+
+    // Source array: number[]
+    let source_array = interner.array(TypeId::NUMBER);
+    let keyof_source = interner.keyof(source_array);
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+
+    // Template is T[K] (index access)
+    let template = interner.index_access(source_array, type_param);
+
+    // Mapped type with identity name_type: { [K in keyof T as K]: T[K] }
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: keyof_source,
+        name_type: Some(type_param), // as K — identity
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+    let result = evaluate_type(&interner, mapped_id);
+
+    // Should produce an Array type (number[]), NOT a plain Object
+    match interner.lookup(result) {
+        Some(TypeData::Array(element_type)) => {
+            assert_eq!(
+                element_type,
+                TypeId::NUMBER,
+                "Expected Array<number>, got Array<{:?}>",
+                interner.lookup(element_type)
+            );
+        }
+        other => {
+            panic!(
+                "Expected Array type for identity as-clause mapped type over array, got {other:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_non_identity_name_type_degrades_to_object() {
+    // type Remapped<T extends unknown[]> = { [K in keyof T as `get${K}`]: T[K] }
+    // Remapped<number[]> should NOT preserve array structure (name type is not identity).
+    let interner = TypeInterner::new();
+
+    let source_array = interner.array(TypeId::NUMBER);
+    let keyof_source = interner.keyof(source_array);
+
+    let k_name = interner.intern_string("K");
+    let type_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info.clone()));
+
+    let template = interner.index_access(source_array, type_param);
+
+    // Name type is a different type parameter (not K), simulating a non-identity transform
+    let other_param_info = TypeParamInfo {
+        name: interner.intern_string("Other"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let other_param = interner.intern(TypeData::TypeParameter(other_param_info));
+
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: keyof_source,
+        name_type: Some(other_param), // as Other — NOT identity
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+    let result = evaluate_type(&interner, mapped_id);
+
+    // Should NOT be an Array — non-identity name types degrade to objects
+    assert!(
+        !matches!(interner.lookup(result), Some(TypeData::Array(_))),
+        "Non-identity name type should NOT preserve array structure, got Array"
+    );
+}

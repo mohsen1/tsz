@@ -1563,6 +1563,22 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
+            // Suppress TS2536 when the index type is deferred — i.e., it involves
+            // a conditional, application, or error type that can't be fully resolved
+            // at the generic level. TSC defers these checks to instantiation time.
+            // Example: { 0: X; 1: Y }[HasTail<T> extends true ? 0 : 1]
+            // Check BOTH the evaluated type AND the original (pre-evaluation) type,
+            // because evaluation may partially resolve an Application into a
+            // Conditional, or may produce ERROR.
+            let is_deferred_index = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || tsz_solver::is_conditional_type(self.ctx.types, ty)
+                    || tsz_solver::is_generic_application(self.ctx.types, ty)
+            };
+            if is_deferred_index(index_type_for_check) || is_deferred_index(index_type) {
+                return;
+            }
+
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
 
