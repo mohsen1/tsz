@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-27T01:02:08Z",
-  "git_sha": "73f9898acdbdb1ace5cbfcd3a4e1508086981163",
+  "timestamp": "2026-02-27T03:52:20Z",
+  "git_sha": "c153e8f08040b0f513b61e765c0d0ffb1d3c7013",
   "summary": {
     "total_tests": 12570,
-    "passed": 9309,
-    "failed": 3261,
+    "passed": 9320,
+    "failed": 3250,
     "pass_rate": 74.1
   },
   "areas_by_pass_rate": [
@@ -14,13 +14,6 @@
       "passed": 7,
       "failed": 8,
       "pass_rate": 46.67
-    },
-    {
-      "area": "jsx",
-      "total": 195,
-      "passed": 96,
-      "failed": 99,
-      "pass_rate": 49.23
     },
     {
       "area": "types/mapped",
@@ -35,6 +28,13 @@
       "passed": 5,
       "failed": 5,
       "pass_rate": 50.0
+    },
+    {
+      "area": "jsx",
+      "total": 195,
+      "passed": 99,
+      "failed": 96,
+      "pass_rate": 50.77
     },
     {
       "area": "externalModules/typeOnly",
@@ -70,13 +70,6 @@
       "passed": 10,
       "failed": 9,
       "pass_rate": 52.63
-    },
-    {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 9,
-      "failed": 8,
-      "pass_rate": 52.94
     },
     {
       "area": "internalModules/DeclarationMerging",
@@ -177,6 +170,13 @@
       "pass_rate": 58.33
     },
     {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 10,
+      "failed": 7,
+      "pass_rate": 58.82
+    },
+    {
       "area": "classes/constructorDeclarations",
       "total": 39,
       "passed": 23,
@@ -217,13 +217,6 @@
       "passed": 20,
       "failed": 13,
       "pass_rate": 60.61
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
     },
     {
       "area": "expressions/functionCalls",
@@ -280,6 +273,13 @@
       "passed": 123,
       "failed": 67,
       "pass_rate": 64.74
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 19,
+      "failed": 10,
+      "pass_rate": 65.52
     },
     {
       "area": "types/primitives",
@@ -402,10 +402,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4876,
-      "failed": 1634,
-      "pass_rate": 74.9
+      "total": 6508,
+      "passed": 4879,
+      "failed": 1629,
+      "pass_rate": 74.97
     },
     {
       "area": "expressions/typeSatisfaction",
@@ -415,18 +415,18 @@
       "pass_rate": 75.0
     },
     {
-      "area": "moduleResolution",
-      "total": 42,
-      "passed": 32,
-      "failed": 10,
-      "pass_rate": 76.19
-    },
-    {
       "area": "es6/unicodeExtendedEscapes",
       "total": 64,
       "passed": 49,
       "failed": 15,
       "pass_rate": 76.56
+    },
+    {
+      "area": "moduleResolution",
+      "total": 42,
+      "passed": 33,
+      "failed": 9,
+      "pass_rate": 78.57
     },
     {
       "area": "enums",
@@ -719,7 +719,7 @@
   "top_failures": [
     {
       "code": "TS2322",
-      "count": 51
+      "count": 53
     },
     {
       "code": "TS2339",
@@ -774,6 +774,10 @@
       "count": 5
     },
     {
+      "code": "TS2875",
+      "count": 5
+    },
+    {
       "code": "TS2367",
       "count": 5
     },
@@ -791,10 +795,6 @@
     },
     {
       "code": "TS1192",
-      "count": 4
-    },
-    {
-      "code": "TS2882",
       "count": 4
     }
   ],
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 153
+      "count": 156
     },
     {
       "code": "TS2339",
