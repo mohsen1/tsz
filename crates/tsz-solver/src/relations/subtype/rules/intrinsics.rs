@@ -430,9 +430,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if boxed == target {
                 return true;
             }
-            // Structural fallback: check if the known boxed type is a subtype of target.
-            // This handles cases where the same String interface has multiple TypeIds.
-            if self.check_subtype(boxed, target).is_true() {
+            // Structural fallback: require bidirectional subtyping (structural equivalence).
+            // Unidirectional `boxed <: target` is too permissive — any supertype of the
+            // boxed wrapper (e.g., `object`, `{}`, `unknown`) would incorrectly match.
+            // For example, `Number <: object` is true, but `object` is NOT the `Number`
+            // boxed wrapper — `number` must NOT be assignable to `object`.
+            if self.check_subtype(boxed, target).is_true()
+                && self.check_subtype(target, boxed).is_true()
+            {
                 return true;
             }
             // Shape-level equivalence check: when both types are ObjectWithIndex shapes

@@ -650,6 +650,92 @@ fn test_primitive_boxing_symbol_assignability() {
     assert!(!checker.is_subtype_of(symbol_ref, TypeId::SYMBOL));
 }
 
+/// Regression test: primitive → object must be rejected even when boxed wrappers
+/// are registered. Previously, `is_target_boxed_type` had a structural fallback
+/// that checked `Number_interface <: object` (unidirectional). Since Number IS an
+/// object type, this returned true — incorrectly treating `object` as the Number
+/// boxed wrapper. The fix requires bidirectional subtyping (structural equivalence).
+#[test]
+fn test_primitive_not_subtype_of_object_with_boxed_wrappers_registered() {
+    let interner = TypeInterner::new();
+
+    // Create Number boxed wrapper interface
+    let to_fixed = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let number_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toFixed"),
+        to_fixed,
+    )]);
+
+    // Create String boxed wrapper interface
+    let to_upper = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let string_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toUpperCase"),
+        to_upper,
+    )]);
+
+    // Create Boolean boxed wrapper interface
+    let to_string = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let boolean_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toString"),
+        to_string,
+    )]);
+
+    // Register boxed wrappers on the interner (simulating what the checker does)
+    interner.set_boxed_type(IntrinsicKind::Number, number_interface);
+    interner.set_boxed_type(IntrinsicKind::String, string_interface);
+    interner.set_boxed_type(IntrinsicKind::Boolean, boolean_interface);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Primitives → object must FAIL (object = non-primitive keyword)
+    assert!(!checker.is_subtype_of(TypeId::NUMBER, TypeId::OBJECT));
+    assert!(!checker.is_subtype_of(TypeId::STRING, TypeId::OBJECT));
+    assert!(!checker.is_subtype_of(TypeId::BOOLEAN, TypeId::OBJECT));
+    assert!(!checker.is_subtype_of(TypeId::BIGINT, TypeId::OBJECT));
+    assert!(!checker.is_subtype_of(TypeId::SYMBOL, TypeId::OBJECT));
+
+    // Primitives → their boxed wrapper must SUCCEED
+    assert!(checker.is_subtype_of(TypeId::NUMBER, number_interface));
+    assert!(checker.is_subtype_of(TypeId::STRING, string_interface));
+    assert!(checker.is_subtype_of(TypeId::BOOLEAN, boolean_interface));
+
+    // Object types → object must SUCCEED
+    let plain_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    assert!(checker.is_subtype_of(plain_obj, TypeId::OBJECT));
+    assert!(checker.is_subtype_of(number_interface, TypeId::OBJECT));
+
+    // Nullish → object must FAIL
+    assert!(!checker.is_subtype_of(TypeId::NULL, TypeId::OBJECT));
+    assert!(!checker.is_subtype_of(TypeId::UNDEFINED, TypeId::OBJECT));
+}
+
 #[test]
 fn test_weak_type_detection_requires_overlap() {
     // Note: Weak type checking is now handled by CompatChecker, not SubtypeChecker.
