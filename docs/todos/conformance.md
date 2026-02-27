@@ -1,8 +1,8 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9338/12570 (74.3%) — full suite, error-code level
-> Up from 9334 after TS2838 infer constraint check + upstream fixes.
+**Current score**: ~9340/12570 (74.3%) — full suite, error-code level
+> Up from 9338 after TS2536 indexed access fix; from 9334 after TS2838 infer constraint check + upstream fixes.
 
 ---
 
@@ -33,6 +33,21 @@
   - Single declaration (no error)
 - **Flipped tests**: `inferTypesWithExtends2.ts`
 
+### Fix: TS2536 false positive for type param indexing mapped type intersection (+2 tests)
+- **Root cause**: In `check_indexed_access_type`, the checker unconditionally replaced the index
+  type parameter (e.g., `T`) with its constraint (`string | number | symbol`) before checking
+  assignability against `keyof object_type`. When the object type was an intersection of mapped
+  types like `{ [P in T]: P } & { [P in U]: never } & { [x: string]: never }`, the `keyof` result
+  included the raw type parameters (`T | U | string`). The constraint `string | number | symbol`
+  was not assignable to `T | U | string` because `number` and `symbol` don't match `T` or `U`.
+- **Fix**: Added an early check: test the raw index type against keyof first. If `T` is directly
+  in the keyof union (by identity), skip the error. Only fall back to constraint-based checking
+  if the raw check fails. This mirrors TSC's behavior.
+- **Files**: `crates/tsz-checker/src/types/type_checking/core.rs`
+- **Tests**: 1 new test in `conformance_issues.rs`
+- **Impact**: Eliminated TS2536 false positive from `conditionalTypes1.ts` (1 of 3 error code
+  mismatches fixed for that test). types/conditional area improved from 50% to 60% (6/10).
+
 ---
 
 ## Solver Fixes — Session 2026-02-27
@@ -52,7 +67,7 @@
 - **Fingerprint improvements**: 3 fewer false positives in `conditionalTypes2.ts` (Extract<T, Function>
   patterns now correctly assignable)
 
-### Remaining conditional type gaps (types/conditional area, 50% → still 50% at area level)
+### Remaining conditional type gaps (types/conditional area, 50% → 60% at area level)
 - **Variance through conditional types** (conditionalTypes2.ts lines 15, 21): Covariant<B> should be
   assignable to Covariant<A> when B extends A, because `T extends string ? T : number` is covariant
   in T. This requires variance measurement through conditional types — a deep solver feature.
@@ -64,8 +79,7 @@
 - **TS1338 infer position check** (inferTypes1.ts): `infer` declarations outside conditional extends
   clause should emit TS1338. The diagnostic message is defined but the checker never emits it.
   Checker-level work, not solver.
-- **TS2838 duplicate infer constraint** (inferTypesWithExtends2.ts): When `infer U` appears twice
-  with different constraints, should emit TS2838. Checker-level validation.
+- ~~**TS2838 duplicate infer constraint** (inferTypesWithExtends2.ts)~~: FIXED — see above.
 - **TS2322 vs TS2353 for conditional targets** (conditionalTypesExcessProperties.ts): Excess property
   checks on conditional type targets emit TS2353 instead of TS2322. Error code selection issue.
 
