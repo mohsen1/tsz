@@ -601,25 +601,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
             in_worklist.remove(&current_flow);
 
-            {
-                let flags = self
-                    .binder
-                    .flow_nodes
-                    .get(current_flow)
-                    .map(|f| f.flags)
-                    .unwrap_or(0);
-                let node = self.binder.flow_nodes.get(current_flow).map(|f| f.node);
-                tracing::trace!(
-                    ref_idx = reference.0,
-                    flow_id = current_flow.0,
-                    current_type = current_type.0,
-                    flags = flags,
-                    node = ?node,
-                    step = steps,
-                    "check_flow BFS step"
-                );
-            }
-
             // Check global cache first to avoid redundant traversals.
             // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
             // schedule antecedents and apply narrowing.
@@ -1142,12 +1123,6 @@ impl<'a> FlowAnalyzer<'a> {
                 result_type
             };
 
-            tracing::trace!(
-                ref_idx = reference.0,
-                flow_id = current_flow.0,
-                final_type = final_type.0,
-                "check_flow BFS result stored"
-            );
             results.insert(current_flow, final_type);
             visited.insert(current_flow);
 
@@ -1167,15 +1142,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Return the result for the initial flow_id
-        let final_result = results.get(&flow_id).copied().unwrap_or(initial_type);
-        tracing::trace!(
-            ref_idx = reference.0,
-            flow_id = flow_id.0,
-            initial_type = initial_type.0,
-            final_result = final_result.0,
-            "check_flow final result"
-        );
-        final_result
+        results.get(&flow_id).copied().unwrap_or(initial_type)
     }
 
     /// Helper function for switch clause handling in iterative mode.
