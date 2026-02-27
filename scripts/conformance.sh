@@ -40,7 +40,8 @@ Commands:
   diff        Show regressions/improvements vs last snapshot baseline
   all         Generate cache (if needed) and run tests (default)
   snapshot    Run tests + analyze + areas, save structured results to
-              scripts/conformance-snapshot.json and per-test baseline
+              scripts/conformance-snapshot.json, per-test detail to
+              scripts/conformance-detail.json, and per-test baseline
   clean       Remove cache file
 
 Run options:
@@ -642,19 +643,24 @@ json.dump({'total': total, 'passed': passed, 'failed': total - passed, 'rate': r
     failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
     pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
 
-    # 3) Run analyze with JSON output
+    # 3) Build per-test detail snapshot (compact JSON with all failure data)
+    local detail_file="$REPO_ROOT/scripts/conformance-detail.json"
+    python3 "$REPO_ROOT/scripts/build-snapshot-detail.py" "$tmpfile" \
+        --output "$detail_file" || true
+
+    # 4) Run analyze with JSON output
     local analyze_json
     analyze_json=$(mktemp)
     python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" \
         --json-output "$analyze_json" || true
 
-    # 4) Run areas with JSON output (depth 2, min 10 tests)
+    # 5) Run areas with JSON output (depth 2, min 10 tests)
     local areas_json
     areas_json=$(mktemp)
     python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" \
         --depth 2 --min-tests 10 --json-output "$areas_json" || true
 
-    # 5) Assemble snapshot JSON (all data passed as arguments, not interpolated)
+    # 6) Assemble snapshot JSON (all data passed as arguments, not interpolated)
     local timestamp
     timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
@@ -664,15 +670,21 @@ import json, sys
 timestamp, git_sha = sys.argv[1], sys.argv[2]
 total, passed, failed = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 rate = float(sys.argv[6])
-analyze_path, areas_path, out_path = sys.argv[7], sys.argv[8], sys.argv[9]
+analyze_path, areas_path, detail_path, out_path = sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10]
 
-analyze, areas = {}, {}
+analyze, areas, detail = {}, {}, {}
 try:
     with open(analyze_path) as f: analyze = json.load(f)
 except: pass
 try:
     with open(areas_path) as f: areas = json.load(f)
 except: pass
+try:
+    with open(detail_path) as f: detail = json.load(f)
+except: pass
+
+# Pull richer aggregates from the detail file when available
+aggregates = detail.get('aggregates', {})
 
 snapshot = {
     'timestamp': timestamp,
@@ -683,8 +695,14 @@ snapshot = {
     },
     'areas_by_pass_rate': areas.get('areas', []),
     'top_failures': analyze.get('quick_wins', []),
-    'not_implemented_codes': analyze.get('not_implemented_codes', []),
-    'partial_codes': analyze.get('partial_codes', []),
+    'not_implemented_codes': aggregates.get('not_implemented_codes', analyze.get('not_implemented_codes', [])),
+    'partial_codes': aggregates.get('partial_codes', analyze.get('partial_codes', [])),
+    'one_missing_zero_extra': aggregates.get('one_missing_zero_extra', []),
+    'one_extra_zero_missing': aggregates.get('one_extra_zero_missing', []),
+    'false_positive_codes': aggregates.get('false_positive_codes', []),
+    'top_missing_codes': aggregates.get('top_missing_codes', []),
+    'top_extra_codes': aggregates.get('top_extra_codes', []),
+    'categories': aggregates.get('categories', {}),
 }
 
 with open(out_path, 'w') as f:
@@ -694,7 +712,7 @@ print(f'Snapshot saved: {total} tests, {passed} passed ({rate}%)')
 print(f'Git SHA: {git_sha}')
 print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
 " "$timestamp" "$git_sha" "$total_tests" "$passed" "$failed" \
-  "$pass_rate" "$analyze_json" "$areas_json" "$snapshot_file" \
+  "$pass_rate" "$analyze_json" "$areas_json" "$detail_file" "$snapshot_file" \
   || { echo "ERROR: failed to assemble snapshot JSON"; return 1; }
 
     rm -f "$summary_json" "$analyze_json" "$areas_json"
@@ -709,7 +727,9 @@ print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
     baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
     echo -e "${GREEN}Baseline saved: $baseline_file ($baseline_count tests)${NC}"
 
+    echo -e "${GREEN}Detail written to: $detail_file${NC}"
     echo -e "${GREEN}Snapshot written to: $snapshot_file${NC}"
+    echo -e "${GREEN}Query offline: python3 scripts/query-conformance.py${NC}"
 }
 
 # Parse arguments

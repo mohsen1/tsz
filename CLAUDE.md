@@ -159,12 +159,28 @@ Skill usage rules:
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
 ## 20.5) Conformance Analysis Tools
-- `./scripts/conformance.sh run` — run conformance tests (error-code level).
-- `./scripts/conformance.sh analyze` — categorize failures by error code, find quick wins.
-- `./scripts/conformance.sh areas` — analyze pass/fail rates by **feature area** (parser, types, salsa, jsx, etc.). Use this to decide which feature to work on next.
-  - `--depth 2` for sub-area breakdown.
-  - `--drilldown <area>` to drill into a specific area (e.g., `types`, `statements`).
-  - `--min-tests N` to filter out small areas.
+
+### CRITICAL: Avoid re-running the full conformance suite
+- The full suite takes **minutes**. Do NOT run it for research/planning/analysis.
+- **All analysis can be done offline** from snapshot files. Only run the full suite to **verify code changes**.
+
+### Offline analysis (preferred — instant, zero cost)
+- `python3 scripts/query-conformance.py` — overview of what to work on next.
+- `python3 scripts/query-conformance.py --one-missing` — tests fixable by adding 1 code.
+- `python3 scripts/query-conformance.py --one-extra` — tests fixable by removing 1 extra code.
+- `python3 scripts/query-conformance.py --false-positives` — false positive breakdown.
+- `python3 scripts/query-conformance.py --code TS2454` — deep-dive a specific error code.
+- `python3 scripts/query-conformance.py --extra-code TS7053` — tests where a code is falsely emitted.
+- `python3 scripts/query-conformance.py --close 2` — tests within diff <= 2 of passing.
+- Snapshot data: `scripts/conformance-snapshot.json` (aggregates), `scripts/conformance-detail.json` (per-test).
+
+### Targeted testing (after code changes)
+- `./scripts/conformance.sh run --filter "pattern"` — run only matching tests (seconds).
+- `./scripts/conformance.sh run --filter "pattern" --verbose` — with expected vs actual.
+
+### Full suite (use sparingly — only to verify changes)
+- `./scripts/conformance.sh run` — run all tests.
+- `./scripts/conformance.sh snapshot` — run + save updated snapshot files.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
