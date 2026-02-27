@@ -811,12 +811,53 @@ fn test_partial_t_not_subtype_of_t() {
         make_homomorphic_mapped(&interner, t_param, Some(crate::MappedModifier::Add), None);
 
     let mut checker = SubtypeChecker::new(&interner);
-    // Pragmatic: Partial<T> <: T is currently allowed as a workaround
-    // until proper intersection stripping (&{}) is implemented.
-    // See: revert commit edcaf2736 — rejecting this caused -2109 conformance regression.
+    // Partial<T> adds optionality (+?), making it wider than T.
+    // Partial<T> is NOT a subtype of T because optional properties may be undefined.
     assert!(
-        checker.check_subtype(partial_t, t_param).is_true(),
-        "Partial<T> should be subtype of T (pragmatic workaround pending &{{}} intersection stripping)"
+        checker.check_subtype(partial_t, t_param).is_false(),
+        "Partial<T> should NOT be subtype of T (adds optionality)"
+    );
+}
+
+#[test]
+fn test_readonly_t_subtype_of_t() {
+    // Readonly<T> <: T — readonly doesn't affect assignability direction.
+    // Readonly only prevents mutation, it doesn't change the value type.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let readonly_t =
+        make_homomorphic_mapped(&interner, t_param, None, Some(crate::MappedModifier::Add));
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(readonly_t, t_param).is_true(),
+        "Readonly<T> should be subtype of T (readonly doesn't widen)"
+    );
+}
+
+#[test]
+fn test_identity_mapped_subtype_of_t() {
+    // { [K in keyof T]: T[K] } <: T — identity mapped type preserves T exactly.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let identity_t = make_homomorphic_mapped(&interner, t_param, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(identity_t, t_param).is_true(),
+        "Identity mapped type should be subtype of T"
     );
 }
 
