@@ -360,3 +360,30 @@ const c = new C();
         "Should NOT emit TS2540 for parenthesized assignment to mutable property"
     );
 }
+
+// =========================================================================
+// globalThis readonly property tests
+// =========================================================================
+
+#[test]
+fn test_global_this_self_reference_is_readonly() {
+    // globalThis.globalThis is a readonly self-reference (TS2540)
+    let source = r"globalThis.globalThis = 1 as any;";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to globalThis.globalThis (readonly)"
+    );
+}
+
+#[test]
+fn test_global_this_var_property_assignment_ok() {
+    // globalThis.x where x is a var-declared global should not emit TS2540
+    let source = r"
+var x = 1;
+globalThis.x = 3;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for assigning to var-declared global via globalThis"
+    );
+}

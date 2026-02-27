@@ -1,7 +1,111 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9464/12570 (75.3%) — full suite, error-code level
+**Current score**: ~9505/12570 (75.6%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27c — es2019 area: globalThis readonly + export checks
+
+### Area: es2019 (54.5% → ~71.4%, 6→10 passing of 14)
+
+**Fixed**: TS2540 for `globalThis.globalThis` assignment, TS2661 for exporting `globalThis` from `declare global {}`.
+
+#### Fix 1: TS2540 for `globalThis.globalThis = ...` — Checker (readonly.rs)
+
+**Root cause**: `globalThis.globalThis` returns `TypeId::ANY` since `typeof globalThis` is modeled as ANY. The general readonly detection in `check_readonly_assignment` can't discover that `globalThis` is a readonly self-reference.
+
+**Fix**: Added special-case check in `check_readonly_assignment` (readonly.rs): when property name is `globalThis` and the object expression is `globalThis`, emit TS2540 directly.
+
+**Test flipped**: `globalThisReadonlyProperties.ts`
+
+#### Fix 2: TS2661 for `export { globalThis }` inside `declare global {}` — Checker (module_checker.rs, import/core.rs)
+
+**Root cause**: Two issues:
+1. `check_local_named_exports` was skipped for `declare global {}` because `is_inside_namespace_declaration` treated it as a namespace.
+2. Even if reached, `globalThis` (no binder symbol) wasn't in the resolvable-names list, so TS2304 would be emitted instead of TS2661.
+
+**Fix**:
+1. Added `is_inside_global_augmentation()` helper that detects `declare global {}` via GLOBAL_AUGMENTATION flag.
+2. Modified the guard in `statement_callback_bridge.rs` to also run `check_local_named_exports` inside global augmentations.
+3. Added `"globalThis"` to the known-resolvable names in module_checker.rs.
+
+**Test flipped**: `globalThisGlobalExportAsGlobal.ts`
+
+#### Collateral improvements: +2 bonus tests flipped
+- `privateNamesConstructorChain-1.ts` — likely benefited from rebase with upstream fixes
+- `typeofANonExportedType.ts` — same
+
+#### Remaining es2019 failures (4 tests)
+
+| Test | Issue | Root cause |
+|------|-------|------------|
+| globalThisPropertyAssignment | Missing TS2339 | `window.z = 3` in JS file — needs Window type resolution, not globalThis |
+| globalThisUnknownNoImplicitAny | Missing TS2339, TS7015, TS7017, TS7053 | `typeof globalThis` is ANY, can't emit implicit-any errors for property access |
+| globalThisAmbientModules | TS2503 instead of TS2339 | `(typeof globalThis)["\"ambientModule\""]` indexed access misinterpreted as namespace |
+| importMeta | Missing TS2339, TS2364 | `import.meta` returns ANY instead of ImportMeta interface type |
+
+**Deeper fix needed**: The fundamental limitation is that `typeof globalThis` is `TypeId::ANY`. Building a proper object type from global scope declarations would fix globalThisUnknownNoImplicitAny and similar tests. The `import.meta` fix needs resolving the ImportMeta global interface. Both are medium-sized efforts.
+
+---
+
+## Session 2026-02-27b — jsx area: `export=` ambient module resolution + cross-file symbol tracking
+
+### Area: jsx (54.36%, investigated, partial fix)
+
+**Investigated**: 11 diff=1 JSX tests missing only TS2322. All use `import React = require('react')` with cross-file `declare module "react" { export = __React; }`.
+
+#### Fix 1: `export=` fallback in binder `resolve_import_if_needed` — Binder
+
+**File**: `crates/tsz-binder/src/state/resolution.rs`
+
+When `import_name` is `None` (namespace/require imports), the binder tried to look up the symbol's escaped name in module_exports. For `import React = require('react')`, this looked up `"React"` which doesn't exist — only `"export="` exists. Added fallback to try `"export="` when `import_name` is None.
+
+**Impact**: Only affects same-binder resolution. Cross-file ambient modules need the checker-level fix below.
+
+#### Fix 2: `export=` fallback in checker `resolve_alias_symbol` — Checker
+
+**File**: `crates/tsz-checker/src/types/queries/lib.rs`
+
+The `resolve_alias_symbol` fallback path checks `import_module` and looks up `export_name` in both primary and lib binders' `module_exports`. When `import_name` is None, `export_name` defaults to the symbol's escaped name (e.g., "React") which doesn't exist in the module's export table. Added a second lookup with key `"export="` when the first lookup fails and `import_name` is None.
+
+#### Fix 3: Cross-file symbol tracking in require path — Checker
+
+**File**: `crates/tsz-checker/src/state/type_analysis/computed.rs`
+
+The `import = require()` path in `compute_type_of_symbol` resolved the module's exports table but didn't call `record_cross_file_symbol_if_needed` for the symbols. This caused symbol ID collisions — a SymbolId from a lib binder was interpreted in the main binder context. Added the same `record_cross_file_symbol_if_needed` loop that the ES6 namespace import path already had.
+
+#### Fix 4: Ambient module export tracking in `resolve_cross_file_export` — Checker
+
+**File**: `crates/tsz-checker/src/state/type_resolution/module.rs`
+
+`resolve_ambient_module_export` returned a SymbolId without recording which binder it came from in `cross_file_symbol_targets`. Changed it to return `(SymbolId, binder_idx)` and the caller now records the cross-file origin.
+
+#### Fix 5: Inherited construct signature instantiation — Checker
+
+**File**: `crates/tsz-checker/src/types/class_type/constructor.rs`
+
+When `resolve_heritage_symbol` returns None (cross-file class), `remap_inherited_construct_signatures` was called with `None` substitution, leaving type parameters uninstantiated. Added TypeSubstitution creation from base construct signature's type params + provided type arguments in both None paths.
+
+#### Conformance improvement: +7 (9486 → 9493)
+
+Tests flipped PASS:
+- `genericCallInferenceConditionalType1.ts`
+- `genericCallInferenceConditionalType2.ts`
+- `namespaceMergedWithFunctionWithOverloadsUsage.ts`
+- `narrowedImports.ts`
+- `unusedImportDeclaration.ts`
+- `iterableContextualTyping1.ts`
+- `intersectionTypeInference3.ts`
+
+#### Not yet fixed: JSX class component cross-file heritage resolution
+
+The 11 diff=1 JSX tests still fail because `class Poisoned extends React.Component<Prop, {}>` requires deep cross-file class heritage resolution:
+
+1. `resolve_heritage_symbol` for `React.Component` (PropertyAccessExpression) calls `resolve_heritage_symbol_access` (class_inheritance.rs) which is simpler than the main `resolve_heritage_symbol` (symbol_resolver_utils.rs) — it doesn't follow import alias chains for property access
+2. Even when the `Component` symbol is found cross-file, computing its constructor type with proper type parameters requires resolving the class declaration from the lib binder's AST, which `delegate_cross_arena_symbol_resolution` currently can't handle for the full class type computation pipeline
+
+**Root cause**: Two separate `resolve_heritage_symbol` implementations exist — the comprehensive one in `symbol_resolver_utils.rs:177` (used by `constructor.rs`) handles import aliases, while the simpler one in `class_inheritance.rs:243` doesn't. The `constructor.rs` path does try the comprehensive one, but the cross-file class type computation still produces incomplete types (missing construct signatures).
 
 ---
 

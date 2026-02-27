@@ -108,7 +108,16 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some(sym_id) = self.resolve_ambient_module_export(module_specifier, export_name) {
+        if let Some((sym_id, binder_idx)) =
+            self.resolve_ambient_module_export(module_specifier, export_name)
+        {
+            // Record cross-file origin so delegate_cross_arena_symbol_resolution
+            // can find the correct arena/binder for this symbol.
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .entry(sym_id)
+                .or_insert(binder_idx);
             return Some(sym_id);
         }
 
@@ -232,14 +241,14 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         export_name: &str,
-    ) -> Option<tsz_binder::SymbolId> {
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
         let binders = self.ctx.all_binders.as_ref()?;
-        for binder in binders.iter() {
+        for (idx, binder) in binders.iter().enumerate() {
             if let Some(exports_table) = binder.module_exports.get(module_specifier)
                 && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
             {
-                return Some(sym_id);
+                return Some((sym_id, idx));
             }
         }
         None

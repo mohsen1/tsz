@@ -755,6 +755,7 @@ impl<'a> CheckerState<'a> {
                             | "symbol"
                             | "object"
                             | "bigint"
+                            | "globalThis"
                     );
 
                 if is_resolvable {
