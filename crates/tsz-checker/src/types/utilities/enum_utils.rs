@@ -629,6 +629,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Independent property variance: Two object types overlap if ALL common
+        // properties have independently overlapping types, even when neither whole
+        // type is assignable to the other.
+        // Example: { a: 1, b: string } and { a: number, b: 'a' } overlap because:
+        //   - a: 1 overlaps with number (1 is a number literal)
+        //   - b: string overlaps with 'a' ('a' is a string literal)
+        if self.objects_with_independently_overlapping_props(effective_left, effective_right) {
+            tracing::trace!("objects with independently overlapping properties");
+            return false;
+        }
+
         tracing::trace!("no overlap detected");
         // No other overlap detected
         true
@@ -677,6 +688,62 @@ impl<'a> CheckerState<'a> {
 
         // At least one type must have properties (avoid trivial empty-object matching)
         !left_shape.properties.is_empty() || !right_shape.properties.is_empty()
+    }
+
+    /// Check if two object types have all common properties with independently
+    /// overlapping types. In tsc's comparable relation, each property is checked
+    /// independently — if every common property's types overlap, the whole types
+    /// are comparable even when neither is assignable to the other.
+    ///
+    /// Example: `{ a: 1, b: string }` and `{ a: number, b: 'a' }` overlap because:
+    /// - `a`: `1` overlaps with `number` (1 is a number literal)
+    /// - `b`: `string` overlaps with `'a'` ('a' is a string literal)
+    fn objects_with_independently_overlapping_props(
+        &mut self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::assignability::object_shape_for_type;
+
+        let left_resolved = self.evaluate_type_with_resolution(left);
+        let right_resolved = self.evaluate_type_with_resolution(right);
+
+        let left_shape = match object_shape_for_type(self.ctx.types, left_resolved) {
+            Some(s) => s,
+            None => return false,
+        };
+        let right_shape = match object_shape_for_type(self.ctx.types, right_resolved) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Skip for types with private/protected members — these use nominal
+        // compatibility and can never overlap structurally even if property
+        // types match (e.g., two classes with `private a: string` are distinct).
+        let has_non_public = |shape: &tsz_solver::ObjectShape| {
+            shape
+                .properties
+                .iter()
+                .any(|p| p.visibility != tsz_solver::Visibility::Public)
+        };
+        if has_non_public(&left_shape) || has_non_public(&right_shape) {
+            return false;
+        }
+
+        // Need at least one common property to compare
+        let mut found_common = false;
+        for lp in &left_shape.properties {
+            for rp in &right_shape.properties {
+                if lp.name == rp.name {
+                    found_common = true;
+                    // If any common property types DON'T overlap, return false
+                    if self.types_have_no_overlap(lp.type_id, rp.type_id) {
+                        return false;
+                    }
+                }
+            }
+        }
+        found_common
     }
 
     /// Get display string for implicit any return type.

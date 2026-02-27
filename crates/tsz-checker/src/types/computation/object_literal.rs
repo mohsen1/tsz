@@ -121,6 +121,21 @@ impl<'a> CheckerState<'a> {
                     self.check_computed_property_name(prop.name);
                 }
 
+                // Skip TS1117 for computed property names that are simple identifiers
+                // (e.g. [s]) since tsc can't statically verify they're duplicates.
+                // Well-known symbols like [Symbol.isConcatSpreadable] are property
+                // accesses that tsc CAN resolve, so we still check those.
+                let is_dynamic_computed_name = self.ctx.arena.get(prop.name).is_some_and(|n| {
+                    n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && self
+                            .ctx
+                            .arena
+                            .get_computed_property(n)
+                            .and_then(|cp| self.ctx.arena.get(cp.expression))
+                            .is_some_and(|expr| {
+                                expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                            })
+                });
                 let name_opt = self.get_property_name(prop.name).or_else(|| {
                     let prop_name_node = self.ctx.arena.get(prop.name)?;
                     if prop_name_node.kind
@@ -192,9 +207,13 @@ impl<'a> CheckerState<'a> {
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property (skip in destructuring targets)
+                    // Check for duplicate property (skip in destructuring targets).
                     // TS1117: duplicate properties are an error in object literals.
+                    // Skip for computed property names — tsc only checks static names.
+                    // Computed names like [Symbol.xxx] or [variable] may legitimately
+                    // appear multiple times (e.g., value + getter/setter for same symbol).
                     if !skip_duplicate_check
+                        && !is_dynamic_computed_name
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
                     {
@@ -475,6 +494,18 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_of_node(computed.expression);
                 }
+                let is_dynamic_computed_method_name =
+                    self.ctx.arena.get(method.name).is_some_and(|n| {
+                        n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && self
+                                .ctx
+                                .arena
+                                .get_computed_property(n)
+                                .and_then(|cp| self.ctx.arena.get(cp.expression))
+                                .is_some_and(|expr| {
+                                    expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                                })
+                    });
                 let name_opt = self.get_property_name(method.name).or_else(|| {
                     let prop_name_node = self.ctx.arena.get(method.name)?;
                     if prop_name_node.kind
@@ -523,9 +554,10 @@ impl<'a> CheckerState<'a> {
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
-                    // Check for duplicate property (skip in destructuring targets)
+                    // Check for duplicate property (skip in destructuring targets and computed names)
                     // TS1117: duplicate properties are an error in object literals.
                     if !skip_duplicate_check
+                        && !is_dynamic_computed_method_name
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
                     {
@@ -689,6 +721,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                let is_dynamic_computed_accessor_name =
+                    self.ctx.arena.get(accessor.name).is_some_and(|n| {
+                        n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && self
+                                .ctx
+                                .arena
+                                .get_computed_property(n)
+                                .and_then(|cp| self.ctx.arena.get(cp.expression))
+                                .is_some_and(|expr| {
+                                    expr.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                                })
+                    });
                 let name_opt = self.get_property_name(accessor.name).or_else(|| {
                     let prop_name_node = self.ctx.arena.get(accessor.name)?;
                     if prop_name_node.kind
@@ -828,7 +872,9 @@ impl<'a> CheckerState<'a> {
                     };
                     // Duplicate properties are an error in object literals.
                     // TS1118 for duplicate get/set accessors, TS1117 for other duplicates.
+                    // Skip for computed property names — tsc only checks static names.
                     if !skip_duplicate_check
+                        && !is_dynamic_computed_accessor_name
                         && explicit_property_names.contains(&name_atom)
                         && !is_complementary_pair
                         && !self.ctx.has_parse_errors

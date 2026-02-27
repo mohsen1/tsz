@@ -1083,19 +1083,44 @@ impl<'a> CheckerState<'a> {
     /// Check if two type parameters are comparable (one constrains to the other).
     /// In tsc, two unconstrained type parameters are NOT comparable (tsc checker.ts:23671-23684).
     fn type_params_are_comparable(&mut self, source: TypeId, target: TypeId) -> bool {
-        // Check if source's constraint chain reaches target
+        // Check if source's constraint chain reaches target.
+        // For union constraints (e.g., U extends T | string), check if any member
+        // of the union is assignable to the target. This handles cases like
+        // `U extends T | string` being comparable to `T`.
         if let Some(info) = tsz_solver::type_param_info(self.ctx.types, source)
             && let Some(constraint) = info.constraint
-            && self.is_assignable_to(constraint, target)
         {
-            return true;
+            if self.is_assignable_to(constraint, target) {
+                return true;
+            }
+            // Decompose union constraints: if any member is comparable/assignable to target
+            if let Some(members) =
+                crate::query_boundaries::dispatch::union_members(self.ctx.types, constraint)
+            {
+                for member in &members {
+                    if *member == target || self.is_assignable_to(*member, target) {
+                        return true;
+                    }
+                }
+            }
         }
         // Check if target's constraint chain reaches source
         if let Some(info) = tsz_solver::type_param_info(self.ctx.types, target)
             && let Some(constraint) = info.constraint
-            && self.is_assignable_to(source, constraint)
         {
-            return true;
+            if self.is_assignable_to(source, constraint) {
+                return true;
+            }
+            // Decompose union constraints for target
+            if let Some(members) =
+                crate::query_boundaries::dispatch::union_members(self.ctx.types, constraint)
+            {
+                for member in &members {
+                    if *member == source || self.is_assignable_to(source, *member) {
+                        return true;
+                    }
+                }
+            }
         }
         false
     }
