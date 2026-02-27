@@ -496,18 +496,19 @@ impl<'a> CheckerState<'a> {
         // in tsc, so we use real_syntax_error_positions which only includes actual
         // parse failures (TS1005, TS1109, TS1128, etc.).
         if self.ctx.has_real_syntax_errors
-            && let Some(class_node) = self.ctx.arena.get(class_idx) {
-                let class_start = class_node.pos;
-                let class_end = class_node.end;
-                let class_has_parse_error = self
-                    .ctx
-                    .real_syntax_error_positions
-                    .iter()
-                    .any(|&pos| pos >= class_start && pos < class_end);
-                if class_has_parse_error {
-                    return;
-                }
+            && let Some(class_node) = self.ctx.arena.get(class_idx)
+        {
+            let class_start = class_node.pos;
+            let class_end = class_node.end;
+            let class_has_parse_error = self
+                .ctx
+                .real_syntax_error_positions
+                .iter()
+                .any(|&pos| pos >= class_start && pos < class_end);
+            if class_has_parse_error {
+                return;
             }
+        }
 
         // Check if this is a derived class (has base class)
         let is_derived_class = self.class_has_base(class);
@@ -684,18 +685,19 @@ impl<'a> CheckerState<'a> {
         // to avoid suppressing TS2564 due to unrelated errors like TS2300 (duplicate
         // identifier) or TS2717 (incompatible property types).
         if prop.type_annotation.is_some()
-            && let Some(type_node) = self.ctx.arena.get(prop.type_annotation) {
-                let type_start = type_node.pos;
-                let type_end = type_node.end;
-                let has_type_annotation_errors = self
-                    .ctx
-                    .diagnostics
-                    .iter()
-                    .any(|d| d.start >= type_start && d.start < type_end && d.code != 2564);
-                if has_type_annotation_errors {
-                    return false;
-                }
+            && let Some(type_node) = self.ctx.arena.get(prop.type_annotation)
+        {
+            let type_start = type_node.pos;
+            let type_end = type_node.end;
+            let has_type_annotation_errors = self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|d| d.start >= type_start && d.start < type_end && d.code != 2564);
+            if has_type_annotation_errors {
+                return false;
             }
+        }
 
         // Enhanced property initialization checking:
         // 1. ANY/UNKNOWN types don't need initialization
