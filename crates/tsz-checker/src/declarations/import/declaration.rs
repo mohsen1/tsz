@@ -231,7 +231,12 @@ impl<'a> CheckerState<'a> {
             let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                     Some(ident.escaped_text.clone())
-                } else { self.ctx.arena.get_literal(name_node).map(|lit| lit.text.clone()) }
+                } else {
+                    self.ctx
+                        .arena
+                        .get_literal(name_node)
+                        .map(|lit| lit.text.clone())
+                }
             } else {
                 None
             };
