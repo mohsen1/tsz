@@ -655,7 +655,12 @@ impl<'a> CheckerState<'a> {
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            if var_decl.type_annotation.is_some() {
+            // Skip this check when the variable already had a type from a prior declaration
+            // (i.e., this is a `var` redeclaration). In that case, `typeof x` resolves to
+            // the previously-established type, not circularly to itself.
+            // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid.
+            let is_redeclaration = self.ctx.var_decl_types.contains_key(&sym_id);
+            if var_decl.type_annotation.is_some() && !is_redeclaration {
                 // Try AST-based check first (catches complex circularities that confuse the solver)
                 let ast_circular = self
                     .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
