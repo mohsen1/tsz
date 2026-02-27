@@ -636,8 +636,10 @@ fn test_ts2322_no_false_positive_nested_conditional() {
 }
 
 #[test]
-fn test_ts2322_accessor_divergent_types_allowed_ts51() {
-    // TS 5.1+ allows divergent getter/setter types — no TS2322 expected.
+fn test_ts2322_accessor_incompatible_getter_setter() {
+    // TS 5.1+ removed the identical-type requirement (TS2380) for getters/setters,
+    // but still checks that the getter return type is ASSIGNABLE to the setter param type.
+    // `string` is not assignable to `number`, so TS2322 is expected.
     let source = r#"
         class C {
             get x(): string { return "s"; }
@@ -652,8 +654,30 @@ fn test_ts2322_accessor_divergent_types_allowed_ts51() {
         .collect();
 
     assert!(
+        !ts2322.is_empty(),
+        "Getter return type (string) not assignable to setter param (number), should get TS2322"
+    );
+}
+
+#[test]
+fn test_ts2322_accessor_compatible_divergent_types() {
+    // When getter return IS assignable to setter param, no error.
+    let source = r#"
+        class C {
+            get x(): string { return "hello"; }
+            set x(value: string | number) {}
+        }
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
         ts2322.is_empty(),
-        "TS 5.1+ allows divergent accessor types, should NOT get 2322; diagnostics: {ts2322:?}"
+        "Getter return type (string) is assignable to setter param (string|number), no TS2322; got: {ts2322:?}"
     );
 }
 

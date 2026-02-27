@@ -72,6 +72,7 @@ impl<'a> CheckerState<'a> {
             // - Static property initializers → NO companion
             // - Heritage clauses → NO companion
             // - Class/enum declarations → NO companion (they get TS2449/TS2450)
+            // - Variables typed as `any`/`unknown`/`undefined` → NO companion
             if !is_tdz_in_property_initializer
                 && !is_tdz_in_heritage_clause
                 && !self.is_in_static_property_initializer_ast_context(idx)
@@ -88,9 +89,14 @@ impl<'a> CheckerState<'a> {
                 })
                 && let Some(usage_node) = self.ctx.arena.get(idx)
             {
-                let key = (usage_node.pos, sym_id);
-                if self.ctx.emitted_ts2454_errors.insert(key) {
-                    self.error_variable_used_before_assigned_at(name, idx);
+                // Check if the variable's declared type is `any`/`unknown`/contains
+                // undefined — tsc suppresses the companion TS2454 in these cases.
+                let declared_type = self.get_type_of_symbol(sym_id);
+                if !self.skip_definite_assignment_for_type(declared_type) {
+                    let key = (usage_node.pos, sym_id);
+                    if self.ctx.emitted_ts2454_errors.insert(key) {
+                        self.error_variable_used_before_assigned_at(name, idx);
+                    }
                 }
             }
 
