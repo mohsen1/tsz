@@ -804,14 +804,13 @@ impl<'a> CheckerState<'a> {
                         let overridden = attrs.properties.nodes.iter().any(|&later_idx| {
                             if let Some(later_node) = self.ctx.arena.get(later_idx)
                                 && later_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
-                                    && let Some(later_attr) =
-                                        self.ctx.arena.get_jsx_attribute(later_node)
-                                        && let Some(name_node) = self.ctx.arena.get(later_attr.name)
-                                            && let Some(ident) =
-                                                self.ctx.arena.get_identifier(name_node)
-                                            {
-                                                return ident.escaped_text.as_str() == prop_name;
-                                            }
+                                && let Some(later_attr) =
+                                    self.ctx.arena.get_jsx_attribute(later_node)
+                                && let Some(name_node) = self.ctx.arena.get(later_attr.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                            {
+                                return ident.escaped_text.as_str() == prop_name;
+                            }
                             false
                         });
                         if overridden {
