@@ -115,7 +115,8 @@ pub fn classify_for_assignability_eval(
         TypeData::IndexAccess(_, _)
         | TypeData::KeyOf(_)
         | TypeData::Mapped(_)
-        | TypeData::Conditional(_) => AssignabilityEvalKind::NeedsEnvEval,
+        | TypeData::Conditional(_)
+        | TypeData::TypeQuery(_) => AssignabilityEvalKind::NeedsEnvEval,
         _ => AssignabilityEvalKind::Resolved,
     }
 }
