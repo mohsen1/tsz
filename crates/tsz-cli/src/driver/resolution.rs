@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
-use crate::fs::is_valid_module_file;
+use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
 use tsz::emitter::ModuleKind;
 use tsz::parser::NodeIndex;
 use tsz::parser::ParserState;
@@ -879,7 +879,7 @@ pub(crate) fn resolve_module_specifier(
     for candidate in candidates {
         // Check if candidate exists in known files (for virtual test files) or on filesystem
         let exists = known_files.contains(&candidate)
-            || (candidate.is_file() && is_valid_module_file(&candidate));
+            || (candidate.is_file() && is_valid_module_or_js_file(&candidate));
         if debug {
             tracing::debug!("candidate={candidate:?} exists={exists}");
         }
@@ -899,7 +899,7 @@ pub(crate) fn resolve_module_specifier(
                 expand_module_path_candidates(&current.join(&specifier), options, package_type)
             {
                 let exists = known_files.contains(&candidate)
-                    || (candidate.is_file() && is_valid_module_file(&candidate));
+                    || (candidate.is_file() && is_valid_module_or_js_file(&candidate));
                 if debug {
                     tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
@@ -1318,7 +1318,7 @@ fn resolve_node_module_specifier(
         {
             let candidates = expand_module_path_candidates(&package_root, options, None);
             for candidate in candidates {
-                if candidate.is_file() && is_valid_module_file(&candidate) {
+                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
                     return Some(canonicalize_or_owned(&candidate));
                 }
             }
@@ -1504,8 +1504,12 @@ fn resolve_package_entry(
         package_root.join(entry)
     };
 
+    // resolve_package_entry is used for `imports` field targets and `main` field
+    // resolution — contexts where tsc accepts JS files as valid resolution targets
+    // (they get added to the program via import-following). This differs from
+    // resolve_export_entry which uses is_valid_module_file (TS/JSON only).
     for candidate in expand_module_path_candidates(&path, options, package_type) {
-        if candidate.is_file() && is_valid_module_file(&candidate) {
+        if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
         }
     }
@@ -1519,7 +1523,7 @@ fn resolve_package_entry(
         if let Some(types) = pj.types.or(pj.typings) {
             let types_path = path.join(&types);
             for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
-                if candidate.is_file() && is_valid_module_file(&candidate) {
+                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
                     return Some(canonicalize_or_owned(&candidate));
                 }
             }
@@ -1531,7 +1535,7 @@ fn resolve_package_entry(
         if let Some(main) = &pj.main {
             let main_path = path.join(main);
             for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                if candidate.is_file() && is_valid_module_file(&candidate) {
+                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
                     return Some(canonicalize_or_owned(&candidate));
                 }
             }
