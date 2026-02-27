@@ -413,8 +413,8 @@ pub mod codes {
     pub use dc::CANNOT_FIND_NAME;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB as CANNOT_FIND_NAME_TARGET_LIB;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2 as CANNOT_FIND_NAME_DOM;
-    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N as CANNOT_FIND_NAME_TEST_RUNNER;
-    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE as CANNOT_FIND_NAME_NODE;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2 as CANNOT_FIND_NAME_TEST_RUNNER;
+    pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2 as CANNOT_FIND_NAME_NODE;
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
@@ -441,13 +441,13 @@ pub mod codes {
 ///
 /// TypeScript emits different error codes for well-known globals that are missing
 /// because they require specific type definitions or target library changes:
-/// - Node.js globals (require, process, Buffer, etc.) → TS2580
+/// - Node.js globals (require, process, Buffer, etc.) → TS2591
 /// - Test runner globals (describe, it, test, etc.) → TS2582
 /// - Target library types (Promise, Symbol, Map, etc.) → TS2583
 /// - DOM globals (document, console) → TS2584
 pub(crate) fn cannot_find_name_code(name: &str) -> u32 {
     match name {
-        // Node.js globals → TS2580
+        // Node.js globals → TS2591
         "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname" => {
             codes::CANNOT_FIND_NAME_NODE
         }
