@@ -3635,3 +3635,42 @@ fn test_ts1479_js_file_single_file_no_false_positive() {
         "Should NOT emit TS1479 in single-file mode.\nActual: {diagnostics:?}"
     );
 }
+
+/// TS2536 should be suppressed for deferred conditional types used as indices.
+/// Example: `{ 0: X; 1: Y }[SomeConditional extends true ? 0 : 1]`
+/// When the conditional can't be resolved at the generic level, TSC defers the check.
+#[test]
+fn test_ts2536_suppressed_for_deferred_conditional_index() {
+    let code = r#"
+type HasTail<T extends any[]> =
+    T extends ([] | [any]) ? false : true;
+type Head<T extends any[]> = T extends [any, ...any[]] ? T[0] : never;
+type Tail<T extends any[]> =
+    ((...t: T) => any) extends ((_: any, ...tail: infer TT) => any) ? TT : [];
+type Last<T extends any[]> = {
+    0: Last<Tail<T>>;
+    1: Head<T>;
+}[HasTail<T> extends true ? 0 : 1];
+"#;
+    let diagnostics = compile_and_get_diagnostics(code);
+    let has_2536 = diagnostics.iter().any(|(code, _)| *code == 2536);
+    assert!(
+        !has_2536,
+        "TS2536 should NOT be emitted for deferred conditional index types.\nActual: {diagnostics:?}"
+    );
+}
+
+/// TS2536 should still be emitted for concrete invalid index types.
+#[test]
+fn test_ts2536_still_emitted_for_concrete_invalid_index() {
+    let code = r#"
+type Obj = { a: string; b: number; };
+type Bad = Obj["c"];
+"#;
+    let diagnostics = compile_and_get_diagnostics(code);
+    let has_2536 = diagnostics.iter().any(|(code, _)| *code == 2536);
+    assert!(
+        has_2536,
+        "TS2536 should be emitted for concrete invalid index 'c'.\nActual: {diagnostics:?}"
+    );
+}
