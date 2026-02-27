@@ -584,6 +584,14 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(symbol_name);
             }
+            // Skip identifiers in computed expressions — they are variable references
+            // (e.g. `[an]` where `const an = 0`), not literal property names. Callers
+            // that need type-based resolution (e.g. object literal type computation)
+            // should fall back to evaluating the expression's type.
+            let expr_node = self.ctx.arena.get(computed.expression)?;
+            if self.ctx.arena.get_identifier(expr_node).is_some() {
+                return None;
+            }
             return get_literal_property_name(self.ctx.arena, computed.expression);
         }
 
