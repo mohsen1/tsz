@@ -930,14 +930,52 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if !found_same_file {
-            // TS2433: The class/function must be in another file.
-            if let Some(name_node) = self.ctx.arena.get(module.name) {
+            // Before emitting TS2433, check if all class/function declarations we CAN
+            // resolve in the current arena are ambient (e.g., `declare function $()`).
+            // If they are all ambient, the namespace merge is valid and TS2433 should
+            // not fire. If none are resolvable (cross-file), we still emit TS2433
+            // because the symbol has CLASS/FUNCTION flags from another file.
+            let mut found_any_class_or_function_in_arena = false;
+            let mut all_ambient_or_bodyless = true;
+            for &decl_idx in &symbol.declarations {
+                if decl_idx == module_idx {
+                    continue;
+                }
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let is_class = decl_node.kind == syntax_kind_ext::CLASS_DECLARATION;
+                let is_function = decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+                if !is_class && !is_function {
+                    continue;
+                }
+                found_any_class_or_function_in_arena = true;
+                if self.is_ambient_declaration(decl_idx) {
+                    continue;
+                }
+                if is_function
+                    && let Some(func) = self.ctx.arena.get_function(decl_node)
+                    && func.body.is_none()
+                {
+                    continue;
+                }
+                // Found a non-ambient class/function in the arena
+                all_ambient_or_bodyless = false;
+                break;
+            }
+
+            // Suppress TS2433 only when we found class/function declarations in the
+            // current arena AND they are all ambient/bodyless. If no class/function
+            // was found in the arena, the merged symbol's CLASS/FUNCTION flags must
+            // come from another file, so TS2433 should fire.
+            let suppress = found_any_class_or_function_in_arena && all_ambient_or_bodyless;
+            if !suppress && let Some(name_node) = self.ctx.arena.get(module.name) {
                 self.ctx.error(
-                    name_node.pos,
-                    name_node.end - name_node.pos,
-                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
-                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
-                );
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
+                        diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
+                    );
             }
         }
     }

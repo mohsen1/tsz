@@ -516,6 +516,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut any_has_divergent_write_type = false;
         let mut nullable_causes = Vec::new();
         let mut any_from_index = false; // Track if any member used index signature
+        let mut has_unknown_members = false;
 
         for &member in &non_unknown_members {
             // Check for null/undefined directly
@@ -563,11 +564,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         property_name: prop_atom,
                     });
                 }
-                // IsUnknown: if any member is unknown, we cannot safely access the property
+                // IsUnknown: skip unknown members in unions — they shouldn't prevent
+                // property access on other union members that DO have the property.
+                // Only return IsUnknown if ALL non-nullable members are unknown.
                 PropertyAccessResult::IsUnknown => {
-                    return Some(PropertyAccessResult::IsUnknown);
+                    has_unknown_members = true;
+                    continue;
                 }
             }
+        }
+
+        // If all non-nullable, non-unknown members had no results and some were unknown,
+        // then the union is effectively unknown for property access purposes.
+        if valid_results.is_empty() && nullable_causes.is_empty() && has_unknown_members {
+            return Some(PropertyAccessResult::IsUnknown);
         }
 
         // If no non-nullable members had the property, it's a PropertyNotFound error

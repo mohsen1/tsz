@@ -131,7 +131,16 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        false
+        // Fallback: bidirectional subtype check handles structural equivalences
+        // that the identity check may miss, such as:
+        // - Intersection distribution: (A | B) & (C | D) ≡ A&C | A&D | B&C | B&D
+        // - typeof resolution: `typeof M` ≡ the actual type of M
+        // - Optional tuple normalization: [1, 2?] ≡ [1, (2 | undefined)?]
+        // Skip `any` since tsc considers `var x: any; var x: string;` as incompatible.
+        if prev_type == TypeId::ANY || current_type == TypeId::ANY {
+            return false;
+        }
+        self.is_subtype_of(prev_type, current_type) && self.is_subtype_of(current_type, prev_type)
     }
 
     /// Try checking redeclaration compatibility using enum object shape substitution.

@@ -1184,11 +1184,21 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            // If we pass through a call expression, the identifier is nested
-            // (e.g., an argument to `factory(A)`).
+            // If we pass through a call expression, the identifier might be:
+            // (a) the callee (e.g., `color` in `extends color()`) — continue
+            //     walking up because `color()` itself might be inside a heritage clause,
+            //     and tsc doesn't emit TS2693 for the callee in that context.
+            // (b) an argument (e.g., `A` in `extends factory(A)`) — stop, TS2693 applies.
             if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
                 || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
             {
+                if let Some(call) = self.ctx.arena.get_call_expr(parent_node)
+                    && call.expression == current
+                {
+                    // The identifier is the callee — continue walking up
+                    current = parent_idx;
+                    continue;
+                }
                 return false;
             }
 

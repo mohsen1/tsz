@@ -197,6 +197,15 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                     target_shapes.push(shape.clone());
+                } else {
+                    // If an intersection member has no object shape and is a type parameter,
+                    // conditional, or application type, it may accept arbitrary properties.
+                    // Skip excess property checking entirely — same logic as union handling.
+                    if query::is_type_parameter_like(self.ctx.types, resolved_member)
+                        || resolved_member == TypeId::OBJECT
+                    {
+                        return;
+                    }
                 }
             }
 

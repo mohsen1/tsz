@@ -817,6 +817,28 @@ impl<'a> CheckerState<'a> {
         let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
 
         if is_type_alias || (has_type && !has_value) {
+            // Type parameters only shadow in type contexts, not value contexts.
+            // `new A()` where `A` is a type param shadowing an outer class should
+            // resolve to the outer class, not emit TS2693.
+            let is_type_param_only =
+                (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0 && !has_value;
+            if is_type_param_only {
+                let lib_binders = self.get_lib_binders();
+                let has_outer_value = self
+                    .ctx
+                    .binder
+                    .resolve_identifier_with_filter(self.ctx.arena, expr_idx, &lib_binders, |sid| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sid, &lib_binders)
+                            .is_some_and(|s| s.flags & symbol_flags::VALUE != 0)
+                    })
+                    .is_some();
+                if has_outer_value {
+                    // Fall through — the new expression will use the outer value
+                    return None;
+                }
+            }
             self.error_type_only_value_at(class_name, expr_idx);
             return Some(TypeId::ERROR);
         }
