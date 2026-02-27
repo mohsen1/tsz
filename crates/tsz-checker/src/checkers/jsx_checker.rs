@@ -158,7 +158,28 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            component_type
+            // The type of a JSX component element expression is always JSX.Element
+            // (i.e. React.ReactElement<any>), not the component constructor/function
+            // type. Returning the component type causes false TS2322 errors when the
+            // JSX expression is used in a position that expects JSX.Element (e.g. as
+            // the return value of `render(): JSX.Element`).
+            // We look up JSX.Element directly here instead of calling get_jsx_element_type()
+            // to avoid re-running the factory-in-scope diagnostics that were already
+            // emitted at the top of get_type_of_jsx_opening_element.
+            if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
+                let lib_binders = self.get_lib_binders();
+                if let Some(symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+                    && let Some(exports) = symbol.exports.as_ref()
+                    && let Some(element_sym_id) = exports.get("Element")
+                {
+                    return self.type_reference_symbol_type(element_sym_id);
+                }
+            }
+            // Fallback: return ANY when JSX.Element can't be resolved (e.g. no JSX types configured)
+            TypeId::ANY
         }
     }
 
@@ -549,6 +570,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Skip if the props type contains error types. This happens when generic type alias
+        // instantiation fails (e.g. TS2589 "Type instantiation is excessively deep") and the
+        // solver produces an Application node whose base is TypeData::Error. Checking attributes
+        // against such a type produces false-positive TS2322 excess-property errors because
+        // no properties can be found in an error type. tsc never emits TS2322 in this situation
+        // because it successfully evaluates the type.
+        if tsz_solver::contains_error_type(self.ctx.types, props_type) {
+            return;
+        }
+
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
         };
@@ -561,6 +592,14 @@ impl<'a> CheckerState<'a> {
         let has_string_index =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
                 .is_some_and(|shape| shape.string_index.is_some());
+
+        // When the props type contains unresolved type parameters (e.g. a generic component
+        // `StatelessComponent<T>`), TypeScript suppresses *excess-property* errors because
+        // a spread may satisfy the type parameter. We still check *type-mismatch* errors
+        // for concrete properties that are found in the intersection. This flag is used
+        // in the PropertyNotFound branch below.
+        let props_has_type_params =
+            tsz_solver::contains_type_parameters(self.ctx.types, props_type);
 
         // Track provided attribute names for missing-required-property check
         let mut provided_attrs: Vec<String> = Vec::new();
@@ -594,6 +633,19 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip 'key' and 'ref' — these are special JSX attributes that TypeScript
+                // does not type-check against component props. 'key' is extracted by the
+                // compiler (especially in react-jsx mode) and 'ref' is managed by
+                // IntrinsicClassAttributes / React.RefObject, not by component props.
+                // Checking them against the props type produces false positives when the
+                // props type is an unevaluated application (e.g. DetailedHTMLProps<...>)
+                // that would expose them through ClassAttributes/IntrinsicAttributes.
+                // Note: the missing-required-props check already skips 'key' and 'ref'
+                // from the required-property side, so not tracking them here is consistent.
+                if attr_name == "key" || attr_name == "ref" {
+                    continue;
+                }
+
                 // Only track valid identifiers for missing-prop checking
                 provided_attrs.push(attr_name.clone());
 
@@ -604,9 +656,15 @@ impl<'a> CheckerState<'a> {
                 {
                     PropertyAccessResult::Success { type_id, .. } => type_id,
                     PropertyAccessResult::PropertyNotFound { .. } => {
-                        // Excess property: attribute doesn't exist in props type
-                        // Skip if props has a string index signature or if attr starts with "data-" or "aria-"
+                        // Excess property: attribute doesn't exist in props type.
+                        // Skip if:
+                        //  - props has a string index signature (any attr is valid), or
+                        //  - attr starts with "data-" or "aria-" (HTML convention), or
+                        //  - props type contains unresolved type parameters (tsc suppresses
+                        //    excess-property errors for generic components because a spread
+                        //    may satisfy the type parameter).
                         if !has_string_index
+                            && !props_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
