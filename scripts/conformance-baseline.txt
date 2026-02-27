@@ -850,7 +850,6 @@ FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInName.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixInNameReact.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespacePrefixIntrinsics.tsx
 FAIL TypeScript/tests/cases/compiler/jsxPropsAsIdentifierNames.tsx
-FAIL TypeScript/tests/cases/compiler/jsxRuntimePragma.ts
 FAIL TypeScript/tests/cases/compiler/jsxSpreadFirstUnionNoErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxViaImport.tsx
 FAIL TypeScript/tests/cases/compiler/keyofDoesntContainSymbols.ts
@@ -1703,7 +1702,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
@@ -2004,10 +2002,6 @@ FAIL TypeScript/tests/cases/conformance/es6/variableDeclarations/VariableDeclara
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorInAmbientContext2.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads1.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads2.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads3.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads4.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads5.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck2.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck25.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck29.ts
@@ -8420,6 +8414,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
@@ -9579,6 +9574,9 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorInAmbientC
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorInAmbientContext5.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorInAmbientContext6.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorNoImplicitReturns.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads3.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads4.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads5.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck1.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck10.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck11.ts
@@ -9590,6 +9588,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck1
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck17.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck18.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck19.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck2.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck21.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck22.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck23.ts

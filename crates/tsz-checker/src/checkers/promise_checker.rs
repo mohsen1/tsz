@@ -656,7 +656,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type is a Generator-like base type (Generator, `AsyncGenerator`,
-    /// Iterator, `AsyncIterator`, `IterableIterator`, `AsyncIterableIterator`).
+    /// Iterator, `AsyncIterator`, `IterableIterator`, `AsyncIterableIterator`,
+    /// Iterable, `AsyncIterable`).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
         // Fast path: Check for Lazy types to known Generator-like types
         {
@@ -680,6 +681,8 @@ impl<'a> CheckerState<'a> {
             "AsyncIterator",
             "IterableIterator",
             "AsyncIterableIterator",
+            "Iterable",
+            "AsyncIterable",
         ] {
             // resolve_global_interface_type handles looking up in lib files and merging declarations
             if let Some(global_type) = self.resolve_global_interface_type(name)
@@ -702,6 +705,8 @@ impl<'a> CheckerState<'a> {
                 | "AsyncIterator"
                 | "IterableIterator"
                 | "AsyncIterableIterator"
+                | "Iterable"
+                | "AsyncIterable"
         )
     }
 

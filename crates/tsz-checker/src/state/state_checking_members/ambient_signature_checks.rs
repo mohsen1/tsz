@@ -569,11 +569,23 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::ERROR)
                 };
                 if generator_base != TypeId::ERROR {
-                    let any_gen = self.ctx.types.factory().application(
-                        generator_base,
-                        vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
-                    );
-                    self.check_assignable_or_report(any_gen, return_type, method.type_annotation);
+                    // Only report if the return type is NOT a generator-like type
+                    // (e.g., Iterable, Iterator, Generator, etc.). If it IS generator-like,
+                    // the type is inherently compatible and doesn't need a structural check.
+                    if self
+                        .get_generator_return_type_argument(return_type)
+                        .is_none()
+                    {
+                        let any_gen = self.ctx.types.factory().application(
+                            generator_base,
+                            vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                        );
+                        self.check_assignable_or_report(
+                            any_gen,
+                            return_type,
+                            method.type_annotation,
+                        );
+                    }
                 }
 
                 self.get_generator_return_type_argument(return_type)
