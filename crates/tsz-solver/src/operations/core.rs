@@ -899,6 +899,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         union_type: TypeId,
         failures: &mut Vec<CallResult>,
         return_types: Vec<TypeId>,
+        combined_return_override: Option<TypeId>,
     ) -> CallResult {
         if return_types.is_empty() {
             if failures.is_empty() {
@@ -948,11 +949,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         TypeId::ERROR
                     };
 
+                // Use the combined return type from the union's signatures, but ONLY
+                // when all union members expected the same parameter type. When params
+                // differ (e.g., {x: string} vs {y: string}), excess property issues can
+                // cause false failures, and leaking a non-ERROR return type would cascade
+                // into downstream narrowing problems.
+                let all_same_param = param_types.windows(2).all(|w| w[0] == w[1]);
+                let combined_return = if all_same_param {
+                    combined_return_override.unwrap_or(TypeId::ERROR)
+                } else {
+                    TypeId::ERROR
+                };
+
                 return CallResult::ArgumentTypeMismatch {
                     index: 0,
                     expected: intersected_param,
                     actual: actual_arg_type,
-                    fallback_return: TypeId::ERROR,
+                    fallback_return: combined_return,
                 };
             }
 
@@ -1110,6 +1123,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             union_type,
                             &mut failures,
                             return_types,
+                            combined.as_ref().map(|c| c.return_type),
                         );
                     }
                 }
@@ -1123,7 +1137,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let union_result = self.interner.union(return_types);
             CallResult::Success(union_result)
         } else if !failures.is_empty() {
-            self.build_union_call_result(union_type, &mut failures, return_types)
+            self.build_union_call_result(
+                union_type,
+                &mut failures,
+                return_types,
+                combined.as_ref().map(|c| c.return_type),
+            )
         } else {
             CallResult::NotCallable {
                 type_id: union_type,

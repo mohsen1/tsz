@@ -154,7 +154,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index,
                     expected,
                     actual,
-                    fallback_return: TypeId::ERROR,
+                    ..
                 } => {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;
@@ -249,6 +249,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
+
+        // Pre-compute the combined construct return type from union members'
+        // construct signatures (mirrors try_compute_combined_union_signature
+        // for the call path). This is used as fallback_return when all members
+        // fail with ArgumentTypeMismatch but have identical param types.
+        let combined_construct_return = self.compute_combined_construct_return(&members);
+
         let mut return_types = Vec::new();
         let mut failures = Vec::new();
 
@@ -277,13 +284,92 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let union_result = self.interner.union(return_types);
             CallResult::Success(union_result)
         } else if !failures.is_empty() {
-            // If no members succeeded, return the first failure
-            failures.into_iter().next().unwrap()
+            // If all failures are ArgumentTypeMismatch, aggregate like build_union_call_result:
+            // intersect parameter types and use the combined construct return.
+            let all_arg_mismatches = failures
+                .iter()
+                .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));
+
+            if all_arg_mismatches {
+                let mut param_types = Vec::new();
+                let mut actual_arg = TypeId::ERROR;
+                for failure in &failures {
+                    if let CallResult::ArgumentTypeMismatch {
+                        expected, actual, ..
+                    } = failure
+                    {
+                        param_types.push(*expected);
+                        actual_arg = *actual;
+                    }
+                }
+                let intersected_param = if param_types.len() == 1 {
+                    param_types[0]
+                } else {
+                    let mut result = param_types[0];
+                    for &pt in &param_types[1..] {
+                        result = self.interner.intersection2(result, pt);
+                    }
+                    result
+                };
+                // Only use the combined return when all union members expected
+                // the same parameter type (same guard as build_union_call_result).
+                let all_same_param = param_types.windows(2).all(|w| w[0] == w[1]);
+                let combined_return = if all_same_param {
+                    combined_construct_return.unwrap_or(TypeId::ERROR)
+                } else {
+                    TypeId::ERROR
+                };
+                CallResult::ArgumentTypeMismatch {
+                    index: 0,
+                    expected: intersected_param,
+                    actual: actual_arg,
+                    fallback_return: combined_return,
+                }
+            } else {
+                failures.into_iter().next().unwrap()
+            }
         } else {
             CallResult::NotCallable {
                 type_id: union_type,
             }
         }
+    }
+
+    /// Compute the combined construct return type for a union of constructors.
+    ///
+    /// Extracts construct signatures from each union member and returns the
+    /// union of their return types. This mirrors `try_compute_combined_union_signature`
+    /// for the call path but only computes the return type (not params/arity).
+    fn compute_combined_construct_return(&self, members: &[TypeId]) -> Option<TypeId> {
+        let mut return_types = Vec::new();
+        for &member in members {
+            match self.interner.lookup(member) {
+                Some(TypeData::Callable(callable_id)) => {
+                    let callable = self.interner.callable_shape(callable_id);
+                    if callable.construct_signatures.len() == 1 {
+                        return_types.push(callable.construct_signatures[0].return_type);
+                    } else if !callable.construct_signatures.is_empty() {
+                        // Multiple construct overloads — use first (conservative)
+                        return_types.push(callable.construct_signatures[0].return_type);
+                    } else {
+                        return None; // member has no construct signature
+                    }
+                }
+                Some(TypeData::Function(func_id)) => {
+                    let func = self.interner.function_shape(func_id);
+                    if func.is_constructor {
+                        return_types.push(func.return_type);
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        if return_types.is_empty() {
+            return None;
+        }
+        Some(self.interner.union(return_types))
     }
 
     /// Resolve a `new` expression on an intersection type.
