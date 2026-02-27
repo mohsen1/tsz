@@ -170,10 +170,34 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or(false);
             if !has_value_shadow {
-                // TS2693: Type parameters cannot be used as values
-                // Example: function f<T>() { return T; }  // Error: T is a type, not a value
-                self.error_type_parameter_used_as_value(name, idx);
-                return type_id;
+                // The closest binder symbol has no VALUE flag (it's the type parameter
+                // itself). But type parameters only shadow in type contexts — in value
+                // contexts, an outer-scope value binding (e.g., a class) should be
+                // accessible. Check if there's a VALUE symbol with the same name by
+                // re-resolving while skipping TYPE_PARAMETER-only symbols.
+                let lib_binders = self.get_lib_binders();
+                let has_outer_value = self
+                    .ctx
+                    .binder
+                    .resolve_identifier_with_filter(self.ctx.arena, idx, &lib_binders, |sym_id| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .is_some_and(|s| {
+                                // Skip symbols that are ONLY type parameters
+                                s.flags & tsz_binder::symbol_flags::VALUE != 0
+                            })
+                    })
+                    .is_some();
+                if has_outer_value {
+                    // Fall through to binder resolution — the outer value takes
+                    // precedence over the type parameter in expression context.
+                } else {
+                    // TS2693: Type parameters cannot be used as values
+                    // Example: function f<T>() { return T; }  // Error: T is a type, not a value
+                    self.error_type_parameter_used_as_value(name, idx);
+                    return type_id;
+                }
             }
             // Fall through to binder resolution — the value symbol takes precedence
         }
