@@ -789,7 +789,7 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file() {
                 return TypeId::ANY;
             }
-            // Otherwise, emit TS2580 suggesting @types/node installation
+            // Otherwise, emit TS2591 suggesting @types/node installation
             self.error_cannot_find_name_install_node_types(name, idx);
             return TypeId::ERROR;
         }
