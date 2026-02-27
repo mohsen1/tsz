@@ -969,6 +969,8 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1378 // Top-level 'for await' loops are only allowed...
         | 1432 // 'await' expressions are only allowed within async functions
         | 1434 // Top-level 'await' expressions are only allowed...
+        | 1442 // Identifier or expression expected (TS-only construct in JS)
+        | 1477 // Member must have an initializer
     )
 }
 

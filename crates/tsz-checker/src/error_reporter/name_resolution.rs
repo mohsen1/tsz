@@ -305,26 +305,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Keep TS2304 for ambiguous generic assertions such as `<<T>(x: T) => T>f`.
-        // These nodes can carry parse-error flags, but TypeScript still reports
-        // unresolved `T` alongside TS1005/TS1109.
-        let force_emit_for_ambiguous_generic = self
-            .ctx
-            .arena
-            .get(idx)
-            .and_then(|node| {
-                let source = self.ctx.arena.source_files.first()?.text.as_ref();
-                let pos = node.pos as usize;
-                if pos < 2 {
-                    return Some(false);
-                }
-                let bytes = source.as_bytes();
-                Some(
-                    bytes.get(pos.saturating_sub(2)) == Some(&b'<')
-                        && bytes.get(pos.saturating_sub(1)) == Some(&b'<'),
-                )
-            })
-            .unwrap_or(false);
+        // Note: Previously we forced TS2304 for `<<T>` ambiguous generic assertions,
+        // but tsc does NOT emit TS2304 for these (only TS1005/TS1109).
 
         // NOTE: `symbol` is intentionally excluded — tsc never emits TS2693 for
         // lowercase `symbol`. Instead it emits TS2552 "Cannot find name 'symbol'.
@@ -365,9 +347,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !force_emit_for_ambiguous_generic
-            && self.unresolved_name_matches_enclosing_param(name, idx)
-        {
+        if self.unresolved_name_matches_enclosing_param(name, idx) {
             return;
         }
 
@@ -480,7 +460,6 @@ impl<'a> CheckerState<'a> {
         // the parse error (missing `)`) comes AFTER the identifier `a`.
         if self.has_syntax_parse_errors()
             && !is_in_computed_property
-            && !force_emit_for_ambiguous_generic
             && !self.ctx.syntax_parse_error_positions.is_empty()
             && let Some(node) = self.ctx.arena.get(idx)
         {
@@ -544,13 +523,7 @@ impl<'a> CheckerState<'a> {
         //
         // Grammar-only errors (TS1100, TS1173, TS1212) should NOT suppress
         // TS2304 — tsc still emits TS2304 in those files.
-        //
-        // Exception: computed property name expressions — tsc always emits
-        // TS2304 for these even in files with parse errors.
-        if self.ctx.has_real_syntax_errors
-            && !is_in_computed_property
-            && !force_emit_for_ambiguous_generic
-        {
+        if self.ctx.has_real_syntax_errors {
             return;
         }
 
