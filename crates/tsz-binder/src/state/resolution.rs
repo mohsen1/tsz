@@ -232,6 +232,10 @@ impl BinderState {
         let mut consider =
             |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
 
+        // Track module scope container node during scope walk so we can check
+        // its exports as a last-resort fallback (see comment below).
+        let mut module_container_node = None;
+
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
             while scope_id.is_some() {
@@ -249,15 +253,15 @@ impl BinderState {
                     return Some(found);
                 }
 
-                if scope.kind == ContainerKind::Module
-                    && let Some(container_sym_id) = self.get_node_symbol(scope.container_node)
-                    && let Some(container_symbol) =
-                        self.get_symbol_with_libs(container_sym_id, lib_binders)
-                    && let Some(exports) = container_symbol.exports.as_ref()
-                    && let Some(member_id) = exports.get(name)
-                    && let Some(found) = consider(member_id)
-                {
-                    return Some(found);
+                // Remember the module scope's container node so we can check
+                // its exports as a fallback after all other resolution fails.
+                // We do NOT check exports here because `export = Namespace`
+                // populates exports with child namespace members, which would
+                // shadow global/lib declarations (e.g., DOM `ClipboardEvent`
+                // shadowed by React's `ClipboardEvent`), causing circular type
+                // references and incorrect TS2430 errors.
+                if scope.kind == ContainerKind::Module && module_container_node.is_none() {
+                    module_container_node = Some(scope.container_node);
                 }
 
                 scope_id = scope.parent;
@@ -278,6 +282,20 @@ impl BinderState {
                     return Some(found);
                 }
             }
+        }
+
+        // Last-resort fallback: check module exports for names that are only
+        // reachable through `export = Namespace`. This runs after scope chain,
+        // file_locals, and lib resolution, so global/lib names take precedence
+        // over re-exported namespace members.
+        if let Some(container_node) = module_container_node
+            && let Some(container_sym_id) = self.get_node_symbol(container_node)
+            && let Some(container_symbol) = self.get_symbol_with_libs(container_sym_id, lib_binders)
+            && let Some(exports) = container_symbol.exports.as_ref()
+            && let Some(member_id) = exports.get(name)
+            && let Some(found) = consider(member_id)
+        {
+            return Some(found);
         }
 
         None
