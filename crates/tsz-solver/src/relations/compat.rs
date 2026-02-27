@@ -653,7 +653,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             Some(TypeData::Conditional(cond_id)) => {
                 // For unresolved conditional types, check both branches for index
                 // signatures. If either branch has one, it's considered present.
-                let cond = self.interner.conditional_type(cond_id).clone();
+                let cond = self.interner.conditional_type(cond_id);
                 let (ts, tn) = self.check_index_signatures(cond.true_type);
                 let (fs, fn_) = self.check_index_signatures(cond.false_type);
                 (ts || fs, tn || fn_)
@@ -710,7 +710,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // branch. This matches tsc's isKnownProperty behavior — excess property
                 // checking should not reject properties that may be valid once the
                 // conditional resolves.
-                let cond = self.interner.conditional_type(cond_id).clone();
+                let cond = self.interner.conditional_type(cond_id);
                 let true_props = self.collect_target_properties(cond.true_type);
                 let false_props = self.collect_target_properties(cond.false_type);
                 properties.extend(true_props);
