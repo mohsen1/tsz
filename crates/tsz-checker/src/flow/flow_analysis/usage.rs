@@ -354,16 +354,6 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-        // Skip TS2454 when the variable is used from a different function scope
-        // than where it is declared.  The nested function could be called after
-        // external code assigns the variable, so tsc suppresses TS2454 here
-        // regardless of whether the variable has an initializer.
-        if self.find_enclosing_function_or_source_file(decl_id_to_check)
-            != self.find_enclosing_function_or_source_file(idx)
-        {
-            return false;
-        }
-
         // If there's an initializer, skip definite assignment check — unless the variable
         // is `var` (function-scoped) and the usage is before the declaration in source
         // order.  `var` hoists the binding but NOT the initializer, so at the usage
