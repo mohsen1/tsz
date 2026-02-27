@@ -172,7 +172,8 @@ impl<'a> CheckerState<'a> {
 
         // TS1155: Check if const declarations must be initialized
         // Skip check for ambient declarations (e.g., declare const x;)
-        if !self.is_ambient_declaration(decl_idx) {
+        // Skip when file has real syntax errors — the parse error is sufficient.
+        if !self.is_ambient_declaration(decl_idx) && !self.ctx.has_real_syntax_errors {
             // Get the parent node (VARIABLE_DECLARATION_LIST) to check flags
             if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
                 && let Some(parent_node) = self.ctx.arena.get(ext.parent)
@@ -754,6 +755,7 @@ impl<'a> CheckerState<'a> {
             let is_ambient = self.is_ambient_declaration(decl_idx);
             let is_const = self.is_const_variable_declaration(decl_idx);
             if self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
                 && !sym_already_cached
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
