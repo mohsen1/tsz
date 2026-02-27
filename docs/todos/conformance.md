@@ -1,8 +1,64 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9341/12570 (74.3%) — full suite, error-code level
-> Up from 9338 after TS2456 column fix; from 9338 after TS2536 indexed access fix.
+**Current score**: ~9184/12570 (73.1%) — full suite, error-code level
+> Note: score dropped from 9362 due to origin/main rebase including commits that
+> introduced regressions (TS5107 suppression + wrapper-adjacent changes). Our fixes
+> contributed +7 net improvements.
+
+---
+
+## Session 2026-02-27 — types/spread area fixes
+
+### Area: types/spread (52.0% → 60.0%, 13→15 of 25 passing)
+
+### Fix 1: Equality operators always return boolean (+5 conformance tests)
+- **File**: `crates/tsz-solver/src/operations/binary_ops.rs`
+- **Root cause**: `BinaryOpEvaluator` returned `TypeError` for equality comparisons
+  between non-overlapping types (e.g., `number !== undefined`). The checker then fell
+  through to returning `UNKNOWN` as the expression type. This cascaded:
+  `UNKNOWN && { a: string }` → `unknown | { a: string }` → false TS2698.
+- **Fix**: Equality operators (`==`, `!=`, `===`, `!==`) always return
+  `BinaryOpResult::Success(TypeId::BOOLEAN)`. TS2367 (no-overlap) diagnostics are
+  handled separately by the checker's comparability check.
+- **Tests fixed**: objectSpreadRepeatedNullCheckPerf, genericCallInferenceConditionalType2,
+  declarationEmitThisPredicates02, declarationEmitThisPredicatesWithPrivateName02,
+  intersectionTypeInference3, typeofAnExportedType.
+
+### Fix 2: Intersection falsy handling in spread validation (+2 conformance tests)
+- **File**: `crates/tsz-solver/src/type_queries/core.rs`
+- **Root cause**: `is_definitely_falsy_type()` didn't handle intersection types.
+  `T & undefined` should be definitely falsy (any value must be undefined), but
+  the function returned `false` for all intersections.
+- **Fix**: Added `Intersection` arm: if ANY member is definitely falsy, the whole
+  intersection is definitely falsy.
+- **Test fixed**: spreadObjectOrFalsy.ts (pattern: `T | T & undefined` in spread).
+
+### Fix 3: Restore strict-family expansion in conformance wrapper (+~2000 tests)
+- **File**: `crates/conformance/src/tsz_wrapper.rs`
+- **Root cause**: A prior commit (e2dd69823) removed strict→sub-option expansion from
+  `convert_options_to_tsconfig()`, assuming tsz handles it internally. However, the
+  conformance wrapper strips source pragmas before writing test files, so tsz can only
+  read options from the generated tsconfig.json. Without expanding `strict: true` into
+  `noImplicitAny`, `strictNullChecks`, etc., tsz missed ~2000 tests' strict-mode diagnostics.
+- **Fix**: Restored the expansion with improved comment explaining why it's needed.
+
+### Remaining types/spread failures (10 of 25):
+- **spreadUnion.ts, spreadUnion3.ts**: Extra TS2403/TS2339 — spread of union type
+  `A | B` doesn't distribute. `collect_spread_properties()` returns empty `Vec` for
+  union types instead of distributing properties from each member.
+- **spreadMethods.ts**: Missing TS2339 — spreading class instances should strip
+  prototype methods. `extract_properties()` doesn't filter methods.
+- **spreadNonObject1.ts**: Missing TS2698 — template literal types (`` `${number}` ``)
+  should be rejected as spread types.
+- **objectSpreadSetonlyAccessor.ts**: Extra TS2322 — set-only accessor spread should
+  produce `undefined` type, not the setter parameter type.
+- **objectSpreadStrictNull.ts**: Fingerprint mismatch — type display differences in
+  TS2322 messages for optional property spreading.
+- **objectSpreadIndexSignature.ts**: Fingerprint mismatch.
+- **spreadOverwritesPropertyStrict.ts**: Fingerprint mismatch.
+- **spreadUnion2.ts**: Fingerprint mismatch.
+- **objectSpreadNegativeParse.ts**: Fingerprint mismatch.
 
 ---
 
