@@ -799,32 +799,117 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // Only check if the symbol has multiple declarations (merged within the same binder)
         if symbol.declarations.len() <= 1 {
-            // For multi-file scenarios: look for declarations with the same name in other binders
+            // For multi-file scenarios: look for a class/function with the same name
+            // in other binders. Handles both top-level and nested symbols.
             if let Some(all_binders) = &self.ctx.all_binders {
                 let namespace_name = &symbol.escaped_name;
 
-                // Check each other binder for a symbol with the same name
-                for other_binder in all_binders.iter() {
-                    if let Some(other_sym_id) =
-                        other_binder.file_locals.get(namespace_name.as_str())
-                        && other_sym_id != sym_id
-                        && let Some(other_symbol) = self.ctx.binder.get_symbol(other_sym_id)
-                    {
-                        // Check if this symbol is a non-ambient class or function
-                        let is_class = (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
-                        let is_function =
-                            (other_symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+                // Build enclosing namespace name chain by walking AST parents.
+                // For `namespace A { export namespace Point { } }`, when checking Point,
+                // this produces ["A"] (outermost first).
+                let enclosing_names: Vec<String> = {
+                    let mut names = Vec::new();
+                    let mut current = module_idx;
+                    // Walk up AST parent chain looking for enclosing MODULE_DECLARATION nodes
+                    while let Some(ext) = self.ctx.arena.get_extended(current) {
+                        current = ext.parent;
+                        if current.is_none() {
+                            break;
+                        }
+                        if let Some(node) = self.ctx.arena.get(current)
+                            && node.kind == syntax_kind_ext::MODULE_DECLARATION
+                            && let Some(mod_data) = self.ctx.arena.get_module(node)
+                            && let Some(name_node) = self.ctx.arena.get(mod_data.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            names.push(ident.escaped_text.clone());
+                        }
+                    }
+                    names.reverse(); // outermost first
+                    names
+                };
 
-                        if (is_class || is_function) && !other_symbol.declarations.is_empty() {
-                            // Found a class or function with the same name in another binder
-                            // Emit TS2433 since namespace and class/function are in different files
-                            if let Some(name_node) = self.ctx.arena.get(module.name) {
-                                self.ctx.error(
+                let current_file_idx = self.ctx.current_file_idx;
+
+                for (binder_idx, other_binder) in all_binders.iter().enumerate() {
+                    // Skip the current file's binder
+                    if binder_idx == current_file_idx {
+                        continue;
+                    }
+
+                    // For top-level namespaces (no enclosing names), check file_locals
+                    if enclosing_names.is_empty() {
+                        if let Some(other_sym_id) =
+                            other_binder.file_locals.get(namespace_name.as_str())
+                            && other_sym_id != sym_id
+                            && let Some(other_symbol) = self.ctx.binder.get_symbol(other_sym_id)
+                        {
+                            let is_class =
+                                (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                            let is_function =
+                                (other_symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+
+                            if (is_class || is_function) && !other_symbol.declarations.is_empty() {
+                                if let Some(name_node) = self.ctx.arena.get(module.name) {
+                                    self.ctx.error(
                                         name_node.pos,
                                         name_node.end - name_node.pos,
                                         diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
                                         diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
                                     );
+                                }
+                                return;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // For nested namespaces, walk down from root through exports.
+                    // E.g., for Point inside A, find A in file_locals, then look for
+                    // Point in A's exports.
+                    let root_name = &enclosing_names[0];
+                    let Some(root_sym_id) = other_binder.file_locals.get(root_name.as_str()) else {
+                        continue;
+                    };
+
+                    // Walk down through intermediate namespace exports
+                    let mut current_sym_id = root_sym_id;
+                    let mut found = true;
+                    for intermediate_name in &enclosing_names[1..] {
+                        if let Some(sym) = self.ctx.binder.get_symbol(current_sym_id)
+                            && let Some(exports) = &sym.exports
+                            && let Some(next_id) = exports.get(intermediate_name.as_str())
+                        {
+                            current_sym_id = next_id;
+                        } else {
+                            found = false;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        continue;
+                    }
+
+                    // Now look for the target name in the innermost container's exports
+                    if let Some(container_sym) = self.ctx.binder.get_symbol(current_sym_id)
+                        && let Some(exports) = &container_sym.exports
+                        && let Some(target_sym_id) = exports.get(namespace_name.as_str())
+                        && target_sym_id != sym_id
+                        && let Some(target_sym) = self.ctx.binder.get_symbol(target_sym_id)
+                    {
+                        let is_class = (target_sym.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                        let is_function =
+                            (target_sym.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
+
+                        if (is_class || is_function) && !target_sym.declarations.is_empty() {
+                            if let Some(name_node) = self.ctx.arena.get(module.name) {
+                                self.ctx.error(
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
+                                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
+                                );
                             }
                             return;
                         }
