@@ -652,38 +652,65 @@ impl<'a> CheckerState<'a> {
             // Handle Lazy types (direct namespace/module references)
             NamespaceMemberKind::Lazy(def_id) => {
                 let sym_id = self.ctx.def_to_symbol_id(def_id)?;
-                let symbol = self.get_cross_file_symbol(sym_id)?;
-                if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
-                    return None;
-                }
 
-                tracing::trace!(
-                    sym_id = sym_id.0,
-                    symbol_name = symbol.escaped_name.as_str(),
-                    property_name,
-                    has_exports = symbol.exports.is_some(),
-                    has_members = symbol.members.is_some(),
-                    exports_len = symbol.exports.as_ref().map_or(0, |t| t.iter().count()),
-                    members_len = symbol.members.as_ref().map_or(0, |t| t.iter().count()),
-                    has_module_exports = self
-                        .ctx
-                        .binder
-                        .module_exports
-                        .contains_key(symbol.escaped_name.as_str()),
-                    "resolve_namespace_value_member: lazy namespace lookup"
-                );
+                // Extract needed data from symbol before mutable borrows below.
+                let (sym_flags, sym_name, direct_member_id, module_export_member_id, import_module) = {
+                    let symbol = self.get_cross_file_symbol(sym_id)?;
+                    if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                        return None;
+                    }
 
-                // Check direct exports first, then namespace members as fallback.
-                let direct_member_id = symbol
-                    .exports
-                    .as_ref()
-                    .and_then(|exports| exports.get(property_name))
-                    .or_else(|| {
-                        symbol
-                            .members
-                            .as_ref()
-                            .and_then(|members| members.get(property_name))
-                    });
+                    tracing::trace!(
+                        sym_id = sym_id.0,
+                        symbol_name = symbol.escaped_name.as_str(),
+                        property_name,
+                        has_exports = symbol.exports.is_some(),
+                        has_members = symbol.members.is_some(),
+                        exports_len = symbol.exports.as_ref().map_or(0, |t| t.iter().count()),
+                        members_len = symbol.members.as_ref().map_or(0, |t| t.iter().count()),
+                        has_module_exports = self
+                            .ctx
+                            .binder
+                            .module_exports
+                            .contains_key(symbol.escaped_name.as_str()),
+                        "resolve_namespace_value_member: lazy namespace lookup"
+                    );
+
+                    // Check direct exports first, then namespace members as fallback.
+                    let direct_member_id = symbol
+                        .exports
+                        .as_ref()
+                        .and_then(|exports| exports.get(property_name))
+                        .or_else(|| {
+                            symbol
+                                .members
+                                .as_ref()
+                                .and_then(|members| members.get(property_name))
+                        });
+
+                    // Fallback: some ambient/module symbols keep exported members in
+                    // binder.module_exports without populating symbol.exports/members.
+                    let module_export_member_id = {
+                        let module_name = symbol.escaped_name.as_str();
+                        self.ctx
+                            .binder
+                            .module_exports
+                            .get(module_name)
+                            .and_then(|exports| exports.get(property_name))
+                            .or_else(|| {
+                                self.resolve_cross_file_namespace_exports(module_name)
+                                    .and_then(|exports| exports.get(property_name))
+                            })
+                    };
+
+                    (
+                        symbol.flags,
+                        symbol.escaped_name.clone(),
+                        direct_member_id,
+                        module_export_member_id,
+                        symbol.import_module.clone(),
+                    )
+                };
 
                 if let Some(member_id) = direct_member_id {
                     return self.resolve_validated_namespace_member(
@@ -692,21 +719,6 @@ impl<'a> CheckerState<'a> {
                         property_name,
                     );
                 }
-
-                // Fallback: some ambient/module symbols keep exported members in
-                // binder.module_exports without populating symbol.exports/members.
-                let module_export_member_id = {
-                    let module_name = symbol.escaped_name.as_str();
-                    self.ctx
-                        .binder
-                        .module_exports
-                        .get(module_name)
-                        .and_then(|exports| exports.get(property_name))
-                        .or_else(|| {
-                            self.resolve_cross_file_namespace_exports(module_name)
-                                .and_then(|exports| exports.get(property_name))
-                        })
-                };
 
                 if let Some(member_id) = module_export_member_id {
                     return self.resolve_validated_namespace_member(
@@ -718,7 +730,7 @@ impl<'a> CheckerState<'a> {
 
                 // Check for re-exports from other modules
                 // This handles cases like: export { foo } from './bar'
-                if let Some(ref module_specifier) = symbol.import_module {
+                if let Some(ref module_specifier) = import_module {
                     let mut visited_aliases = Vec::new();
                     if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
                         module_specifier,
@@ -729,10 +741,24 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if symbol.flags & symbol_flags::ENUM != 0
+                if sym_flags & symbol_flags::ENUM != 0
                     && let Some(member_type) = self.enum_member_type_for_name(sym_id, property_name)
                 {
                     return Some(member_type);
+                }
+
+                // Cross-file namespace merging: if the member wasn't found in this
+                // symbol's exports, check other files for namespace declarations
+                // with the same name that may export this member.
+                if sym_flags & symbol_flags::MODULE != 0
+                    && let Some(member_id) = self
+                        .resolve_namespace_member_from_all_binders(sym_name.as_str(), property_name)
+                {
+                    return self.resolve_validated_namespace_member(
+                        sym_id,
+                        member_id,
+                        property_name,
+                    );
                 }
 
                 None
