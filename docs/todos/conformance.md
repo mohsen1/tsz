@@ -1,82 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9535/12570 (75.9%) — full suite, error-code level
+**Current score**: ~9536/12570 (75.9%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
 
 ---
 
-## Session 2026-02-28a — JSX TS2783 spread overwrite detection
+## Session 2026-02-28a — JSX TS2783 + remove_undefined + Module resolution JS files
 
-### Area: jsx (55.4% pass rate, 108/195 passing)
+### JSX: TS2783 spread overwrite detection + remove_undefined — Checker (jsx_checker.rs)
 
-**Fixed**: TS2783 "'x' is specified more than once, so this usage will be overwritten." for JSX spread attributes — checker-level.
+**Fixed**: Two JSX attribute checking improvements:
 
-#### Fix: JSX spread attribute overwrite detection — Checker (jsx_checker.rs)
+1. **TS2783 spread overwrite detection**: When a JSX element has an explicit attribute followed by a spread with a required property of the same name, emit TS2783. Only fires under strictNullChecks for non-optional spread properties.
 
-**Root cause**: When a JSX element has an explicit attribute (e.g., `a={1}`) followed by a spread attribute (e.g., `{...props}`) that contains a required property with the same name, tsc emits TS2783 to warn that the explicit attribute will be overwritten. Our JSX checker had no such check.
+2. **Strip `undefined` from optional props**: Added `remove_undefined()` utility to solver. When a prop is `text?: string`, the solver returns `string | undefined` (read type). For JSX attribute checking (write position), stripped to `string` to match tsc's `removeMissingType`.
 
-**Fix**: Added TS2783 detection in `check_jsx_attributes_against_props`:
-1. Track explicit attribute names → node indices in a `FxHashMap<String, NodeIndex>`
-2. When processing a `JSX_SPREAD_ATTRIBUTE`, use `collect_object_spread_properties` to get the spread's properties
-3. For each non-optional property in the spread, check if a matching explicit attribute was previously seen
-4. If found, emit TS2783 on the explicit attribute's name node
-5. After checking, only remove required properties from tracking (optional properties don't definitely overwrite, so a later spread with the same property as required can still trigger TS2783)
+**Tests flipped PASS**: `jsxSpreadOverwritesAttributeStrict.tsx`, `tsxGenericAttributesType1.tsx`, `tsxAttributeResolution1.tsx` + collateral improvements
 
-**Key detail**: Only check when `strict_null_checks()` is enabled (matches tsc behavior). Optional spread properties do NOT trigger the diagnostic because the attribute may not be overwritten at runtime.
+**Tests not yet flipped** (blocked on cross-file heritage):
+- `tsxAttributeResolution3.tsx`, `tsxSpreadAttributesResolution11.tsx` — React.Component props unresolved
 
-**File**: `crates/tsz-checker/src/checkers/jsx_checker.rs:886-917`
+### Module resolution: JS file acceptance for import-following — CLI (fs.rs)
 
-**Tests flipped PASS**: +4 (error-code level)
-- `jsxSpreadOverwritesAttributeStrict.tsx` — primary target
-- `tsxGenericAttributesType1.tsx` — primary target
-- 2 collateral improvements
+`is_valid_module_file` rejected `.js/.jsx/.mjs/.cjs`. Split into two variants: strict (TS/JSON for exports) and relaxed (accepts JS for imports/main). Also fixed TS1479 skip_esm_map for `.cjs` files.
 
-**Tests not yet flipped** (2 more TS2783 targets blocked on cross-file heritage):
-- `tsxAttributeResolution3.tsx` — uses `React.Component` cross-file class; props type unresolved
-- `tsxSpreadAttributesResolution11.tsx` — same cross-file heritage issue
-
-#### Unit tests added
-- `test_ts2783_jsx_spread_overwrites_explicit_attribute` — basic required property overwrite
-- `test_ts2783_not_emitted_for_optional_spread_property` — optional property doesn't trigger
-- `test_ts2783_multiple_spreads_track_required_only` — multiple spreads: optional spread doesn't clear tracking, later required spread still fires
+**Test flipped PASS**: `nodeModulesAllowJsPackageImports.ts`
 
 #### Remaining JSX area analysis
 
 The largest JSX blocker remains cross-file class heritage resolution for `React.Component`:
 - 9+ diff=1 tests missing TS2322 because props type is unresolved
 - 2 diff=1 tests missing TS2783 because props type is unresolved
-- Many higher-diff tests also blocked
 
-The cross-file issue is documented in Session 2026-02-27b. The root problem is that `get_class_declaration_from_symbol` (core.rs:877) uses `self.ctx.binder.get_symbol(sym_id)` which only searches the current binder — not the lib binder where React.Component lives.
-
----
-
-## Session 2026-02-28a — Module resolution JS file acceptance for import-following
-
-### Area: node/allowJs (rank 4, was 57.1% → 63.2%)
-
-#### Root cause
-`is_valid_module_file` in `crates/tsz-cli/src/fs.rs` only accepted TS/JSON files, rejecting `.js/.jsx/.mjs/.cjs`. This prevented import-following from discovering JS source files referenced via package.json `imports` field (`#` prefix specifiers). tsc discovers these files during import resolution, not via include patterns.
-
-#### Fix 1: Split `is_valid_module_file` into two variants — CLI (fs.rs + resolution.rs)
-
-- `is_valid_module_file`: TS/JSON only — used by `resolve_export_entry` (export map resolution). Matches tsc behavior where exports require explicit `types` condition for declaration files.
-- `is_valid_module_or_js_file`: TS/JS/JSON — used by `resolve_package_entry`, general candidate resolution, bundler mode, and classic fallback. These are contexts where tsc resolves JS source files during import-following.
-
-**Key insight**: export map entries (`exports` field) and non-export entries (`imports` field, `main` field) have different file acceptance rules in tsc. Export entries are strict (TS/JSON only), while non-export entries accept JS files as resolution targets.
-
-**Files**: `crates/tsz-cli/src/fs.rs:304-320`, `crates/tsz-cli/src/driver/resolution.rs` (6 call sites updated)
-
-#### Fix 2: TS1479 skip_esm_map logic for .cjs files — Checker (declaration.rs)
-
-`.cjs` files are unambiguously CJS and should check `file_is_esm_map` to detect when a `.js` target is actually ESM. Previously `.cjs` was grouped with `.js/.jsx/.mjs` in the `skip_esm_map` check, which skipped the ESM map entirely.
-
-**File**: `crates/tsz-checker/src/declarations/import/declaration.rs:536-555`
-
-**Tests flipped PASS**: `nodeModulesAllowJsPackageImports.ts` (+1)
-
-**Regressions**: 0 (verified `selfNameModuleAugmentation.ts` still passes with the split approach)
+The cross-file issue is documented in Session 2026-02-27b.
 
 ---
 
