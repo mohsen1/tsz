@@ -708,7 +708,7 @@ impl<'a> CheckerState<'a> {
                         &[&name],
                     );
                     self.error_at_node(
-                        decl_idx,
+                        type_alias.name,
                         &message,
                         diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
                     );
