@@ -75,6 +75,48 @@ impl<'a> CheckerState<'a> {
         // Extract function shape from the tag function type
         let callee_shape =
             call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type);
+
+        // Detect constructor-only callable types (classes, interfaces with only `new` sigs).
+        // `get_contextual_signature` falls back to construct signatures when call
+        // signatures are absent, so we must check the callable shape directly.
+        // Tagged templates are function calls — constructor-only types are not callable.
+        if let Some(callable) =
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_tag_type)
+            && callable.call_signatures.is_empty() && !callable.construct_signatures.is_empty() {
+                self.type_check_template_substitutions_no_context(&tagged);
+                self.error_not_callable_at(tag_type, tagged.tag);
+                return TypeId::ERROR;
+            }
+
+        // If `get_contextual_signature` found no signatures (not even construct), check
+        // if the type is truly non-callable.  Types like `Function` or interfaces with
+        // no concrete signatures should still fall through to return `any`.
+        // Only emit TS2349 for types that are definitely non-callable (primitives, literals).
+        if callee_shape.is_none()
+            && function_shape_for_type(self.ctx.types, resolved_tag_type).is_none()
+        {
+            // Check if the type is a primitive/literal/intrinsic that cannot be called.
+            let is_definitely_not_callable =
+                matches!(
+                    resolved_tag_type,
+                    TypeId::STRING
+                        | TypeId::NUMBER
+                        | TypeId::BOOLEAN
+                        | TypeId::VOID
+                        | TypeId::NULL
+                        | TypeId::UNDEFINED
+                        | TypeId::NEVER
+                        | TypeId::SYMBOL
+                        | TypeId::BIGINT
+                        | TypeId::OBJECT
+                ) || tsz_solver::type_queries::is_literal_type(self.ctx.types, resolved_tag_type);
+            if is_definitely_not_callable {
+                self.type_check_template_substitutions_no_context(&tagged);
+                self.error_not_callable_at(tag_type, tagged.tag);
+                return TypeId::ERROR;
+            }
+        }
+
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
