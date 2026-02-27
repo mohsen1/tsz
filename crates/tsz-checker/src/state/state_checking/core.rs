@@ -306,6 +306,11 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
+            // TS2300: Check for property-vs-method kind conflicts in global augmentations.
+            // When `declare global { interface X { ... } }` appears in multiple files,
+            // check for member kind conflicts across the merged declarations.
+            self.check_global_augmentation_member_kind_conflicts();
+
             // Check for built-in global identifier conflicts (2397)
             self.check_built_in_global_identifier_conflicts();
 

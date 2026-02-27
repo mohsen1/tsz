@@ -840,6 +840,15 @@ const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bo
         return true;
     }
 
+    // Type Alias can merge with Interface (invalid, but merged to report duplicate)
+    if ((existing_flags & symbol_flags::TYPE_ALIAS) != 0
+        && (new_flags & symbol_flags::INTERFACE) != 0)
+        || ((existing_flags & symbol_flags::INTERFACE) != 0
+            && (new_flags & symbol_flags::TYPE_ALIAS) != 0)
+    {
+        return true;
+    }
+
     // Class can merge with Variable (invalid, but merged to report duplicate)
     if ((existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::VARIABLE) != 0)
         || ((existing_flags & symbol_flags::VARIABLE) != 0
@@ -2133,11 +2142,13 @@ pub fn create_binder_from_bound_file(
                 .entry(name.clone())
                 .or_default()
                 .extend(decls.iter().map(|aug| {
-                    // Tag each augmentation with its source file's arena
+                    // Tag each augmentation with its source file's arena and file name
                     // so the checker can read declaration nodes from the correct arena
-                    crate::binder::GlobalAugmentation::with_arena(
+                    // and emit cross-file diagnostics with the correct file path.
+                    crate::binder::GlobalAugmentation::with_arena_and_file(
                         aug.node,
                         Arc::clone(&other_file.arena),
+                        other_file.file_name.clone(),
                     )
                 }));
         }
