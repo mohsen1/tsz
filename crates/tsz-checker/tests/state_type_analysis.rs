@@ -14,6 +14,7 @@ fn extracts_callable_shape_and_call_signatures() {
         string_index: None,
         number_index: None,
         symbol: None,
+        is_abstract: false,
     });
     let function = types.function(FunctionShape::new(vec![], TypeId::BOOLEAN));
 

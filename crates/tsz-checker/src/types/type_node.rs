@@ -962,6 +962,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 string_index,
                 number_index,
                 symbol: None,
+                is_abstract: false,
             });
         }
 

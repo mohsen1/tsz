@@ -698,6 +698,7 @@ fn test_construct_signature_void_return_assignability() {
 
     let returns_instance = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -713,6 +714,7 @@ fn test_construct_signature_void_return_assignability() {
 
     let returns_void = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -737,6 +739,7 @@ fn test_call_signature_void_return_assignability() {
 
     let returns_number = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -752,6 +755,7 @@ fn test_call_signature_void_return_assignability() {
 
     let returns_void = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -776,6 +780,7 @@ fn test_call_signature_void_undefined_return_assignability() {
 
     let returns_void = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -791,6 +796,7 @@ fn test_call_signature_void_undefined_return_assignability() {
 
     let returns_undefined = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -1797,6 +1803,7 @@ fn test_function_type_accepts_callables() {
 
     let function_top = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1816,6 +1823,7 @@ fn test_function_type_accepts_callables() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -1838,6 +1846,7 @@ fn test_function_type_rejects_non_callables() {
 
     let function_top = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1865,6 +1874,7 @@ fn test_function_type_not_assignable_to_specific_callable() {
 
     let function_top = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: Vec::new(),
         properties: Vec::new(),
@@ -1873,6 +1883,7 @@ fn test_function_type_not_assignable_to_specific_callable() {
 
     let specific_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
             this_type: None,
@@ -2498,6 +2509,7 @@ fn test_rest_any_callable_target_from_function() {
     let rest_any = interner.array(TypeId::ANY);
     let target = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -2538,6 +2550,7 @@ fn test_rest_unknown_callable_target_from_callable() {
     let rest_unknown = interner.array(TypeId::UNKNOWN);
     let target = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -2558,6 +2571,7 @@ fn test_rest_unknown_callable_target_from_callable() {
 
     let source = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -3726,6 +3740,7 @@ fn test_function_intrinsic_accepts_callable() {
     // Create a callable with multiple signatures
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
@@ -4650,6 +4665,7 @@ fn test_private_brand_callable_with_brand() {
 
     let source = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),
@@ -4665,6 +4681,7 @@ fn test_private_brand_callable_with_brand() {
 
     let target = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             params: Vec::new(),

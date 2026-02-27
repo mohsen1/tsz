@@ -114,6 +114,7 @@ impl<'a> CheckerState<'a> {
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
+            is_abstract: false,
         };
         let factory = self.ctx.types.factory();
         factory.callable(new_shape)
@@ -214,6 +215,7 @@ impl<'a> CheckerState<'a> {
                     string_index: shape.string_index.clone(),
                     number_index: shape.number_index.clone(),
                     symbol: None,
+                    is_abstract: false,
                 };
                 factory.callable(new_shape)
             }
@@ -243,6 +245,7 @@ impl<'a> CheckerState<'a> {
                     string_index: None,
                     number_index: None,
                     symbol: None,
+                    is_abstract: false,
                 };
                 factory.callable(new_shape)
             }

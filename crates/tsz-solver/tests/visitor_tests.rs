@@ -683,6 +683,7 @@ fn test_function_and_callable_extractors() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: Vec::new(),

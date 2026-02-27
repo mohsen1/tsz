@@ -599,6 +599,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             string_index: new_string_index,
             number_index: new_number_index,
             symbol: shape.symbol,
+            is_abstract: shape.is_abstract,
         };
 
         self.interner.callable(new_shape)

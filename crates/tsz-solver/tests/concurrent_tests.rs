@@ -274,6 +274,7 @@ fn test_concurrent_callable_creation() {
         .map(|_| {
             let shape = CallableShape {
                 symbol: None,
+                is_abstract: false,
                 call_signatures: vec![],
                 construct_signatures: vec![],
                 properties: vec![PropertyInfo::readonly(

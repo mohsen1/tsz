@@ -12,6 +12,7 @@ fn classifies_resolution_and_signature_paths() {
         string_index: None,
         number_index: None,
         symbol: None,
+        is_abstract: false,
     });
     let function = types.function(FunctionShape::new(vec![], TypeId::STRING));
     let app = types.application(TypeId::STRING, vec![TypeId::NUMBER]);

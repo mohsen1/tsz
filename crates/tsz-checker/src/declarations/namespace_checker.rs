@@ -137,6 +137,7 @@ impl<'a> CheckerState<'a> {
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
+            is_abstract: false,
         })
     }
 
@@ -185,6 +186,7 @@ impl<'a> CheckerState<'a> {
                     string_index: None,
                     number_index: None,
                     symbol: None,
+                    is_abstract: false,
                 })
             } else {
                 return (function_type, Vec::new());
@@ -207,6 +209,7 @@ impl<'a> CheckerState<'a> {
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
+            is_abstract: false,
         });
 
         (merged_type, Vec::new())

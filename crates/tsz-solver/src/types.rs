@@ -1013,6 +1013,9 @@ pub struct CallableShape {
     pub number_index: Option<IndexSignature>,
     /// Nominal identity for class constructors (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
+    /// Whether this callable represents an abstract constructor type.
+    /// Set for both abstract class constructors and `abstract new (...)` construct signature types.
+    pub is_abstract: bool,
 }
 
 impl PartialEq for CallableShape {
@@ -1025,6 +1028,7 @@ impl PartialEq for CallableShape {
             && self.string_index == other.string_index
             && self.number_index == other.number_index
             && self.symbol == other.symbol
+            && self.is_abstract == other.is_abstract
     }
 }
 
@@ -1040,6 +1044,7 @@ impl std::hash::Hash for CallableShape {
         self.string_index.hash(state);
         self.number_index.hash(state);
         self.symbol.hash(state);
+        self.is_abstract.hash(state);
     }
 }
 

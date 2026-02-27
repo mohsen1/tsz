@@ -4655,6 +4655,7 @@ fn test_resolve_bounds_callable_this_parameter_contravariant() {
     let lower_this = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let lower = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: Vec::new(),
@@ -4669,6 +4670,7 @@ fn test_resolve_bounds_callable_this_parameter_contravariant() {
     });
     let upper = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: Vec::new(),
@@ -4772,6 +4774,7 @@ fn test_resolve_bounds_callable_subtype() {
 
     let lower = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![source_param],
@@ -4786,6 +4789,7 @@ fn test_resolve_bounds_callable_subtype() {
     });
     let upper = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![target_param],
@@ -4837,6 +4841,7 @@ fn test_resolve_bounds_function_to_callable() {
     });
     let upper = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![target_param],
@@ -4879,6 +4884,7 @@ fn test_resolve_bounds_callable_to_function() {
 
     let lower = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![source_param],

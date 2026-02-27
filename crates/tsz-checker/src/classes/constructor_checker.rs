@@ -501,6 +501,16 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
+            // Check if the callable shape itself is marked abstract.
+            // This handles anonymous abstract construct signature types like
+            // `abstract new (...args: any) => any` from type parameter constraints.
+            if let Some(callable_shape) =
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+                && callable_shape.is_abstract
+            {
+                return true;
+            }
+
             // Let solver unwrap application/type-query chains first.
             match resolve_abstract_constructor_anchor(self.ctx.types, type_id) {
                 AbstractConstructorAnchor::TypeQuery(sym_ref) => {

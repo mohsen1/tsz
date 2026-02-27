@@ -28,6 +28,7 @@ fn exposes_property_access_boundary_queries() {
         string_index: None,
         number_index: None,
         symbol: None,
+        is_abstract: false,
     });
     let tuple = types.tuple(vec![
         TupleElement {
