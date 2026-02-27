@@ -291,6 +291,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         member
     }
 
+    /// Compute the combined `this` type for a union of callable types.
+    ///
+    /// In TypeScript, when calling a union type, the `this` context must satisfy
+    /// ALL members' `this` requirements. The combined `this` type is the intersection
+    /// of all members' `this` types. If no member has a `this` type, returns `None`.
+    ///
+    /// Conservative: only extracts `this` from single-signature functions/callables.
+    /// Multi-overload callables are skipped because their `this` depends on which
+    /// overload is selected during resolution, and any overload may satisfy the
+    /// calling context.
+    fn compute_union_this_type(&self, members: &[TypeId]) -> Option<TypeId> {
+        let mut this_types = Vec::new();
+
+        for &member in members {
+            let member = self.normalize_union_member(member);
+            match self.interner.lookup(member) {
+                Some(TypeData::Function(func_id)) => {
+                    let function = self.interner.function_shape(func_id);
+                    if let Some(this_type) = function.this_type {
+                        this_types.push(this_type);
+                    }
+                }
+                Some(TypeData::Callable(callable_id)) => {
+                    let callable = self.interner.callable_shape(callable_id);
+                    // Only consider single-overload callables. Multi-overload
+                    // callables have per-overload this types that depend on
+                    // overload resolution, so we can't pre-compute a combined
+                    // this type for them.
+                    if callable.call_signatures.len() == 1
+                        && let Some(this_type) = callable.call_signatures[0].this_type {
+                            this_types.push(this_type);
+                        }
+                }
+                _ => {
+                    // Non-callable member or member without this type — doesn't constrain
+                }
+            }
+        }
+
+        if this_types.is_empty() {
+            return None;
+        }
+
+        // Intersect all this types
+        let mut result = this_types[0];
+        for &this_type in &this_types[1..] {
+            result = self.interner.intersection2(result, this_type);
+        }
+        Some(result)
+    }
+
     fn is_function_like_union_member(&self, member: TypeId) -> bool {
         let member = self.normalize_union_member(member);
         match self.interner.lookup(member) {
@@ -1004,6 +1055,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
+
+        // Phase 0: Check `this` parameter for the union.
+        // TSC computes the intersection of all members' `this` types and checks the
+        // calling context against it. A call fails with TS2684 if the `this` context
+        // doesn't satisfy ALL members' `this` requirements.
+        if let Some(combined_this) = self.compute_union_this_type(&members) {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, combined_this) {
+                return CallResult::ThisTypeMismatch {
+                    expected_this: combined_this,
+                    actual_this,
+                };
+            }
+        }
 
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)

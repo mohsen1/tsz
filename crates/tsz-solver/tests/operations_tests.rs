@@ -8970,3 +8970,266 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
         "T should be inferred as Bacon via direct arg unification through mapped type Application"
     );
 }
+
+// =============================================================================
+// Union this-parameter checking (TS2684)
+// =============================================================================
+
+#[test]
+fn test_union_call_this_type_mismatch_produces_error() {
+    // type F1 = (this: A) => void;
+    // type F2 = (this: B) => void;
+    // declare var f1: F1 | F2;
+    // f1(); // error TS2684 — `this` context (void) doesn't satisfy A & B
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // A = { a: string }
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    // B = { b: number }
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    // F1 = (this: A) => void
+    let f1 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_a),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    // F2 = (this: B) => void
+    let f2 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_b),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let union = interner.union(vec![f1, f2]);
+
+    // Call with no `this` context (void) — should produce ThisTypeMismatch
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::ThisTypeMismatch { .. }),
+        "Expected ThisTypeMismatch when calling union with incompatible this, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_this_type_satisfied_succeeds() {
+    // type F1 = (this: A) => void;
+    // type F2 = (this: B) => void;
+    // x: A & B & { f: F1 | F2 }
+    // x.f(); // OK — `this` is A & B which satisfies A & B
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    let f1 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_a),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let f2 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_b),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let union = interner.union(vec![f1, f2]);
+
+    // Provide A & B as `this` context — should succeed
+    let this_type = interner.intersection2(type_a, type_b);
+    evaluator.set_actual_this_type(Some(this_type));
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success when this context satisfies all union members, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_mixed_this_and_no_this_members() {
+    // type F0 = () => void; // no this
+    // type F1 = (this: A) => void;
+    // declare var f: F0 | F1;
+    // f(); // error TS2684 — F1 requires `this: A`, but calling context is void
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+
+    // F0 = () => void (no this)
+    let f0 = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    // F1 = (this: A) => void
+    let f1 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: Some(type_a),
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let union = interner.union(vec![f0, f1]);
+
+    // Call with no `this` — should fail because F1 demands `this: A`
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::ThisTypeMismatch { .. }),
+        "Expected ThisTypeMismatch for union with mixed this/no-this, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_multi_overload_callable_this_skipped() {
+    // interface F3 {
+    //   (this: A): void;
+    //   (this: B): void;
+    // }
+    // interface F5 {
+    //   (this: C): void;
+    //   (this: B): void;
+    // }
+    // Multi-overload callables should be SKIPPED in compute_union_this_type,
+    // so union F3 | F5 with correct `this` should succeed through overload resolution.
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
+
+    // F3 has overloads: (this: A): void, (this: B): void
+    let f3 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_a),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // F5 has overloads: (this: C): void, (this: B): void
+    let f5 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_c),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let union = interner.union(vec![f3, f5]);
+
+    // Provide A & B as `this` — both F3 and F5 have an overload accepting B,
+    // so this should succeed (multi-overload callables are skipped in this-check)
+    let this_type = interner.intersection2(type_a, type_b);
+    evaluator.set_actual_this_type(Some(this_type));
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for union of multi-overload callables with matching this, got {result:?}"
+    );
+}
+
+#[test]
+fn test_union_call_no_this_requirements_succeeds() {
+    // Both members have no `this` — should always succeed
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let f1 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
+        TypeId::NUMBER,
+    ));
+    let f2 = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("x"),
+            TypeId::NUMBER,
+        )],
+        TypeId::STRING,
+    ));
+    let union = interner.union(vec![f1, f2]);
+
+    // No this context — should succeed since neither member requires this
+    let result = evaluator.resolve_call(union, &[TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for union with no this requirements, got {result:?}"
+    );
+}
