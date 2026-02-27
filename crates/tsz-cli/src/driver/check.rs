@@ -617,6 +617,7 @@ pub(super) fn collect_diagnostics(
             checker.ctx.set_current_file_idx(file_idx);
             checker.ctx.is_external_module_by_file = Some(Arc::clone(&is_external_module_by_file));
             checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
+            checker.ctx.file_is_esm_map = Some(Arc::clone(&file_is_esm_map));
 
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
@@ -917,6 +918,7 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.set_current_file_idx(file_idx);
     checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
     checker.ctx.file_is_esm = file_is_esm_map.get(&file.file_name).copied();
+    checker.ctx.file_is_esm_map = Some(Arc::clone(file_is_esm_map));
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
     // TS1009 (Trailing comma not allowed) is emitted by our parser but is a

@@ -194,6 +194,11 @@ pub struct CheckerContext<'a> {
     /// When `None`, the checker falls back to extension + global module kind heuristic.
     pub file_is_esm: Option<bool>,
 
+    /// Per-file ESM/CJS map for ALL project files, keyed by file path.
+    /// Used by TS1479 to determine if an import *target* is ESM (not just the current file).
+    /// Set by the driver from module resolver; `None` in single-file / non-Node modes.
+    pub file_is_esm_map: Option<Arc<FxHashMap<String, bool>>>,
+
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 
