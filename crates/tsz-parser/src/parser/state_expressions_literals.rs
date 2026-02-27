@@ -829,15 +829,10 @@ impl ParserState {
 
         // Consume trailing comma and any excess arguments to avoid
         // cascading TS1005 parse errors. The checker validates arity.
+        // TSC allows trailing commas in import() argument lists (like regular
+        // function calls), so we don't emit TS1009 here.
         while self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
-                // Trailing comma → TS1009
-                self.parse_error_at(
-                    self.token_pos().saturating_sub(1),
-                    1,
-                    "Trailing comma not allowed.",
-                    diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
-                );
                 break;
             }
             self.parse_assignment_expression();

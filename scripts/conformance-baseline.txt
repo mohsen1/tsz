@@ -420,6 +420,7 @@ FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportParsingError.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportParseErrors.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportWithoutFromClause.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseNonInstantiatedModule.ts
+FAIL TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseWithExport.ts
 FAIL TypeScript/tests/cases/compiler/es6MemberScoping.ts
 FAIL TypeScript/tests/cases/compiler/escapedIdentifiers.ts
 FAIL TypeScript/tests/cases/compiler/esmNoSynthesizedDefault.ts
@@ -468,7 +469,6 @@ FAIL TypeScript/tests/cases/compiler/exportDefaultInterface.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceAndTwoFunctions.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceClassAndFunctionOverloads.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceClassAndValue.ts
-FAIL TypeScript/tests/cases/compiler/exportDefaultProperty2.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultStripsFreshness.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultTypeAndClass.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultTypeAndFunctionOverloads.ts
@@ -476,7 +476,6 @@ FAIL TypeScript/tests/cases/compiler/exportDefaultTypeClassAndValue.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsClassRedeclarationError.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsDefaultProperty.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsOfModule.ts
-FAIL TypeScript/tests/cases/compiler/exportEqualsProperty2.ts
 FAIL TypeScript/tests/cases/compiler/exportInterfaceClassAndValueWithDuplicatesInImportList.ts
 FAIL TypeScript/tests/cases/compiler/exportSpecifierReferencingOuterDeclaration4.ts
 FAIL TypeScript/tests/cases/compiler/expressionTypeNodeShouldError.ts
@@ -530,6 +529,8 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -999,6 +1000,7 @@ FAIL TypeScript/tests/cases/compiler/namespaceMergedWithImportAliasNoCrash.ts
 FAIL TypeScript/tests/cases/compiler/namespaceNotMergedWithFunctionDefaultExport.ts
 FAIL TypeScript/tests/cases/compiler/namespacesWithTypeAliasOnlyExportsMerge.ts
 FAIL TypeScript/tests/cases/compiler/nanEquality.ts
+FAIL TypeScript/tests/cases/compiler/narrowByBooleanComparison.ts
 FAIL TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue3.ts
 FAIL TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue6.ts
 FAIL TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue7.ts
@@ -2122,6 +2124,7 @@ FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/negateOperato
 FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/negateOperator/negateOperatorWithAnyOtherType.ts
 FAIL TypeScript/tests/cases/conformance/expressions/valuesAndReferences/assignmentToParenthesizedIdentifiers.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/circularReference.ts
+FAIL TypeScript/tests/cases/conformance/externalModules/duplicateExportAssignments.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/exportAssignmentConstrainedGenericType.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/exportAssignmentOfExportNamespaceWithDefault.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/exportNonInitializedVariablesInIfThenStatementNoCrash1.ts
@@ -2198,13 +2201,7 @@ FAIL TypeScript/tests/cases/conformance/generators/generatorReturnContextualType
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeFallback.2.ts
 FAIL TypeScript/tests/cases/conformance/generators/generatorReturnTypeInferenceNonStrict.ts
 FAIL TypeScript/tests/cases/conformance/generators/generatorYieldContextualType.ts
-FAIL TypeScript/tests/cases/conformance/importAssertion/importAssertion1.ts
-FAIL TypeScript/tests/cases/conformance/importAssertion/importAssertion4.ts
-FAIL TypeScript/tests/cases/conformance/importAssertion/importAssertion5.ts
-FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes1.ts
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes10.ts
-FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes4.ts
-FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes5.ts
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes9.ts
 FAIL TypeScript/tests/cases/conformance/importDefer/dynamicImportDefer.ts
 FAIL TypeScript/tests/cases/conformance/importDefer/exportDeferInvalid.ts
@@ -2233,10 +2230,15 @@ FAIL TypeScript/tests/cases/conformance/interfaces/interfacesExtendingClasses/in
 FAIL TypeScript/tests/cases/conformance/internalModules/codeGeneration/importStatementsInterfaces.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/AmbientModuleAndAmbientWithSameNameAndCommonRoot.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/AmbientModuleAndNonAmbientClassWithSameNameAndCommonRoot.ts
+FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndGenericClassStaticFunctionOfTheSameName.ts
+FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndNonGenericClassStaticFunctionOfTheSameName.ts
+FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName.ts
+FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleWithSameNameAndCommonRoot.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleWithSameNameAndCommonRootES6.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndCommonRoot.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndClassWithSameNameAndCommonRoot.ts
+FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndFunctionWithSameNameAndCommonRoot.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedModulesOfTheSameName.ts
 FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts
@@ -2778,6 +2780,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
@@ -4996,7 +4999,6 @@ PASS TypeScript/tests/cases/compiler/es6ImportNameSpaceImportWithExport.ts
 PASS TypeScript/tests/cases/compiler/es6ImportWithJsDocTags.ts
 PASS TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseAmd.ts
 PASS TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseInEs5.ts
-PASS TypeScript/tests/cases/compiler/es6ImportWithoutFromClauseWithExport.ts
 PASS TypeScript/tests/cases/compiler/es6Module.ts
 PASS TypeScript/tests/cases/compiler/es6ModuleClassDeclaration.ts
 PASS TypeScript/tests/cases/compiler/es6ModuleConst.ts
@@ -5083,6 +5085,7 @@ PASS TypeScript/tests/cases/compiler/exportDefaultMissingName.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultParenthesize.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultParenthesizeES6.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultProperty.ts
+PASS TypeScript/tests/cases/compiler/exportDefaultProperty2.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultQualifiedNameNoError.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultVariable.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultWithJSDoc1.ts
@@ -5100,6 +5103,7 @@ PASS TypeScript/tests/cases/compiler/exportEqualsAmd.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsClassNoRedeclarationError.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsCommonJs.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsProperty.ts
+PASS TypeScript/tests/cases/compiler/exportEqualsProperty2.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsUmd.ts
 PASS TypeScript/tests/cases/compiler/exportImport.ts
 PASS TypeScript/tests/cases/compiler/exportImportAndClodule.ts
@@ -5376,8 +5380,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6414,7 +6416,6 @@ PASS TypeScript/tests/cases/compiler/namespaces1.ts
 PASS TypeScript/tests/cases/compiler/namespaces2.ts
 PASS TypeScript/tests/cases/compiler/namespacesDeclaration1.ts
 PASS TypeScript/tests/cases/compiler/namespacesDeclaration2.ts
-PASS TypeScript/tests/cases/compiler/narrowByBooleanComparison.ts
 PASS TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue1.ts
 PASS TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue10.ts
 PASS TypeScript/tests/cases/compiler/narrowByClauseExpressionInSwitchTrue2.ts
@@ -10044,7 +10045,6 @@ PASS TypeScript/tests/cases/conformance/externalModules/asiPreventsParsingAsAmbi
 PASS TypeScript/tests/cases/conformance/externalModules/commonJSImportAsPrimaryExpression.ts
 PASS TypeScript/tests/cases/conformance/externalModules/commonJsImportBindingElementNarrowType.ts
 PASS TypeScript/tests/cases/conformance/externalModules/commonJSImportNotAsPrimaryExpression.ts
-PASS TypeScript/tests/cases/conformance/externalModules/duplicateExportAssignments.ts
 PASS TypeScript/tests/cases/conformance/externalModules/es6/es6modulekind.ts
 PASS TypeScript/tests/cases/conformance/externalModules/es6/es6modulekindExportClassNameWithObject.ts
 PASS TypeScript/tests/cases/conformance/externalModules/es6/es6modulekindWithES2015Target.ts
@@ -10221,11 +10221,17 @@ PASS TypeScript/tests/cases/conformance/generators/generatorReturnTypeIndirectRe
 PASS TypeScript/tests/cases/conformance/generators/generatorReturnTypeInference.ts
 PASS TypeScript/tests/cases/conformance/generators/restParameterInDownlevelGenerator.ts
 PASS TypeScript/tests/cases/conformance/generators/yieldStatementNoAsiAfterTransform.ts
+PASS TypeScript/tests/cases/conformance/importAssertion/importAssertion1.ts
 PASS TypeScript/tests/cases/conformance/importAssertion/importAssertion2.ts
 PASS TypeScript/tests/cases/conformance/importAssertion/importAssertion3.ts
+PASS TypeScript/tests/cases/conformance/importAssertion/importAssertion4.ts
+PASS TypeScript/tests/cases/conformance/importAssertion/importAssertion5.ts
+PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes1.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes11.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes2.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes3.ts
+PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes4.ts
+PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes5.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes6.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes7.ts
 PASS TypeScript/tests/cases/conformance/importAttributes/importAttributes8.ts
@@ -10295,18 +10301,13 @@ PASS TypeScript/tests/cases/conformance/internalModules/codeGeneration/nameColli
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/AmbientModuleAndAmbientFunctionWithTheSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/AmbientModuleAndNonAmbientFunctionWithTheSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModuleMemberThatUsesClassTypeParameter.ts
-PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndGenericClassStaticFunctionOfTheSameName.ts
-PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndNonGenericClassStaticFunctionOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedStaticFunctionUsingClassPrivateStatics.ts
-PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndNonExportedFunctionThatShareAName.ts
-PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticVariableAndNonExportedVarThatShareAName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStringIndexerAndExportedFunctionWithTypeIncompatibleWithIndexer.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/EnumAndModuleWithSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndDifferentCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndEnumWithSameNameAndCommonRoot.ts
-PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndFunctionWithSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedClassesOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedInterfacesOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedClassesOfTheSameName.ts
@@ -11862,7 +11863,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts

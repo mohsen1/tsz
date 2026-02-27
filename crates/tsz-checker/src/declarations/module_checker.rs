@@ -3,6 +3,7 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::Visibility;
 
 // =============================================================================
@@ -67,6 +68,177 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// TS2322: Check that dynamic import options are assignable to `ImportCallOptions`.
+    ///
+    /// For `import(specifier, options)`, validates that the second argument (options)
+    /// is assignable to the global `ImportCallOptions` interface. This catches cases like:
+    /// ```ts
+    /// declare global { interface ImportAttributes { type: "json" } }
+    /// import("./a", { with: { type: "not-json" } }); // TS2322
+    /// ```
+    ///
+    /// Builds the options type manually from the AST using string literal types
+    /// (not widened) to match TSC's behavior. This avoids dependence on contextual
+    /// typing which may not narrow deeply nested object literals.
+    pub(crate) fn check_dynamic_import_options_type(
+        &mut self,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::TypeId;
+
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
+
+        // Only check if there's a second argument (the options object)
+        if args.len() < 2 {
+            return;
+        }
+
+        let options_idx = args[1];
+
+        // Resolve ImportAttributes (augmented version including user's `declare global`).
+        let Some(import_attributes_type) = self.resolve_lib_type_by_name("ImportAttributes") else {
+            return;
+        };
+        // Build target type manually: { with?: ImportAttributes; assert?: ImportAssertions; }
+        // We can't use resolve_lib_type_by_name("ImportCallOptions") because its `with`
+        // property references the base ImportAttributes (without user augmentations).
+        let with_atom = self.ctx.types.intern_string("with");
+        let assert_atom = self.ctx.types.intern_string("assert");
+        let import_call_options_type = self.ctx.types.factory().object(vec![
+            tsz_solver::PropertyInfo::opt(with_atom, import_attributes_type),
+            tsz_solver::PropertyInfo::opt(assert_atom, import_attributes_type),
+        ]);
+
+        // Build the options type manually from the AST with string literal types.
+        let Some(options_node) = self.ctx.arena.get(options_idx) else {
+            return;
+        };
+
+        if options_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let options_type = self.get_type_of_node(options_idx);
+            if options_type == TypeId::ANY
+                || options_type == TypeId::ERROR
+                || options_type == TypeId::NEVER
+            {
+                return;
+            }
+            self.check_assignable_or_report_at(
+                options_type,
+                import_call_options_type,
+                options_idx,
+                options_idx,
+            );
+            return;
+        }
+
+        // Build options object type from AST with literal types for nested attributes
+        let options_type = self.build_import_options_type(options_idx);
+
+        if options_type == TypeId::ANY
+            || options_type == TypeId::ERROR
+            || options_type == TypeId::NEVER
+        {
+            return;
+        }
+
+        // Check assignability — emit TS2322 if not assignable
+        self.check_assignable_or_report_at(
+            options_type,
+            import_call_options_type,
+            options_idx,
+            options_idx,
+        );
+    }
+
+    /// Build an object type from a dynamic import options literal, using string literal
+    /// types for nested `with`/`assert` attribute values.
+    fn build_import_options_type(&mut self, obj_idx: NodeIndex) -> tsz_solver::TypeId {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let children = self.ctx.arena.get_children(obj_idx);
+        let mut properties = Vec::new();
+
+        for child_idx in children {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+
+            if child_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(prop.name) else {
+                    continue;
+                };
+
+                // For `with` and `assert` properties, build nested type from attributes
+                let value_type = if (name == "with" || name == "assert")
+                    && let Some(val_node) = self.ctx.arena.get(prop.initializer)
+                    && val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                {
+                    self.build_literal_object_type(prop.initializer)
+                } else {
+                    self.get_type_of_node(prop.initializer)
+                };
+
+                let name_atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+        }
+
+        if properties.is_empty() {
+            return self.get_type_of_node(obj_idx);
+        }
+
+        self.ctx.types.factory().object(properties)
+    }
+
+    /// Build an object type from an object literal using string literal types for
+    /// all string literal property values (not widened).
+    fn build_literal_object_type(&mut self, obj_idx: NodeIndex) -> tsz_solver::TypeId {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let children = self.ctx.arena.get_children(obj_idx);
+        let mut properties = Vec::new();
+
+        for child_idx in children {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+
+            if child_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                    continue;
+                };
+                let Some(name) = self.get_property_name(prop.name) else {
+                    continue;
+                };
+
+                // Use string literal type for string literal values
+                let value_type = if let Some(val_node) = self.ctx.arena.get(prop.initializer)
+                    && let Some(lit) = self.ctx.arena.get_literal(val_node)
+                {
+                    self.ctx.types.factory().literal_string(&lit.text)
+                } else {
+                    self.get_type_of_node(prop.initializer)
+                };
+
+                let name_atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+        }
+
+        if properties.is_empty() {
+            return self.get_type_of_node(obj_idx);
+        }
+
+        self.ctx.types.factory().object(properties)
     }
 
     /// Check dynamic import module specifier for unresolved modules.
