@@ -471,8 +471,42 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // Callable <: Function
             self.checker
                 .check_callable_to_function_subtype(CallableShapeId(shape_id), t_fn_id)
+        } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
+            // Callable <: Object — check callable's properties against object's required properties.
+            // This handles cases like Array<T> (a Callable) being assigned to ConcatArray<T> (an Object).
+            let s_callable = self
+                .checker
+                .interner
+                .callable_shape(CallableShapeId(shape_id));
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            let s_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: s_callable.properties.clone(),
+                string_index: s_callable.string_index.clone(),
+                number_index: s_callable.number_index.clone(),
+                symbol: s_callable.symbol,
+            };
+            self.checker.check_object_subtype(&s_shape, None, &t_shape)
+        } else if let Some(t_shape_id) =
+            object_with_index_shape_id(self.checker.interner, self.target)
+        {
+            // Callable <: ObjectWithIndex
+            let s_callable = self
+                .checker
+                .interner
+                .callable_shape(CallableShapeId(shape_id));
+            let t_shape = self.checker.interner.object_shape(t_shape_id);
+            let s_shape = ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: s_callable.properties.clone(),
+                string_index: s_callable.string_index.clone(),
+                number_index: s_callable.number_index.clone(),
+                symbol: s_callable.symbol,
+            };
+            self.checker
+                .check_object_to_indexed(&s_shape.properties, None, &t_shape)
         } else {
-            // Trace: Callable source doesn't match non-callable target
+            // Trace: Callable source doesn't match non-callable/non-object target
             if let Some(tracer) = &mut self.checker.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
                     source_type: self.source,

@@ -183,13 +183,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     }
 
     /// Get the Array<T> interface type from lib.d.ts.
-    /// Delegates to the type environment.
+    /// Uses the interner (`QueryDatabase`) which stores the same value as the
+    /// type environment, avoiding `RefCell` borrow conflicts when the subtype
+    /// checker is called from within a mutable borrow of the type environment.
     fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
-        if let Ok(env) = self.type_env.try_borrow() {
-            env.get_array_base_type()
-        } else {
-            None
-        }
+        self.types.get_array_base_type()
     }
 
     /// Get the type parameters for the Array<T> interface.
