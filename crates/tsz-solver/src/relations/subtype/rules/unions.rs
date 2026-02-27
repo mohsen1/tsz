@@ -12,8 +12,8 @@ use crate::types::{
     MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
 };
 use crate::visitor::{
-    index_access_parts, is_identity_comparable_type, is_literal_type, keyof_inner_type,
-    mapped_type_id, type_param_info, union_list_id,
+    application_id, index_access_parts, is_identity_comparable_type, is_literal_type,
+    keyof_inner_type, mapped_type_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -89,12 +89,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // T is assignable to { [K in keyof T]+?: T[K] } (Partial<T>)
         // T is assignable to { readonly [K in keyof T]: T[K] } (Readonly<T>)
         // T is assignable to { [K in keyof T]: T[K] } (identity mapped type)
+        // T is assignable to { [P in keyof T]: T[keyof T] } (widened template)
         //
         // This implements tsc's typeRelatedToMappedType: when the target is a
         // generic homomorphic mapped type whose source is the same type parameter
         // (or a supertype), and the mapped type doesn't remove optionality,
         // the source type parameter is assignable.
         if let Some(mapped_id) = mapped_type_id(self.interner, target)
+            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
+        {
+            return SubtypeResult::True;
+        }
+
+        // Also handle Application targets that resolve to mapped types.
+        // e.g., MyMap<U> where type MyMap<T> = { [P in keyof T]: T[keyof T] }
+        // The Application expands to a Mapped type which we can then check.
+        if let Some(app_id) = application_id(self.interner, target)
+            && let Some(expanded) = self.try_expand_application(app_id)
+            && let Some(mapped_id) = mapped_type_id(self.interner, expanded)
             && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
         {
             return SubtypeResult::True;
@@ -145,21 +157,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        // Template must be S[K] where K is the iteration parameter (homomorphic form)
-        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
-        else {
-            return false;
+        // Fast path: Template is exactly S[K] where K is the iteration parameter
+        let is_identity_template = if let Some((template_obj, template_idx)) =
+            index_access_parts(self.interner, mapped.template)
+        {
+            if let Some(idx_param) = type_param_info(self.interner, template_idx) {
+                idx_param.name == mapped.type_param.name && template_obj == constraint_source
+            } else {
+                false
+            }
+        } else {
+            false
         };
-        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
-            return false;
-        };
-        if idx_param.name != mapped.type_param.name {
-            return false;
-        }
 
-        // Template object must match constraint source (e.g., T[K] where constraint is keyof T)
-        if template_obj != constraint_source {
-            return false;
+        if !is_identity_template {
+            // General case: construct S[K] (source value type at key K) and check
+            // if S[K] <: Template. K is the iteration parameter with constraint keyof(S).
+            //
+            // This handles templates like T[keyof T], T[P] | undefined, etc.
+            // The visit_index_access subtype rule handles S[I] <: T[J] by checking
+            // S <: T AND I <: J, and type parameter subtype checking handles
+            // K <: keyof S via K's constraint.
+            let k_type_id = self.interner.type_param(TypeParamInfo {
+                name: mapped.type_param.name,
+                constraint: Some(mapped.constraint),
+                default: None,
+                is_const: false,
+            });
+            let source_value_type = self.interner.index_access(constraint_source, k_type_id);
+            if !self
+                .check_subtype(source_value_type, mapped.template)
+                .is_true()
+            {
+                return false;
+            }
         }
 
         // Source type parameter must be related to the mapped type's source:

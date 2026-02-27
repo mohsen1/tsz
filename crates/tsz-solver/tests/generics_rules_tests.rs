@@ -1170,3 +1170,131 @@ fn test_t_not_subtype_of_filter_t_remove_optional() {
         "T should NOT be subtype of FilterExclOpt<T> (-? makes target narrower)"
     );
 }
+
+// ─── Non-identity homomorphic mapped type template tests ─────────────────────
+
+/// Helper to create a homomorphic mapped type with a custom template:
+/// { [K in keyof source]<modifiers>: template }
+fn make_homomorphic_mapped_with_template(
+    interner: &TypeInterner,
+    source: TypeId,
+    template: TypeId,
+    optional: Option<crate::MappedModifier>,
+    readonly: Option<crate::MappedModifier>,
+) -> TypeId {
+    let k_name = interner.intern_string("K");
+    let constraint = interner.intern(TypeData::KeyOf(source));
+    interner.mapped(crate::MappedType {
+        type_param: crate::TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type: None,
+        template,
+        optional_modifier: optional,
+        readonly_modifier: readonly,
+    })
+}
+
+#[test]
+fn test_type_param_assignable_to_widened_template_mapped() {
+    // type MyMap<T> = { [P in keyof T]: T[keyof T] }
+    // U <: MyMap<U> should be TRUE
+    //
+    // T[keyof T] is the union of all value types, so for each property P,
+    // T[P] is always assignable to T[keyof T] (a member of a union).
+    let interner = TypeInterner::new();
+    let u_name = interner.intern_string("U");
+    let u_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Template: U[keyof U]
+    let keyof_u = interner.intern(TypeData::KeyOf(u_param));
+    let template = interner.intern(TypeData::IndexAccess(u_param, keyof_u));
+
+    // { [P in keyof U]: U[keyof U] }
+    let mapped = make_homomorphic_mapped_with_template(&interner, u_param, template, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(u_param, mapped).is_true(),
+        "U should be assignable to {{ [P in keyof U]: U[keyof U] }}"
+    );
+}
+
+#[test]
+fn test_type_param_not_assignable_to_string_template_mapped() {
+    // type StringMap<T> = { [P in keyof T]: string }
+    // U <: StringMap<U> should be FALSE (U's values aren't necessarily string)
+    let interner = TypeInterner::new();
+    let u_name = interner.intern_string("U");
+    let u_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // { [P in keyof U]: string }
+    let mapped =
+        make_homomorphic_mapped_with_template(&interner, u_param, TypeId::STRING, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(u_param, mapped).is_true(),
+        "U should NOT be assignable to {{ [P in keyof U]: string }}"
+    );
+}
+
+#[test]
+fn test_type_param_assignable_to_identity_mapped() {
+    // type Identity<T> = { [P in keyof T]: T[P] }
+    // U <: Identity<U> should be TRUE (existing behavior, now also handled by general path)
+    let interner = TypeInterner::new();
+    let u_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let identity_u = make_homomorphic_mapped(&interner, u_param, None, None);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.check_subtype(u_param, identity_u).is_true(),
+        "U should be assignable to {{ [K in keyof U]: U[K] }}"
+    );
+}
+
+#[test]
+fn test_type_param_not_assignable_to_required_mapped() {
+    // U <: Required<U> should be FALSE (Required removes optionality)
+    let interner = TypeInterner::new();
+    let u_param = interner.intern(TypeData::TypeParameter(crate::TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let required_u = make_homomorphic_mapped(
+        &interner,
+        u_param,
+        Some(crate::MappedModifier::Remove),
+        None,
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.check_subtype(u_param, required_u).is_true(),
+        "U should NOT be assignable to Required<U> (-? removes optionality)"
+    );
+}

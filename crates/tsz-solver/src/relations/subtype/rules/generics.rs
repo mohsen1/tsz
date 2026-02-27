@@ -9,7 +9,7 @@
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 use crate::def::DefId;
-use crate::types::{MappedModifier, MappedType, TypeData, Visibility};
+use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, is_empty_object_type, keyof_inner_type, lazy_def_id,
@@ -801,23 +801,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        // Template must be S[K] where K is the iteration parameter
-        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
-        else {
-            return false;
-        };
-        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
-            return false;
-        };
-        if idx_param.name != mapped.type_param.name {
-            return false;
-        }
-        if template_obj != constraint_source {
-            return false;
+        // Fast path: Template is exactly S[K] where K is the iteration parameter
+        if let Some((template_obj, template_idx)) =
+            index_access_parts(self.interner, mapped.template)
+            && let Some(idx_param) = type_param_info(self.interner, template_idx)
+            && idx_param.name == mapped.type_param.name
+            && template_obj == constraint_source
+        {
+            return self.check_subtype(source, constraint_source).is_true();
         }
 
-        // Check if source is assignable to the constraint source
-        self.check_subtype(source, constraint_source).is_true()
+        // General case: construct the source's property value type S[K] where K is
+        // the iteration parameter with constraint `keyof S`, then check S[K] <: Template.
+        //
+        // This handles mapped types like {[P in keyof T]: T[keyof T]} where the template
+        // uses a broader index than just the iteration parameter. The visit_index_access
+        // rule in the subtype visitor handles S[I] <: T[J] by checking S <: T AND I <: J,
+        // and check_type_parameter_subtype handles K <: keyof S via K's constraint.
+        let k_type_id = self.interner.type_param(TypeParamInfo {
+            name: mapped.type_param.name,
+            constraint: Some(mapped.constraint),
+            default: None,
+            is_const: false,
+        });
+        let source_value_type = self.interner.index_access(constraint_source, k_type_id);
+        if self
+            .check_subtype(source_value_type, mapped.template)
+            .is_true()
+            && self.check_subtype(source, constraint_source).is_true()
+        {
+            return true;
+        }
+
+        false
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
