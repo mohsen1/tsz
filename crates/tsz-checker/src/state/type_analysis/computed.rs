@@ -707,6 +707,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
                         &[&name],
                     );
+                    // Point at the type alias name, not the entire declaration
                     self.error_at_node(
                         type_alias.name,
                         &message,

@@ -573,22 +573,18 @@ impl BinderState {
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
-        // A module can have multiple wildcard re-exports, check all of them
+        // A module can have multiple wildcard re-exports, check all of them.
         if let Some(source_modules) = self.wildcard_reexports.get(module_specifier) {
             let source_type_only_flags = self.wildcard_reexports_type_only.get(module_specifier);
-            for source_module in source_modules {
+
+            for (i, source_module) in source_modules.iter().enumerate() {
                 let source_is_type_only = source_type_only_flags
-                    .and_then(|entries| {
-                        entries
-                            .iter()
-                            .find(|(module, _)| module == source_module)
-                            .map(|(_, is_type_only)| *is_type_only)
-                    })
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
                     .unwrap_or(false);
 
                 debug!(
-                    "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
-                    export_name, module_specifier, source_module
+                    "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}' (type_only={})",
+                    export_name, module_specifier, source_module, source_is_type_only
                 );
                 if let Some(result) = self.resolve_import_with_reexports_inner_type_only(
                     source_module,

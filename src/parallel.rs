@@ -1171,34 +1171,37 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             let source_type_only = result.wildcard_reexports_type_only.get(file_name);
 
             if entry.len() + source_modules.len() <= 16 {
-                for source_module in source_modules {
+                for (i, source_module) in source_modules.iter().enumerate() {
+                    // Use index-based access to get the correct type-only flag
                     let source_is_type_only = source_type_only
-                        .and_then(|entries| {
-                            entries
-                                .iter()
-                                .find(|(module, _)| module == source_module)
-                                .map(|(_, is_type_only)| *is_type_only)
-                        })
+                        .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
                         .unwrap_or(false);
 
-                    if !entry.contains(source_module) {
+                    if let Some(pos) = entry.iter().position(|m| m == source_module) {
+                        // Already have this source — if this path is non-type-only,
+                        // override the existing flag (value re-export takes priority).
+                        if !source_is_type_only {
+                            type_only_entry[pos].1 = false;
+                        }
+                    } else {
                         entry.push(source_module.clone());
                         type_only_entry.push((source_module.clone(), source_is_type_only));
                     }
                 }
             } else {
-                let mut seen: FxHashSet<String> = entry.iter().cloned().collect();
-                for source_module in source_modules {
+                let mut seen: FxHashMap<String, usize> = entry.iter().cloned().zip(0..).collect();
+                for (i, source_module) in source_modules.iter().enumerate() {
                     let source_is_type_only = source_type_only
-                        .and_then(|entries| {
-                            entries
-                                .iter()
-                                .find(|(module, _)| module == source_module)
-                                .map(|(_, is_type_only)| *is_type_only)
-                        })
+                        .and_then(|entries| entries.get(i).map(|(_, is_to)| *is_to))
                         .unwrap_or(false);
 
-                    if seen.insert(source_module.clone()) {
+                    if let Some(&pos) = seen.get(source_module) {
+                        if !source_is_type_only {
+                            type_only_entry[pos].1 = false;
+                        }
+                    } else {
+                        let pos = entry.len();
+                        seen.insert(source_module.clone(), pos);
                         entry.push(source_module.clone());
                         type_only_entry.push((source_module.clone(), source_is_type_only));
                     }
