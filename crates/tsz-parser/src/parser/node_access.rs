@@ -12,19 +12,19 @@ use super::node::{
     CompositeTypeData, ComputedPropertyData, ConditionalExprData, ConditionalTypeData,
     ConstructorData, DecoratorData, EnumData, EnumMemberData, ExportAssignmentData, ExportDeclData,
     ExprStatementData, ExprWithTypeArgsData, ExtendedNodeInfo, ForInOfData, FunctionData,
-    FunctionTypeData, HeritageData, IdentifierData, IfStatementData, ImportClauseData,
-    ImportDeclData, IndexSignatureData, IndexedAccessTypeData, InferTypeData, InterfaceData,
-    JsxAttributeData, JsxAttributesData, JsxClosingData, JsxElementData, JsxExpressionData,
-    JsxFragmentData, JsxNamespacedNameData, JsxOpeningData, JsxSpreadAttributeData, JsxTextData,
-    JumpData, LabeledData, LiteralData, LiteralExprData, LiteralTypeData, LoopData, MappedTypeData,
-    MethodDeclData, ModuleBlockData, ModuleData, NamedImportsData, NamedTupleMemberData, Node,
-    NodeArena, ParameterData, ParenthesizedData, PropertyAssignmentData, PropertyDeclData,
-    QualifiedNameData, ReturnData, ShorthandPropertyData, SignatureData, SourceFileData,
-    SpecifierData, SpreadData, SwitchData, TaggedTemplateData, TemplateExprData,
-    TemplateLiteralTypeData, TemplateSpanData, TryData, TupleTypeData, TypeAliasData,
-    TypeAssertionData, TypeLiteralData, TypeOperatorData, TypeParameterData, TypePredicateData,
-    TypeQueryData, TypeRefData, UnaryExprData, UnaryExprDataEx, VariableData,
-    VariableDeclarationData, WrappedTypeData,
+    FunctionTypeData, HeritageData, IdentifierData, IfStatementData, ImportAttributeData,
+    ImportAttributesData, ImportClauseData, ImportDeclData, IndexSignatureData,
+    IndexedAccessTypeData, InferTypeData, InterfaceData, JsxAttributeData, JsxAttributesData,
+    JsxClosingData, JsxElementData, JsxExpressionData, JsxFragmentData, JsxNamespacedNameData,
+    JsxOpeningData, JsxSpreadAttributeData, JsxTextData, JumpData, LabeledData, LiteralData,
+    LiteralExprData, LiteralTypeData, LoopData, MappedTypeData, MethodDeclData, ModuleBlockData,
+    ModuleData, NamedImportsData, NamedTupleMemberData, Node, NodeArena, ParameterData,
+    ParenthesizedData, PropertyAssignmentData, PropertyDeclData, QualifiedNameData, ReturnData,
+    ShorthandPropertyData, SignatureData, SourceFileData, SpecifierData, SpreadData, SwitchData,
+    TaggedTemplateData, TemplateExprData, TemplateLiteralTypeData, TemplateSpanData, TryData,
+    TupleTypeData, TypeAliasData, TypeAssertionData, TypeLiteralData, TypeOperatorData,
+    TypeParameterData, TypePredicateData, TypeQueryData, TypeRefData, UnaryExprData,
+    UnaryExprDataEx, VariableData, VariableDeclarationData, WrappedTypeData,
 };
 use super::syntax_kind_ext::{
     ARRAY_BINDING_PATTERN, ARROW_FUNCTION, AS_EXPRESSION, BINARY_EXPRESSION, BLOCK,
@@ -1011,6 +1011,30 @@ impl NodeArena {
         }
     }
 
+    /// Get import attributes data (`with { ... }` or `assert { ... }`).
+    #[inline]
+    #[must_use]
+    pub fn get_import_attributes_data(&self, node: &Node) -> Option<&ImportAttributesData> {
+        use super::syntax_kind_ext::IMPORT_ATTRIBUTES;
+        if node.has_data() && node.kind == IMPORT_ATTRIBUTES {
+            self.import_attributes.get(node.data_index as usize)
+        } else {
+            None
+        }
+    }
+
+    /// Get single import attribute data (name: value pair).
+    #[inline]
+    #[must_use]
+    pub fn get_import_attribute_data(&self, node: &Node) -> Option<&ImportAttributeData> {
+        use super::syntax_kind_ext::IMPORT_ATTRIBUTE;
+        if node.has_data() && node.kind == IMPORT_ATTRIBUTE {
+            self.import_attribute.get(node.data_index as usize)
+        } else {
+            None
+        }
+    }
+
     /// Get parameter data.
     #[inline]
     #[must_use]
@@ -1702,6 +1726,8 @@ define_at_accessors! {
     get_specifier_at => get_specifier -> SpecifierData;
     get_export_decl_at => get_export_decl -> ExportDeclData;
     get_export_assignment_at => get_export_assignment -> ExportAssignmentData;
+    get_import_attributes_data_at => get_import_attributes_data -> ImportAttributesData;
+    get_import_attribute_data_at => get_import_attribute_data -> ImportAttributeData;
     get_parameter_at => get_parameter -> ParameterData;
     get_property_decl_at => get_property_decl -> PropertyDeclData;
     get_method_decl_at => get_method_decl -> MethodDeclData;

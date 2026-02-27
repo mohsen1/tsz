@@ -159,6 +159,8 @@ impl<'a> CheckerState<'a> {
             }
             // TS7036: Check specifier type is assignable to `string`
             self.check_dynamic_import_specifier_type(call);
+            // TS2322: Check options arg against ImportCallOptions
+            self.check_dynamic_import_options_type(call);
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports

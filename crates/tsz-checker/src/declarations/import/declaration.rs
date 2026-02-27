@@ -180,6 +180,105 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2322: Check that import attribute values are assignable to the global `ImportAttributes`
+    /// interface.
+    ///
+    /// For `import ... with { type: "json" }`, builds an object type from the attribute
+    /// entries and checks it against the global `ImportAttributes` interface. If the user
+    /// has augmented `ImportAttributes` (e.g., `interface ImportAttributes { type: "json" }`),
+    /// mismatched values will produce TS2322.
+    pub(crate) fn check_import_attributes_assignability(&mut self, attributes_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::TypeId;
+
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        let elements: Vec<NodeIndex> = attrs_data.elements.nodes.clone();
+
+        if elements.is_empty() {
+            return;
+        }
+
+        // Resolve the global ImportAttributes interface type (including user augmentations).
+        let Some(import_attributes_type) = self.resolve_lib_type_by_name("ImportAttributes") else {
+            return;
+        };
+
+        // Build an object type from the import attribute entries
+        let mut properties = Vec::new();
+        for &elem_idx in &elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::IMPORT_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+                continue;
+            };
+
+            // Get the attribute name (identifier or string literal)
+            let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    Some(ident.escaped_text.clone())
+                } else { self.ctx.arena.get_literal(name_node).map(|lit| lit.text.clone()) }
+            } else {
+                None
+            };
+
+            let Some(name) = name else {
+                continue;
+            };
+
+            // Get the value type — import attribute values are always string literals.
+            // Use string literal types directly (not widened) to match TSC behavior.
+            let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value)
+                && let Some(lit) = self.ctx.arena.get_literal(val_node)
+            {
+                self.ctx.types.factory().literal_string(&lit.text)
+            } else {
+                // Fallback for non-literal values (should not happen for valid attributes)
+                self.get_type_of_node(attr_data.value)
+            };
+
+            let name_atom = self.ctx.types.intern_string(&name);
+            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+        }
+
+        if properties.is_empty() {
+            return;
+        }
+
+        let source_type = self.ctx.types.factory().object(properties);
+
+        // Don't check if source or target are any/error
+        if source_type == TypeId::ANY
+            || source_type == TypeId::ERROR
+            || import_attributes_type == TypeId::ANY
+            || import_attributes_type == TypeId::ERROR
+        {
+            return;
+        }
+
+        // Check assignability — emit TS2322 at the attributes node if not assignable
+        self.check_assignable_or_report_at(
+            source_type,
+            import_attributes_type,
+            attributes_idx,
+            attributes_idx,
+        );
+    }
+
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
@@ -191,6 +290,13 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
+        // statement has parse errors. Matches TSC: syntax errors take priority.
+        use tsz_parser::parser::node_flags;
+        let has_parse_errors =
+            (node.flags as u32 & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                || self.ctx.has_real_syntax_errors;
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
@@ -211,8 +317,13 @@ impl<'a> CheckerState<'a> {
                     );
         }
 
-        // TS2823: Import attributes require specific module options
-        self.check_import_attributes_module_option(import.attributes);
+        if !has_parse_errors {
+            // TS2823: Import attributes require specific module options
+            self.check_import_attributes_module_option(import.attributes);
+
+            // TS2322: Check import attribute values against global ImportAttributes interface
+            self.check_import_attributes_assignability(import.attributes);
+        }
 
         // TS1214/TS1212: Check import binding names for strict mode reserved words.
         // Import declarations make the file a module, so it's always strict mode → TS1214.
@@ -222,7 +333,8 @@ impl<'a> CheckerState<'a> {
             self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
         }
 
-        if !self.ctx.report_unresolved_imports {
+        // Skip module resolution checks when import has parse errors
+        if has_parse_errors || !self.ctx.report_unresolved_imports {
             return;
         }
 
