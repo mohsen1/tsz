@@ -558,6 +558,7 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -802,6 +803,7 @@ FAIL TypeScript/tests/cases/compiler/jsdocBracelessTypeTag1.ts
 FAIL TypeScript/tests/cases/compiler/jsdocCallbackAndType.ts
 FAIL TypeScript/tests/cases/compiler/jsdocClassMissingTypeArguments.ts
 FAIL TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
+FAIL TypeScript/tests/cases/compiler/jsdocFunctionClassPropertiesDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/jsdocFunctionTypeFalsePositive.ts
 FAIL TypeScript/tests/cases/compiler/jsdocIllegalTags.ts
 FAIL TypeScript/tests/cases/compiler/jsdocImportTypeNodeNamespace.ts
@@ -1466,6 +1468,7 @@ FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx
 FAIL TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
 FAIL TypeScript/tests/cases/compiler/tsxResolveExternalModuleExportsTypes.ts
+FAIL TypeScript/tests/cases/compiler/tsxSpreadDoesNotReportExcessProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts
 FAIL TypeScript/tests/cases/compiler/tupleTypes.ts
@@ -5549,7 +5552,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6124,7 +6126,6 @@ PASS TypeScript/tests/cases/compiler/jsDeclarationsGlobalFileConstFunctionNamed.
 PASS TypeScript/tests/cases/compiler/jsDeclarationsWithDefaultAsNamespaceLikeMerge.ts
 PASS TypeScript/tests/cases/compiler/jsdocAccessEnumType.ts
 PASS TypeScript/tests/cases/compiler/jsdocCastCommentEmit.ts
-PASS TypeScript/tests/cases/compiler/jsdocFunctionClassPropertiesDeclaration.ts
 PASS TypeScript/tests/cases/compiler/jsdocImportTypeResolution.ts
 PASS TypeScript/tests/cases/compiler/jsdocInTypeScript.ts
 PASS TypeScript/tests/cases/compiler/jsdocParameterParsingInvalidName.ts
@@ -7746,7 +7747,6 @@ PASS TypeScript/tests/cases/compiler/tsxDefaultImports.ts
 PASS TypeScript/tests/cases/compiler/tsxDiscriminantPropertyInference.tsx
 PASS TypeScript/tests/cases/compiler/tsxFragmentChildrenCheck.ts
 PASS TypeScript/tests/cases/compiler/tsxNoTypeAnnotatedSFC.tsx
-PASS TypeScript/tests/cases/compiler/tsxSpreadDoesNotReportExcessProps.tsx
 PASS TypeScript/tests/cases/compiler/tsxUnionMemberChecksFilterDataProps.tsx
 PASS TypeScript/tests/cases/compiler/tsxUnionSpread.tsx
 PASS TypeScript/tests/cases/compiler/tupleTypeInference.ts
