@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-27T14:53:02Z",
-  "git_sha": "5084e559bfaeeb7d6f3ebab3d0d2fe345e1e4e57",
+  "timestamp": "2026-02-27T14:59:31Z",
+  "git_sha": "eb590a920a54c7efa2c7562df469cb6927fa68a7",
   "summary": {
     "total_tests": 12570,
     "passed": 9465,
@@ -14,13 +14,6 @@
       "passed": 13,
       "failed": 13,
       "pass_rate": 50.0
-    },
-    {
-      "area": "types/union",
-      "total": 25,
-      "passed": 13,
-      "failed": 12,
-      "pass_rate": 52.0
     },
     {
       "area": "types/contextualTypes",
@@ -77,6 +70,13 @@
       "passed": 19,
       "failed": 15,
       "pass_rate": 55.88
+    },
+    {
+      "area": "types/union",
+      "total": 25,
+      "passed": 14,
+      "failed": 11,
+      "pass_rate": 56.0
     },
     {
       "area": "controlFlow",
@@ -389,9 +389,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4921,
-      "failed": 1589,
-      "pass_rate": 75.59
+      "passed": 4920,
+      "failed": 1590,
+      "pass_rate": 75.58
     },
     {
       "area": "expressions/unaryOperators",
@@ -1544,6 +1544,10 @@
       "count": 4
     },
     {
+      "code": "TS2536",
+      "count": 4
+    },
+    {
       "code": "TS2741",
       "count": 4
     },
@@ -1561,10 +1565,6 @@
     },
     {
       "code": "TS2305",
-      "count": 3
-    },
-    {
-      "code": "TS2589",
       "count": 3
     }
   ],
@@ -1893,8 +1893,8 @@
     }
   ],
   "categories": {
-    "false_positive": 451,
-    "all_missing": 587,
+    "false_positive": 452,
+    "all_missing": 586,
     "wrong_code": 2061,
     "close_to_passing": 1712
   }

@@ -531,6 +531,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -3057,7 +3058,6 @@ FAIL TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeO
 FAIL TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes2.ts
 FAIL TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures.ts
-FAIL TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures5.ts
 FAIL TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures6.ts
 FAIL TypeScript/tests/cases/conformance/types/union/unionTypeConstructSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/union/unionTypeEquivalence.ts
@@ -5423,7 +5423,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -12379,6 +12378,7 @@ PASS TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes4.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures2.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures3.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures4.ts
+PASS TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures5.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeCallSignatures7.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeIndexSignature.ts
 PASS TypeScript/tests/cases/conformance/types/union/unionTypeMembers.ts
