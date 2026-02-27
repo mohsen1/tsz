@@ -704,13 +704,15 @@ impl StatementChecker {
                 }
             }
             syntax_kind_ext::THROW_STATEMENT => {
-                // Extract operand before mutable operations
+                // Extract operand before mutable operations.
+                // Throw statements use ReturnData (same as return statements),
+                // not UnaryExprData.
                 let operand = {
                     let arena = state.arena();
                     arena
                         .get(stmt_idx)
-                        .and_then(|node| arena.get_unary_expr(node))
-                        .map(|u| u.operand)
+                        .and_then(|node| arena.get_return_statement(node))
+                        .map(|r| r.expression)
                 };
                 if let Some(operand) = operand {
                     state.get_type_of_node(operand);
