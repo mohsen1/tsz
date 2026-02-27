@@ -512,6 +512,14 @@ impl<'a> CheckerState<'a> {
         let eap_type = self.type_reference_symbol_type(eap_sym_id);
         let evaluated = self.evaluate_type_with_env(eap_type);
 
+        // If the type couldn't be resolved (unknown/error), the symbol's declarations
+        // are likely in a different file's arena (cross-file project mode). Fall back to
+        // "props" as the standard JSX convention — all React types and most JSX configs
+        // use `{ props: {} }` as the ElementAttributesProperty interface.
+        if evaluated == TypeId::UNKNOWN || evaluated == TypeId::ERROR {
+            return Some("props".to_string());
+        }
+
         // Check if it has any properties
         if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, evaluated) {
             if shape.properties.is_empty() {
