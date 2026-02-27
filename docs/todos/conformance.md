@@ -1,7 +1,52 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9201/12570 (73.2%) — full suite, error-code level
+**Current score**: ~9207/12570 (73.2%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27 — node/allowJs area: TS1470 import.meta in CJS files
+
+### Area: node/allowJs (52.38% → 57.14%, 11→12 passing of 21)
+
+### Fix: Emit TS1470 for import.meta in CommonJS output files (+5 conformance tests net)
+- **Files changed**:
+  - `crates/tsz-checker/src/types/property_access_type.rs` — detect `import.meta` (PROPERTY_ACCESS_EXPRESSION
+    with ImportKeyword base) and emit TS1470 via `check_import_meta_in_cjs()`; return `TypeId::ANY` for
+    import.meta type as fallback until ImportMeta global interface resolution is implemented
+  - `crates/tsz-checker/src/dispatch.rs` — handle META_PROPERTY (new.target) in dispatch to return
+    `TypeId::ANY` instead of falling to error default
+- **Root cause**: `import.meta` was never checked for CJS context. The parser creates `import.meta` as
+  `PROPERTY_ACCESS_EXPRESSION` (kind 212) with `ImportKeyword` as the expression node, NOT as
+  `META_PROPERTY` (kind 237) which is used only for `new.target`. The property access handler
+  previously tried to resolve `ImportKeyword` as a normal expression (producing ERROR), cascading
+  through the entire property access chain.
+- **CJS detection logic**: Reuses the same pattern from TS1479 (declaration.rs:454-474) — file extension
+  (.cts/.cjs always CJS, .mts/.mjs always ESM), then `file_is_esm` from driver, then fallback.
+  For Node16/NodeNext, per-file format determines CJS. For module < ES2020 (excluding System),
+  all files produce CJS output.
+- **Tests fixed**: `nodeModulesAllowJsImportMeta.ts`, `nodeModulesImportMeta.ts`, plus 3 more from
+  the import.meta/new.target returning ANY instead of ERROR (unblocking type inference chains).
+
+### Investigated but not fixed: remaining node/allowJs failures
+- **TS2835** (3 tests): "Relative import paths need explicit file extensions" — requires proper
+  Node16/NodeNext module resolution with extension enforcement
+- **TS1479** (3 tests): CJS-importing-ESM detection — requires .mjs/.cjs file discovery through
+  import resolution (not glob patterns). Conformance wrapper changes to include patterns cause
+  TS18003 fingerprint regressions; tsconfig "files" array also causes regressions due to root
+  files getting different diagnostic treatment.
+- **TS2307** (2 tests): Module resolution for package exports/imports — requires package.json
+  "exports"/"imports" field resolution
+- **TS2343** (2 tests): tslib import helper version check — needs tslib resolution infrastructure
+- **TS2725** (1 test): Class name collision with globals in node16 — needs module-specific name collision check
+- **TS2882** (1 test, extra): False positive side-effect import resolution — over-emitting
+
+### Key architectural insight: conformance wrapper file discovery
+- tsz uses glob-based include patterns for file discovery; tsc uses import-based (demand-driven)
+  discovery. Adding .mjs/.cjs/.mts/.cts to include patterns causes TS18003 fingerprint mismatches
+  (diagnostic messages embed include paths) and over-discovers files. Adding to tsconfig "files"
+  array causes regressions because root files get different diagnostic treatment. This is a
+  structural limitation requiring import-based file discovery in the driver.
 
 ---
 
