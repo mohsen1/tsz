@@ -1063,13 +1063,16 @@ fn compile_inner(
     // our checker still emits false-positive semantic errors that would wrongly
     // suppress TS5107 in tests where tsc has no source errors.
     //
-    // We only suppress TS5107 for error ranges that are never false positives:
+    // We suppress TS5107 for error ranges that are never false positives:
+    //   - 1xxx: parser/syntax errors (TS1005, TS1109, etc.)
     //   - 8xxx: JS grammar errors ("can only be used in TypeScript files")
     //   - 17xxx: exponentiation grammar errors (TS17006/TS17007)
     if has_deprecation_diagnostics {
-        let has_reliable_grammar_errors = diagnostics
-            .iter()
-            .any(|d| (8000..9000).contains(&d.code) || (17000..18000).contains(&d.code));
+        let has_reliable_grammar_errors = diagnostics.iter().any(|d| {
+            (1000..2000).contains(&d.code)
+                || (8000..9000).contains(&d.code)
+                || (17000..18000).contains(&d.code)
+        });
         if has_reliable_grammar_errors {
             // Real grammar errors take priority — drop TS5107 from config diagnostics.
             config_diagnostics.retain(|d| {
