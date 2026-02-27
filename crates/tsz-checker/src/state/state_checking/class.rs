@@ -274,10 +274,12 @@ impl<'a> CheckerState<'a> {
         // Skip for declared classes (ambient declarations don't need implementations)
         if !is_declared {
             self.check_class_member_implementations(&class.members.nodes);
-        }
 
-        // Check static/instance consistency for method overloads (TS2387, TS2388)
-        self.check_static_instance_overload_consistency(&class.members.nodes);
+            // Check static/instance consistency for method overloads (TS2387, TS2388)
+            // In `declare class`, static and instance methods with the same name are
+            // separate declarations, not overload signatures.
+            self.check_static_instance_overload_consistency(&class.members.nodes);
+        }
 
         // Check abstract consistency for method overloads (TS2512)
         self.check_abstract_overload_consistency(&class.members.nodes);
