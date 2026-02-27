@@ -697,6 +697,16 @@ impl<'a> CheckerState<'a> {
             }
         };
 
+        // If the flow node is UNREACHABLE, the code at this point will never
+        // execute. Skip the definite assignment check — tsc does not emit
+        // TS2454 for unreachable code paths (e.g., the incrementor of a
+        // for-loop whose body always breaks).
+        if let Some(flow) = self.ctx.binder.flow_nodes.get(flow_node)
+            && flow.has_any_flags(tsz_binder::flow_flags::UNREACHABLE)
+        {
+            return true;
+        }
+
         // Create a flow analyzer and check definite assignment
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
