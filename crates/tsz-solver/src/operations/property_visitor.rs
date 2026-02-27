@@ -515,7 +515,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let mut valid_write_results = Vec::new();
         let mut any_has_divergent_write_type = false;
         let mut nullable_causes = Vec::new();
-        let mut any_from_index = false; // Track if any member used index signature
+        let mut any_from_index = false; // ANY member used index signature (for noUncheckedIndexedAccess)
+        let mut all_from_index = true; // ALL members used index signature (for TS2540 vs TS2542)
         let mut has_unknown_members = false;
 
         for &member in &non_unknown_members {
@@ -544,7 +545,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         valid_write_results.push(type_id);
                     }
                     if from_index_signature {
-                        any_from_index = true; // Propagate: if ANY member uses index, flag it
+                        any_from_index = true;
+                    } else {
+                        all_from_index = false; // If ANY member has named property, not index-only
                     }
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined {
@@ -652,11 +655,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             None
         };
 
-        // Union of all result types
+        // Union of all result types — only flag as "from index signature" if ALL
+        // members resolved through index signatures. If any member has the property
+        // as a named property, the checker should use TS2540 (not TS2542).
         Some(PropertyAccessResult::Success {
             type_id,
             write_type,
-            from_index_signature: any_from_index, // Contagious across union members
+            from_index_signature: all_from_index,
         })
     }
 }

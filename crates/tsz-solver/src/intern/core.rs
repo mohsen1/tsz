@@ -905,7 +905,7 @@ impl TypeInterner {
             }
         }
 
-        flat.sort_by_key(|id| Self::union_sort_key(*id));
+        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
         flat.retain(|id| *id != TypeId::NEVER);
 
@@ -998,37 +998,86 @@ impl TypeInterner {
 
     /// Sort key for union member ordering that matches tsc's type creation order.
     ///
-    /// tsc creates built-in types in order: string, number, bigint, boolean,
-    /// symbol, void, undefined, null — all with lower IDs than user-defined types.
-    /// Unions sorted by type ID in tsc thus display `string | number`.
-    /// Our built-in TypeId constants differ, so we remap only built-in IDs.
-    /// Non-built-in types (literals, objects, etc.) keep their natural TypeId
-    /// order which reflects creation order, matching tsc's behavior.
+    /// tsc's default mode (without stableTypeOrdering) sorts by type ID (creation order).
+    /// Built-in types get remapped IDs so they sort consistently regardless of our internal
+    /// TypeId numbering. Non-built-in types keep their raw TypeId, which for sequential
+    /// allocation approximates declaration/source order.
     const fn union_sort_key(id: TypeId) -> u32 {
         match id {
-            // Remap built-in primitives to match tsc's creation order.
-            // In tsc: string < number < bigint < boolean < symbol < void < undefined < null
-            // Our IDs: BOOLEAN(8) < NUMBER(9) < STRING(10) < BIGINT(11) < SYMBOL(12)
-            // Remap: STRING→8, NUMBER→9, BIGINT→10, BOOLEAN→11 (swap STRING/BOOLEAN)
             TypeId::STRING => 8,
             TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE => 11,
             TypeId::BOOLEAN_FALSE => 12,
             TypeId::BIGINT => 10,
-            // VOID(5), UNDEFINED(6), NULL(7) need to sort AFTER primitives in tsc
             TypeId::VOID => 13,
             TypeId::UNDEFINED => 14,
             TypeId::NULL => 15,
-            // Everything else (ERROR, NEVER, UNKNOWN, ANY, NUMBER, SYMBOL, OBJECT,
-            // FUNCTION, literals, user types) keeps its natural TypeId order
             _ => id.0,
         }
     }
 
+    /// Compare two union members for ordering.
+    ///
+    /// Primary sort: remapped TypeId key (via `union_sort_key`).
+    /// Secondary sort: SymbolId for named Object/Callable types, which preserves
+    /// binder declaration order and matches tsc's output for named types that may
+    /// get interned in a different order than tsc allocates type IDs.
+    fn compare_union_members(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        let key_a = Self::union_sort_key(a);
+        let key_b = Self::union_sort_key(b);
+        let key_cmp = key_a.cmp(&key_b);
+        if key_cmp != Ordering::Equal {
+            return key_cmp;
+        }
+        // For named types with same sort key, use semantic identity for ordering:
+        // - Lazy(DefId): DefId reflects source declaration order
+        // - Enum(DefId): same
+        // - Object/Callable: SymbolId from binder (declaration order)
+        if let (Some(data_a), Some(data_b)) = (self.lookup(a), self.lookup(b)) {
+            match (&data_a, &data_b) {
+                // Lazy type references and Enum types: sort by DefId (source declaration order)
+                (TypeData::Lazy(d1), TypeData::Lazy(d2))
+                | (TypeData::Enum(d1, _), TypeData::Enum(d2, _)) => {
+                    let cmp = d1.0.cmp(&d2.0);
+                    if cmp != Ordering::Equal {
+                        return cmp;
+                    }
+                }
+                // Object types: sort by SymbolId (declaration order)
+                (TypeData::Object(s1), TypeData::Object(s2))
+                | (TypeData::ObjectWithIndex(s1), TypeData::ObjectWithIndex(s2))
+                | (TypeData::Object(s1), TypeData::ObjectWithIndex(s2))
+                | (TypeData::ObjectWithIndex(s1), TypeData::Object(s2)) => {
+                    let shape1 = self.object_shape(*s1);
+                    let shape2 = self.object_shape(*s2);
+                    if let (Some(sym1), Some(sym2)) = (shape1.symbol, shape2.symbol) {
+                        let cmp = sym1.0.cmp(&sym2.0);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                }
+                // Callable types: sort by SymbolId (declaration order)
+                (TypeData::Callable(s1), TypeData::Callable(s2)) => {
+                    let shape1 = self.callable_shape(*s1);
+                    let shape2 = self.callable_shape(*s2);
+                    if let (Some(sym1), Some(sym2)) = (shape1.symbol, shape2.symbol) {
+                        let cmp = sym1.0.cmp(&sym2.0);
+                        if cmp != Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        a.0.cmp(&b.0)
+    }
+
     pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
         // Deduplicate and sort for consistent identity.
-        // Sort order matches tsc's type creation order so union display
-        // (e.g. `string | number`) matches tsc output.
-        flat.sort_by_key(|id| Self::union_sort_key(*id));
+        // Sort order uses semantic comparison to match tsc's union display.
+        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
         // Handle special cases
@@ -1100,7 +1149,7 @@ impl TypeInterner {
     /// same normalization as `normalize_union` (sort, dedup, special cases, literal
     /// absorption) but skips the `reduce_union_subtypes` step.
     fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
-        flat.sort_by_key(|id| Self::union_sort_key(*id));
+        flat.sort_by(|a, b| self.compare_union_members(*a, *b));
         flat.dedup();
 
         if flat.contains(&TypeId::ERROR) {
