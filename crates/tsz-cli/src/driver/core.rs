@@ -1105,6 +1105,15 @@ fn compile_inner(
     diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
+
+    // tsc suppresses TS2304 ("Cannot find name") when TS8xxx JS grammar errors exist
+    // anywhere in the project. TS8xxx errors indicate type annotations in JS files, which
+    // can cause cascading false TS2304 name-not-found errors.
+    let has_js_grammar_errors = diagnostics.iter().any(|d| (8000..9000).contains(&d.code));
+    if has_js_grammar_errors {
+        diagnostics.retain(|d| d.code != 2304);
+    }
+
     diagnostics.sort_by(|left, right| {
         left.file
             .cmp(&right.file)
