@@ -342,7 +342,9 @@ impl<'a> TypeLowering<'a> {
         let mut type_params_collected = false;
         let mut collected_params = Vec::new();
 
-        for (decl_idx, decl_arena) in declarations {
+        // Process declarations in reverse order: TypeScript's interface merging
+        // rule puts later declarations' members first for overload resolution.
+        for (decl_idx, decl_arena) in declarations.iter().rev() {
             // Create a lowering context for this specific arena
             let lowerer = self.with_arena(decl_arena);
 
@@ -1234,7 +1236,11 @@ impl<'a> TypeLowering<'a> {
             Vec::new()
         };
 
-        for &decl_idx in declarations {
+        // Process declarations in reverse order: TypeScript's interface merging
+        // rule puts later declarations' members first for overload resolution.
+        // E.g., PromiseConstructor from es2015.iterable (earlier) and es2015.promise
+        // (later) — the tuple overload from es2015.promise should be tried first.
+        for &decl_idx in declarations.iter().rev() {
             let Some(node) = self.arena.get(decl_idx) else {
                 continue;
             };
