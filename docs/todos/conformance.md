@@ -1,8 +1,44 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9284/12570 (73.9%) — full suite, error-code level
-> Up from 9268 after never-type and any-suppression fixes.
+**Current score**: ~9334/12570 (74.3%) — full suite, error-code level
+> Up from 9333 after conditional type constraint fix.
+
+---
+
+## Solver Fixes — Session 2026-02-27
+
+### Fix: Default constraint for deferred conditional types (+1 at snapshot level, +3 flipped tests)
+- **Root cause**: When checking `T extends U ? X : Y <: Target` (source is a deferred conditional),
+  the subtype checker only tried both-branches: `X <: Target AND Y <: Target`. For Extract<T, U>
+  (= `T extends Function ? T : never`), the true branch `T` (unconstrained) failed `T <: Function`,
+  even though tsc computes the "default constraint" `T & Function` which IS assignable to Function.
+- **Fix**: In `conditional_branches_subtype()`, added a first strategy that computes the default
+  constraint before falling back to both-branches. The constraint is `X[T := T & U] | Y` — the
+  true branch with check_type replaced by `check_type & extends_type`, union with false branch.
+  Only applies when check_type is a TypeParameter (deferred conditionals).
+- **Files**: `crates/tsz-solver/src/relations/subtype/rules/conditionals.rs`
+- **Tests**: 5 new tests in `conditional_comprehensive_tests.rs`
+- **Flipped tests**: `intersectionTypeInference3`, `prespecializedGenericMembers1`, `typeofAnExportedType`
+- **Fingerprint improvements**: 3 fewer false positives in `conditionalTypes2.ts` (Extract<T, Function>
+  patterns now correctly assignable)
+
+### Remaining conditional type gaps (types/conditional area, 50% → still 50% at area level)
+- **Variance through conditional types** (conditionalTypes2.ts lines 15, 21): Covariant<B> should be
+  assignable to Covariant<A> when B extends A, because `T extends string ? T : number` is covariant
+  in T. This requires variance measurement through conditional types — a deep solver feature.
+- **Extract2<T, Foo, Bar> nested conditional** (conditionalTypes2.ts line 70): `T extends U ? T extends V ? T : never : never`
+  The nested conditional's constraint isn't computed. Would need recursive constraint computation.
+- **TS2349/TS2722 callable narrowing** (conditionalTypes2.ts lines 50, 56): After `isFunction(x)`,
+  `x()` reports "not callable". The narrowed type `Extract<string | (() => string) | undefined, Function>`
+  should distribute to `() => string`. This is a narrowing/evaluation issue, not subtype.
+- **TS1338 infer position check** (inferTypes1.ts): `infer` declarations outside conditional extends
+  clause should emit TS1338. The diagnostic message is defined but the checker never emits it.
+  Checker-level work, not solver.
+- **TS2838 duplicate infer constraint** (inferTypesWithExtends2.ts): When `infer U` appears twice
+  with different constraints, should emit TS2838. Checker-level validation.
+- **TS2322 vs TS2353 for conditional targets** (conditionalTypesExcessProperties.ts): Excess property
+  checks on conditional type targets emit TS2353 instead of TS2322. Error code selection issue.
 
 ---
 
