@@ -150,13 +150,41 @@ impl<'a> CheckerState<'a> {
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
 
+        // When the condition is a known literal boolean, skip evaluating the
+        // unreachable branch.  Evaluating it would trigger false diagnostics
+        // (e.g. TS2454 "variable used before assignment") for code that can
+        // never execute at runtime.  tsc does the same: it recognises that
+        // `true ? a : b` makes the false branch dead code.
+        //
+        // We check the AST node kind rather than the type because the `true`
+        // keyword gets widened to `boolean` through `resolve_literal`.
+        use tsz_scanner::SyntaxKind;
+        let condition_is_true = self
+            .ctx
+            .arena
+            .get(cond.condition)
+            .is_some_and(|n| n.kind == SyntaxKind::TrueKeyword as u16);
+        let condition_is_false = self
+            .ctx
+            .arena
+            .get(cond.condition)
+            .is_some_and(|n| n.kind == SyntaxKind::FalseKeyword as u16);
+
         // Compute branch types with the outer contextual type for inference.
         // Branch typing may mutate contextual state while recursing, so restore
         // it explicitly before each branch.
-        let when_true = self.get_type_of_node(cond.when_true);
+        let when_true = if condition_is_false {
+            TypeId::NEVER
+        } else {
+            self.get_type_of_node(cond.when_true)
+        };
 
         self.ctx.contextual_type = prev_context;
-        let when_false = self.get_type_of_node(cond.when_false);
+        let when_false = if condition_is_true {
+            TypeId::NEVER
+        } else {
+            self.get_type_of_node(cond.when_false)
+        };
 
         self.ctx.contextual_type = prev_context;
         self.ctx.preserve_literal_types = prev_preserve;

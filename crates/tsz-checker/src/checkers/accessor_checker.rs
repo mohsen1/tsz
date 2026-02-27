@@ -169,7 +169,119 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Note: check_accessor_type_compatibility removed — tsc 6.0 allows different
-    // get/set types unconditionally, even without explicit type annotations on both.
-    // The TS 5.1 requirement for explicit annotations was relaxed in 6.0.
+    // =========================================================================
+    // Getter/Setter Type Compatibility (TS2322)
+    // =========================================================================
+
+    /// Check that getter return types are assignable to setter parameter types.
+    ///
+    /// tsc 6.0 removed TS2380 (getter/setter must have same type), but still
+    /// checks that the getter's return type is assignable to the setter's
+    /// parameter type.  When it isn't, TS2322 is emitted at the getter name.
+    ///
+    /// Example:
+    /// ```typescript
+    /// class C {
+    ///     get bar() { return 0; }      // TS2322: number not assignable to string
+    ///     set bar(n: string) {}
+    /// }
+    /// ```
+    pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
+        // (name_idx, body_idx, type_annotation) for getter;
+        // (param_type_annotation, param_idx) for setter.
+        type GetterInfo = Option<(NodeIndex, NodeIndex, NodeIndex)>;
+        type SetterInfo = Option<(NodeIndex, NodeIndex)>;
+
+        let mut pairs: FxHashMap<String, (GetterInfo, SetterInfo)> = FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(accessor) = self.ctx.arena.get_accessor(node) else {
+                continue;
+            };
+
+            let Some(name) = self.get_property_name(accessor.name) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                // Store getter: (name_idx, body_idx, type_annotation)
+                pairs.entry(name).or_default().0 =
+                    Some((accessor.name, accessor.body, accessor.type_annotation));
+            } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
+                // Store setter: (first param's type_annotation, first param idx)
+                if let Some(&first_param) = accessor.parameters.nodes.first()
+                    && let Some(param_node) = self.ctx.arena.get(first_param)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
+                }
+            }
+        }
+
+        // Check compatibility for each pair
+        for (_name, (getter, setter)) in pairs {
+            let Some((getter_name, getter_body, getter_type_ann)) = getter else {
+                continue;
+            };
+            let Some((setter_type_ann, _setter_param)) = setter else {
+                continue;
+            };
+            // Only check when the setter has an explicit type annotation.
+            // When the setter has no annotation, its type is inferred from
+            // the getter, so they're always compatible.
+            if setter_type_ann == NodeIndex::NONE {
+                continue;
+            }
+            // Skip abstract accessors — they have no body, so there's no
+            // return statement to anchor the diagnostic to.  tsc doesn't
+            // emit TS2322 for abstract getter/setter type mismatches.
+            if getter_body == NodeIndex::NONE {
+                continue;
+            }
+
+            // Get getter return type: prefer explicit annotation, else infer from body
+            let getter_return_type = if getter_type_ann != NodeIndex::NONE {
+                self.get_type_from_type_node(getter_type_ann)
+            } else {
+                self.infer_getter_return_type(getter_body)
+            };
+
+            // Get setter parameter type from its annotation
+            let setter_param_type = self.get_type_from_type_node(setter_type_ann);
+
+            // Check assignability: getter return type must be assignable to setter param type.
+            // tsc emits TS2322 at the first return statement in the getter body.
+            if getter_return_type != setter_param_type
+                && getter_return_type != tsz_solver::TypeId::ANY
+                && setter_param_type != tsz_solver::TypeId::ANY
+            {
+                // Find the first return statement in the getter body for diagnostic location
+                let diag_idx = self
+                    .find_first_return_in_block(getter_body)
+                    .unwrap_or(getter_name);
+                self.check_assignable_or_report_at(
+                    getter_return_type,
+                    setter_param_type,
+                    diag_idx,
+                    diag_idx,
+                );
+            }
+        }
+    }
+
+    /// Find the first return statement inside a block body.
+    fn find_first_return_in_block(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                return Some(stmt_idx);
+            }
+        }
+        None
+    }
 }
