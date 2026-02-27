@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-27T05:57:49Z",
-  "git_sha": "dd171fd15174585bf8e5d46d30fcbea8a89b8f29",
+  "timestamp": "2026-02-27T06:37:00Z",
+  "git_sha": "5ea73ba12ab3bea6ec6d09780045d7acfc550a37",
   "summary": {
     "total_tests": 12570,
-    "passed": 9333,
-    "failed": 3237,
-    "pass_rate": 74.2
+    "passed": 9334,
+    "failed": 3236,
+    "pass_rate": 74.3
   },
   "areas_by_pass_rate": [
     {
@@ -156,13 +156,6 @@
       "pass_rate": 57.14
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 14,
-      "failed": 10,
-      "pass_rate": 58.33
-    },
-    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -219,7 +212,21 @@
       "pass_rate": 60.61
     },
     {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 18,
+      "failed": 11,
+      "pass_rate": 62.07
+    },
+    {
       "area": "expressions/functionCalls",
+      "total": 24,
+      "passed": 15,
+      "failed": 9,
+      "pass_rate": 62.5
+    },
+    {
+      "area": "types/intersection",
       "total": 24,
       "passed": 15,
       "failed": 9,
@@ -273,13 +280,6 @@
       "passed": 123,
       "failed": 67,
       "pass_rate": 64.74
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 19,
-      "failed": 10,
-      "pass_rate": 65.52
     },
     {
       "area": "types/primitives",
@@ -410,9 +410,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4884,
-      "failed": 1626,
-      "pass_rate": 75.02
+      "passed": 4885,
+      "failed": 1625,
+      "pass_rate": 75.04
     },
     {
       "area": "es6/unicodeExtendedEscapes",
