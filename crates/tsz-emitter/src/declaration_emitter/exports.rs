@@ -211,14 +211,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         let func_body = func.body;
+        let func_name = func.name;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
-            // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
-                && let Some(return_type_id) =
-                    type_queries::get_return_type(*interner, *func_type_id)
+            // No explicit return type, try to infer it from the type cache
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
@@ -530,14 +535,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         let func_body = func.body;
+        let func_name = func.name;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
-            // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
-                && let Some(return_type_id) =
-                    type_queries::get_return_type(*interner, *func_type_id)
+            // No explicit return type, try to infer it from the type cache
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));

@@ -10,5 +10,6 @@ use tsz_solver::{DefId, TypeId};
 #[derive(Debug, Clone, Default)]
 pub struct TypeCacheView {
     pub node_types: FxHashMap<u32, TypeId>,
+    pub symbol_types: FxHashMap<SymbolId, TypeId>,
     pub def_to_symbol: FxHashMap<DefId, SymbolId>,
 }

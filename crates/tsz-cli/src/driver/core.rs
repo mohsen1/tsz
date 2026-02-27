@@ -1031,23 +1031,31 @@ fn compile_inner(
     perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
     let collect_diagnostics_start = Instant::now();
+    let parallel_type_caches = std::sync::Mutex::new(FxHashMap::default());
     let mut diagnostics: Vec<Diagnostic> = collect_diagnostics(
         &program,
         &resolved,
         &base_dir,
         effective_cache,
         &lib_contexts,
+        &parallel_type_caches,
     );
     perf_log_phase("collect_diagnostics", collect_diagnostics_start);
 
-    // Get reference to type caches for declaration emit
-    // Create a longer-lived empty FxHashMap for the fallback case
-    let empty_type_caches = FxHashMap::default();
-    let type_caches_ref: &FxHashMap<_, _> = local_cache
-        .as_ref()
-        .map(|c| &c.type_caches)
-        .or_else(|| cache.as_ref().map(|c| &c.type_caches))
-        .unwrap_or(&empty_type_caches);
+    // Get reference to type caches for declaration emit.
+    // In the parallel (no-cache) path, type caches are returned via the
+    // Mutex parameter. In the cached/incremental path they live in the
+    // CompilationCache.
+    let parallel_type_caches = parallel_type_caches.into_inner().unwrap();
+    let type_caches_ref: &FxHashMap<_, _> = if !parallel_type_caches.is_empty() {
+        &parallel_type_caches
+    } else {
+        local_cache
+            .as_ref()
+            .map(|c| &c.type_caches)
+            .or_else(|| cache.as_ref().map(|c| &c.type_caches))
+            .unwrap_or(&parallel_type_caches)
+    };
     // For binary files, suppress all diagnostics except TS1490.
     // Parsing UTF-16/corrupted content as UTF-8 produces cascading
     // TS1127 "Invalid character" false positives; TSC only emits TS1490.
