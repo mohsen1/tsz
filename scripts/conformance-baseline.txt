@@ -14,7 +14,6 @@ FAIL TypeScript/tests/cases/compiler/ambientPropertyDeclarationInJs.ts
 FAIL TypeScript/tests/cases/compiler/ambientWithStatements.ts
 FAIL TypeScript/tests/cases/compiler/ambiguousGenericAssertion1.ts
 FAIL TypeScript/tests/cases/compiler/amdModuleName2.ts
-FAIL TypeScript/tests/cases/compiler/anonymousModules.ts
 FAIL TypeScript/tests/cases/compiler/argumentsObjectIterator01_ES6.ts
 FAIL TypeScript/tests/cases/compiler/argumentsObjectIterator02_ES6.ts
 FAIL TypeScript/tests/cases/compiler/argumentsReferenceInConstructor4_Js.ts
@@ -2050,8 +2049,6 @@ FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInEqualityCh
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInEqualityChecksES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInFunctionParameterType.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInFunctionParameterTypeES6.ts
-FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInModuleName.ts
-FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInModuleNameES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInObjectLiteral.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInObjectLiteralES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/templates/templateStringInPropertyName1.ts
@@ -3355,6 +3352,7 @@ PASS TypeScript/tests/cases/compiler/anonterface.ts
 PASS TypeScript/tests/cases/compiler/anonymousClassDeclarationDoesntPrintWithReadonly.ts
 PASS TypeScript/tests/cases/compiler/anonymousClassExpression1.ts
 PASS TypeScript/tests/cases/compiler/anonymousClassExpression2.ts
+PASS TypeScript/tests/cases/compiler/anonymousModules.ts
 PASS TypeScript/tests/cases/compiler/anyAndUnknownHaveFalsyComponents.ts
 PASS TypeScript/tests/cases/compiler/anyAsReturnTypeForNewOnCall.ts
 PASS TypeScript/tests/cases/compiler/anyDeclare.ts
@@ -9476,6 +9474,8 @@ PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInInOperator
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInInOperatorES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInInstanceOf.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInInstanceOfES6.ts
+PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInModuleName.ts
+PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInModuleNameES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInModulo.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInModuloES6.ts
 PASS TypeScript/tests/cases/conformance/es6/templates/templateStringInMultiplication.ts
