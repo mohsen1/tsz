@@ -1,7 +1,54 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9534/12570 (75.8%) — full suite, error-code level
+**Current score**: ~9535/12570 (75.9%) — full suite, error-code level
+**Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28a — JSX TS2783 spread overwrite detection
+
+### Area: jsx (55.4% pass rate, 108/195 passing)
+
+**Fixed**: TS2783 "'x' is specified more than once, so this usage will be overwritten." for JSX spread attributes — checker-level.
+
+#### Fix: JSX spread attribute overwrite detection — Checker (jsx_checker.rs)
+
+**Root cause**: When a JSX element has an explicit attribute (e.g., `a={1}`) followed by a spread attribute (e.g., `{...props}`) that contains a required property with the same name, tsc emits TS2783 to warn that the explicit attribute will be overwritten. Our JSX checker had no such check.
+
+**Fix**: Added TS2783 detection in `check_jsx_attributes_against_props`:
+1. Track explicit attribute names → node indices in a `FxHashMap<String, NodeIndex>`
+2. When processing a `JSX_SPREAD_ATTRIBUTE`, use `collect_object_spread_properties` to get the spread's properties
+3. For each non-optional property in the spread, check if a matching explicit attribute was previously seen
+4. If found, emit TS2783 on the explicit attribute's name node
+5. After checking, only remove required properties from tracking (optional properties don't definitely overwrite, so a later spread with the same property as required can still trigger TS2783)
+
+**Key detail**: Only check when `strict_null_checks()` is enabled (matches tsc behavior). Optional spread properties do NOT trigger the diagnostic because the attribute may not be overwritten at runtime.
+
+**File**: `crates/tsz-checker/src/checkers/jsx_checker.rs:886-917`
+
+**Tests flipped PASS**: +4 (error-code level)
+- `jsxSpreadOverwritesAttributeStrict.tsx` — primary target
+- `tsxGenericAttributesType1.tsx` — primary target
+- 2 collateral improvements
+
+**Tests not yet flipped** (2 more TS2783 targets blocked on cross-file heritage):
+- `tsxAttributeResolution3.tsx` — uses `React.Component` cross-file class; props type unresolved
+- `tsxSpreadAttributesResolution11.tsx` — same cross-file heritage issue
+
+#### Unit tests added
+- `test_ts2783_jsx_spread_overwrites_explicit_attribute` — basic required property overwrite
+- `test_ts2783_not_emitted_for_optional_spread_property` — optional property doesn't trigger
+- `test_ts2783_multiple_spreads_track_required_only` — multiple spreads: optional spread doesn't clear tracking, later required spread still fires
+
+#### Remaining JSX area analysis
+
+The largest JSX blocker remains cross-file class heritage resolution for `React.Component`:
+- 9+ diff=1 tests missing TS2322 because props type is unresolved
+- 2 diff=1 tests missing TS2783 because props type is unresolved
+- Many higher-diff tests also blocked
+
+The cross-file issue is documented in Session 2026-02-27b. The root problem is that `get_class_declaration_from_symbol` (core.rs:877) uses `self.ctx.binder.get_symbol(sym_id)` which only searches the current binder — not the lib binder where React.Component lives.
 
 ---
 
