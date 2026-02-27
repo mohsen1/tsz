@@ -1475,6 +1475,13 @@ impl<'a> CheckerState<'a> {
         let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
 
         let index_type_for_check = self.evaluate_type_with_env(index_type);
+        // First check: raw index type against keyof.
+        // This handles cases where keyof includes type parameters from mapped types
+        // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
+        if self.is_assignable_to(index_type_for_check, keyof_object) {
+            return;
+        }
+        // Fall back to constraint-based check for type parameters.
         let index_type_for_check = tsz_solver::type_queries::get_type_parameter_constraint(
             self.ctx.types,
             index_type_for_check,
