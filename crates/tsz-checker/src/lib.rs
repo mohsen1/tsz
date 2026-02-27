@@ -173,6 +173,9 @@ mod ts2428_tests;
 #[path = "../tests/ts2430_tests.rs"]
 mod ts2430_tests;
 #[cfg(test)]
+#[path = "../tests/ts2440_tests.rs"]
+mod ts2440_tests;
+#[cfg(test)]
 #[path = "../tests/ts2450_const_enum_tests.rs"]
 mod ts2450_const_enum_tests;
 #[cfg(test)]

@@ -969,6 +969,11 @@ impl<'a> CheckerState<'a> {
                         let mut import_has_value = false;
                         let mut visited = Vec::new();
                         if let Some(resolved_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                            // When resolve_alias_symbol returns the SAME symbol, it
+                            // means resolution failed (e.g. unresolved external module).
+                            // The symbol's flags include merged local declarations,
+                            // which would give a false positive.
+                            && resolved_id != sym_id
                             && let Some(resolved_sym) = self
                                 .ctx
                                 .binder
@@ -1007,16 +1012,47 @@ impl<'a> CheckerState<'a> {
                                 import_has_value = true;
                             }
                         }
+
+                        // Cross-file fallback: when resolve_alias_symbol returns the alias
+                        // itself (can't resolve cross-file), check the exported symbol's
+                        // flags directly in the other binders.
+                        if !import_has_value
+                            && let Some(ref module_name) = sym.import_module {
+                                let export_name = sym.import_name.as_deref().unwrap_or(&name);
+                                if let Some(binders) = &self.ctx.all_binders {
+                                    for binder in binders.iter() {
+                                        if let Some(exports) =
+                                            binder.module_exports.get(module_name.as_str())
+                                            && let Some(target_sym_id) = exports.get(export_name)
+                                                && let Some(target_sym) =
+                                                    binder.symbols.get(target_sym_id)
+                                                    && (target_sym.flags
+                                                        & (symbol_flags::VALUE
+                                                            | symbol_flags::EXPORT_VALUE))
+                                                        != 0
+                                                    {
+                                                        import_has_value = true;
+                                                        break;
+                                                    }
+                                    }
+                                }
+                            }
+
                         if !import_has_value {
                             continue;
                         }
 
+                        // Use the import STATEMENT's enclosing scope — the scope
+                        // the import lives in (e.g. module scope).  We avoid using
+                        // the import-specifier's scope because `find_enclosing_scope`
+                        // may differ from the statement scope when the specifier is
+                        // inside a NamedImports node that happens to be scope-creating.
                         let import_scope = self
                             .ctx
                             .binder
-                            .find_enclosing_scope(self.ctx.arena, binding_node_idx);
+                            .find_enclosing_scope(self.ctx.arena, stmt_idx);
 
-                        // Check 1: merged declarations on the import's own symbol
+                        // Check 1: merged declarations on the import's own symbol.
                         has_conflict = sym.declarations.iter().any(|&decl_idx| {
                             if decl_idx == binding_node_idx
                                 || decl_idx == clause_idx
@@ -1029,14 +1065,48 @@ impl<'a> CheckerState<'a> {
                             if !is_current_file_decl {
                                 return false;
                             }
-
-                            let in_same_scope = if let Some(import_scope_id) = import_scope {
-                                self.ctx
-                                    .binder
-                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                    == Some(import_scope_id)
-                            } else {
-                                true
+                            // Skip declarations inside module augmentations
+                            // (`declare module "./foo" { ... }`).  The binder may
+                            // not create a separate scope for the augmentation block,
+                            // so the scope check alone can't detect this.
+                            if self.is_inside_module_augmentation(decl_idx) {
+                                return false;
+                            }
+                            // Scope check: the declaration must be in the same
+                            // logical scope as the import.  We compare scopes by
+                            // checking if they are the same ScopeId OR if they
+                            // share the same container symbol (merged namespace
+                            // blocks create separate scopes but share one symbol).
+                            // Use the PARENT's scope for scope-creating nodes
+                            // (e.g. function/class declarations create a body
+                            // scope, but they *live in* the parent scope).
+                            let decl_containing_scope =
+                                self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                                    let parent = ext.parent;
+                                    if parent.is_some() {
+                                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                                    } else {
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    }
+                                });
+                            let in_same_scope = match (import_scope, decl_containing_scope) {
+                                (Some(a), Some(b)) if a == b => true,
+                                (Some(a), Some(b)) => {
+                                    // Merged namespace: check if both scopes'
+                                    // container nodes map to the same symbol.
+                                    let sym_a =
+                                        self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                        });
+                                    let sym_b =
+                                        self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                        });
+                                    sym_a.is_some() && sym_a == sym_b
+                                }
+                                _ => true,
                             };
                             if !in_same_scope {
                                 return false;
@@ -1054,14 +1124,11 @@ impl<'a> CheckerState<'a> {
                                 ) {
                                     return false;
                                 }
-                                // Check if the local declaration has value semantics
-                                if let Some(flags) =
-                                    self.declaration_symbol_flags(self.ctx.arena, decl_idx)
-                                {
-                                    (flags & symbol_flags::VALUE) != 0
-                                } else {
-                                    true
-                                }
+                                // Any non-import local declaration conflicts with a
+                                // value import. tsc emits TS2440 even when the local is
+                                // a type alias or non-instantiated namespace, as long as
+                                // the import itself has value semantics.
+                                true
                             } else {
                                 false
                             }
@@ -1076,19 +1143,36 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                                 if let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) {
-                                    if (other_sym.flags & symbol_flags::VALUE) == 0 {
+                                    // Skip if the other symbol is purely an alias (another import)
+                                    if (other_sym.flags & symbol_flags::ALIAS) != 0
+                                        && (other_sym.flags & !symbol_flags::ALIAS) == 0
+                                    {
                                         continue;
                                     }
                                     // Must have a declaration in the same scope
                                     let decl_in_same_scope =
                                         other_sym.declarations.iter().any(|&decl_idx| {
-                                            if let Some(import_scope_id) = import_scope {
-                                                self.ctx
-                                                    .binder
-                                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                                    == Some(import_scope_id)
-                                            } else {
-                                                true
+                                            let decl_containing =
+                                                self.ctx.arena.get_extended(decl_idx).and_then(
+                                                    |ext| {
+                                                        let parent = ext.parent;
+                                                        if parent.is_some() {
+                                                            self.ctx.binder.find_enclosing_scope(
+                                                                self.ctx.arena,
+                                                                parent,
+                                                            )
+                                                        } else {
+                                                            self.ctx.binder.find_enclosing_scope(
+                                                                self.ctx.arena,
+                                                                decl_idx,
+                                                            )
+                                                        }
+                                                    },
+                                                );
+                                            
+                                            match (import_scope, decl_containing) {
+                                                (Some(a), Some(b)) => a == b,
+                                                _ => true,
                                             }
                                         });
                                     if !decl_in_same_scope {
