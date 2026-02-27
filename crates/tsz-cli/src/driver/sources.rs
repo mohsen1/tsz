@@ -358,10 +358,16 @@ pub(super) fn collect_type_root_files(
     if roots.is_empty() {
         // When no valid type roots exist, any explicitly requested types
         // (via the `types` config option) are unresolved.
+        // Filter out "*" wildcard and empty strings — these are not literal package names.
         let unresolved = options
             .types
             .as_ref()
-            .map(|t| t.iter().map(|s| s.clone()).collect())
+            .map(|t| {
+                t.iter()
+                    .filter(|s| s.as_str() != "*" && !s.trim().is_empty())
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         return (Vec::new(), unresolved);
     }

@@ -223,6 +223,16 @@ fn type_package_candidates(name: &str) -> Vec<String> {
         }
     }
 
+    // For bare (non-scoped) package names, also check @types/<name>.
+    // tsc's resolveTypeReferenceDirective checks both node_modules/<name>/
+    // and node_modules/@types/<name>/ during the walk-up.
+    if !normalized.starts_with('@') && !normalized.contains('/') {
+        let at_types = format!("@types/{normalized}");
+        if !candidates.iter().any(|v| v == &at_types) {
+            candidates.push(at_types);
+        }
+    }
+
     if !candidates.iter().any(|value| value == &normalized) {
         candidates.push(normalized);
     }
