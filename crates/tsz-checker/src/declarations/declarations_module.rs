@@ -885,7 +885,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             if !is_class && !is_function {
                 continue;
             }
-            if self.is_ambient_declaration(decl_idx) {
+            let is_ambient = self.is_ambient_declaration(decl_idx);
+            if is_ambient {
+                // Ambient (declare) class/function: counts as same-file merge
+                // (no TS2433) but doesn't trigger TS2434 ordering check.
+                found_same_file = true;
                 continue;
             }
             if is_function
