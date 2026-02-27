@@ -256,16 +256,45 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn is_matching_property_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
-        let Some((a_base, a_name)) = self.property_reference(a) else {
-            return false;
-        };
-        let Some((b_base, b_name)) = self.property_reference(b) else {
-            return false;
-        };
-        if a_name != b_name {
+        // Try the fast path: both sides produce an (object, atom) pair.
+        if let (Some((a_base, a_name)), Some((b_base, b_name))) =
+            (self.property_reference(a), self.property_reference(b))
+        {
+            if a_name == b_name {
+                return self.is_matching_reference(a_base, b_base);
+            }
             return false;
         }
-        self.is_matching_reference(a_base, b_base)
+
+        // Fallback for element accesses with non-literal keys (e.g. obj[key]).
+        // property_reference returns None when the key isn't a literal, but two
+        // element accesses with matching object and matching key variable should
+        // still be considered the same reference. tsc's isMatchingReference
+        // handles this by recursively comparing the argument expressions.
+        let a_skipped = self.skip_parens_and_assertions(a);
+        let b_skipped = self.skip_parens_and_assertions(b);
+        let (Some(node_a), Some(node_b)) = (self.arena.get(a_skipped), self.arena.get(b_skipped))
+        else {
+            return false;
+        };
+        if node_a.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && node_b.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let (Some(access_a), Some(access_b)) = (
+                self.arena.get_access_expr(node_a),
+                self.arena.get_access_expr(node_b),
+            ) else {
+                return false;
+            };
+            if access_a.question_dot_token || access_b.question_dot_token {
+                return false;
+            }
+            return self.is_matching_reference(access_a.expression, access_b.expression)
+                && self
+                    .is_matching_reference(access_a.name_or_argument, access_b.name_or_argument);
+        }
+
+        false
     }
 
     pub(crate) fn property_reference(&self, idx: NodeIndex) -> Option<(NodeIndex, Atom)> {
