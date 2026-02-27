@@ -1115,22 +1115,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Skip ambient declarations — `declare class`/`declare enum` are type-level
-        // and have no TDZ. In multi-file mode, search all arenas since decl_idx may
-        // point to a node in another file's arena.
+        // Skip ambient declarations — `declare class`/`declare enum`/`declare const`
+        // are type-level and have no TDZ. In multi-file mode, search all arenas since
+        // decl_idx may point to a node in another file's arena.
         if is_cross_file {
-            if let Some(class) = decl_arena.get_class(decl_node)
-                && decl_arena
-                    .has_modifier(&class.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
-            {
-                return false;
-            }
-            if let Some(enum_decl) = decl_arena.get_enum(decl_node)
-                && decl_arena.has_modifier(
-                    &enum_decl.modifiers,
-                    tsz_scanner::SyntaxKind::DeclareKeyword,
-                )
-            {
+            // Use the cross-file arena's ambient context check which walks up the AST
+            // to detect `declare` keyword, AMBIENT flag, or implicit ambient context.
+            // This covers classes, enums, AND variables (e.g., `declare const a: string`
+            // in .d.ts files).
+            if decl_arena.is_in_ambient_context(decl_idx) {
                 return false;
             }
         } else if self.is_ambient_declaration(decl_idx) {
