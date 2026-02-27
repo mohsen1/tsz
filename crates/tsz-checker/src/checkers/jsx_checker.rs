@@ -41,26 +41,51 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         };
 
-        // Get tag name text
-        let tag_name = if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            self.ctx
-                .arena
-                .get_identifier(tag_name_node)
-                .map(|id| id.escaped_text.as_str())
-        } else {
-            // Property access expression (e.g., React.Component)
-            None
-        };
-
-        // Determine if this is an intrinsic element (lowercase first char)
-        let is_intrinsic = tag_name
-            .as_ref()
-            .is_some_and(|name| name.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
+        // Get tag name text and determine if intrinsic.
+        // Namespaced tags (e.g., `svg:path`) are always intrinsic — TSC looks up
+        // `JSX.IntrinsicElements["svg:path"]` using the full `namespace:name` string.
+        let (tag_name, namespaced_tag_owned, is_intrinsic) =
+            if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                let name = self
+                    .ctx
+                    .arena
+                    .get_identifier(tag_name_node)
+                    .map(|id| id.escaped_text.as_str());
+                let intrinsic = name
+                    .as_ref()
+                    .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
+                (name, None::<String>, intrinsic)
+            } else if tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+                // Namespaced tags like `svg:path` → always intrinsic.
+                // Build "namespace:name" string for IntrinsicElements lookup.
+                let ns_str = self
+                    .ctx
+                    .arena
+                    .get_jsx_namespaced_name(tag_name_node)
+                    .and_then(|ns| {
+                        let ns_id = self.ctx.arena.get(ns.namespace)?;
+                        let ns_text = self.ctx.arena.get_identifier(ns_id)?.escaped_text.as_str();
+                        let name_id = self.ctx.arena.get(ns.name)?;
+                        let name_text = self
+                            .ctx
+                            .arena
+                            .get_identifier(name_id)?
+                            .escaped_text
+                            .as_str();
+                        Some(format!("{ns_text}:{name_text}"))
+                    });
+                (None, ns_str, true)
+            } else {
+                // Property access expression (e.g., React.Component)
+                (None, None, false)
+            };
+        // Unify: for namespaced tags, use the owned string; for simple tags, use the borrowed &str.
+        let effective_tag: Option<&str> = tag_name.or(namespaced_tag_owned.as_deref());
 
         if is_intrinsic {
             let ie_type = self.get_intrinsic_elements_type();
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
-            if let Some(tag) = tag_name
+            if let Some(tag) = effective_tag
                 && let Some(intrinsic_elements_type) = ie_type
             {
                 // Evaluate IntrinsicElements from Lazy(DefId) to its concrete Object form.
@@ -156,6 +181,10 @@ impl<'a> CheckerState<'a> {
                     props_type,
                     jsx_opening.tag_name,
                 );
+            } else {
+                // TS2604: JSX element type does not have any construct or call signatures.
+                // Emit when the component type is concrete but lacks call/construct signatures.
+                self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -212,6 +241,9 @@ impl<'a> CheckerState<'a> {
                         .next()
                         .is_some_and(|c| c.is_ascii_lowercase())
                 })
+        } else if tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            // Namespaced tags (e.g., `</svg:path>`) are always intrinsic
+            true
         } else {
             false
         };
@@ -378,6 +410,74 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Emit TS2604 if the component type has no call or construct signatures.
+    ///
+    /// TSC emits this when a JSX element references a value that is neither:
+    /// - A function (SFC) with call signatures, nor
+    /// - A class with construct signatures, nor
+    /// - `any`/error/unknown/type parameter (which are silently allowed).
+    fn check_jsx_element_has_signatures(
+        &mut self,
+        component_type: TypeId,
+        tag_name_idx: NodeIndex,
+    ) {
+        // Skip for types that are inherently allowed in JSX position
+        if component_type == TypeId::ANY
+            || component_type == TypeId::ERROR
+            || component_type == TypeId::UNKNOWN
+            || component_type == TypeId::NEVER
+        {
+            return;
+        }
+        // Skip type parameters — they may resolve to callable types
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+            return;
+        }
+        // Skip string types — dynamic tag names like `<CustomTag>` where CustomTag
+        // is a string value are valid JSX (treated as intrinsic element lookups)
+        if self.is_assignable_to(component_type, TypeId::STRING) {
+            return;
+        }
+        // Skip if file has parse errors (avoid cascading diagnostics)
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        // Check if the type (or any union member) has call/construct signatures
+        let types_to_check = if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+        {
+            members
+        } else {
+            vec![component_type]
+        };
+
+        let has_signatures = types_to_check.iter().any(|&ty| {
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, ty)
+                .is_some_and(|sigs| !sigs.is_empty())
+                || tsz_solver::type_queries::get_construct_signatures(self.ctx.types, ty)
+                    .is_some_and(|sigs| !sigs.is_empty())
+                || tsz_solver::type_queries::get_function_shape(self.ctx.types, ty).is_some()
+        });
+
+        if !has_signatures {
+            // TSC uses the tag name (variable name) in the message, not the resolved type
+            let tag_text = self
+                .ctx
+                .arena
+                .get(tag_name_idx)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|id| id.escaped_text.as_str().to_owned())
+                .unwrap_or_else(|| self.format_type(component_type));
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                tag_name_idx,
+                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
+                &[&tag_text],
+            );
+        }
     }
 
     /// Extract props type from a Stateless Function Component (SFC).
