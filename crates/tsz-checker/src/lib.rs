@@ -246,6 +246,9 @@ mod generic_inference_manual;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "../tests/keyof_mapped_as_clause_tests.rs"]
+mod keyof_mapped_as_clause_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]

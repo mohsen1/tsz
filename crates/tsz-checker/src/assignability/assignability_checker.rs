@@ -860,7 +860,12 @@ impl<'a> CheckerState<'a> {
         {
             let keyof_type = get_keyof_type(self.ctx.types, target).unwrap();
             let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
-            if !allowed_keys.contains(&str_lit) {
+            // Only use this pre-check when we could determine concrete keys.
+            // An empty set means the inner type couldn't be resolved (e.g., it's
+            // an Application, Mapped type with as-clause, or Lazy reference).
+            // In that case, fall through to the solver's assignability check which
+            // correctly evaluates keyof through the full type evaluation pipeline.
+            if !allowed_keys.is_empty() && !allowed_keys.contains(&str_lit) {
                 self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
                 return false;
             }
