@@ -597,8 +597,11 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                 }
-                // Also check if base is directly a Callable with construct signatures
-                query::has_construct_signatures(self.ctx.types, base)
+                // Recursively check if base is a constructor type. This handles:
+                // - Interfaces with construct signatures (e.g., Constructor<T>)
+                // - Other Application types
+                // - Type aliases that resolve to constructors via intersections
+                self.is_constructor_type(base)
             }
             // Lazy reference (DefId) - check if it's a class or interface
             // This handles cases like:
