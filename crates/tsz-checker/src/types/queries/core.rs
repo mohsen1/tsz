@@ -609,10 +609,9 @@ impl<'a> CheckerState<'a> {
                 .and_then(|computed| self.ctx.arena.get(computed.expression))
                 .is_some_and(|expr_node| self.ctx.arena.get_identifier(expr_node).is_some());
 
-        if !is_computed_identifier
-            && let Some(name) = self.get_property_name(name_idx) {
-                return Some(name);
-            }
+        if !is_computed_identifier && let Some(name) = self.get_property_name(name_idx) {
+            return Some(name);
+        }
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             let computed = self.ctx.arena.get_computed_property(name_node)?;
