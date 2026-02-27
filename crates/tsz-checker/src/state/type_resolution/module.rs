@@ -470,11 +470,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(target_idx) = self
                     .ctx
                     .resolve_import_target_from_file(source_idx, &candidate)
-                    && let Some(exports) =
-                        self.resolve_cross_file_namespace_exports_for_file(target_idx)
-                {
-                    return Some(exports);
-                }
+                && let Some(exports) =
+                    self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            {
+                return Some(exports);
+            }
         }
 
         None
