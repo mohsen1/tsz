@@ -320,9 +320,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // overload resolution, so we can't pre-compute a combined
                     // this type for them.
                     if callable.call_signatures.len() == 1
-                        && let Some(this_type) = callable.call_signatures[0].this_type {
-                            this_types.push(this_type);
-                        }
+                        && let Some(this_type) = callable.call_signatures[0].this_type
+                    {
+                        this_types.push(this_type);
+                    }
                 }
                 _ => {
                     // Non-callable member or member without this type — doesn't constrain
