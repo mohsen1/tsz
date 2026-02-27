@@ -537,6 +537,13 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
+        // Resolve Lazy(DefId) types to their concrete Object forms.
+        // Normal property access calls resolve_type_for_property_access() before checking,
+        // but JSX attribute checking skipped this step — interface-referenced props arrived
+        // as Lazy(DefId) and the solver's PropertyAccessEvaluator couldn't resolve them
+        // (QueryCache's resolve_lazy returns None), causing silent TypeId::ANY fallback.
+        let props_type = self.resolve_type_for_property_access(props_type);
+
         // Skip if evaluation resulted in any or error
         if props_type == TypeId::ANY || props_type == TypeId::ERROR {
             return;
