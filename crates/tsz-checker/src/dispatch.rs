@@ -1302,6 +1302,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
 
+            // MetaProperty: `new.target` (import.meta is parsed as PROPERTY_ACCESS_EXPRESSION)
+            k if k == syntax_kind_ext::META_PROPERTY => {
+                // new.target returns the constructor function or undefined.
+                // Return any as a safe fallback.
+                TypeId::ANY
+            }
+
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
