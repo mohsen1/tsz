@@ -1503,6 +1503,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .push(Arc::clone(&result.arena));
             }
 
+            let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();
             if let Some(new_sym) = global_symbols.get_mut(new_id) {
                 // Check if this is a cross-file merge (same symbol already has data)
                 let is_cross_file_merge = !new_sym.declarations.is_empty();
@@ -1517,6 +1518,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         new_sym.value_declaration = old_sym.value_declaration;
                     }
                     // Merge exports (if both have exports)
+                    // First pass: add missing exports, collect nested merge targets
                     if let (Some(old_exports), Some(new_exports)) =
                         (old_sym.exports.as_ref(), new_sym.exports.as_mut())
                     {
@@ -1526,8 +1528,22 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 if let Some(&remapped_id) = id_remap.get(sym_id) {
                                     new_exports.set(name.clone(), remapped_id);
                                 }
+                            } else if let Some(&remapped_new_id) = id_remap.get(sym_id) {
+                                // Both files export the same name (e.g., nested namespace Utils).
+                                // Record for deferred merge outside the get_mut borrow scope.
+                                let existing_export_id = new_exports.get(name).unwrap();
+                                if existing_export_id != remapped_new_id {
+                                    nested_merges.push((existing_export_id, remapped_new_id));
+                                }
                             }
                         }
+                    }
+                    // Handle case where old symbol has exports but new doesn't yet
+                    if old_sym.exports.is_some() && new_sym.exports.is_none() {
+                        new_sym.exports = old_sym
+                            .exports
+                            .as_ref()
+                            .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
                     }
                     // Merge members (if both have members)
                     if let (Some(old_members), Some(new_members)) =
@@ -1564,6 +1580,55 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         .as_ref()
                         .map(|table| Box::new(remap_symbol_table(table.as_ref(), &id_remap)));
                     *new_sym = updated;
+                }
+            }
+
+            // Deferred pass: merge nested symbols (e.g., nested namespace Utils)
+            // outside the get_mut borrow scope above
+            for (existing_id, source_id) in nested_merges {
+                // Collect data from source symbol first
+                let merge_data = global_symbols.get(source_id).map(|src| {
+                    (
+                        src.flags,
+                        src.declarations.clone(),
+                        src.value_declaration,
+                        src.exports.as_ref().cloned(),
+                        src.members.as_ref().cloned(),
+                    )
+                });
+                if let Some((src_flags, src_decls, src_val_decl, src_exports, src_members)) =
+                    merge_data
+                    && let Some(dst) = global_symbols.get_mut(existing_id)
+                {
+                    let can_merge = can_merge_symbols_cross_file(dst.flags, src_flags);
+                    if !can_merge {
+                        continue;
+                    }
+                    dst.flags |= src_flags;
+                    append_unique_declarations(&mut dst.declarations, &src_decls);
+                    if dst.value_declaration.is_none() && !src_val_decl.is_none() {
+                        dst.value_declaration = src_val_decl;
+                    }
+                    if let Some(src_exp) = src_exports {
+                        let dst_exp = dst
+                            .exports
+                            .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                        for (ename, &esym) in src_exp.iter() {
+                            if !dst_exp.has(ename) {
+                                dst_exp.set(ename.clone(), esym);
+                            }
+                        }
+                    }
+                    if let Some(src_mem) = src_members {
+                        let dst_mem = dst
+                            .members
+                            .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                        for (mname, &msym) in src_mem.iter() {
+                            if !dst_mem.has(mname) {
+                                dst_mem.set(mname.clone(), msym);
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -243,6 +243,14 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(sym_id);
             }
+
+            // Cross-file namespace body fallback: if we're inside a namespace body
+            // and the name wasn't found, check the merged namespace symbol's exports.
+            // This handles e.g. `Point` in part2.ts referring to `Point` exported from
+            // part1.ts's `namespace A`.
+            if let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name) {
+                return Some(sym_id);
+            }
         }
 
         trace!(
@@ -476,6 +484,13 @@ impl<'a> CheckerState<'a> {
             if is_value_only {
                 return TypeSymbolResolution::ValueOnly(sym_id);
             }
+            return TypeSymbolResolution::Type(sym_id);
+        }
+
+        // Cross-file namespace body fallback for type position
+        if resolved.is_none()
+            && let Some(sym_id) = self.resolve_unqualified_name_in_enclosing_namespace(idx, name)
+        {
             return TypeSymbolResolution::Type(sym_id);
         }
 
@@ -834,6 +849,142 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve a namespace member across all binders in multi-file mode.
+    ///
+    /// Cross-file lookup binders have `file_locals` (name→SymbolId) but empty symbol
+    /// arenas. So we use the checker's own binder (which has the shared global symbol
+    /// arena) to look up symbol data.
+    ///
+    /// Also handles nested namespaces: for `A.Utils.Plane`, searches parent namespace
+    /// exports in each binder's `file_locals` to find the nested `Utils` namespace.
+    pub(crate) fn resolve_namespace_member_from_all_binders(
+        &self,
+        namespace_name: &str,
+        member_name: &str,
+    ) -> Option<SymbolId> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            // Try to find namespace in file_locals first (top-level namespaces)
+            if let Some(ns_sym_id) = binder.file_locals.get(namespace_name) {
+                // Use checker's binder for symbol data (cross-file binders have empty arenas)
+                if let Some(ns_symbol) = self.ctx.binder.get_symbol(ns_sym_id)
+                    && ns_symbol.flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                        != 0
+                    && let Some(exports) = ns_symbol.exports.as_ref()
+                    && let Some(member_id) = exports.get(member_name)
+                {
+                    self.record_cross_file_member(member_id, member_name, file_idx);
+                    return Some(member_id);
+                }
+            }
+
+            // For nested namespaces (e.g., `Utils` inside `A`): search parent
+            // namespace exports in this binder for the target namespace name.
+            for (_, &parent_sym_id) in binder.file_locals.iter() {
+                let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
+                    continue;
+                };
+                if parent_sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                    == 0
+                {
+                    continue;
+                }
+                if let Some(parent_exports) = parent_sym.exports.as_ref()
+                    && let Some(nested_ns_id) = parent_exports.get(namespace_name)
+                    && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
+                    && nested_ns.flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                        != 0
+                    && let Some(nested_exports) = nested_ns.exports.as_ref()
+                    && let Some(member_id) = nested_exports.get(member_name)
+                {
+                    self.record_cross_file_member(member_id, member_name, file_idx);
+                    return Some(member_id);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Record a cross-file symbol origin for proper arena delegation.
+    fn record_cross_file_member(&self, member_id: SymbolId, member_name: &str, file_idx: usize) {
+        if let Some(local_sym) = self.ctx.binder.get_symbol(member_id) {
+            if local_sym.escaped_name.as_str() != member_name {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .entry(member_id)
+                    .or_insert(file_idx);
+            }
+        } else {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .entry(member_id)
+                .or_insert(file_idx);
+        }
+    }
+
+    /// Resolve an unqualified name by checking exports of enclosing namespace(s).
+    ///
+    /// When code inside `namespace A { ... }` in file2 references `Point`,
+    /// and `Point` is exported from `namespace A` in file1, the normal scope
+    /// chain only sees file2's namespace body. This method walks up the AST
+    /// to find enclosing `MODULE_DECLARATION` nodes and checks their merged
+    /// symbol exports for the name.
+    fn resolve_unqualified_name_in_enclosing_namespace(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        // Only applies in global scripts — in external modules, namespaces
+        // in different files do NOT merge (each file is its own module).
+        if self.ctx.binder.is_external_module() {
+            return None;
+        }
+
+        let arena = self.ctx.arena;
+        let mut current = node_idx;
+
+        // Walk up the AST looking for enclosing MODULE_DECLARATION nodes
+        for _ in 0..100 {
+            let ext = arena.get_extended(current)?;
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let parent_node = arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Found an enclosing namespace. Get its name.
+                if let Some(module_data) = arena.get_module(parent_node)
+                    && let Some(ns_name_ident) = arena.get_identifier_at(module_data.name)
+                {
+                    let ns_name = ns_name_ident.escaped_text.as_str();
+                    // Look up the name in the merged namespace's exports
+                    // First check the global symbol directly
+                    if let Some(ns_sym_id) = self.ctx.binder.file_locals.get(ns_name)
+                        && let Some(ns_sym) = self.ctx.binder.get_symbol(ns_sym_id)
+                        && let Some(exports) = ns_sym.exports.as_ref()
+                        && let Some(member_id) = exports.get(name)
+                    {
+                        return Some(member_id);
+                    }
+                    // Also try cross-file resolution via all binders
+                    if let Some(member_id) =
+                        self.resolve_namespace_member_from_all_binders(ns_name, name)
+                    {
+                        return Some(member_id);
+                    }
+                }
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
     /// Inner implementation of qualified symbol resolution with cycle detection.
     pub(crate) fn resolve_qualified_symbol_inner(
         &self,
@@ -917,6 +1068,22 @@ impl<'a> CheckerState<'a> {
                 return Some(reexported_sym);
             }
 
+            // Cross-file namespace merging fallback: if the member wasn't found in
+            // the resolved symbol's exports, check other files' namespace declarations
+            // with the same name. This handles `namespace A` declared across files.
+            if left_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                != 0
+                && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
+                    left_symbol.escaped_name.as_str(),
+                    right_name,
+                )
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
+
             return None;
         }
 
@@ -973,6 +1140,19 @@ impl<'a> CheckerState<'a> {
             self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
         {
             return Some(reexported_sym);
+        }
+
+        // Cross-file namespace merging fallback for qualified names in type position.
+        if left_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+            && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
+                left_symbol.escaped_name.as_str(),
+                right_name,
+            )
+        {
+            return Some(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
         }
 
         None
