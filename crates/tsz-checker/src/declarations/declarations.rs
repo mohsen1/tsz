@@ -115,7 +115,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
 
         // TS1155: 'const' declarations must be initialized
-        if is_const && decl_data.initializer.is_none() {
+        // Skip when file has real syntax errors — the parse error is sufficient.
+        if is_const && decl_data.initializer.is_none() && !self.ctx.has_real_syntax_errors {
             // Skip for destructuring patterns - they get TS1182 from the parser
             if let Some(name_node) = self.ctx.arena.get(decl_data.name) {
                 if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
