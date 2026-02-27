@@ -431,6 +431,26 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // For namespace/require imports (`import X = require("m")`), import_name
+            // is None and the symbol's escaped_name won't match any module export.
+            // Try the module's `export =` value (stored under key "export=").
+            // This handles `declare module "react" { export = __React; }`.
+            if symbol.import_name.is_none() {
+                if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
+                    && let Some(target_sym_id) = exports.get("export=")
+                {
+                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                }
+                if let Some(binders) = &self.ctx.all_binders {
+                    for binder in binders.iter() {
+                        if let Some(exports) = binder.module_exports.get(module_name)
+                            && let Some(target_sym_id) = exports.get("export=")
+                        {
+                            return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                        }
+                    }
+                }
+            }
             // For ES6 imports, if we can't find the export, return the alias symbol itself
             // This allows the type checker to use the symbol reference
             return Some(sym_id);

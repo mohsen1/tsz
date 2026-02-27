@@ -483,13 +483,66 @@ impl<'a> CheckerState<'a> {
                                 base_constructor_type,
                                 &mut properties,
                             );
-                            inherited_construct_signatures = self
-                                .remap_inherited_construct_signatures(
+
+                            // When type arguments are provided (e.g., `extends Base<Prop, {}>`),
+                            // build a substitution from the base constructor's type params to
+                            // the resolved type arguments. Without this, inherited construct
+                            // signature params retain uninstantiated type parameter references
+                            // (e.g., `props?: P` instead of `props?: Prop`), causing the JSX
+                            // checker's G3 guard to bail out on "generic" signatures.
+                            let substitution = type_arguments.and_then(|args| {
+                                let base_sigs = construct_signatures_for_type(
+                                    self.ctx.types,
+                                    base_constructor_type,
+                                );
+                                let base_type_params = base_sigs
+                                    .as_ref()
+                                    .and_then(|sigs| sigs.first())
+                                    .map(|sig| &sig.type_params)?;
+                                if base_type_params.is_empty() {
+                                    return None;
+                                }
+
+                                let mut type_args = Vec::new();
+                                for &arg_idx in &args.nodes {
+                                    type_args.push(self.get_type_from_type_node(arg_idx));
+                                }
+                                // Fill missing args with defaults/constraints
+                                if type_args.len() < base_type_params.len() {
+                                    for param in base_type_params.iter().skip(type_args.len()) {
+                                        let fallback = param
+                                            .default
+                                            .or(param.constraint)
+                                            .unwrap_or(TypeId::UNKNOWN);
+                                        type_args.push(fallback);
+                                    }
+                                }
+                                if type_args.len() > base_type_params.len() {
+                                    type_args.truncate(base_type_params.len());
+                                }
+
+                                Some(TypeSubstitution::from_args(
+                                    self.ctx.types,
+                                    base_type_params,
+                                    &type_args,
+                                ))
+                            });
+
+                            inherited_construct_signatures = if let Some(ref subst) = substitution {
+                                self.remap_inherited_construct_signatures_with_substitution(
+                                    base_constructor_type,
+                                    subst,
+                                    &class_type_params,
+                                    instance_type,
+                                )
+                            } else {
+                                self.remap_inherited_construct_signatures(
                                     base_constructor_type,
                                     &class_type_params,
                                     instance_type,
                                     None,
-                                );
+                                )
+                            };
                         }
                         break;
                     }
@@ -552,12 +605,61 @@ impl<'a> CheckerState<'a> {
                             base_constructor_type,
                             &mut properties,
                         );
-                        inherited_construct_signatures = self.remap_inherited_construct_signatures(
-                            base_constructor_type,
-                            &class_type_params,
-                            instance_type,
-                            None,
-                        );
+
+                        // Instantiate inherited construct signatures with type arguments
+                        // (same logic as the resolve_heritage_symbol → None path above).
+                        let substitution = type_arguments.and_then(|args| {
+                            let base_sigs = construct_signatures_for_type(
+                                self.ctx.types,
+                                base_constructor_type,
+                            );
+                            let base_type_params = base_sigs
+                                .as_ref()
+                                .and_then(|sigs| sigs.first())
+                                .map(|sig| &sig.type_params)?;
+                            if base_type_params.is_empty() {
+                                return None;
+                            }
+
+                            let mut type_args_vec = Vec::new();
+                            for &arg_idx in &args.nodes {
+                                type_args_vec.push(self.get_type_from_type_node(arg_idx));
+                            }
+                            if type_args_vec.len() < base_type_params.len() {
+                                for param in base_type_params.iter().skip(type_args_vec.len()) {
+                                    let fallback = param
+                                        .default
+                                        .or(param.constraint)
+                                        .unwrap_or(TypeId::UNKNOWN);
+                                    type_args_vec.push(fallback);
+                                }
+                            }
+                            if type_args_vec.len() > base_type_params.len() {
+                                type_args_vec.truncate(base_type_params.len());
+                            }
+
+                            Some(TypeSubstitution::from_args(
+                                self.ctx.types,
+                                base_type_params,
+                                &type_args_vec,
+                            ))
+                        });
+
+                        inherited_construct_signatures = if let Some(ref subst) = substitution {
+                            self.remap_inherited_construct_signatures_with_substitution(
+                                base_constructor_type,
+                                subst,
+                                &class_type_params,
+                                instance_type,
+                            )
+                        } else {
+                            self.remap_inherited_construct_signatures(
+                                base_constructor_type,
+                                &class_type_params,
+                                instance_type,
+                                None,
+                            )
+                        };
                     }
                     break;
                 };
