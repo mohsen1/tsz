@@ -538,22 +538,6 @@ impl<'a> CheckerState<'a> {
     // JSX Attribute Type Checking
     // =========================================================================
 
-    /// Check if a string is a valid JS identifier (used to filter JSX attribute names).
-    ///
-    /// Hyphenated names (e.g., `data-foo`, `aria-label`) are valid JSX syntax but
-    /// TSC treats them as "extra" attributes that bypass type checking. Only standard
-    /// JS identifiers get checked against the props type.
-    fn is_valid_js_identifier(s: &str) -> bool {
-        let mut chars = s.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if !first.is_ascii_alphabetic() && first != '$' && first != '_' {
-            return false;
-        }
-        chars.all(|c| c.is_ascii_alphanumeric() || c == '$' || c == '_')
-    }
-
     /// Check JSX attributes against an already-evaluated props type.
     ///
     /// For each attribute, checks that the assigned value is assignable to the
@@ -611,7 +595,7 @@ impl<'a> CheckerState<'a> {
 
         // Track provided attribute names for missing-required-property check
         let mut provided_attrs: Vec<String> = Vec::new();
-        let mut has_spread = false;
+        let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
 
         // Check each attribute
@@ -636,11 +620,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Skip type-checking invalid attribute names (parser should catch these)
-                if !Self::is_valid_js_identifier(&attr_name) {
-                    continue;
-                }
-
                 // Skip 'key' and 'ref' — these are special JSX attributes that TypeScript
                 // does not type-check against component props. 'key' is extracted by the
                 // compiler (especially in react-jsx mode) and 'ref' is managed by
@@ -659,10 +638,24 @@ impl<'a> CheckerState<'a> {
 
                 // Get expected type from props
                 use tsz_solver::operations::property::PropertyAccessResult;
+                let is_data_or_aria =
+                    attr_name.starts_with("data-") || attr_name.starts_with("aria-");
                 let expected_type = match self
                     .resolve_property_access_with_env(props_type, &attr_name)
                 {
-                    PropertyAccessResult::Success { type_id, .. } => type_id,
+                    PropertyAccessResult::Success {
+                        type_id,
+                        from_index_signature,
+                        ..
+                    } => {
+                        // data-* and aria-* attributes are only type-checked when they're
+                        // explicitly declared as named properties. When resolved via a string
+                        // index signature, tsc skips them (HTML convention).
+                        if is_data_or_aria && from_index_signature {
+                            continue;
+                        }
+                        type_id
+                    }
                     PropertyAccessResult::PropertyNotFound { .. } => {
                         // Excess property: attribute doesn't exist in props type.
                         // Skip if:
@@ -761,19 +754,96 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                has_spread = true;
-                // Note: we skip spread assignability checking because TSC merges
-                // spread properties with explicit attributes before checking, and
-                // we don't implement that merge yet. Checking the raw spread type
-                // against the full props type would produce false positives when
-                // explicit attributes override or supplement spread properties.
+                // Extract the spread type to track which properties it provides.
+                // This is used for the TS2741 (missing required property) check below.
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    continue;
+                };
+                let spread_expr_idx = spread_data.expression;
+                let spread_type = self.compute_type_of_node(spread_expr_idx);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+
+                // When spread type is any/error/unknown, it potentially provides all
+                // properties, so we skip further checking.
+                if spread_type == TypeId::ANY
+                    || spread_type == TypeId::ERROR
+                    || spread_type == TypeId::UNKNOWN
+                {
+                    // Mark all required props as provided (any spread covers everything)
+                    spread_covers_all = true;
+                    continue;
+                }
+
+                // Extract property names from the spread type for TS2741 tracking.
+                // This allows the missing-required-property check to account for
+                // properties provided via spread.
+                if let Some(spread_shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
+                {
+                    for prop in &spread_shape.properties {
+                        let prop_name = self.ctx.types.resolve_atom(prop.name);
+                        provided_attrs.push(prop_name.to_string());
+                    }
+                }
+
+                // Check assignability of each spread property against the corresponding
+                // props property. Only check properties that exist in the target props
+                // AND are NOT overridden by explicit attributes after the spread.
+                // Note: We don't check the spread as a whole against props because
+                // explicit attributes can supplement/override spread properties.
+                if let Some(spread_shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
+                {
+                    use tsz_solver::operations::property::PropertyAccessResult;
+                    for prop in &spread_shape.properties {
+                        let prop_name = self.ctx.types.resolve_atom(prop.name);
+
+                        // Skip props that will be overridden by later explicit attributes.
+                        // We check if an explicit attribute with the same name appears in the
+                        // remaining attrs list.
+                        let overridden = attrs.properties.nodes.iter().any(|&later_idx| {
+                            if let Some(later_node) = self.ctx.arena.get(later_idx)
+                                && later_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                                    && let Some(later_attr) =
+                                        self.ctx.arena.get_jsx_attribute(later_node)
+                                        && let Some(name_node) = self.ctx.arena.get(later_attr.name)
+                                            && let Some(ident) =
+                                                self.ctx.arena.get_identifier(name_node)
+                                            {
+                                                return ident.escaped_text.as_str() == prop_name;
+                                            }
+                            false
+                        });
+                        if overridden {
+                            continue;
+                        }
+
+                        // Look up the expected type for this property in the props type
+                        let expected_type =
+                            match self.resolve_property_access_with_env(props_type, &prop_name) {
+                                PropertyAccessResult::Success { type_id, .. } => type_id,
+                                _ => continue, // Property not in props, skip
+                            };
+
+                        // Check if the spread property's type is assignable to the expected type
+                        if prop.type_id != TypeId::ANY && prop.type_id != TypeId::ERROR {
+                            self.check_assignable_or_report_at(
+                                prop.type_id,
+                                expected_type,
+                                spread_expr_idx,
+                                tag_name_idx,
+                            );
+                        }
+                    }
+                }
             }
         }
 
         // Check for missing required properties (TS2741)
-        // Skip if there's a spread attribute (spread may provide the missing props)
-        // Skip if we already reported excess property errors (tsc doesn't pile on with TS2741)
-        if !has_spread && !has_excess_property_error {
+        // Skip if:
+        // - we already reported excess property errors (tsc doesn't pile on with TS2741)
+        // - a spread of type `any` covers all properties
+        if !has_excess_property_error && !spread_covers_all {
             // tsc anchors TS2741 (missing required property) at the tag name
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
