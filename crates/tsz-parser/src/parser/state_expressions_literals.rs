@@ -1610,14 +1610,6 @@ impl ParserState {
         let close_paren_end = self.token_end();
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        if parameters.len() != 1 {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor must have exactly one parameter.",
-                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
-            );
-        }
-
         if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(

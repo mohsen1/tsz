@@ -689,14 +689,6 @@ impl ParserState {
         };
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        if parameters.len() != 1 {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor must have exactly one parameter.",
-                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
-            );
-        }
-
         // TS1051: A 'set' accessor cannot have an optional parameter
         if let Some(&first_param) = parameters.nodes.first()
             && let Some(param_node) = self.arena.get(first_param)
