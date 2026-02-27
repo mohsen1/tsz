@@ -160,27 +160,64 @@ Skill usage rules:
 
 ## 20.5) Conformance Analysis Tools
 
-### Snapshot-first workflow (preferred)
-- **Always check `scripts/conformance-snapshot.json` first** before running the full conformance suite.
-- The snapshot contains pre-computed results: `summary`, `areas_by_pass_rate`, `top_failures`, `not_implemented_codes`, and `partial_codes`.
-- Use the snapshot to identify which error codes to work on, which areas have low pass rates, and what the current baseline is.
-- **Do NOT run `./scripts/conformance.sh run` for the full suite** unless you need to verify your changes. It takes minutes and is wasteful for research/planning.
+### CRITICAL: Avoid re-running the full conformance suite
+- The full conformance suite takes **minutes** to run. Do NOT run it for research, planning, or analysis.
+- **All analysis can be done offline** from pre-computed snapshot files. Use the query tools below.
+- Only run the full suite (`./scripts/conformance.sh run` or `snapshot`) when you need to **verify code changes** you've made.
 
-### Targeted testing
-- `./scripts/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
-- `./scripts/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
-- Use `--max N` to limit test count for quick smoke tests.
+### Offline analysis (preferred — zero cost, instant)
+Two snapshot files contain everything needed for analysis:
+- **`scripts/conformance-snapshot.json`** — high-level aggregates (summary, areas, top failures, quick wins).
+- **`scripts/conformance-detail.json`** — per-test failure data (expected/actual/missing/extra codes for every failing test, ~400KB).
 
-### Full suite (use sparingly)
-- `./scripts/conformance.sh run` — run all conformance tests (error-code level).
-- `./scripts/conformance.sh analyze` — categorize failures by error code, find quick wins.
-- `./scripts/conformance.sh areas` — analyze pass/fail rates by **feature area** (parser, types, salsa, jsx, etc.). Use this to decide which feature to work on next.
-  - `--depth 2` for sub-area breakdown.
-  - `--drilldown <area>` to drill into a specific area (e.g., `types`, `statements`).
-  - `--min-tests N` to filter out small areas.
-- `./scripts/conformance.sh snapshot` — run + analyze + areas, save updated results to `scripts/conformance-snapshot.json`.
+**Query tool** (`python3 scripts/query-conformance.py`):
+```bash
+# Overview: what to work on next
+python3 scripts/query-conformance.py
 
-### TSC cache for research
+# Tests fixable by adding 1 missing code (highest impact)
+python3 scripts/query-conformance.py --one-missing
+
+# Tests fixable by removing 1 extra code
+python3 scripts/query-conformance.py --one-extra
+
+# False positive breakdown (expected 0, we emit errors)
+python3 scripts/query-conformance.py --false-positives
+
+# Deep-dive a specific error code (shows would-pass, also-needs, extras)
+python3 scripts/query-conformance.py --code TS2454
+
+# List tests where a code is falsely emitted
+python3 scripts/query-conformance.py --extra-code TS7053
+
+# Tests closest to passing (diff <= N)
+python3 scripts/query-conformance.py --close 2
+
+# Export paths for piping into conformance runner
+python3 scripts/query-conformance.py --code TS2454 --paths-only
+```
+
+**Reading snapshot JSON directly** (for custom queries):
+```python
+import json
+with open('scripts/conformance-snapshot.json') as f:
+    snap = json.load(f)
+# Keys: summary, areas_by_pass_rate, top_failures, not_implemented_codes,
+#        partial_codes, one_missing_zero_extra, one_extra_zero_missing,
+#        false_positive_codes, top_missing_codes, top_extra_codes, categories
+```
+
+**Reading detail JSON directly** (for per-test queries):
+```python
+import json
+with open('scripts/conformance-detail.json') as f:
+    detail = json.load(f)
+# detail["failures"][test_path] = {"e": [...], "a": [...], "m": [...], "x": [...]}
+# e=expected, a=actual, m=missing, x=extra
+# PASS tests are not in the failures dict (implicit pass).
+```
+
+### TSC cache for research (what does tsc expect?)
 - `scripts/tsc-cache-full.json` contains tsc's expected diagnostics for every test.
 - Each entry has `error_codes`, `diagnostic_fingerprints` (code, file, line, column, message_key).
 - Use Python/jq to query the cache for tests expecting a specific error code without running anything:
@@ -194,6 +231,15 @@ Skill usage rules:
           print(key)
   "
   ```
+
+### Targeted testing (after code changes)
+- `./scripts/conformance.sh run --filter "pattern"` — run only tests matching a filename pattern (fast, seconds).
+- `./scripts/conformance.sh run --filter "pattern" --verbose` — see expected vs actual diagnostics for failures.
+- Use `--max N` to limit test count for quick smoke tests.
+
+### Full suite (use sparingly — only to verify changes)
+- `./scripts/conformance.sh run` — run all conformance tests (error-code level).
+- `./scripts/conformance.sh snapshot` — run + analyze + save all snapshot files. Run this after a batch of changes to update the offline data.
 
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
