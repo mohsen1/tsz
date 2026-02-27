@@ -1807,7 +1807,6 @@ FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnArrowFunct
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnAwait.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnEnum2.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionExpression.ts
-FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionParameter.ts
 FAIL TypeScript/tests/cases/conformance/decorators/legacyDecorators-contextualTypes.ts
 FAIL TypeScript/tests/cases/conformance/directives/multiline.tsx
 FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
@@ -2829,6 +2828,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
@@ -8646,6 +8646,7 @@ PASS TypeScript/tests/cases/conformance/decorators/decoratorMetadataWithTypeOnly
 PASS TypeScript/tests/cases/conformance/decorators/decoratorMetadataWithTypeOnlyImport2.ts
 PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnEnum.ts
 PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionDeclaration.ts
+PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionParameter.ts
 PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnImportEquals1.ts
 PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnImportEquals2.ts
 PASS TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnInterface.ts
@@ -11867,7 +11868,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
