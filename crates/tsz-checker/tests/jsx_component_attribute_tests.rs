@@ -394,3 +394,67 @@ let x = <Comp name="hi" data-testid="foo" aria-label="bar" />;
         "Should not type-check hyphenated attributes, got: {diags:?}"
     );
 }
+
+// =============================================================================
+// TS2604: JSX element type without call/construct signatures
+// =============================================================================
+
+#[test]
+fn test_ts2604_emitted_for_non_callable_element() {
+    // A non-callable value used as JSX tag should emit TS2604
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+var Div = 3;
+<Div />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Should emit TS2604 for non-callable JSX element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2604_not_emitted_for_callable_element() {
+    // A callable value used as JSX tag should NOT get TS2604
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Comp() {{ return <div />; }}
+<Comp />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Should NOT emit TS2604 for callable JSX element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2604_not_emitted_for_empty_interface_with_no_intrinsics() {
+    // When no JSX.IntrinsicElements exists, string-typed tags shouldn't get TS2604
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+}
+var CustomTag = "h1";
+<CustomTag />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
+        ),
+        "Should NOT emit TS2604 for string-typed JSX tag, got: {diags:?}"
+    );
+}
