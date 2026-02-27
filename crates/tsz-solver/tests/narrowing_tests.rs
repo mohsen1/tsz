@@ -1330,3 +1330,61 @@ fn test_narrow_object_by_typeof_negation_number_keeps_object() {
     let narrowed = ctx.narrow_by_typeof_negation(TypeId::OBJECT, "number");
     assert_eq!(narrowed, TypeId::OBJECT);
 }
+
+// =============================================================================
+// remove_undefined Tests
+// =============================================================================
+
+#[test]
+fn test_remove_undefined_from_union() {
+    let interner = TypeInterner::new();
+    // string | undefined → string
+    let union = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_remove_undefined_from_triple_union() {
+    let interner = TypeInterner::new();
+    // string | number | undefined → string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_preserves_null() {
+    let interner = TypeInterner::new();
+    // string | null | undefined → string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NULL);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_no_undefined_noop() {
+    let interner = TypeInterner::new();
+    // string | number → string | number (unchanged)
+    let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, union);
+}
+
+#[test]
+fn test_remove_undefined_bare_undefined() {
+    let interner = TypeInterner::new();
+    // undefined → never
+    let result = remove_undefined(&interner, TypeId::UNDEFINED);
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
+fn test_remove_undefined_non_union_noop() {
+    let interner = TypeInterner::new();
+    // string → string (unchanged)
+    let result = remove_undefined(&interner, TypeId::STRING);
+    assert_eq!(result, TypeId::STRING);
+}
