@@ -1,7 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9207/12570 (73.2%) — full suite, error-code level
+**Current score**: ~9454/12570 (75.2%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27 — internalModules/DeclarationMerging: cross-file namespace merging
+
+### Area: internalModules/DeclarationMerging (53.3% → 56.2%, 16→18 passing of 30→32)
+
+### Fix: Cross-file namespace declaration merging (+6 conformance tests from this fix alone)
+- **Files changed**:
+  - `src/parallel.rs` — recursive nested namespace export merging in `merge_bind_results_ref`:
+    when two files export a nested namespace with the same name (e.g., `namespace A { export namespace Utils }`),
+    collect merge targets in a deferred pass (to avoid borrow checker issues with `global_symbols`),
+    then merge flags/declarations/exports/members of nested symbols
+  - `crates/tsz-checker/src/symbols/symbol_resolver.rs` — three new cross-file resolution methods:
+    - `resolve_namespace_member_from_all_binders()`: qualified name fallback (e.g., `A.Utils.Plane`)
+    - `resolve_unqualified_name_in_enclosing_namespace()`: bare names in namespace body (e.g., `Point`
+      inside `namespace A` body referring to `Point` from another file's `namespace A`)
+    - Added fallbacks in both value and type position resolution paths
+  - `crates/tsz-checker/src/types/queries/lib.rs` — cross-file fallback in `resolve_namespace_value_member`
+- **Root cause**: Three issues:
+  1. `merge_bind_results_ref` skipped duplicate exports (`if !new_exports.has(name)`) without merging
+     nested namespace internals — so `Utils.Plane` from file2 was lost
+  2. Cross-file lookup binders have EMPTY symbol arenas (`BinderState::new()`), so
+     `binder.get_symbol()` always returned None — fix: use `self.ctx.binder.get_symbol()` (global arena)
+  3. No fallback existed for unqualified names in namespace bodies — `Point` in file2's `namespace A`
+     was never resolved from file1's `namespace A` exports
+- **Guard**: Only applies to global scripts; skips external modules (`is_external_module()`) since
+  `export namespace` in module files does NOT merge cross-file (matches tsc behavior)
+- **Remaining issues**:
+  - TS2403 false positives when `Point` resolves but structural comparison fails (type identity issue)
+  - TS2433 "namespace declaration cannot be in a different file from a class/function" (5 tests, unimplemented)
+  - TS2351 false positives on cross-file constructors (3 tests)
 
 ---
 
