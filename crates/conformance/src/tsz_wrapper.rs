@@ -670,23 +670,12 @@ fn convert_options_to_tsconfig(
         opts.insert(tsconfig_key.to_string(), json_value);
     }
 
-    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
-        for key in [
-            "noImplicitAny",
-            "noImplicitThis",
-            "strictNullChecks",
-            "strictFunctionTypes",
-            "strictBindCallApply",
-            "strictPropertyInitialization",
-            "useUnknownInCatchVariables",
-            "alwaysStrict",
-        ] {
-            opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
-        }
-    }
+    // NOTE: We intentionally do NOT expand `strict` into sub-options here.
+    // Both tsc and tsz resolve `strict` internally (setting alwaysStrict,
+    // noImplicitAny, etc.). Expanding them into the tsconfig causes
+    // `alwaysStrict: false` to appear as an explicit option, which triggers
+    // TS5107 deprecation diagnostics in tsc 6.0 — a false positive since
+    // the value is implied by `strict`, not independently set by the user.
 
     // Sort properties alphabetically for deterministic tsconfig output.
     opts.sort_keys();
