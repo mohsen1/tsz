@@ -1,7 +1,60 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9505/12570 (75.6%) — full suite, error-code level
+**Current score**: ~9535/12570 (75.9%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27d — types/union area: discriminated union narrowing fix
+
+### Area: types/union (56.0% pass rate, 14/25 passing)
+
+**Fixed**: Discriminated union narrowing with optional properties — solver-level.
+
+#### Fix: `narrow_object_property` clears optional flag — Solver (unions.rs)
+
+**Root cause**: In `type_related_to_discriminated_type` (TypeScript's `typeRelatedToDiscriminatedType`), when we narrow a source property to a specific discriminant value, we create a new object type via `narrow_object_property`. This function preserved the original `optional` flag from the source property. So `{ foo?: number | undefined }` narrowed to `number` became `{ foo?: number }` (still optional). This failed against `{ foo: number }` (required) in the target union because the subtype checker correctly rejects `source.optional && !target.optional`.
+
+**Fix**: Set `optional: false` in `narrow_object_property` when creating the narrowed type. When we know the property has a specific discriminant value, the property must be present (not missing), so it should never be optional in the narrowed type.
+
+**File**: `crates/tsz-solver/src/relations/subtype/rules/unions.rs:490`
+
+**Tests flipped PASS**:
+- `unionRelationshipCheckPasses.ts` — primary target: `{ foo?: number | undefined }` ≤ `{ foo?: undefined } | { foo: number }`
+- `genericCallInferenceConditionalType2.ts` — collateral improvement
+- `privateNamesConstructorChain-1.ts` — collateral improvement
+
+**Conformance**: 9522 → 9535 (+13, accounting for upstream changes)
+
+#### Unit tests added
+- `test_discriminated_union_optional_property_narrowing` — regression test for the exact bug
+- `test_discriminated_union_narrowing_preserves_non_discriminant_props` — non-discriminant properties maintained during narrowing
+
+#### Remaining types/union failures (10 tests)
+
+| Test | Issue | Root cause |
+|------|-------|------------|
+| unionTypeParameterInference | Extra TS2322 | Generic inference: `U \| Foo<U>` not properly inferred in `lift(value).prop` |
+| unionTypeInference | Extra TS2322, TS2345 | Deep mapped/conditional type: `DeepPromised<T>` assignability |
+| unionOfClassCalls | Extra TS2678, TS2769 | Union method call: switch comparable check + overload resolution |
+| unionWithIndexSignature | Extra TS7053 | Index signature on intersection of typed arrays |
+| unionOfArraysFilterCall | Missing TS18048, extra TS2365 | Filter return type narrowing |
+| unionAndIntersectionInference1 | Extra TS2532 | "Object possibly undefined" false positive |
+| unionAndIntersectionInference3 | Extra TS2345 | Inference with intersection/union combinations |
+| contextualTypeWithUnionTypeCallSignatures | Missing TS7006 | Contextual typing for implicit-any params |
+| unionTypeCallSignatures6 | Missing TS2349 | Union call signature resolution |
+| unionPropertyOfProtectedAndIntersectionProperty | Missing TS2339 | Protected property access through union |
+
+#### Investigated extra-TS2322 false positives (89 one-extra tests)
+
+The 89 tests where TS2322 is the only extra code have diverse root causes:
+- Indexed access type evaluation (`T[K]` not reducing when all properties have same type)
+- Computed property setter type resolution (unique symbol properties)
+- Destructuring flow narrowing (type guards not flowing through destructuring)
+- Generic inference priority/ordering issues
+- Tuple/array intersection assignability
+
+No single common cause identified. Each requires a targeted fix.
 
 ---
 
