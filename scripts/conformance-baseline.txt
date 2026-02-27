@@ -528,8 +528,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -541,7 +539,6 @@ FAIL TypeScript/tests/cases/compiler/genericConstructorFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericDefaults.ts
 FAIL TypeScript/tests/cases/compiler/genericDefaultsErrors.ts
 FAIL TypeScript/tests/cases/compiler/genericFunctionInference1.ts
-FAIL TypeScript/tests/cases/compiler/genericFunctionInference2.ts
 FAIL TypeScript/tests/cases/compiler/genericFunctionsWithOptionalParameters1.ts
 FAIL TypeScript/tests/cases/compiler/genericFunduleInModule.ts
 FAIL TypeScript/tests/cases/compiler/genericFunduleInModule2.ts
@@ -5357,6 +5354,8 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5397,6 +5396,7 @@ PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase.ts
 PASS TypeScript/tests/cases/compiler/genericDerivedTypeWithSpecializedBase2.ts
 PASS TypeScript/tests/cases/compiler/genericFunctionCallSignatureReturnTypeMismatch.ts
 PASS TypeScript/tests/cases/compiler/genericFunctionHasFreshTypeArgs.ts
+PASS TypeScript/tests/cases/compiler/genericFunctionInference2.ts
 PASS TypeScript/tests/cases/compiler/genericFunctions0.ts
 PASS TypeScript/tests/cases/compiler/genericFunctions1.ts
 PASS TypeScript/tests/cases/compiler/genericFunctions2.ts
