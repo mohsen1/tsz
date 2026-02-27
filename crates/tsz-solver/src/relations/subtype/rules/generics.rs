@@ -643,18 +643,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        // Template must be S[K] where K is the iteration parameter (homomorphic form)
-        let Some((template_obj, template_idx)) = index_access_parts(self.interner, mapped.template)
-        else {
-            return false;
+        // Check template compatibility with the source's property type S[K].
+        // Fast path: if template is exactly S[K] (identity form), no further check needed.
+        // General case: check if the template is a subtype of S[K].
+        // This handles cases like Denullified<T> where template is NonNullable<T[K]>,
+        // which is always <: T[K], so Denullified<T> is assignable to T.
+        let template_ok = if let Some((template_obj, template_idx)) =
+            index_access_parts(self.interner, mapped.template)
+            && let Some(idx_param) = type_param_info(self.interner, template_idx)
+            && idx_param.name == mapped.type_param.name
+            && template_obj == constraint_source
+        {
+            true
+        } else {
+            let k_type_id = self.interner.type_param(TypeParamInfo {
+                name: mapped.type_param.name,
+                constraint: Some(mapped.constraint),
+                default: None,
+                is_const: false,
+            });
+            let source_value_type = self.interner.index_access(constraint_source, k_type_id);
+            self.check_subtype(mapped.template, source_value_type)
+                .is_true()
         };
-        let Some(idx_param) = type_param_info(self.interner, template_idx) else {
-            return false;
-        };
-        if idx_param.name != mapped.type_param.name {
-            return false;
-        }
-        if template_obj != constraint_source {
+
+        if !template_ok {
             return false;
         }
 
