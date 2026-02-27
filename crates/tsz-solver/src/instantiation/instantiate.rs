@@ -560,16 +560,12 @@ impl<'a> TypeInstantiator<'a> {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
                             }
-                            let evaluated = crate::evaluation::evaluate::evaluate_type(
-                                self.interner,
-                                instantiated,
-                            );
-                            // Check if evaluation hit depth limit
-                            if evaluated == TypeId::ERROR {
-                                self.depth_exceeded = true;
-                                return TypeId::ERROR;
-                            }
-                            results.push(evaluated);
+                            // Don't evaluate here — the instantiator lacks a TypeResolver,
+                            // so evaluate_type (with NoopResolver) can't resolve Lazy types
+                            // in the conditional's check/extends positions. Instead, return
+                            // the unevaluated conditionals and let the caller's evaluator
+                            // (which has a proper resolver) handle evaluation.
+                            results.push(instantiated);
                         }
                         return self.interner.union(results);
                     }

@@ -166,7 +166,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
         let key_set = match self.extract_mapped_keys(keys) {
-            Some(keys) => keys,
+            Some(mut keys) => {
+                // Deduplicate string literals to handle overlapping enum members.
+                // For example, `enum A { CAT = "cat" }` and `enum B { CAT = "cat" }` both
+                // produce key "cat". Without dedup, the mapped type would have two conflicting
+                // properties named "cat" with different types.
+                keys.string_literals.sort_unstable();
+                keys.string_literals.dedup();
+                keys
+            }
             None => {
                 tracing::trace!(
                     keys_lookup = ?self.interner().lookup(keys),
@@ -460,6 +468,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
+        
         if string_index.is_some() || number_index.is_some() {
             self.interner().object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
@@ -629,6 +638,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             ),
                         );
                         keys.string_literals.push(s);
+                    } else if let Some(inner_keys) = self.extract_mapped_keys(member) {
+                        // Recursively extract keys from non-literal union members.
+                        // Handles enum types (TypeData::Enum), lazy refs (TypeData::Lazy),
+                        // and nested unions (e.g., `A | B` where A, B are enum types).
+                        keys.string_literals.extend(inner_keys.string_literals);
+                        keys.has_string |= inner_keys.has_string;
+                        keys.has_number |= inner_keys.has_number;
                     } else {
                         // Non-literal in union - can't fully evaluate
                         return None;
@@ -657,6 +673,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // For `enum E { A, B }`, members is the union `0 | 1`, and the keys
                 // are the enum values. Recursively extract from the members type.
                 self.extract_mapped_keys(members)
+            }
+            TypeData::Lazy(def_id) => {
+                // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
+                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
+                    && resolved != type_id {
+                        return self.extract_mapped_keys(resolved);
+                    }
+                None
             }
             // Can't extract literals from other types
             _ => None,

@@ -2,6 +2,7 @@ use super::*;
 use crate::TypeInterner;
 use crate::def::DefId;
 use crate::instantiation::instantiate::MAX_INSTANTIATION_DEPTH;
+use crate::types::TypeData;
 
 #[test]
 fn test_substitution_basic() {
@@ -1587,5 +1588,88 @@ fn test_object_property_does_not_contaminate_method_type_param() {
         }
     } else {
         panic!("Expected object type");
+    }
+}
+
+#[test]
+fn test_distributive_conditional_over_union_with_lazy_members() {
+    // Verifies that distributing a conditional type over a union containing
+    // Lazy(DefId) members does NOT prematurely evaluate the conditionals.
+    //
+    // Scenario: Extract<T, U> = T extends U ? T : never
+    // When T = Lazy(Cat) | Lazy(Dog) and U = { type: "cat" },
+    // the instantiator must NOT evaluate the conditionals (because it has
+    // no TypeResolver to resolve Lazy types). Instead it should return
+    // unevaluated conditionals that the caller's evaluator can handle.
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create type parameter T
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Create distributive conditional: T extends { type: "cat" } ? T : never
+    let cat_lit = interner.literal_string("cat");
+    let extends_shape = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("type"),
+        cat_lit,
+    )]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: type_param_t,
+        extends_type: extends_shape,
+        true_type: type_param_t,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Create Lazy types representing interface references
+    let cat_def = DefId(1);
+    let dog_def = DefId(2);
+    let lazy_cat = interner.intern(TypeData::Lazy(cat_def));
+    let lazy_dog = interner.intern(TypeData::Lazy(dog_def));
+    let union_type = interner.union(vec![lazy_cat, lazy_dog]);
+
+    // Substitute T = Lazy(Cat) | Lazy(Dog)
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union_type);
+    let result = instantiate_type(&interner, cond, &subst);
+
+    // The result should be a union of two unevaluated conditionals:
+    //   (Lazy(Cat) extends {type:"cat"} ? Lazy(Cat) : never)
+    // | (Lazy(Dog) extends {type:"cat"} ? Lazy(Dog) : never)
+    //
+    // It must NOT be `never` — that would mean the instantiator
+    // wrongly evaluated the conditionals with NoopResolver.
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "Distributive conditional over Lazy union must not collapse to never"
+    );
+
+    // Verify it's a union of conditionals (not never, not error)
+    match interner.lookup(result) {
+        Some(TypeData::Union(members)) => {
+            let member_list = interner.type_list(members);
+            assert_eq!(
+                member_list.len(),
+                2,
+                "Expected union of 2 distributed conditionals"
+            );
+            // Each member should be a conditional type
+            for &member in member_list.iter() {
+                assert!(
+                    matches!(interner.lookup(member), Some(TypeData::Conditional(_))),
+                    "Each distributed member should be a conditional, got {:?}",
+                    interner.lookup(member)
+                );
+            }
+        }
+        other => {
+            panic!("Expected union of conditionals, got {other:?}");
+        }
     }
 }
