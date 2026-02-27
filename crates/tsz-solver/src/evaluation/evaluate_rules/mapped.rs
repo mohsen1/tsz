@@ -468,7 +468,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
-        
         if string_index.is_some() || number_index.is_some() {
             self.interner().object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
@@ -677,9 +676,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Lazy(def_id) => {
                 // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
                 if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
-                    && resolved != type_id {
-                        return self.extract_mapped_keys(resolved);
-                    }
+                    && resolved != type_id
+                {
+                    return self.extract_mapped_keys(resolved);
+                }
                 None
             }
             // Can't extract literals from other types

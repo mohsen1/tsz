@@ -253,9 +253,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // so we resolve the DefId to get the underlying type and check that.
             TypeData::Lazy(def_id) => {
                 if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner())
-                    && resolved != evaluated {
-                        return self.is_key_in_mapped_constraint(resolved, prop_name);
-                    }
+                    && resolved != evaluated
+                {
+                    return self.is_key_in_mapped_constraint(resolved, prop_name);
+                }
                 // Couldn't resolve further — be conservative and accept
                 true
             }
