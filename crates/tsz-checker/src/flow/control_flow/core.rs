@@ -517,6 +517,17 @@ impl<'a> FlowAnalyzer<'a> {
 
             // Check if we've reached a fixed point (type stopped changing)
             if current_type == prev_type {
+                // Update cache with the final converged type for all intermediate keys.
+                // During iteration, we inject `(loop, sym, entry_type) -> entry_type` which
+                // is a pessimistic guess. Once the fixed point is reached, we must update
+                // the cache so subsequent queries with initial_type=entry_type get the
+                // correct converged result, not the stale intermediate.
+                if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
+                    if entry_type != current_type {
+                        let entry_key = (loop_flow_id, sym_id, entry_type);
+                        cache.borrow_mut().insert(entry_key, current_type);
+                    }
+                }
                 return current_type;
             }
         }
@@ -877,13 +888,6 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|nt| nt.get(&sym.value_declaration.0).copied())
                                 });
                             let narrowing_base = declared_type.unwrap_or(initial_type);
-                            tracing::trace!(
-                                "killing def: initial={:?} declared={:?} base={:?} assigned={:?}",
-                                initial_type,
-                                declared_type,
-                                narrowing_base,
-                                assigned_type
-                            );
                             self.narrow_assignment(narrowing_base, assigned_type)
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type

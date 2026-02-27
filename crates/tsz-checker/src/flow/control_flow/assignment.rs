@@ -21,11 +21,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         widen_literals_for_destructuring: bool,
     ) -> Option<TypeId> {
-        tracing::trace!(
-            "get_assigned_type called: assignment_node={:?} target={:?}",
-            assignment_node,
-            target
-        );
         let node = self.arena.get(assignment_node)?;
 
         // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
