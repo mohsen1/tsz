@@ -388,7 +388,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if is_type_alias || (has_type && !has_value) {
+            let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
+            if is_type_alias || (has_type && !has_value && !has_alias) {
                 trace!(
                     name = name,
                     sym_id = ?sym_id,
