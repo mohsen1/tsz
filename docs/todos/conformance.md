@@ -1,10 +1,50 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9184/12570 (73.1%) — full suite, error-code level
-> Note: score dropped from 9362 due to origin/main rebase including commits that
-> introduced regressions (TS5107 suppression + wrapper-adjacent changes). Our fixes
-> contributed +7 net improvements.
+**Current score**: ~9201/12570 (73.2%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27 — classes area fixes
+
+### Area: classes (50.0% → improved, 8→ passing of 16 top-level)
+
+### Fix: Suppress TS7008 for static members assigned in class static blocks (+11 conformance tests)
+- **Files changed**:
+  - `crates/tsz-checker/src/state/state_checking_members/member_access.rs` — added `property_assigned_in_enclosing_class_static_block()`
+  - `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs` — call new check for static properties
+  - `crates/tsz-checker/src/flow/flow_analysis/core.rs` — added `CLASS_STATIC_BLOCK_DECLARATION` to `analyze_statement()` block arm
+- **Root cause**: `property_assigned_in_enclosing_class_constructor()` only scanned CONSTRUCTOR
+  bodies for `this.prop = ...` assignments. Static properties assigned in class static blocks
+  (`static { this.x = 1; }`) were not detected, so TS7008 ("Member implicitly has an 'any' type")
+  was falsely emitted.
+- **Secondary root cause**: Even after adding the static block scanner, `analyze_statement()` in
+  `flow_analysis/core.rs` only matched `syntax_kind_ext::BLOCK` kind. Static blocks have kind
+  `CLASS_STATIC_BLOCK_DECLARATION` but share the same `BlockData` struct. The walker silently
+  skipped static block bodies. Fix: added `|| k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION`
+  to the BLOCK match arm.
+- **Tests fixed**: classStaticBlockUseBeforeDef1-5.ts, controlFlowAutoAccessor1.ts,
+  genericCallInferenceConditionalType2.ts, prespecializedGenericMembers1.ts,
+  iterableContextualTyping1.ts, plus 3 more from upstream interaction.
+
+### Investigated but not fixed: `this` type in static methods
+- **Tests affected**: `typeOfThisInStaticMembers.ts`, `classWithStaticMembers.ts` (2 tests)
+- **Root cause**: `resolve_lazy()` in `crates/tsz-solver/src/def/resolver.rs` (line 521-524)
+  ALWAYS returns instance type for class `DefId`s. When `class_member_this_type()` correctly
+  identifies a static method and tries to return the constructor type, the `Lazy(DefId)` it
+  produces still resolves to the instance type in `TypeEnvironment::resolve_lazy()`.
+- **Why not fixed**: Deep architectural change to `DefId` resolution needed. Only 2 tests
+  benefit, and the change could regress many tests that rely on the current class DefId→instance
+  resolution path. Documented for future work.
+
+### Remaining classes failures (identified for future work):
+- **staticIndexSignature** sub-area (28.6% pass rate): 5 failing tests around static index
+  signatures — requires implementing static member index signature resolution
+- **classHeritageSpecifica** sub-area (41.2% pass rate): heritage clause specifics, often
+  TS2339/TS2416/TS2420 mismatches
+- **classStaticBlock** sub-area: mostly fixed by this session's TS7008 work
+- **TS2564** ("Property has no initializer and is not definitely assigned"): not yet implemented,
+  would fix several class member tests
 
 ---
 
