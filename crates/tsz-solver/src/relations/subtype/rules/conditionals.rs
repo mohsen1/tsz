@@ -5,7 +5,7 @@
 //! - Distributive conditional types
 //! - Branch compatibility checking
 
-use crate::types::{ConditionalType, TypeId};
+use crate::types::{ConditionalType, TypeData, TypeId};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -59,39 +59,113 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check if both branches of a conditional type are subtypes of target.
+    /// Check if a conditional type source is assignable to a concrete target.
     ///
-    /// When checking `T extends U ? X : Y <: target`, we need to verify that:
-    /// - Both the true branch (X) and false branch (Y) are subtypes of target
+    /// When checking `T extends U ? X : Y <: target`, we use two strategies:
     ///
-    /// This is used when the source is a conditional type and we need to check
-    /// if it can be used where the target type is expected.
+    /// 1. **Default constraint** (tsc's `getConstraintOfConditionalType`):
+    ///    Compute the "inferred true type" by replacing the check type in the
+    ///    true branch with `check_type & extends_type`, then union with the
+    ///    false branch. If this constraint is a subtype of target, succeed.
+    ///    For `Extract<T, Function>` (= `T extends Function ? T : never`),
+    ///    the constraint is `T & Function`, which is assignable to `Function`.
     ///
-    /// ## Logic:
-    /// - `X <: target` AND `Y <: target` => True
-    /// - Otherwise => False
+    /// 2. **Both branches** (fallback): Check that both the true and false
+    ///    branches are individually subtypes of target.
     ///
     /// ## Examples:
     /// ```typescript
-    /// // Both branches are strings
-    /// type T = boolean extends true ? "yes" : "no";
-    /// let x: string = null as T;  // ✅ "yes" <: string and "no" <: string
+    /// // Constraint approach: Extract<T, Function> <: Function
+    /// // Constraint = T & Function | never = T & Function
+    /// // T & Function <: Function ✅
     ///
-    /// // Branches have different types
-    /// type U = boolean extends true ? "yes" : 42;
-    /// let y: string = null as U;  // ❌ 42 is not <: string
+    /// // Both branches approach:
+    /// // type T = boolean extends true ? "yes" : "no";
+    /// // "yes" <: string and "no" <: string ✅
     /// ```
     pub(crate) fn conditional_branches_subtype(
         &mut self,
         cond: &ConditionalType,
         target: TypeId,
     ) -> SubtypeResult {
+        // Strategy 1: Try default constraint of the conditional type.
+        // This matches tsc's getConstraintOfConditionalType / getDefaultConstraintOfConditionalType.
+        if let Some(constraint) = self.get_conditional_constraint(cond)
+            && self.check_subtype(constraint, target).is_true()
+        {
+            return SubtypeResult::True;
+        }
+
+        // Strategy 2: Both branches must be subtypes of target.
         if self.check_subtype(cond.true_type, target).is_true()
             && self.check_subtype(cond.false_type, target).is_true()
         {
             SubtypeResult::True
         } else {
             SubtypeResult::False
+        }
+    }
+
+    /// Compute the default constraint of a conditional type.
+    ///
+    /// For `T extends U ? X : Y`, the default constraint is:
+    ///   `X[T := T & U] | Y`
+    ///
+    /// where `X[T := T & U]` means the true branch with the check type
+    /// replaced by the intersection of `check_type` and `extends_type`.
+    /// This is tsc's "inferred true type" computation.
+    ///
+    /// Currently handles these patterns:
+    /// - `T extends U ? T : Y` → `(T & U) | Y` (Extract pattern)
+    /// - Other patterns: returns the general `X | Y` union
+    fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
+        // Only compute the constraint when the check type is a type parameter.
+        // Deferred conditionals (where T is unresolved) always have a type parameter
+        // as check type. For resolved conditionals with concrete check types,
+        // the evaluator would have already picked a branch.
+        if !matches!(
+            self.interner.lookup(cond.check_type),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
+
+        // Compute the "inferred true type": the true branch with the check type
+        // replaced by check_type & extends_type.
+        let inferred_true = if cond.true_type == cond.check_type {
+            // Common case: Extract<T, U> = T extends U ? T : never
+            // Inferred true = T & U
+            self.interner
+                .intersection2(cond.check_type, cond.extends_type)
+        } else if self.type_references_check_type(cond.true_type, cond.check_type) {
+            // True branch references check_type but isn't identical to it.
+            // We can't do full instantiation in the subtype checker, so
+            // fall back to using the true type as-is (less precise but safe).
+            cond.true_type
+        } else {
+            // True branch doesn't reference check_type at all.
+            // Inferred true = X (unchanged).
+            cond.true_type
+        };
+
+        // Default constraint = inferred_true | false_type
+        let constraint = self.interner.union2(inferred_true, cond.false_type);
+        Some(constraint)
+    }
+
+    /// Check if a type references the given `check_type` (a type parameter).
+    /// Used to determine if the true branch needs substitution.
+    fn type_references_check_type(&self, ty: TypeId, check_type: TypeId) -> bool {
+        if ty == check_type {
+            return true;
+        }
+        // Check common wrapper types that might contain the check type
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+                let member_list = self.interner.type_list(members);
+                member_list.contains(&check_type)
+            }
+            _ => false,
         }
     }
 
