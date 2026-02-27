@@ -601,6 +601,25 @@ impl<'a> FlowAnalyzer<'a> {
             }
             in_worklist.remove(&current_flow);
 
+            {
+                let flags = self
+                    .binder
+                    .flow_nodes
+                    .get(current_flow)
+                    .map(|f| f.flags)
+                    .unwrap_or(0);
+                let node = self.binder.flow_nodes.get(current_flow).map(|f| f.node);
+                tracing::trace!(
+                    ref_idx = reference.0,
+                    flow_id = current_flow.0,
+                    current_type = current_type.0,
+                    flags = flags,
+                    node = ?node,
+                    step = steps,
+                    "check_flow BFS step"
+                );
+            }
+
             // Check global cache first to avoid redundant traversals.
             // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
             // schedule antecedents and apply narrowing.
@@ -942,12 +961,13 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                 } else {
                     // This assignment doesn't affect our reference — pass through to antecedent.
-                    // CRITICAL: If the antecedent carries narrowing info and hasn't been processed
-                    // yet, we must defer to avoid losing narrowing. Without this, the worklist
-                    // may process this ASSIGNMENT before its antecedent chain is resolved, using
-                    // the un-narrowed type. This applies to CONDITION nodes (which directly
-                    // narrow) and CALL nodes (which are merge points whose own antecedents may
-                    // carry narrowing from conditions).
+                    // CRITICAL: If the antecedent hasn't been processed yet, we must defer to
+                    // avoid losing narrowing. Without this, the worklist may process this
+                    // ASSIGNMENT before its antecedent chain is resolved, using the un-narrowed
+                    // type. This applies to CONDITION nodes (which directly narrow), CALL nodes
+                    // (assertion functions), BRANCH_LABEL (merges), and also ASSIGNMENT chains
+                    // that may themselves lead to conditions (e.g. `let v1 = x; let v2 = x;`
+                    // inside an `if (x instanceof C)` block).
                     if let Some(&ant) = flow.antecedent.first() {
                         if let Some(&ant_type) = results.get(&ant) {
                             // Antecedent already computed — use its result
@@ -958,7 +978,8 @@ impl<'a> FlowAnalyzer<'a> {
                                     f.has_any_flags(
                                         flow_flags::CONDITION
                                             | flow_flags::CALL
-                                            | flow_flags::BRANCH_LABEL,
+                                            | flow_flags::BRANCH_LABEL
+                                            | flow_flags::ASSIGNMENT,
                                     )
                                 });
                             if ant_needs_defer {
@@ -1121,6 +1142,12 @@ impl<'a> FlowAnalyzer<'a> {
                 result_type
             };
 
+            tracing::trace!(
+                ref_idx = reference.0,
+                flow_id = current_flow.0,
+                final_type = final_type.0,
+                "check_flow BFS result stored"
+            );
             results.insert(current_flow, final_type);
             visited.insert(current_flow);
 
@@ -1140,7 +1167,15 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Return the result for the initial flow_id
-        results.get(&flow_id).copied().unwrap_or(initial_type)
+        let final_result = results.get(&flow_id).copied().unwrap_or(initial_type);
+        tracing::trace!(
+            ref_idx = reference.0,
+            flow_id = flow_id.0,
+            initial_type = initial_type.0,
+            final_result = final_result.0,
+            "check_flow final result"
+        );
+        final_result
     }
 
     /// Helper function for switch clause handling in iterative mode.
