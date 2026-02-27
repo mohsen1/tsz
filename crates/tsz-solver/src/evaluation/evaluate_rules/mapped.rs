@@ -147,13 +147,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // `keyof T` to concrete keys (via T's constraint), the template instantiation
         // would fail because T[key] can't be resolved for a type parameter.
         //
-        // This is critical for patterns like:
-        //   function f<T extends any[]>(a: Boxified<T>) { a.pop(); }
-        // where Boxified<T> = { [P in keyof T]: Box<T[P]> }
-        //
-        // If we expand this, T["pop"] becomes ERROR. We need to keep it deferred
-        // and handle property access on the deferred mapped type specially.
+        // EXCEPTION: If the type parameter is constrained to an array or tuple,
+        // we should produce an array/tuple type instead of deferring. This matches
+        // tsc's instantiateMappedArrayType behavior. For example:
+        //   function f<T extends any[]>(a: Boxified<T>) { a.concat(a); }
+        // Boxified<T> should evaluate to Box<T[number]>[] (an array), not a deferred
+        // mapped type. The template's T[K] with K=number resolves through the
+        // constraint (T[number] where T extends any[] → any).
         if self.is_mapped_type_over_type_parameter(mapped) {
+            // Before deferring, check if the type parameter has an array/tuple constraint.
+            if let Some(result) = self.try_evaluate_mapped_over_array_param(mapped) {
+                return result;
+            }
+
             tracing::trace!(
                 constraint = ?self.interner().lookup(constraint),
                 "evaluate_mapped: DEFERRED - mapped type over type parameter"
@@ -518,6 +524,77 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         false
+    }
+
+    /// Try to evaluate a mapped type over a type parameter as an array/tuple.
+    ///
+    /// When the mapped type's source is a type parameter constrained to an array
+    /// or tuple, we produce an array/tuple type instead of deferring. This matches
+    /// tsc's `instantiateMappedArrayType` behavior.
+    ///
+    /// For `Boxified<T>` where `T extends any[]`:
+    /// - Template `Box<T[K]>` with K=number → `Box<T[number]>` → `Box<any>`
+    /// - Result: `Array(Box<any>)` instead of a deferred Mapped type
+    fn try_evaluate_mapped_over_array_param(&mut self, mapped: &MappedType) -> Option<TypeId> {
+        // Extract the type parameter from the constraint (keyof T → T)
+        let TypeData::KeyOf(source) = self.interner().lookup(mapped.constraint)? else {
+            return None;
+        };
+        let TypeData::TypeParameter(param) = self.interner().lookup(source)? else {
+            return None;
+        };
+        let constraint = param.constraint?;
+
+        // Only preserve array shape for identity name mappings (no `as` clause
+        // or `as K` where K is the iteration variable)
+        let is_identity_or_no_name = mapped.name_type.is_none()
+            || mapped.name_type.is_some_and(|nt| {
+                matches!(
+                    self.interner().lookup(nt),
+                    Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
+                )
+            });
+        if !is_identity_or_no_name {
+            return None;
+        }
+
+        // Resolve the constraint to check if it's array/tuple-like
+        let resolved = self.evaluate(constraint);
+        match self.interner().lookup(resolved) {
+            Some(TypeData::Array(element_type)) => {
+                tracing::trace!(
+                    element_type = element_type.0,
+                    "evaluate_mapped: array-constrained type parameter → producing array"
+                );
+                Some(self.evaluate_mapped_array(mapped, element_type))
+            }
+            Some(TypeData::Tuple(tuple_id)) => {
+                tracing::trace!(
+                    "evaluate_mapped: tuple-constrained type parameter → producing tuple"
+                );
+                Some(self.evaluate_mapped_tuple(mapped, tuple_id))
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                let has_readonly_index = shape
+                    .number_index
+                    .as_ref()
+                    .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
+                if has_readonly_index
+                    && let Some(index) = &shape.number_index {
+                        tracing::trace!(
+                            "evaluate_mapped: readonly-array-constrained type parameter → producing readonly array"
+                        );
+                        return Some(self.evaluate_mapped_array_with_readonly(
+                            mapped,
+                            index.value_type,
+                            true,
+                        ));
+                    }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
