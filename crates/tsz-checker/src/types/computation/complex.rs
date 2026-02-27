@@ -933,11 +933,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Callable types - check if the symbol is abstract
-        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id)
-            && let Some(sym_id) = callable_shape.symbol
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-        {
-            return (symbol.flags & symbol_flags::ABSTRACT) != 0;
+        // or if the callable shape itself is marked abstract (for anonymous
+        // construct signature types like `abstract new (a: string) => string`).
+        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
+            if callable_shape.is_abstract {
+                return true;
+            }
+            if let Some(sym_id) = callable_shape.symbol
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                return (symbol.flags & symbol_flags::ABSTRACT) != 0;
+            }
         }
         // If no symbol or not abstract, fall through to general classification
 
