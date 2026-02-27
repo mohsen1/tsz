@@ -1025,8 +1025,13 @@ impl<'a> CheckerState<'a> {
 
         // Cross-check accessors against properties/methods for TS2300
         // A field+getter, field+setter, or method+getter/setter conflict is TS2300
+        // tsc reports on BOTH the accessor and the conflicting property/method
         for (key, accessor_indices) in &accessor_plain_names {
-            if seen_names.contains_key(key) {
+            if let Some(member_info) = seen_names.get(key) {
+                // Report TS2300 on the conflicting property/method declarations
+                for &idx in &member_info.indices {
+                    self.report_duplicate_class_member_ts2300(idx);
+                }
                 // Report TS2300 on the accessor declarations
                 for &idx in accessor_indices {
                     self.report_duplicate_class_member_ts2300(idx);

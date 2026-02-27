@@ -356,16 +356,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
             let s_callable = self.interner.callable_shape(s_callable_id);
             if !s_callable.properties.is_empty()
-                && let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
-                    let t_shape = self.interner.object_shape(t_shape_id);
-                    return self.explain_object_failure(
-                        source,
-                        target,
-                        &s_callable.properties,
-                        None,
-                        &t_shape.properties,
-                    );
-                }
+                && let Some(t_shape_id) = object_shape_id(self.interner, resolved_target)
+            {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &s_callable.properties,
+                    None,
+                    &t_shape.properties,
+                );
+            }
         }
 
         if let (Some(s_elem), Some(t_elem)) = (
