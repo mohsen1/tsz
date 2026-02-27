@@ -536,4 +536,48 @@ impl<'a> CheckerState<'a> {
 
         true
     }
+
+    /// Check if a named export from a module was reached through a `export type *` wildcard
+    /// re-export chain. Returns `true` when the export should be excluded from the namespace
+    /// object's value properties because any wildcard in the re-export chain was type-only.
+    ///
+    /// For example:
+    /// ```typescript
+    /// // ghost.ts
+    /// export class Ghost {}          // Ghost.is_type_only = false
+    /// // intermediate.ts
+    /// export type * from './ghost'   // wildcard_reexports_type_only = true
+    /// ```
+    /// When building the namespace type for `intermediate`, `Ghost` should NOT appear
+    /// as a value property because the wildcard re-export is type-only.
+    pub(crate) fn is_export_from_type_only_wildcard(
+        &self,
+        module_name: &str,
+        export_name: &str,
+    ) -> bool {
+        // Resolve the target file for this module specifier
+        let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+        // Get the canonical file name used as key in the target binder's data structures
+        let target_file_name = self
+            .ctx
+            .get_arena_for_file(target_file_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.as_str());
+        let Some(file_name) = target_file_name else {
+            return false;
+        };
+
+        // Use the binder's re-export resolution which tracks type-only status
+        // through wildcard chains
+        matches!(
+            target_binder.resolve_import_with_reexports_type_only(file_name, export_name),
+            Some((_, true))
+        )
+    }
 }
