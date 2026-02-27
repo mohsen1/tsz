@@ -698,6 +698,12 @@ impl<'a> CheckerState<'a> {
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
 
+        // Track explicit attribute names → their name node indices for TS2783
+        // (spread overwrite detection). When a spread contains a required property
+        // that was already specified as an explicit attribute, we emit TS2783.
+        let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
+
         // Check each attribute
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -735,6 +741,9 @@ impl<'a> CheckerState<'a> {
 
                 // Only track valid identifiers for missing-prop checking
                 provided_attrs.push(attr_name.clone());
+
+                // Track for TS2783 spread-overwrite detection
+                named_attr_nodes.insert(attr_name.clone(), attr_data.name);
 
                 // Get expected type from props
                 use tsz_solver::operations::property::PropertyAccessResult;
@@ -872,6 +881,42 @@ impl<'a> CheckerState<'a> {
                     // Mark all required props as provided (any spread covers everything)
                     spread_covers_all = true;
                     continue;
+                }
+
+                // TS2783: Check if any earlier explicit attributes will be
+                // overwritten by required (non-optional) properties from this spread.
+                // Only when strict null checks are enabled (matches tsc behavior).
+                if self.ctx.strict_null_checks() && !named_attr_nodes.is_empty() {
+                    let spread_props = self.collect_object_spread_properties(spread_type);
+                    for sp in &spread_props {
+                        if !sp.optional {
+                            let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                            if let Some(&attr_name_idx) = named_attr_nodes.get(&sp_name) {
+                                use crate::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let message = format_message(
+                                    diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                    &[&sp_name],
+                                );
+                                self.error_at_node(
+                                    attr_name_idx,
+                                    &message,
+                                    diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                );
+                            }
+                        }
+                    }
+                    // After TS2783 check, clear tracking only for required properties
+                    // that the spread provides. Optional properties don't definitely
+                    // overwrite, so the explicit attribute may still be overwritten by
+                    // a later spread with the same property as required.
+                    for sp in &spread_props {
+                        if !sp.optional {
+                            let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                            named_attr_nodes.remove(&sp_name);
+                        }
+                    }
                 }
 
                 // Extract property names from the spread type for TS2741 tracking.
