@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-27T01:02:08Z",
-  "git_sha": "73f9898acdbdb1ace5cbfcd3a4e1508086981163",
+  "timestamp": "2026-02-27T01:34:00Z",
+  "git_sha": "69c2df6762e062ffb3ddf885382677a1c26cd966",
   "summary": {
     "total_tests": 12570,
-    "passed": 9309,
-    "failed": 3261,
+    "passed": 9312,
+    "failed": 3258,
     "pass_rate": 74.1
   },
   "areas_by_pass_rate": [
@@ -403,9 +403,9 @@
     {
       "area": "compiler",
       "total": 6510,
-      "passed": 4876,
-      "failed": 1634,
-      "pass_rate": 74.9
+      "passed": 4879,
+      "failed": 1631,
+      "pass_rate": 74.95
     },
     {
       "area": "expressions/typeSatisfaction",
@@ -719,7 +719,7 @@
   "top_failures": [
     {
       "code": "TS2322",
-      "count": 51
+      "count": 52
     },
     {
       "code": "TS2339",
