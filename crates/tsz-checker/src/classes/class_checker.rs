@@ -1074,6 +1074,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Detect overload signatures (method declarations without body) so we
+            // can skip the type compatibility check for them later.  We do NOT
+            // skip the entire loop iteration because override / accessor / kind
+            // mismatch checks still need to run for bodyless method declarations.
+            let is_overload_signature = is_method && {
+                self.ctx
+                    .arena
+                    .get(member_idx)
+                    .and_then(|n| self.ctx.arena.get_method_decl(n))
+                    .is_some_and(|m| m.body.is_none())
+            };
+
             let base_info =
                 self.find_member_in_class_chain(base_idx, &member_name, is_static, 0, true);
 
@@ -1343,6 +1355,14 @@ impl<'a> CheckerState<'a> {
 
             // Skip type compatibility check if either type is ANY
             if member_type == TypeId::ANY || base_type == TypeId::ANY {
+                continue;
+            }
+
+            // Skip type compatibility for overload signatures. tsc checks
+            // inheritance using the combined overloaded type from the symbol,
+            // not individual AST declarations.  Individual overloads may be
+            // narrower than the base method's type, producing false TS2416.
+            if is_overload_signature {
                 continue;
             }
 
