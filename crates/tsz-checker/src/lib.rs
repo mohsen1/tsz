@@ -214,6 +214,9 @@ mod ts7057_yield_implicit_any;
 #[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
+#[cfg(test)]
+#[path = "../tests/yield_star_return_type_tests.rs"]
+mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
 #[cfg(test)]
 #[path = "../tests/architecture_contract_tests.rs"]
