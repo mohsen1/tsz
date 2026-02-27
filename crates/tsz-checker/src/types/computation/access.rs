@@ -324,7 +324,16 @@ impl<'a> CheckerState<'a> {
                 self.get_literal_key_union_from_type(index_type)
         {
             let total_keys = string_keys.len() + number_keys.len();
-            if total_keys > 1 || literal_string_is_none {
+            // Non-integer numeric literals (e.g., 1.1, -1) should be resolved as
+            // property names, not via index signatures. Skip this block when all
+            // keys are non-indexable numbers so the property name handler below
+            // can process them (e.g., c[1.1] where C has property `1.1: string`).
+            let all_non_indexable_numbers = string_keys.is_empty()
+                && !number_keys.is_empty()
+                && number_keys
+                    .iter()
+                    .all(|&n| self.get_numeric_index_from_number(n).is_none());
+            if (total_keys > 1 || literal_string_is_none) && !all_non_indexable_numbers {
                 if !string_keys.is_empty() && number_keys.is_empty() {
                     use_index_signature_check = false;
                 }
