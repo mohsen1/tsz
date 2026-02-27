@@ -125,38 +125,21 @@ pub struct GlobalAugmentation {
     pub node: NodeIndex,
     /// The arena containing this declaration (None = current file's arena, Some = cross-file)
     pub arena: Option<Arc<NodeArena>>,
-    /// Source file name (populated during cross-file merge for cross-file diagnostics)
-    pub file_name: Option<String>,
 }
 
 impl GlobalAugmentation {
     /// Create a new global augmentation without arena context (during binding).
     #[must_use]
     pub const fn new(node: NodeIndex) -> Self {
-        Self {
-            node,
-            arena: None,
-            file_name: None,
-        }
+        Self { node, arena: None }
     }
 
     /// Create a new global augmentation with arena context (during merge).
     #[must_use]
-    pub fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
         Self {
             node,
             arena: Some(arena),
-            file_name: None,
-        }
-    }
-
-    /// Create a new global augmentation with arena context and file name (during merge).
-    #[must_use]
-    pub fn with_arena_and_file(node: NodeIndex, arena: Arc<NodeArena>, file_name: String) -> Self {
-        Self {
-            node,
-            arena: Some(arena),
-            file_name: Some(file_name),
         }
     }
 }

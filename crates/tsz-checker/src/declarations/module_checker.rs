@@ -855,46 +855,6 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // TS2300: Check for duplicate export specifier names in the same export list.
-        // e.g. `export { Foo, Foo }` — both specifiers with the exported name "Foo".
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            use rustc_hash::FxHashMap;
-
-            let mut seen_names: FxHashMap<String, Vec<tsz_parser::parser::NodeIndex>> =
-                FxHashMap::default();
-            for &specifier_idx in &named_exports.elements.nodes {
-                let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
-                    continue;
-                };
-                let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
-                    continue;
-                };
-                // The exported name is specifier.name (the right side of `as`, or the only name)
-                let name_idx = specifier.name;
-                if name_idx.is_none() {
-                    continue;
-                }
-                let Some(name_str) = self.get_identifier_text_from_idx(name_idx) else {
-                    continue;
-                };
-                seen_names.entry(name_str).or_default().push(name_idx);
-            }
-            for (name, nodes) in &seen_names {
-                if nodes.len() > 1 {
-                    let message =
-                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[name]);
-                    for &name_idx in nodes {
-                        self.error_at_node(
-                            name_idx,
-                            &message,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
-                    }
-                }
-            }
-        }
-
         // Check if the export clause is inside an ambient module declaration
         // (e.g., `declare module "m" { export { X }; }`). Inside such blocks,
         // only declarations within the module scope are local — file-level
