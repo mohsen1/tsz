@@ -1,7 +1,51 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9493/12570 (75.5%) — full suite, error-code level
+**Current score**: ~9505/12570 (75.6%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27c — es2019 area: globalThis readonly + export checks
+
+### Area: es2019 (54.5% → ~71.4%, 6→10 passing of 14)
+
+**Fixed**: TS2540 for `globalThis.globalThis` assignment, TS2661 for exporting `globalThis` from `declare global {}`.
+
+#### Fix 1: TS2540 for `globalThis.globalThis = ...` — Checker (readonly.rs)
+
+**Root cause**: `globalThis.globalThis` returns `TypeId::ANY` since `typeof globalThis` is modeled as ANY. The general readonly detection in `check_readonly_assignment` can't discover that `globalThis` is a readonly self-reference.
+
+**Fix**: Added special-case check in `check_readonly_assignment` (readonly.rs): when property name is `globalThis` and the object expression is `globalThis`, emit TS2540 directly.
+
+**Test flipped**: `globalThisReadonlyProperties.ts`
+
+#### Fix 2: TS2661 for `export { globalThis }` inside `declare global {}` — Checker (module_checker.rs, import/core.rs)
+
+**Root cause**: Two issues:
+1. `check_local_named_exports` was skipped for `declare global {}` because `is_inside_namespace_declaration` treated it as a namespace.
+2. Even if reached, `globalThis` (no binder symbol) wasn't in the resolvable-names list, so TS2304 would be emitted instead of TS2661.
+
+**Fix**:
+1. Added `is_inside_global_augmentation()` helper that detects `declare global {}` via GLOBAL_AUGMENTATION flag.
+2. Modified the guard in `statement_callback_bridge.rs` to also run `check_local_named_exports` inside global augmentations.
+3. Added `"globalThis"` to the known-resolvable names in module_checker.rs.
+
+**Test flipped**: `globalThisGlobalExportAsGlobal.ts`
+
+#### Collateral improvements: +2 bonus tests flipped
+- `privateNamesConstructorChain-1.ts` — likely benefited from rebase with upstream fixes
+- `typeofANonExportedType.ts` — same
+
+#### Remaining es2019 failures (4 tests)
+
+| Test | Issue | Root cause |
+|------|-------|------------|
+| globalThisPropertyAssignment | Missing TS2339 | `window.z = 3` in JS file — needs Window type resolution, not globalThis |
+| globalThisUnknownNoImplicitAny | Missing TS2339, TS7015, TS7017, TS7053 | `typeof globalThis` is ANY, can't emit implicit-any errors for property access |
+| globalThisAmbientModules | TS2503 instead of TS2339 | `(typeof globalThis)["\"ambientModule\""]` indexed access misinterpreted as namespace |
+| importMeta | Missing TS2339, TS2364 | `import.meta` returns ANY instead of ImportMeta interface type |
+
+**Deeper fix needed**: The fundamental limitation is that `typeof globalThis` is `TypeId::ANY`. Building a proper object type from global scope declarations would fix globalThisUnknownNoImplicitAny and similar tests. The `import.meta` fix needs resolving the ImportMeta global interface. Both are medium-sized efforts.
 
 ---
 
