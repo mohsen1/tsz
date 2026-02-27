@@ -76,7 +76,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.interner.lookup(source),
             self.interner.lookup(target)
         );
-
         if source == target {
             return;
         }
@@ -1028,6 +1027,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let iter_param_name = mapped.type_param.name;
 
         let mut reverse_properties = Vec::new();
+        let mut any_reversed = false;
 
         for prop in &source_obj.properties {
             // Substitute the iteration parameter K with the property name literal
@@ -1037,17 +1037,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
             // Reverse-infer through the template: find what T[K] should be.
-            // If reversal fails for any property, abort the entire reverse inference.
             let reversed_value = match self.reverse_infer_through_template(
                 prop.type_id,
                 instantiated_template,
                 target_placeholder,
             ) {
-                Some(v) => v,
-                None => return false, // Can't reverse this property, fall back
+                Some(v) => {
+                    any_reversed = true;
+                    v
+                }
+                // If reversal fails for this property, use `unknown` as a placeholder.
+                // The post-inference check will catch the type mismatch
+                // (e.g., TS2322: number not assignable to () => unknown).
+                None => TypeId::UNKNOWN,
             };
 
             reverse_properties.push(PropertyInfo::new(prop.name, reversed_value));
+        }
+
+        // Only commit the reverse inference if at least one property was successfully
+        // reversed. If ALL properties failed, abort and let the fallback paths handle it.
+        if !any_reversed {
+            return false;
         }
 
         // Build the reverse mapped object and constrain it against the placeholder T
@@ -1093,10 +1104,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && template_app.args.len() == source_app.args.len()
                 {
                     for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
-                        let reversed =
-                            self.reverse_infer_through_template(*s_arg, *t_arg, target_placeholder);
-                        if let Some(rev) = reversed
-                            && rev != *s_arg
+                        if let Some(rev) =
+                            self.reverse_infer_through_template(*s_arg, *t_arg, target_placeholder)
                         {
                             return Some(rev);
                         }
@@ -1111,9 +1120,40 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
-        // For any other template shape (function types, conditional types, etc.),
-        // we can't safely reverse. Signal failure so we fall back to the
-        // standard simple/evaluate paths.
+        // Case 3: template is a Function type (from mapped type template like `() => T[K]`
+        // or `(val: T[K]) => boolean`) and source is also a Function.
+        // Reverse through parameters and return type to find the placeholder.
+        if let Some(TypeData::Function(template_fn_id)) = self.interner.lookup(template) {
+            let template_fn = self.interner.function_shape(template_fn_id);
+            if let Some(TypeData::Function(source_fn_id)) = self.interner.lookup(source_value) {
+                let source_fn = self.interner.function_shape(source_fn_id);
+                // Try reversing through parameters first (handles contravariant case:
+                // source `(v: string) => bool` against template `(val: T["foo"]) => bool`
+                // → T["foo"] = string)
+                let min_params = template_fn.params.len().min(source_fn.params.len());
+                for i in 0..min_params {
+                    if let Some(reversed) = self.reverse_infer_through_template(
+                        source_fn.params[i].type_id,
+                        template_fn.params[i].type_id,
+                        target_placeholder,
+                    ) {
+                        return Some(reversed);
+                    }
+                }
+                // Try reversing through the return type (covariant case:
+                // source `() => number` against template `() => T["bar"]` → T["bar"] = number)
+                return self.reverse_infer_through_template(
+                    source_fn.return_type,
+                    template_fn.return_type,
+                    target_placeholder,
+                );
+            }
+            // Source is not a matching function — can't reverse
+            return None;
+        }
+
+        // For any other template shape (conditional types, etc.),
+        // we can't safely reverse.
         None
     }
 
