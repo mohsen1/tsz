@@ -347,13 +347,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If target is iterable and source array elements are assignable to the
         // yielded type, accept the assignment.
         let Some(query_db) = self.query_db else {
+            // No query_db — try direct iterable yield type extraction
+            if let Some(yield_type) = self.extract_iterable_yield_type(target) {
+                return Some(self.check_subtype(element_type, yield_type));
+            }
             return Some(direct);
         };
-        let Some(iter_info) = get_iterator_info(query_db, target, false) else {
-            return Some(direct);
+        if let Some(iter_info) = get_iterator_info(query_db, target, false) {
+            return Some(self.check_subtype(element_type, iter_info.yield_type));
+        }
+
+        // get_iterator_info failed (e.g., can't resolve `next()` on an Application
+        // type like Iterator<T>). Fall back to extracting the yield type directly
+        // from the target's [Symbol.iterator] return type arguments.
+        if let Some(yield_type) = self.extract_iterable_yield_type(target) {
+            return Some(self.check_subtype(element_type, yield_type));
+        }
+
+        Some(direct)
+    }
+
+    /// Extract the yield type from an Iterable-like target type.
+    ///
+    /// When the target is an object with a `[Symbol.iterator]` method whose return
+    /// type is a generic Application (e.g., `Iterator<T, TReturn, TNext>`), extract
+    /// the first type argument as the yield type.
+    ///
+    /// This is used as a fallback when full iterator protocol resolution fails
+    /// (e.g., because `next()` can't be resolved on an unexpanded Application type).
+    fn extract_iterable_yield_type(&self, target: TypeId) -> Option<TypeId> {
+        use crate::visitor::{
+            application_id, callable_shape_id, object_shape_id, object_with_index_shape_id,
         };
 
-        Some(self.check_subtype(element_type, iter_info.yield_type))
+        // Get the target's object shape (either Object or ObjectWithIndex)
+        let shape_id = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))?;
+        let shape = self.interner.object_shape(shape_id);
+
+        // Find [Symbol.iterator] property
+        let sym_iter_atom = self.interner.intern_string("[Symbol.iterator]");
+        let iter_prop = shape
+            .properties
+            .binary_search_by_key(&sym_iter_atom, |p| p.name)
+            .ok()
+            .map(|idx| &shape.properties[idx])?;
+
+        // Get the Callable shape to extract the return type
+        let callable_id = callable_shape_id(self.interner, iter_prop.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+
+        // Get the first call signature's return type
+        let return_type = callable.call_signatures.first()?.return_type;
+
+        // If the return type is an Application (e.g., Iterator<T, TReturn, TNext>),
+        // the first type argument is the yield type
+        let app_id = application_id(self.interner, return_type)?;
+        let app = self.interner.type_application(app_id);
+
+        // The yield type is the first type argument
+        app.args.first().copied()
     }
 
     /// Get the element type of an array type, or return the type itself for any[].

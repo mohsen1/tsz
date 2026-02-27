@@ -528,6 +528,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2052,7 +2053,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts
-FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/taggedTemplateContextualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/elementAccess/letIdentifierInElementAccess01.ts
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/callOverload.ts
@@ -2800,7 +2800,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
@@ -3004,7 +3003,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuper
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithStringIndexer2.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes/subtypingWithStringIndexer4.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/objectTypesIdentityWithPrivates3.ts
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/bivariantInferences.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/contextualSignatureInstantiation.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithConstructorTypedArguments5.ts
@@ -5403,7 +5401,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -9874,6 +9871,7 @@ PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/getSetAccessorContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping1.ts
+PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping2.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping3.ts
@@ -11864,6 +11862,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
@@ -12341,6 +12340,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIde
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/primtiveTypesAreIdentical.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/typeParametersAreIdenticalToThemselves.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeAndMemberIdentity/unionTypeIdentity.ts
+PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/bivariantInferences.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/discriminatedUnionInference.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallTypeArgumentInference.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithArrayLiteralArgs.ts

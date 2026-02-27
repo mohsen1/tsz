@@ -8,7 +8,8 @@
 //! - `check_modifier_combinations` — modifier conflict checks (e.g., abstract + private)
 
 use crate::query_boundaries::assignability::{
-    get_function_return_type, replace_function_return_type, rewrite_function_error_slots_to_any,
+    erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
+    rewrite_function_error_slots_to_any,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -398,7 +399,14 @@ impl<'a> CheckerState<'a> {
         impl_type: tsz_solver::TypeId,
         overload_type: tsz_solver::TypeId,
     ) -> bool {
-        // Get return types of both signatures
+        // Erase type parameters to `any` before comparing, matching TSC's
+        // `getErasedSignature` in `isImplementationCompatibleWithOverload`.
+        // This ensures positional parameter comparison works when the impl
+        // and overload use type params in different structural positions.
+        let impl_type = erase_function_type_params_to_any(self.ctx.types, impl_type);
+        let overload_type = erase_function_type_params_to_any(self.ctx.types, overload_type);
+
+        // Get return types of both (erased) signatures
         let impl_return = get_function_return_type(self.ctx.types, impl_type);
         let overload_return = get_function_return_type(self.ctx.types, overload_type);
 
