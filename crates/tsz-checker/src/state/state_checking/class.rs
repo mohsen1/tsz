@@ -467,7 +467,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn check_property_initialization(
         &mut self,
-        _class_idx: NodeIndex,
+        class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
         is_declared: bool,
         _is_abstract: bool,
@@ -488,13 +488,26 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc suppresses TS2564 for the entire class when the file contains parse
-        // errors (containsParseError flag propagation).  In practice, parse error
-        // recovery produces garbage AST nodes that confuse the property initialization
-        // checker, so it's safest to skip the check entirely.
-        if self.ctx.has_parse_errors {
-            return;
-        }
+        // tsc suppresses TS2564 per-node via its containsParseError flag propagation.
+        // A parse error only affects the containing node and its ancestors, not the
+        // entire file. We approximate this by checking if any *real* syntax error
+        // position falls within the class node's span. Grammar-level parse errors
+        // (e.g., TS1030 "modifier already seen") don't trigger containsParseError
+        // in tsc, so we use real_syntax_error_positions which only includes actual
+        // parse failures (TS1005, TS1109, TS1128, etc.).
+        if self.ctx.has_real_syntax_errors
+            && let Some(class_node) = self.ctx.arena.get(class_idx) {
+                let class_start = class_node.pos;
+                let class_end = class_node.end;
+                let class_has_parse_error = self
+                    .ctx
+                    .real_syntax_error_positions
+                    .iter()
+                    .any(|&pos| pos >= class_start && pos < class_end);
+                if class_has_parse_error {
+                    return;
+                }
+            }
 
         // Check if this is a derived class (has base class)
         let is_derived_class = self.class_has_base(class);
@@ -666,19 +679,23 @@ impl<'a> CheckerState<'a> {
         // tsc suppresses TS2564 when the property's type annotation already has errors
         // (e.g. TS2314 "A generic type requires type arguments").  The type may resolve
         // to a valid TypeId even when there's an error on the type reference, so we check
-        // whether any existing diagnostic falls within the member's span.
-        if let Some(member_node) = self.ctx.arena.get(member_idx) {
-            let mem_start = member_node.pos;
-            let mem_end = member_node.end;
-            let has_type_errors = self
-                .ctx
-                .diagnostics
-                .iter()
-                .any(|d| d.start >= mem_start && d.start < mem_end && d.code != 2564);
-            if has_type_errors {
-                return false;
+        // whether any existing diagnostic falls within the type annotation's span.
+        // IMPORTANT: Only check the type annotation span, not the entire member span,
+        // to avoid suppressing TS2564 due to unrelated errors like TS2300 (duplicate
+        // identifier) or TS2717 (incompatible property types).
+        if prop.type_annotation.is_some()
+            && let Some(type_node) = self.ctx.arena.get(prop.type_annotation) {
+                let type_start = type_node.pos;
+                let type_end = type_node.end;
+                let has_type_annotation_errors = self
+                    .ctx
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.start >= type_start && d.start < type_end && d.code != 2564);
+                if has_type_annotation_errors {
+                    return false;
+                }
             }
-        }
 
         // Enhanced property initialization checking:
         // 1. ANY/UNKNOWN types don't need initialization

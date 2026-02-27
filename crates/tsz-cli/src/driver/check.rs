@@ -666,6 +666,12 @@ pub(super) fn collect_diagnostics(
                 .parse_diagnostics
                 .iter()
                 .any(|d| is_real_syntax_error(d.code));
+            checker.ctx.real_syntax_error_positions = file
+                .parse_diagnostics
+                .iter()
+                .filter(|d| is_real_syntax_error(d.code))
+                .map(|d| d.start)
+                .collect();
             let mut file_diagnostics = Vec::new();
             for parse_diagnostic in &file.parse_diagnostics {
                 file_diagnostics.push(parse_diagnostic_to_checker(

@@ -358,6 +358,10 @@ pub struct CheckerContext<'a> {
     /// checks (TS1100, TS1173, TS1212, etc.) which are semantic errors emitted
     /// during parsing. Used for broader TS2304 suppression matching tsc behavior.
     pub has_real_syntax_errors: bool,
+    /// Positions of "real" syntax errors only (matching `is_real_syntax_error()`).
+    /// Used for per-node TS2564 suppression — only real parse failures (not grammar
+    /// checks like TS1030 "modifier already seen") suppress property initialization.
+    pub real_syntax_error_positions: Vec<u32>,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
