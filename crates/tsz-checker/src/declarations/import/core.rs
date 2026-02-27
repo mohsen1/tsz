@@ -329,24 +329,25 @@ impl<'a> CheckerState<'a> {
             && (has_namespace_import || has_named_imports)
             && let Some(ref table) = exports_table
             && table.has("export=")
-            && self.export_equals_target_is_not_module_or_variable(table) {
-                let flag_name = if (self.ctx.compiler_options.module as u32)
-                    >= (tsz_common::ModuleKind::ES2015 as u32)
-                {
-                    "allowSyntheticDefaultImports"
-                } else {
-                    "esModuleInterop"
-                };
-                let message = format_message(
+            && self.export_equals_target_is_not_module_or_variable(table)
+        {
+            let flag_name = if (self.ctx.compiler_options.module as u32)
+                >= (tsz_common::ModuleKind::ES2015 as u32)
+            {
+                "allowSyntheticDefaultImports"
+            } else {
+                "esModuleInterop"
+            };
+            let message = format_message(
                     diagnostic_messages::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                     &[flag_name],
                 );
-                self.error_at_node(
+            self.error_at_node(
                     import.module_specifier,
                     &message,
                     diagnostic_codes::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                 );
-            }
+        }
 
         // Check default import: import X from "module"
         // If the module has no "default" export and allowSyntheticDefaultImports is off,

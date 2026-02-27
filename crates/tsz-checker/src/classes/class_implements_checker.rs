@@ -330,8 +330,16 @@ impl<'a> CheckerState<'a> {
         // Member types are computed lazily only when needed for an interface match.
         let mut class_members: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
+        // Track method names with multiple declarations (overloads).
+        // For overloaded methods, individual declaration types are incomplete —
+        // the combined overloaded type must be used instead.
+        let mut overloaded_methods: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
         for &member_idx in &class_data.members.nodes {
             if let Some(name) = self.get_member_name(member_idx) {
+                if class_members.contains_key(&name) {
+                    overloaded_methods.insert(name.clone());
+                }
                 class_members.insert(name, member_idx);
             }
             if let Some(node) = self.ctx.arena.get(member_idx)
@@ -351,6 +359,25 @@ impl<'a> CheckerState<'a> {
         }
         let mut class_member_types: rustc_hash::FxHashMap<NodeIndex, TypeId> =
             rustc_hash::FxHashMap::default();
+
+        // For overloaded methods, get the combined type from the class instance type.
+        // The instance type builder already aggregates all overload signatures into a
+        // single callable type, which is what tsc checks against the interface.
+        let mut overloaded_member_types: rustc_hash::FxHashMap<String, TypeId> =
+            rustc_hash::FxHashMap::default();
+        if !overloaded_methods.is_empty() {
+            let class_instance_type = self.get_class_instance_type(class_idx, class_data);
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, class_instance_type)
+            {
+                for prop in &shape.properties {
+                    let name = self.ctx.types.resolve_atom(prop.name);
+                    if overloaded_methods.contains(&name) {
+                        overloaded_member_types.insert(name, prop.type_id);
+                    }
+                }
+            }
+        }
 
         // Build a map of inherited PUBLIC instance members from the base class chain.
         // Only public members can satisfy interface requirements — private/protected inherited
@@ -539,7 +566,14 @@ impl<'a> CheckerState<'a> {
 
                             // Check if class has this member
                             if let Some(&class_member_idx) = class_members.get(&member_name) {
-                                let class_member_type = if let Some(&cached) =
+                                // For overloaded methods, use the combined type from the
+                                // class instance type (all overload signatures merged).
+                                // For non-overloaded members, use the single declaration type.
+                                let class_member_type = if let Some(&overloaded_type) =
+                                    overloaded_member_types.get(&member_name)
+                                {
+                                    overloaded_type
+                                } else if let Some(&cached) =
                                     class_member_types.get(&class_member_idx)
                                 {
                                     cached
