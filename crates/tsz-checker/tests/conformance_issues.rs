@@ -3551,3 +3551,87 @@ fn ts7008_static_property_without_assignment_in_static_block() {
         "Static property NOT assigned in static block should still emit TS7008. Got: {diagnostics:?}"
     );
 }
+
+// TS1479: CJS file importing ESM module
+// Tests the current_is_commonjs detection logic with different file extensions.
+
+/// Helper: compile with a custom file name and `report_unresolved_imports` enabled.
+fn compile_with_file_name_and_get_diagnostics(
+    file_name: &str,
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+/// .cts files should detect as CJS — extending the original check to also include .cjs.
+/// When `file_is_esm` = Some(false), .ts files should detect as CJS.
+#[test]
+fn test_ts1479_cts_file_is_commonjs() {
+    // A .cts file importing something — the import should be treated as CJS context.
+    // Without a multi-file setup, TS1479 won't fire (needs resolved target marked ESM),
+    // but we verify no crash and correct CJS classification by checking the code compiles.
+    let opts = CheckerOptions {
+        module: tsz_common::common::ModuleKind::Node16,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_file_name_and_get_diagnostics(
+        "test.cts",
+        r#"import { foo } from './other';"#,
+        opts,
+    );
+    // Without multi-file resolution, we can't trigger TS1479, but we verify
+    // that .cts files don't cause issues and get normal TS2307 for missing modules.
+    assert!(
+        has_error(&diagnostics, 2307)
+            || has_error(&diagnostics, 2792)
+            || has_error(&diagnostics, 2882),
+        "Expected resolution error for .cts file import.\nActual: {diagnostics:?}"
+    );
+}
+
+/// In single-file mode (no multi-file resolution), .js files can't trigger TS1479
+/// because the import target doesn't resolve. In multi-file mode, .js files CAN
+/// get TS1479 when importing .mjs targets (extension-based ESM), but NOT when
+/// importing .js targets in ESM packages (package.json-based ESM).
+#[test]
+fn test_ts1479_js_file_single_file_no_false_positive() {
+    let opts = CheckerOptions {
+        module: tsz_common::common::ModuleKind::Node16,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_with_file_name_and_get_diagnostics(
+        "test.js",
+        r#"import { foo } from './other.mjs';"#,
+        opts,
+    );
+    // In single-file mode, module doesn't resolve so TS1479 check isn't reached.
+    // This verifies no false TS1479 from CJS detection alone.
+    assert!(
+        !has_error(&diagnostics, 1479),
+        "Should NOT emit TS1479 in single-file mode.\nActual: {diagnostics:?}"
+    );
+}

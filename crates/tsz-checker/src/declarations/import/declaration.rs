@@ -416,8 +416,26 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".mjs")
                             || file_name.ends_with(".cjs");
                         let skip_exports = is_js_like && !source_file.is_declaration_file;
-                        let target_is_esm =
+                        // Determine if target file is ESM. .mjs/.mts are always ESM.
+                        // For .js/.ts targets, also check package.json "type" field via
+                        // file_is_esm_map — but only for .ts/.tsx source files. TSC does
+                        // not emit TS1479 for .js source files importing .js ESM targets,
+                        // only when the target is .mjs/.mts (unambiguously ESM).
+                        let target_ext_is_esm =
                             file_name.ends_with(".mjs") || file_name.ends_with(".mts");
+                        let current_is_js_like = self.ctx.file_name.ends_with(".js")
+                            || self.ctx.file_name.ends_with(".jsx")
+                            || self.ctx.file_name.ends_with(".mjs")
+                            || self.ctx.file_name.ends_with(".cjs");
+                        let target_is_esm = target_ext_is_esm
+                            || (!current_is_js_like
+                                && self
+                                    .ctx
+                                    .file_is_esm_map
+                                    .as_ref()
+                                    .and_then(|m| m.get(file_name))
+                                    .copied()
+                                    .unwrap_or(false));
                         let is_dts = source_file.is_declaration_file;
                         (is_dts, Some((skip_exports, target_is_esm)))
                     } else {
@@ -430,14 +448,15 @@ impl<'a> CheckerState<'a> {
                         skip_export_checks = true;
                     }
 
-                    // TS1479: Check if CommonJS file is importing an ES module
-                    // This error occurs when the current file will emit require() calls
-                    // but the target file is an ES module (which cannot be required)
+                    // TS1479: Check if CommonJS file is importing an ES module.
+                    // TSC emits TS1479 for .cts/.cjs (always CJS) and for .ts/.js files
+                    // in CJS packages (via package.json "type" field or default).
                     let current_is_commonjs = {
                         let current_file = &self.ctx.file_name;
-                        // .cts files are always CommonJS
-                        let is_commonjs_file = current_file.ends_with(".cts");
-                        // .mts files are always ESM
+                        // .cts/.cjs are always CommonJS
+                        let is_commonjs_file =
+                            current_file.ends_with(".cts") || current_file.ends_with(".cjs");
+                        // .mts/.mjs are always ESM
                         let is_esm_file =
                             current_file.ends_with(".mts") || current_file.ends_with(".mjs");
                         if is_commonjs_file {
