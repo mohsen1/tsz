@@ -513,6 +513,10 @@ pub fn resolve_compiler_options(
     if let Some(resolve_json_module) = options.resolve_json_module {
         resolved.resolve_json_module = resolve_json_module;
         resolved.checker.resolve_json_module = resolve_json_module;
+    } else {
+        // tsc 6.0 defaults resolveJsonModule to true when not explicitly set.
+        resolved.resolve_json_module = true;
+        resolved.checker.resolve_json_module = true;
     }
     if let Some(import_helpers) = options.import_helpers {
         resolved.import_helpers = import_helpers;
@@ -789,6 +793,13 @@ pub fn resolve_compiler_options(
             resolved.allow_synthetic_default_imports = true;
             resolved.checker.allow_synthetic_default_imports = true;
         }
+    } else {
+        // tsc 6.0 defaults esModuleInterop to true when not explicitly set.
+        resolved.es_module_interop = true;
+        resolved.checker.es_module_interop = true;
+        resolved.printer.es_module_interop = true;
+        resolved.allow_synthetic_default_imports = true;
+        resolved.checker.allow_synthetic_default_imports = true;
     }
 
     if let Some(allow_synthetic_default_imports) = options.allow_synthetic_default_imports {
