@@ -137,6 +137,14 @@ impl<'a> CheckerState<'a> {
 
         let prop_name = ident.escaped_text.clone();
 
+        // `globalThis.globalThis` is a readonly self-reference (TS2540).
+        // Since `typeof globalThis` is modeled as ANY, the general readonly detection
+        // can't discover this. TSC treats it as `readonly globalThis: typeof globalThis`.
+        if prop_name == "globalThis" && self.is_global_this_expression(access.expression) {
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
+            return true;
+        }
+
         // Check if the property is an enum member (TS2540) BEFORE property existence check.
         // Enum members may not be found by resolve_property_access_with_env because
         // they are resolved through the binder's enum symbol, not the type system.

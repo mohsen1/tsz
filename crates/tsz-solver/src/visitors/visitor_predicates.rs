@@ -229,22 +229,13 @@ fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, d
         | Some(TypeData::Enum(_, _))
         | Some(TypeData::UniqueSymbol(_)) => true,
 
-        // Tuples are identity-comparable if ALL elements are (no rest elements)
-        Some(TypeData::Tuple(list_id)) => {
-            let elements = types.tuple_list(list_id);
-            // Check for rest elements - if any, not identity-comparable
-            if elements.iter().any(|e| e.rest) {
-                return false;
-            }
-            // All elements must be identity-comparable
-            elements
-                .iter()
-                .all(|e| is_identity_comparable_type_impl(types, e.type_id, depth + 1))
-        }
+        // Tuples are NOT identity-comparable because labeled tuples like [a: 1]
+        // and [b: 1] are compatible despite having different TypeIds.
+        // Similarly, [1, 2?] and [a: 1, b?: 2] must go through structural comparison
+        // (check_tuple_subtype) which correctly ignores labels.
+        // This matches the same reasoning as ReadonlyType below.
 
-        // Everything else is not identity-comparable
-        // ReadonlyType of an identity-comparable tuple is NOT considered identity-comparable
-        // because ["a"] <: readonly ["a"] but they have different TypeIds.
+        // Everything else is not identity-comparable.
         _ => false,
     }
 }
