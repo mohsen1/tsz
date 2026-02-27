@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
     /// Handles: numeric literals, unary +/-/~, binary +/-/*/ // /%/|/&/^/<</>>/>>>,
     /// and parenthesized expressions. Returns None if the expression cannot be
     /// evaluated at compile time.
-    fn evaluate_constant_expression(&self, expr_idx: NodeIndex) -> Option<f64> {
+    pub(crate) fn evaluate_constant_expression(&self, expr_idx: NodeIndex) -> Option<f64> {
         let node = self.ctx.arena.get(expr_idx)?;
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {

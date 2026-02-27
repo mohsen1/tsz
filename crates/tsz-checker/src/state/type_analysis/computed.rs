@@ -359,9 +359,37 @@ impl<'a> CheckerState<'a> {
             {
                 let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
                 member_types.reserve(enum_decl.members.nodes.len());
+                // Track auto-increment counter for numeric enum members.
+                // TypeScript auto-increments from 0 for the first member, and from
+                // previous_value + 1 for subsequent members without initializers.
+                // When a member has an explicit numeric initializer, the counter
+                // resets to initializer_value + 1. String initializers break auto-increment.
+                let mut auto_value: Option<f64> = Some(0.0);
                 for &member_idx in &enum_decl.members.nodes {
                     if let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) {
-                        let member_type = self.enum_member_type_from_decl(member_idx);
+                        let has_initializer = member.initializer.is_some();
+                        let mut member_type = self.enum_member_type_from_decl(member_idx);
+
+                        if has_initializer {
+                            // Member has explicit initializer. Evaluate it to determine
+                            // the next auto-increment value.
+                            if let Some(val) = self.evaluate_constant_expression(member.initializer)
+                            {
+                                auto_value = Some(val + 1.0);
+                            } else {
+                                // String literal or unevaluable — auto-increment is broken
+                                auto_value = None;
+                            }
+                        } else if member_type == TypeId::NUMBER {
+                            // No explicit initializer — use auto-increment if available.
+                            // This fixes mapped types over numeric enums: { [k in E]?: string }
+                            // needs individual property keys ("0", "1", "2"), not `number`.
+                            if let Some(val) = auto_value {
+                                member_type = factory.literal_number(val);
+                                auto_value = Some(val + 1.0);
+                            }
+                        }
+
                         if member_type != TypeId::ERROR {
                             member_types.push(member_type);
                         }
