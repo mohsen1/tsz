@@ -103,6 +103,9 @@ tests/debug/
 # Pre-commit hook temp files
 .conformance-value
 
+# Conformance last-run (ephemeral, regenerated each run)
+scripts/conformance-last-run.txt
+
 # Benchmark and conformance temp files
 scripts/conformance/dist
 .target-bench/

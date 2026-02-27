@@ -34,12 +34,13 @@ Usage: ./scripts/conformance.sh [COMMAND] [OPTIONS]
 
 Commands:
   generate    Generate TSC cache locally (if not checked in)
-  run         Run conformance tests against TSC cache
+  run         Run conformance tests against TSC cache (auto-diffs vs baseline)
   analyze     Analyze failures: categorize, rank by impact, find easy wins
   areas       Analyze pass/fail rates by test directory area
+  diff        Show regressions/improvements vs last snapshot baseline
   all         Generate cache (if needed) and run tests (default)
   snapshot    Run tests + analyze + areas, save structured results to
-              scripts/conformance-snapshot.json (committed to git)
+              scripts/conformance-snapshot.json and per-test baseline
   clean       Remove cache file
 
 Run options:
@@ -358,13 +359,40 @@ run_tests() {
         runner_flags+=(--print-test --print-test-files --print-fingerprints --verbose)
     fi
 
+    # Always capture per-test results for diffing against baseline.
+    # Use --print-test and tee to both show output and save results.
+    local last_run="$REPO_ROOT/scripts/conformance-last-run.txt"
+    local tmpout
+    tmpout=$(mktemp)
+
+    # Run with --print-test to get PASS/FAIL per test line
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
+        --print-test \
         "${runner_flags[@]}" \
-        "${extra_args[@]}"
+        "${extra_args[@]}" 2>/dev/null | tee "$tmpout" || true
+
+    # Extract sorted PASS/FAIL lines for diffing
+    grep -E '^(PASS|FAIL) ' "$tmpout" | sort > "$last_run" 2>/dev/null || true
+    rm -f "$tmpout"
+
+    # Auto-diff against baseline if it exists and this was an unfiltered run
+    local baseline="$REPO_ROOT/scripts/conformance-baseline.txt"
+    local has_filter=false
+    for arg in "${extra_args[@]}"; do
+        if [[ "$arg" == "--filter" ]] || [[ "$arg" == --filter=* ]]; then
+            has_filter=true
+            break
+        fi
+    done
+
+    if [ "$has_filter" = false ] && [ -f "$baseline" ] && [ -s "$last_run" ]; then
+        echo ""
+        diff_results "$baseline" "$last_run"
+    fi
 }
 
 analyze_tests() {
@@ -467,6 +495,54 @@ areas_analysis() {
         ${depth:+--depth "$depth"} \
         ${min_tests:+--min-tests "$min_tests"} \
         ${drilldown:+--drilldown "$drilldown"}
+}
+
+diff_results() {
+    # Compare two per-test result files and show regressions/improvements.
+    # Usage: diff_results <baseline_file> <current_file>
+    local baseline_file="$1"
+    local current_file="$2"
+
+    python3 -c "
+import sys
+
+baseline = {}
+current = {}
+
+with open(sys.argv[1]) as f:
+    for line in f:
+        parts = line.strip().split(' ', 1)
+        if len(parts) == 2:
+            baseline[parts[1]] = parts[0]
+
+with open(sys.argv[2]) as f:
+    for line in f:
+        parts = line.strip().split(' ', 1)
+        if len(parts) == 2:
+            current[parts[1]] = parts[0]
+
+regressions = sorted(t for t in baseline if baseline[t] == 'PASS' and current.get(t) == 'FAIL')
+improvements = sorted(t for t in current if current[t] == 'PASS' and baseline.get(t) == 'FAIL')
+new_tests = sorted(t for t in current if t not in baseline)
+removed_tests = sorted(t for t in baseline if t not in current)
+
+b_pass = sum(1 for v in baseline.values() if v == 'PASS')
+c_pass = sum(1 for v in current.values() if v == 'PASS')
+delta = c_pass - b_pass
+
+if not regressions and not improvements:
+    print(f'No regressions or improvements vs baseline ({b_pass} -> {c_pass}, delta={delta:+d})')
+else:
+    if improvements:
+        print(f'✓ {len(improvements)} improvements (FAIL -> PASS):')
+        for t in improvements:
+            print(f'  + {t}')
+    if regressions:
+        print(f'✗ {len(regressions)} regressions (PASS -> FAIL):')
+        for t in regressions:
+            print(f'  - {t}')
+    print(f'Net: {b_pass} -> {c_pass} ({delta:+d})')
+" "$baseline_file" "$current_file"
 }
 
 clean_cache() {
@@ -626,6 +702,13 @@ print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
     # Verify snapshot is valid JSON
     python3 -m json.tool "$snapshot_file" > /dev/null || { echo "ERROR: snapshot is not valid JSON"; return 1; }
 
+    # 6) Save per-test baseline for regression diffing
+    local baseline_file="$REPO_ROOT/scripts/conformance-baseline.txt"
+    grep -E '^(PASS|FAIL) ' "$tmpfile" | sort > "$baseline_file" 2>/dev/null || true
+    local baseline_count
+    baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
+    echo -e "${GREEN}Baseline saved: $baseline_file ($baseline_count tests)${NC}"
+
     echo -e "${GREEN}Snapshot written to: $snapshot_file${NC}"
 }
 
@@ -706,6 +789,20 @@ case "$COMMAND" in
             ensure_cache
         fi
         areas_analysis "${REMAINING_ARGS[@]}"
+        ;;
+    diff)
+        # Diff last run against baseline (no need to re-run tests)
+        baseline="$REPO_ROOT/scripts/conformance-baseline.txt"
+        last_run="$REPO_ROOT/scripts/conformance-last-run.txt"
+        if [ ! -f "$baseline" ]; then
+            echo "No baseline found. Run './scripts/conformance.sh snapshot' first."
+            exit 1
+        fi
+        if [ ! -f "$last_run" ]; then
+            echo "No last-run results. Run './scripts/conformance.sh run' first."
+            exit 1
+        fi
+        diff_results "$baseline" "$last_run"
         ;;
     all)
         check_submodule_clean
