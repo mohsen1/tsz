@@ -3477,3 +3477,77 @@ fn test_reverse_mapped_type_no_regression_func_template() {
         "reproduce with Func template should not produce TS2769. Got: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// TS7008 — Static class member assigned in static block should not emit
+// =============================================================================
+
+#[test]
+fn ts7008_static_property_assigned_in_static_block_no_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        class C {
+            static x;
+            static {
+                this.x = 1;
+            }
+        }
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 7008),
+        "Static property assigned in static block should not emit TS7008. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts7008_static_property_assigned_before_declaration_no_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        class C {
+            static {
+                this.x = 1;
+            }
+            static x;
+        }
+        "#,
+    );
+    assert!(
+        !has_error(&diagnostics, 7008),
+        "Static property assigned in earlier static block should not emit TS7008. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts7008_instance_property_without_annotation_or_initializer() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        class C {
+            x;
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 7008),
+        "Instance property without annotation or initializer should emit TS7008. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts7008_static_property_without_assignment_in_static_block() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+        class C {
+            static x;
+            static {
+                // no assignment to this.x
+                let y = 1;
+            }
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 7008),
+        "Static property NOT assigned in static block should still emit TS7008. Got: {diagnostics:?}"
+    );
+}

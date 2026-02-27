@@ -260,11 +260,16 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&prop.modifiers);
+        let is_static = self.has_static_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
             && prop.type_annotation.is_none()
             && prop.initializer.is_none()
             && !is_private_in_ambient
             && !self.property_assigned_in_enclosing_class_constructor(prop.name)
+            // TSC also suppresses TS7008 for static properties assigned in class
+            // static blocks (e.g., `static { this.x = 1; }`)
+            && !(is_static
+                && self.property_assigned_in_enclosing_class_static_block(prop.name))
             && let Some(member_name) = self.get_property_name(prop.name)
         {
             use crate::diagnostics::diagnostic_codes;

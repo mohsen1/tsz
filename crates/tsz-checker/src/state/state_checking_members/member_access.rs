@@ -49,6 +49,39 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Check if a static property is assigned via `this.<prop> = ...` in any
+    /// class static block. TSC suppresses TS7008 for static members that are
+    /// assigned in static blocks, even when the member has no type annotation.
+    pub(crate) fn property_assigned_in_enclosing_class_static_block(
+        &self,
+        prop_name: NodeIndex,
+    ) -> bool {
+        let Some(key) = self.property_key_from_name(prop_name) else {
+            return false;
+        };
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        let member_nodes = class_info.member_nodes.clone();
+        let mut tracked = rustc_hash::FxHashSet::default();
+        tracked.insert(key.clone());
+
+        member_nodes.into_iter().any(|member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return false;
+            }
+            // Static blocks are stored as BlockData — analyze their statements
+            // for `this.<prop> = ...` patterns using the same flow analysis as
+            // constructor assignment checking (no super() requirement).
+            self.analyze_constructor_assignments(member_idx, &tracked, false)
+                .contains(&key)
+        })
+    }
+
     fn enclosing_class_constructor_param_names(&self) -> rustc_hash::FxHashSet<String> {
         let mut names = rustc_hash::FxHashSet::default();
 
