@@ -1,7 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9535/12570 (75.9%) — full suite, error-code level
+**Current score**: ~9536/12564 (75.9%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27e — types/nonPrimitive area: is_typeof_object ordering fix
+
+### Area: types/nonPrimitive (56.2% pass rate, 9/16 passing)
+
+**Fixed**: `is_typeof_object()` ordering bug — solver-level.
+
+#### Fix: Check `TypeId::OBJECT` before `db.lookup()` — Solver (compound.rs)
+
+**Root cause**: `is_typeof_object()` in `NarrowingContext` checked `self.db.lookup(type_id)` before checking `type_id == TypeId::OBJECT`. Since `TypeId::OBJECT` (the non-primitive `object` type, ID=13) had interned data in the type store, `lookup` returned `Some(data)` — but the data's internal representation didn't match any of the structural `TypeData` variants (`Object`, `ObjectWithIndex`, `Intersection`, etc.). The function returned `false` instead of `true`. The identity check `type_id == TypeId::OBJECT` in the `else` branch was dead code.
+
+This broke typeof negation narrowing: `typeof b !== "object"` where `b: object | null` should narrow to `never` (both `object` and `null` are excluded), but `narrow_excluding_typeof_object` kept `object` in the result because `is_typeof_object(TypeId::OBJECT)` returned `false`.
+
+**Fix**: Move the `TypeId::OBJECT` identity check before the structural `db.lookup()` call. This follows the architecture principle: "maintain fast identity checks before structural checks" (Section 18).
+
+**File**: `crates/tsz-solver/src/narrowing/compound.rs:113-117`
+
+**Tests flipped PASS**:
+- `genericCallInferenceConditionalType1.ts` — collateral: fixed typeof object narrowing in conditional type inference
+- `genericCallInferenceConditionalType2.ts` — collateral: same mechanism
+- `privateNamesConstructorChain-1.ts` — collateral: improved typeof narrowing in class private name resolution
+
+**Conformance**: 9533 → 9536 (+3, 0 regressions)
+
+#### Investigated but not fixed (requires further solver work)
+
+- **nonPrimitiveNarrow, nonPrimitiveStrictNull**: Need BOTH this fix AND removing `TypeId::NEVER` from TS2339 suppression. However, removing NEVER suppression causes 5 regressions (constEnums, controlFlowWithIncompleteTypes, deeplyNestedConstraints, noSubtypeReduction, typeVariableTypeGuards) because the solver produces false `never` in those tests. Blocked until solver narrowing is improved.
+- **nonPrimitiveAssignError**: Emits TS2322 where tsc expects TS2741. The property-missing detection logic doesn't trigger for the `object` type.
+- **nonPrimitiveUnionIntersection**: Missing TS2353, extra TS2741. Different error code for excess property on object type.
+- **nonPrimitiveAccessProperty, nonPrimitiveAsProperty, nonPrimitiveInGeneric**: Fingerprint-only mismatches (correct error codes, different message text — e.g., we show `'object'` where tsc shows `'{}'` for destructuring patterns, or top-level vs drill-down type mismatch messages).
+
+#### Unit tests added
+- `test_narrow_object_intrinsic_by_typeof_number_yields_never` — typeof "number" on object → never
+- `test_narrow_object_intrinsic_by_typeof_object_yields_object` — typeof "object" on object → object
+- `test_narrow_object_or_null_by_typeof_negation_object_yields_never` — typeof !== "object" on object|null → never (the main bug scenario)
+- `test_narrow_object_or_string_by_typeof_negation_object_yields_string` — typeof !== "object" on object|string → string
+- `test_narrow_object_by_typeof_negation_number_keeps_object` — typeof !== "number" on object → object
 
 ---
 
