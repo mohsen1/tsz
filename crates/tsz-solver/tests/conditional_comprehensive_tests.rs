@@ -5,10 +5,12 @@
 //! - Distributive conditional types
 //! - infer keyword
 //! - Nested conditionals
+//! - Conditional type constraint for subtype checking
 
 use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{ConditionalType, TypeData, TypeParamInfo};
 
 // =============================================================================
@@ -561,4 +563,162 @@ fn test_conditional_tuple_assignability() {
     let result = evaluate_type(&interner, cond_id);
 
     assert_eq!(result, TypeId::BOOLEAN_TRUE);
+}
+
+// =============================================================================
+// Conditional Type Constraint Subtyping Tests
+// =============================================================================
+// These test the default constraint computation for deferred conditional types.
+// In tsc, when T extends U ? X : Y is deferred (T is a type parameter), the
+// "default constraint" is X[T := T & U] | Y. This constraint is used for
+// assignability: if constraint <: target, the conditional is assignable.
+
+#[test]
+fn test_extract_pattern_assignable_to_extends_type() {
+    // Extract<T, Function> = T extends Function ? T : never
+    // Constraint = T & Function | never = T & Function
+    // T & Function <: Function → true
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Build: T extends Function ? T : never (like Extract<T, Function>)
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::FUNCTION,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let extract_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(extract_type, TypeId::FUNCTION),
+        "Extract<T, Function> should be assignable to Function via constraint T & Function"
+    );
+}
+
+#[test]
+fn test_extract_pattern_assignable_to_broader_type() {
+    // Extract<T, string> = T extends string ? T : never
+    // Constraint = T & string
+    // T & string <: string | number → true (string member of intersection is subtype)
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let extract_type = interner.conditional(cond);
+
+    let string_or_number = interner.union2(TypeId::STRING, TypeId::NUMBER);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(extract_type, string_or_number),
+        "Extract<T, string> should be assignable to string | number"
+    );
+}
+
+#[test]
+fn test_conditional_constraint_not_assignable_to_unrelated() {
+    // Extract<T, string> = T extends string ? T : never
+    // Constraint = T & string
+    // T & string <: number → false (string is not subtype of number)
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: t_param,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+    let extract_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(extract_type, TypeId::NUMBER),
+        "Extract<T, string> should NOT be assignable to number"
+    );
+}
+
+#[test]
+fn test_conditional_non_extract_both_branches_still_works() {
+    // T extends string ? number : boolean
+    // Both branches: number <: string|number|boolean, boolean <: string|number|boolean
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: true,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let target = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(cond_type, target),
+        "T extends string ? number : boolean should be assignable to string|number|boolean"
+    );
+}
+
+#[test]
+fn test_concrete_conditional_not_affected_by_constraint() {
+    // string extends number ? "yes" : "no" — concrete check type (not a type parameter).
+    // The constraint logic should NOT apply; only both-branches check.
+    let interner = TypeInterner::new();
+
+    let yes_literal = interner.literal_string("yes");
+    let no_literal = interner.literal_string("no");
+
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::NUMBER,
+        true_type: yes_literal,
+        false_type: no_literal,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    // Both "yes" and "no" are string literals, so both <: string.
+    assert!(
+        checker.is_subtype_of(cond_type, TypeId::STRING),
+        "Concrete conditional: both branches are string literals, assignable to string"
+    );
 }
