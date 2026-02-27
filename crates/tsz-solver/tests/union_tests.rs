@@ -715,3 +715,96 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
          ObjectWithIndex with Lazy(number-obj) even with bypass_evaluation"
     );
 }
+
+// =============================================================================
+// Discriminated Union: Optional Property Narrowing
+// =============================================================================
+
+#[test]
+fn test_discriminated_union_optional_property_narrowing() {
+    // Regression: { foo?: number | undefined } should be assignable to
+    // { foo?: undefined } | { foo: number }.
+    //
+    // The discriminated union algorithm narrows the source by each possible
+    // discriminant value. When narrowing to `number`, the property must be
+    // treated as non-optional (the property is present with that value).
+    // Previously, narrow_object_property preserved the optional flag, causing
+    // the narrowed { foo?: number } to fail against { foo: number } (required).
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let foo_name = interner.intern_string("foo");
+
+    // Source: { foo?: number | undefined }
+    let source = interner.object(vec![PropertyInfo {
+        name: foo_name,
+        type_id: interner.union2(TypeId::NUMBER, TypeId::UNDEFINED),
+        write_type: interner.union2(TypeId::NUMBER, TypeId::UNDEFINED),
+        optional: true,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Target member 1: { foo?: undefined }
+    let target_a = interner.object(vec![PropertyInfo {
+        name: foo_name,
+        type_id: TypeId::UNDEFINED,
+        write_type: TypeId::UNDEFINED,
+        optional: true,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Target member 2: { foo: number }
+    let target_b = interner.object(vec![PropertyInfo::new(foo_name, TypeId::NUMBER)]);
+
+    let target_union = interner.union2(target_a, target_b);
+
+    // This should pass via discriminated union decomposition:
+    // - foo=number matches { foo: number }
+    // - foo=undefined matches { foo?: undefined }
+    assert!(
+        checker.is_subtype_of(source, target_union),
+        "{{ foo?: number | undefined }} should be assignable to {{ foo?: undefined }} | {{ foo: number }}"
+    );
+}
+
+#[test]
+fn test_discriminated_union_narrowing_preserves_non_discriminant_props() {
+    // { kind: 'a' | 'b', value: string } should be assignable to
+    // { kind: 'a', value: string } | { kind: 'b', value: string }
+    // via discriminated union decomposition.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let kind_name = interner.intern_string("kind");
+    let value_name = interner.intern_string("value");
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+
+    // Source: { kind: 'a' | 'b', value: string }
+    let source = interner.object(vec![
+        PropertyInfo::new(kind_name, interner.union2(lit_a, lit_b)),
+        PropertyInfo::new(value_name, TypeId::STRING),
+    ]);
+
+    // Target: { kind: 'a', value: string } | { kind: 'b', value: string }
+    let target_a = interner.object(vec![
+        PropertyInfo::new(kind_name, lit_a),
+        PropertyInfo::new(value_name, TypeId::STRING),
+    ]);
+    let target_b = interner.object(vec![
+        PropertyInfo::new(kind_name, lit_b),
+        PropertyInfo::new(value_name, TypeId::STRING),
+    ]);
+    let target_union = interner.union2(target_a, target_b);
+
+    assert!(
+        checker.is_subtype_of(source, target_union),
+        "Object with union discriminant should be assignable to discriminated union"
+    );
+}

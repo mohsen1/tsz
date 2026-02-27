@@ -477,6 +477,12 @@ fn is_discriminant_for_union(
 }
 
 /// Create a new object type by narrowing one property to a specific type.
+///
+/// When narrowing for discriminated union checking, the property is being
+/// constrained to a specific discriminant value, which means the property
+/// must be present (not missing). Therefore we always set `optional = false`
+/// on the narrowed property — even when the narrowed type is `undefined`,
+/// because the check asserts the property exists with that exact type.
 fn narrow_object_property(
     db: &dyn TypeDatabase,
     shape_id: ObjectShapeId,
@@ -490,6 +496,7 @@ fn narrow_object_property(
         new_props[idx] = PropertyInfo {
             type_id: narrowed_type,
             write_type: narrowed_type,
+            optional: false,
             ..new_props[idx].clone()
         };
     }
