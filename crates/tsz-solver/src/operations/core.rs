@@ -584,6 +584,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
+            TypeData::TypeQuery(_) => {
+                // TypeQuery (typeof X) needs the checker's resolver context to look up
+                // the symbol's type, so use checker.evaluate_type() rather than the
+                // standalone evaluate_type which uses a NoopResolver.
+                let resolved = self.checker.evaluate_type(func_type);
+                if resolved != func_type {
+                    self.resolve_call(resolved, arg_types)
+                } else {
+                    CallResult::NotCallable { type_id: func_type }
+                }
+            }
             // The `Function` intrinsic type is callable in TypeScript and returns `any`.
             // This matches tsc behavior: `declare const f: Function; f()` is valid.
             TypeData::Intrinsic(IntrinsicKind::Function | IntrinsicKind::Any) => {

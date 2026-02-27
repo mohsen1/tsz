@@ -452,7 +452,9 @@ impl<'a> CheckerState<'a> {
         callee_type_for_call: TypeId,
     ) -> TypeId {
         // Direct Function type - return ANY (which is callable)
-        if self.is_global_function_type(callee_type_orig) {
+        if self.is_global_function_type(callee_type_orig)
+            || self.is_global_function_type(callee_type_for_call)
+        {
             return TypeId::ANY;
         }
 
@@ -466,12 +468,18 @@ impl<'a> CheckerState<'a> {
             let mut new_members = Vec::new();
 
             for (i, &member) in members.iter().enumerate() {
-                // Check if this member corresponds to a Function type in the original
-                let is_func = if let Some(ref orig) = orig_members {
-                    i < orig.len() && self.is_global_function_type(orig[i])
-                } else {
-                    false
-                };
+                // Check if this member is the global Function type.
+                // Check resolved members, original members, AND TypeQuery members
+                // whose referenced symbol resolves to the Function type.
+                let is_func = self.is_global_function_type(member)
+                    || self.is_member_function_type(member)
+                    || if let Some(ref orig) = orig_members {
+                        i < orig.len()
+                            && (self.is_global_function_type(orig[i])
+                                || self.is_member_function_type(orig[i]))
+                    } else {
+                        false
+                    };
 
                 if is_func {
                     has_function = true;
@@ -533,8 +541,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Also check union members: if all callable members resolve through Function
-        // (e.g., `Function | (() => void)` should still be callable)
+        false
+    }
+
+    /// Check if a type is a `TypeQuery` (typeof X) that resolves to the global Function type.
+    /// This handles cases like `typeof c1` where `c1: Function`.
+    fn is_member_function_type(&mut self, type_id: TypeId) -> bool {
+        if let Some(sym_ref) = tsz_solver::type_query_symbol(self.ctx.types, type_id) {
+            let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            let resolved = self.get_type_of_symbol(sym_id);
+            if resolved != type_id {
+                return self.is_global_function_type(resolved);
+            }
+        }
         false
     }
 
