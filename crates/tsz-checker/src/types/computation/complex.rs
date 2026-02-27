@@ -616,8 +616,15 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
 
-        // Delegate to Solver for constructor resolution
-        let result = self.resolve_new_with_checker_adapter(constructor_type, &arg_types, false);
+        // Delegate to Solver for constructor resolution, passing contextual type
+        // so generic constructors like `new Promise(...)` can infer type parameters
+        // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
+        let result = self.resolve_new_with_checker_adapter(
+            constructor_type,
+            &arg_types,
+            false,
+            self.ctx.contextual_type,
+        );
 
         match result {
             CallResult::Success(return_type) => return_type,

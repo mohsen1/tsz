@@ -159,6 +159,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         arg_types: &[TypeId],
         force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
     ) -> CallResult {
         self.ensure_relation_input_ready(type_id);
         self.ensure_relation_inputs_ready(arg_types);
@@ -171,6 +172,7 @@ impl<'a> CheckerState<'a> {
             type_id,
             arg_types,
             force_bivariant_callbacks,
+            contextual_type,
         )
     }
 

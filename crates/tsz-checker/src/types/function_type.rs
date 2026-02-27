@@ -902,6 +902,12 @@ impl<'a> CheckerState<'a> {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 self.unwrap_promise_type(original_type)
                     .unwrap_or(return_type)
+            } else if is_async_for_context {
+                // For contextually-typed async functions (no explicit annotation),
+                // also unwrap Promise from the return type. For unions like
+                // Promise<T> | StateMachine<T>, unwrap each Promise member to get
+                // T | StateMachine<T> as the effective body return type.
+                self.unwrap_async_return_type_for_body(return_type)
             } else {
                 return_type
             };

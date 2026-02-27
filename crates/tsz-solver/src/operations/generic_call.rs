@@ -185,6 +185,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ctx_type,                      // target
                 crate::types::InferencePriority::ReturnType,
             );
+
+            // For same-base Application types (e.g., Promise<__infer_0> vs Promise<Obj>),
+            // also constrain type arguments directly. The general constraint engine
+            // evaluates Applications to structural forms (Objects), but for interfaces
+            // like Promise, structural decomposition through methods like `then` can't
+            // reach type args because those methods have their own generic signatures.
+            // This targeted pairwise extraction only runs during return type seeding,
+            // so it doesn't affect parameter-based inference (preserving variance).
+            if let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) = (
+                self.interner.lookup(return_type_with_placeholders),
+                self.interner.lookup(ctx_type),
+            ) {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *s_arg,
+                            *t_arg,
+                            crate::types::InferencePriority::ReturnType,
+                        );
+                    }
+                }
+            }
         }
 
         // 3. Multi-pass constraint collection for proper contextual typing
@@ -1134,6 +1160,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 ctx_type,
                 InferencePriority::ReturnType,
             );
+
+            // Same-base Application pairwise extraction (see resolve_generic_call_inner).
+            if let (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) = (
+                self.interner.lookup(return_type_with_placeholders),
+                self.interner.lookup(ctx_type),
+            ) {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                        self.constrain_types(
+                            &mut infer_ctx,
+                            &var_map,
+                            *s_arg,
+                            *t_arg,
+                            InferencePriority::ReturnType,
+                        );
+                    }
+                }
+            }
         }
 
         // 3. Round 1: Process non-contextual arguments only

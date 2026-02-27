@@ -841,4 +841,34 @@ impl<'a> CheckerState<'a> {
     pub fn unwrap_promise_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.promise_like_return_type_argument(type_id)
     }
+
+    /// Unwrap Promise from an async function's return type for body checking.
+    ///
+    /// For contextually-typed async functions (no explicit annotation), the inferred
+    /// return type may be `Promise<T>` or a union like `Promise<T> | StateMachine<T>`.
+    /// This method unwraps each Promise member to produce the effective body return type:
+    /// - `Promise<T>` → `T`
+    /// - `Promise<T> | StateMachine<T>` → `T | StateMachine<T>`
+    /// - Non-Promise types pass through unchanged.
+    pub fn unwrap_async_return_type_for_body(&mut self, return_type: TypeId) -> TypeId {
+        // Try simple unwrap first
+        if let Some(unwrapped) = self.unwrap_promise_type(return_type) {
+            return unwrapped;
+        }
+        // For unions, unwrap each Promise member individually
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, return_type)
+        {
+            let mut new_members: Vec<TypeId> = Vec::new();
+            for member in &members {
+                if let Some(unwrapped) = self.unwrap_promise_type(*member) {
+                    new_members.push(unwrapped);
+                } else {
+                    new_members.push(*member);
+                }
+            }
+            return self.ctx.types.factory().union(new_members);
+        }
+        return_type
+    }
 }

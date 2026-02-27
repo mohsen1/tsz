@@ -901,7 +901,30 @@ impl<'a> CheckerState<'a> {
                 && expected_type != TypeId::ANY
                 && !self.type_contains_error(expected_type)
             {
-                self.ctx.contextual_type = Some(expected_type);
+                // For async functions, the return type has been unwrapped from Promise<T>
+                // to T. But return expressions like `return new Promise(resolve => ...)`
+                // need Promise<T> in the contextual type for generic constructor inference.
+                // Transform T → T | PromiseLike<T> | Promise<T> (matching await behavior).
+                // Only apply when expected_type is the unwrapped T (not a union or Promise).
+                // If expected_type is already a union or Promise-like, the transformation
+                // would create nonsensical nested types.
+                if self.ctx.in_async_context()
+                    && expected_type != TypeId::UNKNOWN
+                    && expected_type != TypeId::NEVER
+                    && !tsz_solver::is_union_type(self.ctx.types, expected_type)
+                    && !self.is_promise_type(expected_type)
+                {
+                    let promise_like_t = self.get_promise_like_type(expected_type);
+                    let promise_t = self.get_promise_type(expected_type);
+                    let mut members = vec![expected_type, promise_like_t];
+                    if let Some(pt) = promise_t {
+                        members.push(pt);
+                    }
+                    let union_context = self.ctx.types.factory().union(members);
+                    self.ctx.contextual_type = Some(union_context);
+                } else {
+                    self.ctx.contextual_type = Some(expected_type);
+                }
                 // Clear cached type to force recomputation with contextual type
                 // This is necessary because the expression might have been previously typed
                 // without contextual information (e.g., during function body analysis)
