@@ -801,7 +801,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         if symbol.declarations.len() <= 1 {
             // For multi-file scenarios: look for a class/function with the same name
             // in other binders. Handles both top-level and nested symbols.
-            if let Some(all_binders) = &self.ctx.all_binders {
+            // In external modules, each file has its own scope — symbols from
+            // different files don't merge, so cross-file TS2433 doesn't apply.
+            if !self.is_external_module()
+                && let Some(all_binders) = &self.ctx.all_binders
+            {
                 let namespace_name = &symbol.escaped_name;
 
                 // Build enclosing namespace name chain by walking AST parents.
