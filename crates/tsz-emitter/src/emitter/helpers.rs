@@ -48,6 +48,17 @@ impl<'a> Printer<'a> {
 
     /// Write identifier text to output with name mapping when available.
     pub(super) fn write_identifier(&mut self, text: &str) {
+        // Handle pending block comment space (e.g., `/** comment */ identifier`).
+        if self.pending_block_comment_space {
+            self.pending_block_comment_space = false;
+            if !text.is_empty()
+                && !text.starts_with(' ')
+                && !text.starts_with('\n')
+                && !text.starts_with('\r')
+            {
+                self.writer.write_space();
+            }
+        }
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_name(text, source_pos, text);
         } else {
