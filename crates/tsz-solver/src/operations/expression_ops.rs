@@ -9,7 +9,7 @@ use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
+use crate::types::{TypeData, TypeId};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -50,26 +50,18 @@ pub fn compute_conditional_expression_type(
         return TypeId::NEVER;
     }
 
-    // Only short-circuit for literal boolean types (true/false).
-    // Do NOT short-circuit based on general type truthiness (e.g., object types),
-    // because the static type may not reflect the actual runtime value.
-    // Example: `<T>null` has type T (object), but value is null (falsy).
-    // The result type should still be the union of both branches.
-    if let Some(TypeData::Literal(LiteralValue::Boolean(true))) = interner.lookup(condition) {
-        return true_type;
-    }
-    if let Some(TypeData::Literal(LiteralValue::Boolean(false))) = interner.lookup(condition) {
-        return false_type;
-    }
-    // Also short-circuit for null/undefined literal conditions
-    // since these are known to be always falsy at runtime
-    if matches!(
-        interner.lookup(condition),
-        Some(TypeData::Intrinsic(IntrinsicKind::Null))
-            | Some(TypeData::Intrinsic(IntrinsicKind::Undefined))
-    ) {
-        return false_type;
-    }
+    // tsc always returns the union of both branch types, even when the
+    // condition is a known literal boolean.  The checker already handles
+    // diagnostic suppression for dead branches; the solver just computes
+    // the result type as the union with subtype reduction.
+    //
+    // For null/undefined conditions, the false branch is still the
+    // relevant type, but we union for consistency (never branches
+    // disappear from unions automatically).
+    //
+    // Note: we do NOT short-circuit for literal true/false because
+    // tsc's `checkConditionalExpression` always computes
+    // `getUnionType([type1, type2], SubtypeReduction)`.
 
     // If both branches are the same type, no need for union
     if true_type == false_type {
