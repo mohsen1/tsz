@@ -361,25 +361,36 @@ fn test_call_rest_parameter_min_args_with_required() {
 }
 
 #[test]
-fn test_binary_overlap_disjoint_primitives() {
+fn test_binary_equality_disjoint_primitives_returns_boolean() {
+    // Equality operators always return boolean regardless of operand types.
+    // TS2367 diagnostics are the checker's responsibility, not the evaluator's.
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let result = evaluator.evaluate(TypeId::STRING, TypeId::NUMBER, "===");
-    assert!(matches!(result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
+
+    let result = evaluator.evaluate(TypeId::NUMBER, TypeId::UNDEFINED, "!==");
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
+
+    let result = evaluator.evaluate(TypeId::STRING, TypeId::NULL, "===");
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
 }
 
 #[test]
-fn test_binary_overlap_disjoint_primitives_loose_equality() {
+fn test_binary_equality_disjoint_primitives_loose_returns_boolean() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let result = evaluator.evaluate(TypeId::STRING, TypeId::NUMBER, "==");
-    assert!(matches!(result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
+
+    let result = evaluator.evaluate(TypeId::BOOLEAN, TypeId::UNDEFINED, "!=");
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
 }
 
 #[test]
-fn test_binary_overlap_disjoint_literals() {
+fn test_binary_equality_disjoint_literals_returns_boolean() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
@@ -387,7 +398,10 @@ fn test_binary_overlap_disjoint_literals() {
     let two = interner.literal_number(2.0);
 
     let result = evaluator.evaluate(one, two, "===");
-    assert!(matches!(result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
+
+    let result = evaluator.evaluate(one, two, "!==");
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
 }
 
 #[test]
@@ -451,12 +465,18 @@ fn test_binary_overlap_template_literal() {
         BinaryOpResult::Success(TypeId::BOOLEAN)
     ));
 
-    let bad_result = evaluator.evaluate(template, TypeId::NUMBER, "===");
-    assert!(matches!(bad_result, BinaryOpResult::TypeError { .. }));
+    // Even non-overlapping equality comparisons produce boolean
+    let non_overlap_result = evaluator.evaluate(template, TypeId::NUMBER, "===");
+    assert!(matches!(
+        non_overlap_result,
+        BinaryOpResult::Success(TypeId::BOOLEAN)
+    ));
 }
 
 #[test]
-fn test_binary_overlap_generic_constraint_disjoint() {
+fn test_binary_equality_generic_constraint_disjoint_still_boolean() {
+    // Even when a type parameter's constraint is disjoint from the other operand,
+    // equality operators still produce boolean. TS2367 is the checker's job.
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
@@ -468,7 +488,7 @@ fn test_binary_overlap_generic_constraint_disjoint() {
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
-    assert!(matches!(result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
 }
 
 #[test]
@@ -510,7 +530,8 @@ fn test_binary_overlap_unconstrained_type_param() {
 }
 
 #[test]
-fn test_binary_overlap_union_constraint_disjoint() {
+fn test_binary_equality_union_constraint_disjoint_still_boolean() {
+    // Same principle: disjoint union constraint doesn't affect equality result type.
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
@@ -523,7 +544,7 @@ fn test_binary_overlap_union_constraint_disjoint() {
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::BOOLEAN, "===");
-    assert!(matches!(result, BinaryOpResult::TypeError { .. }));
+    assert!(matches!(result, BinaryOpResult::Success(TypeId::BOOLEAN)));
 }
 
 #[test]
@@ -607,6 +628,33 @@ fn test_binary_logical_and_contextual_callable_false_left_preserves_false() {
     match result {
         BinaryOpResult::Success(result_type) => assert_eq!(result_type, left_false),
         _ => panic!("Expected false result, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_binary_logical_and_with_boolean_produces_false_union() {
+    // Verifies that `boolean && object_type` produces `false | object_type`,
+    // which is critical for spread patterns like `...condition && { prop: value }`.
+    // The spread checker filters out definitely-falsy types from unions, so
+    // `false | { a: string }` is a valid spread type, but `unknown | { a: string }` is not.
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let obj = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
+
+    // boolean && { a: string } should produce false | { a: string }
+    let result = evaluator.evaluate(TypeId::BOOLEAN, obj, "&&");
+    match result {
+        BinaryOpResult::Success(result_type) => {
+            // The result should be a union containing false and the object type
+            let data = interner.lookup(result_type);
+            assert!(
+                matches!(data, Some(TypeData::Union(_))),
+                "Expected union type, got {data:?}"
+            );
+        }
+        _ => panic!("Expected success result, got {result:?}"),
     }
 }
 

@@ -499,11 +499,9 @@ impl<'a> BinaryOpEvaluator<'a> {
                 self.evaluate_arithmetic(left, right, op)
             }
             "==" | "!=" | "===" | "!==" => {
-                if self.has_overlap(left, right) {
-                    BinaryOpResult::Success(TypeId::BOOLEAN)
-                } else {
-                    BinaryOpResult::TypeError { left, right, op }
-                }
+                // Equality operators always produce boolean regardless of operand types.
+                // TS2367 (no overlap) diagnostics are handled separately by the checker.
+                BinaryOpResult::Success(TypeId::BOOLEAN)
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right, op),
             "&&" | "||" | "??" => self.evaluate_logical(left, right, op, contextual_type),
