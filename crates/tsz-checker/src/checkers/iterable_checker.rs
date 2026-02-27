@@ -572,6 +572,30 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Nested binding patterns can be fed an over-widened union from positional
+        // destructuring inference (e.g. `var [, , [, b, ]] = [3,5,[0, 1]]`).
+        // The array `[3,5,[0, 1]]` is inferred as `(number | number[])[]` instead of
+        // a tuple, so the inner pattern receives `number | number[]`. tsc uses contextual
+        // typing to infer a tuple, but until we do the same, suppress the false TS2488
+        // when the union contains at least one array/tuple/string member.
+        // NOTE: We use a side-effect-free check (classify_full_iterable_type) instead of
+        // is_iterable_type to avoid polluting checker state via property access resolution.
+        if init_expr.is_none()
+            && tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
+                .is_some_and(|members| {
+                    members.iter().any(|&member| {
+                        matches!(
+                            classify_full_iterable_type(self.ctx.types, member),
+                            FullIterableTypeKind::Array(_)
+                                | FullIterableTypeKind::Tuple(_)
+                                | FullIterableTypeKind::StringLiteral(_)
+                        )
+                    })
+                })
+        {
+            return true;
+        }
+
         // TypeScript also allows array destructuring for "array-like" types
         // (types with numeric index signatures) even without [Symbol.iterator]()
         if self.has_numeric_index_signature(resolved_type) {

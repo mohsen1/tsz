@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&prop.modifiers) {
                         continue;
                     }
-                    let Some(name) = self.get_property_name(prop.name) else {
+                    let Some(name) = self.get_property_name_resolved(prop.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -211,7 +211,7 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&method.modifiers) {
                         continue;
                     }
-                    let Some(name) = self.get_property_name(method.name) else {
+                    let Some(name) = self.get_property_name_resolved(method.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
                     if !self.has_static_modifier(&accessor.modifiers) {
                         continue;
                     }
-                    let Some(name) = self.get_property_name(accessor.name) else {
+                    let Some(name) = self.get_property_name_resolved(accessor.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
