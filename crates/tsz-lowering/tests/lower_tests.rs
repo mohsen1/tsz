@@ -2615,3 +2615,119 @@ fn test_template_literal_is_text_only() {
     // Non-template literal type
     assert!(!interner.template_literal_is_text_only(TypeId::STRING));
 }
+
+// =============================================================================
+// Interface Merge Ordering Tests
+// =============================================================================
+
+/// Helper to find all interface declarations for a given name in the arena
+fn find_interface_declarations(arena: &NodeArena, name: &str) -> Vec<NodeIndex> {
+    let mut decls = Vec::new();
+    for i in 0..arena.len() {
+        let idx = NodeIndex(i as u32);
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            && let Some(interface) = arena.get_interface(node)
+            && let Some(name_node) = arena.get(interface.name)
+            && let Some(id_data) = arena.get_identifier(name_node)
+            && id_data.escaped_text == name
+        {
+            decls.push(idx);
+        }
+    }
+    decls
+}
+
+/// TypeScript's interface merging puts later declarations' method overloads first.
+/// This is critical for overload resolution: e.g., `PromiseConstructor`'s tuple overload
+/// from es2015.promise.d.ts (later) should be tried before the Iterable overload from
+/// es2015.iterable.d.ts (earlier).
+#[test]
+fn test_merged_interface_method_overloads_later_first() {
+    // Two interface declarations for Foo, each with a method bar(...)
+    // Declaration 1 has bar(x: string): string
+    // Declaration 2 has bar(x: number): number
+    // After merging, bar's overloads should be [number->number, string->string]
+    // (later declaration first)
+    let source = r#"
+interface Foo {
+    bar(x: string): string;
+}
+interface Foo {
+    bar(x: number): number;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = std::mem::take(&mut parser.arena);
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let decls = find_interface_declarations(&arena, "Foo");
+    assert_eq!(decls.len(), 2, "Should find 2 interface declarations");
+
+    let type_id = lowering.lower_interface_declarations(&decls);
+
+    // The result should be an Object or Callable type with the bar method
+    let type_data = interner.lookup(type_id).expect("Type should exist");
+    match type_data {
+        TypeData::Callable(callable_shape_id) => {
+            let callable = interner.callable_shape(callable_shape_id);
+            // bar should have 2 call signatures
+            assert_eq!(callable.call_signatures.len(), 2, "Should have 2 overloads");
+            // The second declaration's overload (number->number) should be first
+            let first_sig = &callable.call_signatures[0];
+            assert_eq!(
+                first_sig.return_type,
+                TypeId::NUMBER,
+                "First overload should be from later declaration (number->number)"
+            );
+            let second_sig = &callable.call_signatures[1];
+            assert_eq!(
+                second_sig.return_type,
+                TypeId::STRING,
+                "Second overload should be from earlier declaration (string->string)"
+            );
+        }
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            // Find the bar property
+            let bar_prop = shape
+                .properties
+                .iter()
+                .find(|p| interner.resolve_atom(p.name) == "bar")
+                .expect("Should have bar property");
+            // bar should be a callable with 2 overloads
+            let bar_data = interner
+                .lookup(bar_prop.type_id)
+                .expect("bar type should exist");
+            match bar_data {
+                TypeData::Callable(callable_shape_id) => {
+                    let callable = interner.callable_shape(callable_shape_id);
+                    assert_eq!(callable.call_signatures.len(), 2, "Should have 2 overloads");
+                    // Later declaration's overload should be first
+                    let first_sig = &callable.call_signatures[0];
+                    assert_eq!(
+                        first_sig.return_type,
+                        TypeId::NUMBER,
+                        "First overload should be from later declaration (number->number)"
+                    );
+                    let second_sig = &callable.call_signatures[1];
+                    assert_eq!(
+                        second_sig.return_type,
+                        TypeId::STRING,
+                        "Second overload should be from earlier declaration (string->string)"
+                    );
+                }
+                _ => panic!("Expected Callable type for bar, got {bar_data:?}"),
+            }
+        }
+        _ => panic!("Expected Object or Callable type, got {type_data:?}"),
+    }
+}
