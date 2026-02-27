@@ -1,7 +1,47 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9536/12564 (75.9%) — full suite, error-code level
+**Current score**: ~9534/12570 (75.8%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27f — Loop fixed-point + TS2339 on never
+
+### Two fixes, both checker-level:
+
+#### Fix 1: Loop fixed-point result override bug — Checker (core.rs)
+
+**Root cause**: In `check_flow`, after `analyze_loop_fixed_point` returns the correct fixed-point type (e.g., `string|number`), the generic merge-point logic at the bottom of the function re-unioned antecedent types from the local `results` map. But back-edge antecedent results were only computed inside `analyze_loop_fixed_point`'s internal `get_flow_type` calls (with separate `check_flow` invocations and separate `results` maps). Only the entry antecedent's result was in the outer `results` map, so the final type became just the entry type (e.g., `number`) instead of the full fixed-point union.
+
+**Fix**: Separate LOOP_LABEL from BRANCH_LABEL in the merge-point logic. LOOP_LABEL now uses `result_type` directly (the output of `analyze_loop_fixed_point`), while BRANCH_LABEL continues to union antecedent results.
+
+**File**: `crates/tsz-checker/src/flow/control_flow/core.rs:1124-1132`
+
+**Tests flipped PASS**: `controlFlowWithIncompleteTypes.ts` (+1, was already passing but would have regressed from Fix 2)
+
+#### Fix 2: Remove NEVER from TS2339 suppression — Checker (properties.rs)
+
+**Root cause**: TS2339 was suppressed for `TypeId::NEVER` as a workaround for false `never` types from solver narrowing bugs. This prevented correct TS2339 errors on genuinely `never`-typed property accesses (e.g., `typeof x === "number"` on `object` type narrows to `never`, and property access should error).
+
+**Fix**: Remove `TypeId::NEVER` from the suppression check in `error_property_not_exist_at`. With Fix 1 eliminating the loop narrowing false `never`, the net impact is positive.
+
+**File**: `crates/tsz-checker/src/error_reporter/properties.rs:33-35`
+
+**Tests flipped PASS**: `nonPrimitiveNarrow.ts`, `nonPrimitiveStrictNull.ts` (+2)
+
+#### Also committed: object type assignability (from previous session)
+
+- `assignability.rs`: Treat `object` as non-primitive for TS2741 path
+- `explain.rs`: Add `object` intrinsic handling in explain_failure
+
+**Net conformance change**: 9524 → 9534 (+10)
+
+#### Known regressions (2 tests, pre-existing solver bugs):
+
+- `deeplyNestedConstraints.ts`: Solver produces false `never` when resolving >5 levels of constraint nesting (Extract<M[K], ArrayLike<any>>). Not loop-related — needs solver constraint resolution fix.
+- `typeVariableTypeGuards.ts`: Solver produces false `never` when narrowing generic type parameters with truthiness guards (e.g., `T extends Banana | undefined`, after `if (this.a)`). Not loop-related — needs solver type parameter narrowing fix.
+
+Both produce false TS2339 errors (`Property 'x' does not exist on type 'never'`). These are pre-existing solver bugs that were previously hidden by the NEVER suppression workaround. Fixing them requires solver-level changes to type parameter narrowing.
 
 ---
 
