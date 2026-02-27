@@ -50,6 +50,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
+            // In tsc, passing `undefined` to an optional parameter is always
+            // accepted — the parameter type implicitly includes `undefined`
+            // via the `?` marker.  We check this here (lazily, at the call
+            // site) rather than baking `| undefined` into the parameter type
+            // at signature build time, because lib signatures are built without
+            // strictNullChecks and would otherwise miss it.
+            if *arg_type == TypeId::UNDEFINED || *arg_type == TypeId::VOID {
+                let param_info = self.param_info_for_arg_index(params, i);
+                if param_info.is_some_and(|p| p.optional) {
+                    continue;
+                }
+            }
+
             // Expand TypeParameters to their constraints for assignability checking when the
             // *parameter* expects a concrete type (e.g. `object`) but the argument is an outer
             // type parameter with a compatible constraint.
@@ -148,6 +161,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 (min, max)
             }
             _ => (required, None),
+        }
+    }
+
+    /// Look up the `ParamInfo` for a given argument index (non-rest only).
+    /// Returns `None` if the index falls into a rest parameter or is out of bounds.
+    fn param_info_for_arg_index<'b>(
+        &self,
+        params: &'b [ParamInfo],
+        arg_index: usize,
+    ) -> Option<&'b ParamInfo> {
+        let rest_start = if params.last().is_some_and(|p| p.rest) {
+            params.len().saturating_sub(1)
+        } else {
+            params.len()
+        };
+        if arg_index < rest_start {
+            Some(&params[arg_index])
+        } else {
+            None
         }
     }
 
