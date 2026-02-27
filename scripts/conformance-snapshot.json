@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-02-27T03:52:20Z",
-  "git_sha": "c153e8f08040b0f513b61e765c0d0ffb1d3c7013",
+  "timestamp": "2026-02-27T04:29:52Z",
+  "git_sha": "a231c94f9ec262c69e36543a63d6ce4f733d3415",
   "summary": {
     "total_tests": 12570,
-    "passed": 9320,
-    "failed": 3250,
-    "pass_rate": 74.1
+    "passed": 9326,
+    "failed": 3244,
+    "pass_rate": 74.2
   },
   "areas_by_pass_rate": [
     {
@@ -70,6 +70,13 @@
       "passed": 10,
       "failed": 9,
       "pass_rate": 52.63
+    },
+    {
+      "area": "expressions/contextualTyping",
+      "total": 17,
+      "passed": 9,
+      "failed": 8,
+      "pass_rate": 52.94
     },
     {
       "area": "internalModules/DeclarationMerging",
@@ -168,13 +175,6 @@
       "passed": 7,
       "failed": 5,
       "pass_rate": 58.33
-    },
-    {
-      "area": "expressions/contextualTyping",
-      "total": 17,
-      "passed": 10,
-      "failed": 7,
-      "pass_rate": 58.82
     },
     {
       "area": "classes/constructorDeclarations",
@@ -402,10 +402,10 @@
     },
     {
       "area": "compiler",
-      "total": 6508,
-      "passed": 4879,
-      "failed": 1629,
-      "pass_rate": 74.97
+      "total": 6509,
+      "passed": 4881,
+      "failed": 1628,
+      "pass_rate": 74.99
     },
     {
       "area": "expressions/typeSatisfaction",
@@ -459,9 +459,9 @@
     {
       "area": "parser/ecmascript5",
       "total": 687,
-      "passed": 564,
-      "failed": 123,
-      "pass_rate": 82.1
+      "passed": 565,
+      "failed": 122,
+      "pass_rate": 82.24
     },
     {
       "area": "declarationEmit",
@@ -954,12 +954,12 @@
       "count": 17
     },
     {
-      "code": "TS2591",
+      "code": "TS5107",
       "count": 16
     },
     {
-      "code": "TS5107",
-      "count": 16
+      "code": "TS2688",
+      "count": 15
     }
   ]
 }
