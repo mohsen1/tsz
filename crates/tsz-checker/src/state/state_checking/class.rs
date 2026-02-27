@@ -488,6 +488,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc suppresses TS2564 for the entire class when the file contains parse
+        // errors (containsParseError flag propagation).  In practice, parse error
+        // recovery produces garbage AST nodes that confuse the property initialization
+        // checker, so it's safest to skip the check entirely.
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
         // Check if this is a derived class (has base class)
         let is_derived_class = self.class_has_base(class);
 
@@ -654,6 +662,23 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         };
+
+        // tsc suppresses TS2564 when the property's type annotation already has errors
+        // (e.g. TS2314 "A generic type requires type arguments").  The type may resolve
+        // to a valid TypeId even when there's an error on the type reference, so we check
+        // whether any existing diagnostic falls within the member's span.
+        if let Some(member_node) = self.ctx.arena.get(member_idx) {
+            let mem_start = member_node.pos;
+            let mem_end = member_node.end;
+            let has_type_errors = self
+                .ctx
+                .diagnostics
+                .iter()
+                .any(|d| d.start >= mem_start && d.start < mem_end && d.code != 2564);
+            if has_type_errors {
+                return false;
+            }
+        }
 
         // Enhanced property initialization checking:
         // 1. ANY/UNKNOWN types don't need initialization
