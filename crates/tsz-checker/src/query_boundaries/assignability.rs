@@ -53,6 +53,10 @@ pub(crate) fn replace_function_return_type(
     tsz_solver::type_queries::replace_function_return_type(db, type_id, new_return)
 }
 
+pub(crate) fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::erase_function_type_params_to_any(db, type_id)
+}
+
 pub(crate) fn are_types_overlapping_with_env(
     db: &dyn TypeDatabase,
     env: &tsz_solver::TypeEnvironment,

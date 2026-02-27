@@ -665,6 +665,47 @@ pub fn replace_function_return_type(
     })
 }
 
+/// Erase a generic function's type parameters by replacing them with `any`.
+///
+/// This mirrors TSC's `getErasedSignature` used in `isImplementationCompatibleWithOverload`.
+/// Returns the original type when it is not a function or has no type parameters.
+pub fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    if shape.type_params.is_empty() {
+        return type_id;
+    }
+
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    let mut subst = TypeSubstitution::new();
+    for tp in &shape.type_params {
+        subst.insert(tp.name, TypeId::ANY);
+    }
+
+    let params = shape
+        .params
+        .iter()
+        .map(|p| crate::types::ParamInfo {
+            type_id: instantiate_type(db, p.type_id, &subst),
+            ..p.clone()
+        })
+        .collect();
+    let return_type = instantiate_type(db, shape.return_type, &subst);
+    let this_type = shape.this_type.map(|t| instantiate_type(db, t, &subst));
+
+    db.function(crate::types::FunctionShape {
+        type_params: Vec::new(), // erased
+        params,
+        this_type,
+        return_type,
+        type_predicate: shape.type_predicate.clone(),
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    })
+}
+
 /// Get the conditional type info for a conditional type.
 ///
 /// Returns None if the type is not a Conditional.
