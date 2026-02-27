@@ -267,7 +267,8 @@ impl<'a> CheckerState<'a> {
                 // TS2695: Emit when left side has no side effects
                 // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
                 // TypeScript DOES emit this even when left operand has type errors or is typed as any
-                if self.ctx.compiler_options.allow_unreachable_code != Some(true)
+                if !self.ctx.has_parse_errors
+                    && self.ctx.compiler_options.allow_unreachable_code != Some(true)
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
                 {
