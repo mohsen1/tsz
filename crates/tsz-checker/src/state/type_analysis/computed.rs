@@ -1464,9 +1464,44 @@ impl<'a> CheckerState<'a> {
             let expr_type = self.get_type_of_node(for_data.expression);
             Some(self.for_of_element_type(expr_type))
         } else if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
-            Some(TypeId::STRING)
+            let for_data = self.ctx.arena.get_for_in_of(for_node).cloned()?;
+            let expr_type = self.get_type_of_node(for_data.expression);
+            Some(self.compute_for_in_variable_type(expr_type))
         } else {
             None
+        }
+    }
+
+    /// Compute the type of a for-in loop variable.
+    ///
+    /// tsc behavior (checker.ts `getTypeForVariableLikeDeclaration`):
+    /// ```text
+    /// indexType = keyof(nonNullable(exprType))
+    /// if indexType is TypeParameter | Index → Extract<indexType, string>
+    /// else → string
+    /// ```
+    ///
+    /// When iterating `for (let k in obj)` where `obj: T` (a type parameter),
+    /// `k` gets type `Extract<keyof T, string>` so that `obj[k]` is well-typed.
+    pub(crate) fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
+        // Remove null/undefined from expression type
+        let non_nullable = tsz_solver::remove_nullish(self.ctx.types, expr_type);
+
+        // Compute keyof
+        let keyof_type = self.ctx.types.factory().keyof(non_nullable);
+        let keyof_evaluated = self.evaluate_type_with_env(keyof_type);
+
+        // If the keyof result is a type parameter or index (keyof) type,
+        // return Extract<keyof T, string> = keyof T & string
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, keyof_evaluated)
+            || tsz_solver::type_queries::is_keyof_type(self.ctx.types, keyof_evaluated)
+        {
+            self.ctx
+                .types
+                .factory()
+                .intersection(vec![keyof_evaluated, TypeId::STRING])
+        } else {
+            TypeId::STRING
         }
     }
 }
