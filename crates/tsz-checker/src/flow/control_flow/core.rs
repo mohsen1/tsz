@@ -1121,10 +1121,17 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     query::union_types(self.interner, types)
                 }
-            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
-                && !flow.antecedent.is_empty()
-            {
-                // Union all antecedent types for branch/loop
+            } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
+                // LOOP_LABEL: use result_type directly from analyze_loop_fixed_point.
+                // The fixed-point iteration already computes the correct union of entry
+                // type and back-edge types. Re-unioning antecedent results here would
+                // give the wrong answer because back-edge results are computed inside
+                // analyze_loop_fixed_point's internal get_flow_type calls (which have
+                // their own check_flow invocations with separate `results` maps) and
+                // are NOT present in our local `results` map.
+                result_type
+            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL) && !flow.antecedent.is_empty() {
+                // Union all antecedent types for branch merge points
                 let ant_types: Vec<TypeId> = flow
                     .antecedent
                     .iter()
