@@ -195,13 +195,19 @@ ensure_binaries() {
     echo ""
 }
 
-generate_cache() {
-    local force_regenerate="${1:-false}"
-    
-    # Ensure scripts dependencies (TypeScript + emit runner deps) are installed
-    if [ ! -d "$REPO_ROOT/scripts/node_modules" ]; then
+# Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
+ensure_scripts_deps() {
+    if [ ! -d "$REPO_ROOT/scripts/node_modules/typescript" ]; then
+        echo -e "${YELLOW}Installing scripts dependencies (TypeScript libs)...${NC}"
         (cd "$REPO_ROOT/scripts" && npm install --silent 2>/dev/null || npm install)
     fi
+}
+
+generate_cache() {
+    local force_regenerate="${1:-false}"
+
+    # Ensure scripts dependencies (TypeScript + emit runner deps) are installed
+    ensure_scripts_deps
 
     if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ]; then
         echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
@@ -319,6 +325,9 @@ EOF
 }
 
 run_tests() {
+    # TypeScript lib files are needed for type checking (resolved via scripts/node_modules/typescript/lib)
+    ensure_scripts_deps
+
     echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
     echo "Workers: $WORKERS"
