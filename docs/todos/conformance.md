@@ -52,6 +52,34 @@ The cross-file issue is documented in Session 2026-02-27b. The root problem is t
 
 ---
 
+## Session 2026-02-28a — Module resolution JS file acceptance for import-following
+
+### Area: node/allowJs (rank 4, was 57.1% → 63.2%)
+
+#### Root cause
+`is_valid_module_file` in `crates/tsz-cli/src/fs.rs` only accepted TS/JSON files, rejecting `.js/.jsx/.mjs/.cjs`. This prevented import-following from discovering JS source files referenced via package.json `imports` field (`#` prefix specifiers). tsc discovers these files during import resolution, not via include patterns.
+
+#### Fix 1: Split `is_valid_module_file` into two variants — CLI (fs.rs + resolution.rs)
+
+- `is_valid_module_file`: TS/JSON only — used by `resolve_export_entry` (export map resolution). Matches tsc behavior where exports require explicit `types` condition for declaration files.
+- `is_valid_module_or_js_file`: TS/JS/JSON — used by `resolve_package_entry`, general candidate resolution, bundler mode, and classic fallback. These are contexts where tsc resolves JS source files during import-following.
+
+**Key insight**: export map entries (`exports` field) and non-export entries (`imports` field, `main` field) have different file acceptance rules in tsc. Export entries are strict (TS/JSON only), while non-export entries accept JS files as resolution targets.
+
+**Files**: `crates/tsz-cli/src/fs.rs:304-320`, `crates/tsz-cli/src/driver/resolution.rs` (6 call sites updated)
+
+#### Fix 2: TS1479 skip_esm_map logic for .cjs files — Checker (declaration.rs)
+
+`.cjs` files are unambiguously CJS and should check `file_is_esm_map` to detect when a `.js` target is actually ESM. Previously `.cjs` was grouped with `.js/.jsx/.mjs` in the `skip_esm_map` check, which skipped the ESM map entirely.
+
+**File**: `crates/tsz-checker/src/declarations/import/declaration.rs:536-555`
+
+**Tests flipped PASS**: `nodeModulesAllowJsPackageImports.ts` (+1)
+
+**Regressions**: 0 (verified `selfNameModuleAugmentation.ts` still passes with the split approach)
+
+---
+
 ## Session 2026-02-27f — Loop fixed-point + TS2339 on never
 
 ### Two fixes, both checker-level:
