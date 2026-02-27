@@ -5,6 +5,50 @@
 
 ---
 
+## Session 2026-02-27 — types/union area: TS2684 union this-parameter + TS2511 abstract constructors
+
+### Area: types/union (52.0% → 56.0%, 13→14 passing of 25)
+
+**Fixed**: TS2684 missing for union call signatures with `this` parameters; TS2511 missing for anonymous abstract construct signatures in unions.
+
+#### Fix 1: Union this-parameter checking (TS2684) — Solver
+
+**Root cause**: `resolve_union_call` in the solver resolves each union member independently. When member B's call fails with `ThisTypeMismatch` but members A and C succeed, the failure was silently dropped. TSC computes the intersection of all members' `this` types and checks the calling context against it before overload resolution.
+
+**Fix**: Added `compute_union_this_type()` to `CallEvaluator` (core.rs) that:
+1. Iterates union members, extracting `this_type` from single-overload functions/callables
+2. Multi-overload callables are conservatively skipped (their `this` depends on which overload is selected)
+3. Intersects all extracted `this` types
+4. Phase 0 check in `resolve_union_call`: if combined `this` exists and calling context doesn't satisfy it → `ThisTypeMismatch`
+
+**Test flipped**: `unionTypeCallSignatures5.ts` (FAIL→PASS)
+
+#### Fix 2: Abstract construct signature detection (TS2511) — Checker
+
+**Root cause**: `type_contains_abstract_class_inner` only checked `callable_shape.symbol` for `ABSTRACT` flag, but `abstract new (a: string) => string` is an anonymous construct signature with no symbol. The `CallableShape.is_abstract` field was already set correctly but never checked.
+
+**Fix**: Check `callable_shape.is_abstract` before the symbol-based check in `complex.rs`.
+
+**Impact**: TS2511 now emitted for `unionTypeConstructSignatures.ts`, but test still fails at fingerprint level due to other pre-existing TS2345/TS2554 mismatches.
+
+#### Bonus improvements
+2 compiler tests also flipped PASS thanks to the this-parameter fix:
+- `genericCallInferenceConditionalType1.ts`
+- `prespecializedGenericMembers1.ts`
+
+#### Investigated but not fixed (remaining types/union gaps)
+
+| Test | Issue | Root cause |
+|------|-------|------------|
+| unionTypeCallSignatures6 | Missing TS2349 | Multi-overload union call resolution with incompatible `this`; would need full intersection-of-this for multi-overload callables |
+| unionTypeWithIndexSignature | TS2540 vs TS2542 code swap | Readonly property access emitting wrong code; test also has other fingerprint mismatches |
+| contextualTypeWithUnionTypeCallSignatures | Missing TS7006 | Contextual typing for incompatible union call signatures should produce `any` parameter type |
+| discriminatedUnionTypes1/2, unionTypeEquivalence | Fingerprint-only | Union member ordering: `union_sort_key()` sorts by `TypeId` (interning order), not source order |
+| unionRelationshipCheckPasses | Extra TS2322 | Discriminated union assignability: `{foo?: number}` to `{foo?: undefined} | {foo: number}` |
+| unionTypeParameterInference | Extra TS2322 | Generic inference with `lift(value).prop` pattern |
+
+---
+
 ## Session 2026-02-27 — references area: wrong TS2688 cache entries from typeRoots path mapping
 
 ### Area: references (53.3% → 93.3%, 8→14 passing of 15)
@@ -1391,3 +1435,4 @@ All items below have been validated against the codebase (implementations + test
 | TS2365 mixed-orderable | Remove `is_orderable`/`OrderableVisitor` from solver `BinaryOpEvaluator` — was accepting mixed-kind comparisons like `number < string` | +1 test (comparisonOperatorWithNoRelationshipPrimitiveType) |
 | TS2411/TS2413 index sig | TS2411: preserve original quote style for string literal property names using `node_text()`. TS2413: only emit on number index nodes (remove string/container fallback); remove redundant cross-body number-vs-string checks from `duplicate_identifiers.rs` | +1 test (mergedInterfacesWithIndexers2) |
 | mapped type as-clause | Filtering as-clause recognition in homomorphic mapped type assignability (T <: Filter<T> where Filter uses `as P extends Foo ? P : never`) | +6 tests |
+| union this-param + abstract ctor | TS2684: `compute_union_this_type()` intersects single-overload members' `this` types for Phase 0 check in `resolve_union_call`. TS2511: check `callable_shape.is_abstract` for anonymous `abstract new` signatures | +2 tests (unionTypeCallSignatures5 + 2 bonus compiler tests) |
