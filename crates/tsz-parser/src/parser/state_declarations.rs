@@ -1540,7 +1540,6 @@ impl ParserState {
     /// import * as x from "mod";
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
-        
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
 
