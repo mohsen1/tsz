@@ -274,7 +274,12 @@ impl<'a> CheckerState<'a> {
                 // when the source is a primitive type. Primitives can't have "missing properties".
                 // Example: `x: number = moduleA` → "Type '...' is not assignable to type 'number'"
                 //          NOT "Property 'someClass' is missing in type 'number'..."
-                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                // Note: `object` (TypeId::OBJECT) is explicitly non-primitive — it represents
+                // all non-primitive values and behaves like `{}` structurally, so missing
+                // properties are meaningful and should produce TS2741.
+                if *source_type != tsz_solver::TypeId::OBJECT
+                    && tsz_solver::is_primitive_type(self.ctx.types, *source_type)
+                {
                     let src_str = self.format_type(*source_type);
                     let tgt_str = self.format_type(*target_type);
                     let message = format_message(
