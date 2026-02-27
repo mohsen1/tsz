@@ -870,7 +870,9 @@ impl<'a> Printer<'a> {
 
         self.write("get ");
         self.emit(accessor.name);
-        self.write("()");
+        self.write("(");
+        self.emit_function_parameters_js(&accessor.parameters.nodes);
+        self.write(")");
 
         // Skip type annotation for JS emit
 
