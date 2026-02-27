@@ -484,6 +484,14 @@ fn types_are_comparable_inner(
         return true;
     }
 
+    // Unwrap ReadonlyType wrappers — `readonly T[]` is comparable to `T[]`
+    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(source) {
+        return types_are_comparable_inner(db, inner, target, depth + 1);
+    }
+    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(target) {
+        return types_are_comparable_inner(db, source, inner, depth + 1);
+    }
+
     // Type parameters are not automatically comparable for TS2352 purposes.
     // Treating them as "comparable to anything" suppresses valid diagnostics
     // like asserting a specific subtype to an unconcretized type parameter.
@@ -501,6 +509,20 @@ fn types_are_comparable_inner(
             .iter()
             .any(|&m| types_are_comparable_inner(db, source, m, depth + 1));
     }
+
+    // Array comparability: Array<A> is comparable to Array<B> if A and B are comparable.
+    // This handles cases like `(string | number)[]` as `string[]`.
+    if let Some(TypeData::Array(source_elem)) = db.lookup(source)
+        && let Some(TypeData::Array(target_elem)) = db.lookup(target) {
+            return types_are_comparable_inner(db, source_elem, target_elem, depth + 1);
+        }
+
+    // Callable types are comparable to other callable types — they share the
+    // callable structure pattern, so tsc never emits TS2352 between them.
+    if let Some(TypeData::Callable(_)) = db.lookup(source)
+        && let Some(TypeData::Callable(_)) = db.lookup(target) {
+            return true;
+        }
 
     // Check primitive ↔ literal comparability
     // string is comparable to any string literal
@@ -577,15 +599,17 @@ fn types_have_common_properties(
     target: TypeId,
     depth: u32,
 ) -> bool {
-    // Helper to get properties from an object/callable type
-    fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
+    // Helper to get properties from an object/callable type.
+    // Returns (name, type_id, optional) — the optional flag is needed because
+    // optional properties implicitly include `undefined` for comparability.
+    fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId, bool)> {
         match db.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
-                    .map(|p| (p.name, p.type_id))
+                    .map(|p| (p.name, p.type_id, p.optional))
                     .collect()
             }
             Some(TypeData::Callable(callable_id)) => {
@@ -593,7 +617,7 @@ fn types_have_common_properties(
                 shape
                     .properties
                     .iter()
-                    .map(|p| (p.name, p.type_id))
+                    .map(|p| (p.name, p.type_id, p.optional))
                     .collect()
             }
             Some(TypeData::Intersection(list_id)) => {
@@ -619,18 +643,30 @@ fn types_have_common_properties(
     // Name-only matching is too permissive and suppresses valid TS2352 cases
     // on incompatible generic instantiations.
     use rustc_hash::FxHashMap;
-    let mut target_by_name: FxHashMap<Atom, Vec<TypeId>> = FxHashMap::default();
-    for (name, ty) in target_props {
-        target_by_name.entry(name).or_default().push(ty);
+    let mut target_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
+    for (name, ty, optional) in target_props {
+        target_by_name.entry(name).or_default().push((ty, optional));
     }
 
-    source_props.iter().any(|(source_name, source_ty)| {
-        target_by_name.get(source_name).is_some_and(|target_tys| {
-            target_tys
-                .iter()
-                .any(|target_ty| types_are_comparable_inner(db, *source_ty, *target_ty, depth + 1))
+    source_props
+        .iter()
+        .any(|(source_name, source_ty, source_optional)| {
+            target_by_name
+                .get(source_name)
+                .is_some_and(|target_entries| {
+                    target_entries.iter().any(|(target_ty, target_optional)| {
+                        // If either property is optional, `undefined` is part of the type.
+                        // E.g., `a?: string` effectively has type `string | undefined`,
+                        // so `undefined` is comparable to it.
+                        if (*source_optional || *target_optional)
+                            && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
+                        {
+                            return true;
+                        }
+                        types_are_comparable_inner(db, *source_ty, *target_ty, depth + 1)
+                    })
+                })
         })
-    })
 }
 
 /// Check if a type contains a `TypeQuery` referencing a specific symbol.
