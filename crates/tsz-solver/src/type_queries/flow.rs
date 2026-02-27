@@ -513,16 +513,18 @@ fn types_are_comparable_inner(
     // Array comparability: Array<A> is comparable to Array<B> if A and B are comparable.
     // This handles cases like `(string | number)[]` as `string[]`.
     if let Some(TypeData::Array(source_elem)) = db.lookup(source)
-        && let Some(TypeData::Array(target_elem)) = db.lookup(target) {
-            return types_are_comparable_inner(db, source_elem, target_elem, depth + 1);
-        }
+        && let Some(TypeData::Array(target_elem)) = db.lookup(target)
+    {
+        return types_are_comparable_inner(db, source_elem, target_elem, depth + 1);
+    }
 
     // Callable types are comparable to other callable types — they share the
     // callable structure pattern, so tsc never emits TS2352 between them.
     if let Some(TypeData::Callable(_)) = db.lookup(source)
-        && let Some(TypeData::Callable(_)) = db.lookup(target) {
-            return true;
-        }
+        && let Some(TypeData::Callable(_)) = db.lookup(target)
+    {
+        return true;
+    }
 
     // Check primitive ↔ literal comparability
     // string is comparable to any string literal
