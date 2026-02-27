@@ -760,7 +760,10 @@ impl<'a> BinaryOpEvaluator<'a> {
 
         let result = if op == "&&" {
             // left && right
-            let falsy_left = ctx.narrow_to_falsy(left);
+            // Use extract_definitely_falsy_type (not narrow_to_falsy) to match tsc's
+            // getDefinitelyFalsyPartOfType. For `string && X`, result is `"" | X`
+            // (not `string | X`), because only `""` is definitely falsy.
+            let falsy_left = ctx.extract_definitely_falsy_type(left);
             let truthy_left = ctx.narrow_by_truthiness(left);
 
             if truthy_left == TypeId::NEVER {

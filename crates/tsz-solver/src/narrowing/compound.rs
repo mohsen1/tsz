@@ -392,6 +392,80 @@ impl<'a> NarrowingContext<'a> {
         TypeId::NEVER
     }
 
+    /// Extract the definitely-falsy representative type from a type.
+    ///
+    /// This mirrors tsc's `getDefinitelyFalsyPartOfType`. Unlike `narrow_to_falsy`
+    /// which is used for flow narrowing (and returns the full `string` type for
+    /// the falsy branch), this returns only the specific falsy literal value:
+    /// - `string` → `""` (empty string literal)
+    /// - `number` → `0` (zero literal)
+    /// - `bigint` → `0n` (zero bigint literal)
+    /// - `boolean` → `false`
+    /// - `null`, `undefined`, `void`, `never` → themselves
+    /// - Unions → map each member
+    /// - Everything else → `never`
+    ///
+    /// Used for `&&` expression type computation where `a && b` has type
+    /// `extractDefinitelyFalsyTypes(a) | b`.
+    pub fn extract_definitely_falsy_type(&self, type_id: TypeId) -> TypeId {
+        if type_id == TypeId::ANY {
+            return TypeId::ANY;
+        }
+
+        let resolved = self.resolve_type(type_id);
+
+        // Handle unions: map each member
+        if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
+            let falsy_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| self.extract_definitely_falsy_type(m))
+                .filter(|&m| m != TypeId::NEVER)
+                .collect();
+            return if falsy_members.is_empty() {
+                TypeId::NEVER
+            } else if falsy_members.len() == 1 {
+                falsy_members[0]
+            } else {
+                self.db.union(falsy_members)
+            };
+        }
+
+        // boolean → false
+        if resolved == TypeId::BOOLEAN {
+            return TypeId::BOOLEAN_FALSE;
+        }
+
+        // string → "" (empty string literal)
+        if resolved == TypeId::STRING {
+            return self.db.literal_string("");
+        }
+
+        // number → 0 (zero literal)
+        if resolved == TypeId::NUMBER {
+            return self.db.literal_number(0.0);
+        }
+
+        // bigint → 0n (zero bigint literal)
+        if resolved == TypeId::BIGINT {
+            return self.db.literal_bigint("0");
+        }
+
+        // null, undefined, void are always falsy
+        if resolved.is_nullable() {
+            return resolved;
+        }
+
+        // Literals that are falsy
+        if let Some(_lit) = literal_value(self.db, resolved)
+            && self.is_definitely_falsy(resolved)
+        {
+            return resolved;
+        }
+
+        // Everything else (objects, functions, etc.) has no definitely-falsy part
+        TypeId::NEVER
+    }
+
     /// This matches TypeScript's behavior where `if (x)` narrows out:
     /// - null, undefined, void
     /// - false (boolean literal)

@@ -1353,7 +1353,6 @@ FAIL TypeScript/tests/cases/compiler/spellingSuggestionLeadingUnderscores01.ts
 FAIL TypeScript/tests/cases/compiler/spellingSuggestionModule.ts
 FAIL TypeScript/tests/cases/compiler/spliceTuples.ts
 FAIL TypeScript/tests/cases/compiler/spreadExpressionContextualType.ts
-FAIL TypeScript/tests/cases/compiler/spreadIdenticalTypesRemoved.ts
 FAIL TypeScript/tests/cases/compiler/spreadIntersectionJsx.tsx
 FAIL TypeScript/tests/cases/compiler/spreadInvalidArgumentType.ts
 FAIL TypeScript/tests/cases/compiler/spreadOfObjectLiteralAssignableToIndexSignature.ts
@@ -1830,8 +1829,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/typeGuardsAsAssertions.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/typeGuardsTypeParameters.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceDeclarationEmit.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/libReferenceNoLibBundle.ts
-FAIL TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicates02.ts
-FAIL TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicatesWithPrivateName02.ts
 FAIL TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts
 FAIL TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor3.ts
 FAIL TypeScript/tests/cases/conformance/decorators/class/accessor/decoratorOnClassAccessor6.ts
@@ -2124,6 +2121,7 @@ FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/condition
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/arrayLiteralExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping2.ts
+FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
@@ -3006,6 +3004,7 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/union
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
+FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/genericTypeReferenceWithoutTypeArgument.ts
@@ -3013,11 +3012,9 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/gen
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/nonGenericTypeReferenceWithTypeArguments.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadIndexSignature.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadNegativeParse.ts
-FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadRepeatedNullCheckPerf.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadSetonlyAccessor.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/objectSpreadStrictNull.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/spreadMethods.ts
-FAIL TypeScript/tests/cases/conformance/types/spread/spreadNonObject1.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/spreadObjectOrFalsy.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/spreadOverwritesPropertyStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/spread/spreadUnion.ts
@@ -7431,6 +7428,7 @@ PASS TypeScript/tests/cases/compiler/spellingSuggestionGlobal4.ts
 PASS TypeScript/tests/cases/compiler/spreadBooleanRespectsFreshness.ts
 PASS TypeScript/tests/cases/compiler/spreadExpressionContainingObjectExpressionContextualType.ts
 PASS TypeScript/tests/cases/compiler/spreadExpressionContextualTypeWithNamespace.ts
+PASS TypeScript/tests/cases/compiler/spreadIdenticalTypesRemoved.ts
 PASS TypeScript/tests/cases/compiler/spreadIntersection.ts
 PASS TypeScript/tests/cases/compiler/spreadObjectNoCircular1.ts
 PASS TypeScript/tests/cases/compiler/spreadObjectPermutations.ts
@@ -8633,7 +8631,9 @@ PASS TypeScript/tests/cases/conformance/declarationEmit/typeofImportTypeOnlyExpo
 PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitIdentifierPredicates01.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitIdentifierPredicatesWithPrivateName01.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicates01.ts
+PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicates02.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicatesWithPrivateName01.ts
+PASS TypeScript/tests/cases/conformance/declarationEmit/typePredicates/declarationEmitThisPredicatesWithPrivateName02.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typeReferenceRelatedFiles.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.ambient.ts
 PASS TypeScript/tests/cases/conformance/declarationEmit/typesVersionsDeclarationEmit.multiFile.ts
@@ -9926,7 +9926,6 @@ PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/getSetAccessorContextualTyping.ts
-PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping2.ts
@@ -12063,7 +12062,6 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
-PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts
@@ -12076,10 +12074,12 @@ PASS TypeScript/tests/cases/conformance/types/spread/objectSpreadComputedPropert
 PASS TypeScript/tests/cases/conformance/types/spread/objectSpreadNegative.ts
 PASS TypeScript/tests/cases/conformance/types/spread/objectSpreadNoTransform.ts
 PASS TypeScript/tests/cases/conformance/types/spread/objectSpreadRepeatedComplexity.ts
+PASS TypeScript/tests/cases/conformance/types/spread/objectSpreadRepeatedNullCheckPerf.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadContextualTypedBindingPattern.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadDuplicate.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadDuplicateExact.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadExcessProperty.ts
+PASS TypeScript/tests/cases/conformance/types/spread/spreadNonObject1.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadNonPrimitive.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadOverwritesProperty.ts
 PASS TypeScript/tests/cases/conformance/types/spread/spreadTypeVariable.ts
