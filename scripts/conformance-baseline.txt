@@ -1505,7 +1505,6 @@ FAIL TypeScript/tests/cases/compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx
 FAIL TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
-FAIL TypeScript/tests/cases/compiler/tsxResolveExternalModuleExportsTypes.ts
 FAIL TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts
 FAIL TypeScript/tests/cases/compiler/tupleTypes.ts
@@ -1914,7 +1913,6 @@ FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionEx
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionParameter.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnImportEquals2.ts
 FAIL TypeScript/tests/cases/conformance/decorators/legacyDecorators-contextualTypes.ts
-FAIL TypeScript/tests/cases/conformance/directives/multiline.tsx
 FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
 FAIL TypeScript/tests/cases/conformance/directives/ts-ignore.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
@@ -2198,6 +2196,7 @@ FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/condition
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/arrayLiteralExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping2.ts
+FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
@@ -2565,7 +2564,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/typedefTagTypeResolution.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/typedefTagWrapping.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/typeTagCircularReferenceOnConstructorFunction.ts
 FAIL TypeScript/tests/cases/conformance/jsdoc/typeTagNoErasure.ts
-FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenCanBeTupleType.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty13.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty14.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty15.tsx
@@ -3039,6 +3037,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
@@ -9984,7 +9983,6 @@ PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/getSetAccessorContextualTyping.ts
-PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping2.ts
@@ -10514,7 +10512,6 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsMissing
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsMissingTypeParameters.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsModuleReferenceHasEmit.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsMultipleExportFromMerge.ts
-PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsNonIdentifierInferredNames.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsOptionalTypeLiteralProps2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsPackageJson.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsParameterTagReusesInputNodeInEmit1.ts
@@ -11885,7 +11882,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
