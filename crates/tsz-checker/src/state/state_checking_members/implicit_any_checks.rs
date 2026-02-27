@@ -59,6 +59,8 @@ impl<'a> CheckerState<'a> {
         // Skip TS7006 for parameters on nodes with parse errors.
         // This prevents cascading "implicitly has any type" errors on malformed AST nodes.
         // The parse error itself should already be emitted (e.g., TS1005, TS2390).
+        // Check both the parameter name AND the enclosing function/arrow for errors,
+        // since parse errors like `(a): => {}` set flags on the parent, not on `a`.
         use tsz_parser::parser::node_flags;
         if let Some(name_node) = self.ctx.arena.get(param.name) {
             let flags = name_node.flags as u32;
@@ -66,6 +68,25 @@ impl<'a> CheckerState<'a> {
                 || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
             {
                 return;
+            }
+        }
+        // Also check parent chain (parameter → function/arrow) for parse errors
+        if let Some(ext) = self.ctx.arena.get_extended(param.name) {
+            // param.name's parent is ParameterDeclaration; its parent is the function/arrow
+            let param_decl = ext.parent;
+            if let Some(param_node) = self.ctx.arena.get(param_decl) {
+                let flags = param_node.flags as u32;
+                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0 {
+                    return;
+                }
+            }
+            if let Some(param_ext) = self.ctx.arena.get_extended(param_decl)
+                && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
+            {
+                let flags = func_node.flags as u32;
+                if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0 {
+                    return;
+                }
             }
         }
 

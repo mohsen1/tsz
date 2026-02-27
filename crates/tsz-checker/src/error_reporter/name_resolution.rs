@@ -613,9 +613,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this is a known Node.js global → TS2591
+        // Skip for "module" when there are parse errors — the parser likely failed to
+        // parse a module declaration and recovered `module` as an identifier.
         if is_known_node_global(name) {
-            self.error_cannot_find_name_install_node_types(name, idx);
-            return;
+            if name == "module" && self.has_parse_errors() {
+                // Fall through to TS2304 instead of TS2591 — the parser likely failed
+                // to parse a module declaration and recovered `module` as an identifier.
+            } else {
+                self.error_cannot_find_name_install_node_types(name, idx);
+                return;
+            }
         }
 
         // Check if this is a known test runner global → TS2593

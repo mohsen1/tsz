@@ -18,26 +18,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         if let Some(module) = self.ctx.arena.get_module(node) {
-            // TS2580: Anonymous module declaration with `module` keyword (not `namespace`)
-            // When `module {` is parsed as a module declaration with a missing name,
-            // TSC also emits TS2580 because `module` could be a Node.js identifier reference.
-            let is_namespace = (node.flags as u32) & node_flags::NAMESPACE != 0;
-
-            if !is_namespace
-                && let Some(name_node) = self.ctx.arena.get(module.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                && ident.escaped_text.is_empty()
-            {
-                // Detailed node types error (TS2591) is preferred in recent TS versions.
-                let code =
-                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
-                let message = format_message(
-                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                    &["module"],
-                );
-
-                self.ctx.error(node.pos, 6, message, code);
-            }
+            // Anonymous module declarations (`module { }`) already have TS1437 from the parser.
+            // tsc does NOT additionally emit TS2591 for these — the parse error is sufficient.
 
             // TS2397: Declaration name conflicts with built-in global identifier.
             // Namespaces named `globalThis` or `undefined` conflict with built-in globals.

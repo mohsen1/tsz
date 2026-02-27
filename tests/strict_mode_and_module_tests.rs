@@ -58,9 +58,16 @@ module {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // Should have TS2591 (detailed node types error)
+    // Anonymous modules should NOT emit TS2591 — the parser already emits TS1437.
+    // tsc does not additionally suggest @types/node for anonymous module declarations.
     assert!(
-        codes.contains(&2591),
-        "Expected TS2591 for anonymous module, got: {codes:?}"
+        !codes.contains(&2591),
+        "Should NOT emit TS2591 for anonymous module (tsc only emits TS1437), got: {codes:?}"
+    );
+    // Verify the parser produced TS1437
+    let parse_codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        parse_codes.contains(&1437),
+        "Expected TS1437 from parser for anonymous module, got: {parse_codes:?}"
     );
 }
