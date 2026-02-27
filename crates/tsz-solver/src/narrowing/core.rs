@@ -977,6 +977,30 @@ impl<'a> NarrowingContext<'a> {
         is_object_like_type_through_type_constraints(self.db, type_id)
     }
 
+    /// Check if a type represents the global Object interface from lib.d.ts.
+    ///
+    /// All non-primitive values are instances of Object at runtime. Used by
+    /// instanceof false branch narrowing to exclude all non-primitive types
+    /// when the constructor is `Object`.
+    pub(super) fn is_object_interface(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::OBJECT {
+            return true;
+        }
+        // Check the query database directly for boxed Object interface.
+        // Boxed types are registered on the interner during lib.d.ts processing,
+        // bypassing TypeResolver (which may be a different instance).
+        // Use as_type_database() to disambiguate from TypeResolver's get_boxed_type.
+        let db = self.db.as_type_database();
+        if db.get_boxed_type(crate::types::IntrinsicKind::Object) == Some(type_id) {
+            return true;
+        }
+        if let Some(def_id) = lazy_def_id(self.db, type_id)
+            && db.is_boxed_def_id(def_id, crate::types::IntrinsicKind::Object) {
+                return true;
+            }
+        false
+    }
+
     pub(super) fn narrow_type_param(&self, source: TypeId, target: TypeId) -> Option<TypeId> {
         let info = type_param_info(self.db, source)?;
 

@@ -410,6 +410,11 @@ impl<'a> NarrowingContext<'a> {
     pub fn narrow_by_instanceof_false(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
         let resolved_source = self.resolve_type(source_type);
 
+        // Check if the instance type is the global Object interface.
+        // All non-primitive values are instances of Object at runtime,
+        // so the false branch of `instanceof Object` keeps only primitives.
+        let is_object_target = self.is_object_interface(instance_type);
+
         if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
@@ -418,6 +423,11 @@ impl<'a> NarrowingContext<'a> {
                     // Primitives always survive the false branch of instanceof
                     if self.is_js_primitive(member) {
                         return true;
+                    }
+                    // When the target is Object, ALL non-primitives are excluded
+                    // because every non-primitive value is an Object instance.
+                    if is_object_target {
+                        return false;
                     }
                     // A member only fails to reach the false branch if it is GUARANTEED
                     // to pass the true branch. In TypeScript, this means the member
@@ -437,6 +447,9 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Non-union: if it's guaranteed to be an instance, it will never reach the false branch.
+        if is_object_target && !self.is_js_primitive(resolved_source) {
+            return TypeId::NEVER;
+        }
         if self.is_assignable_to(resolved_source, instance_type) {
             return TypeId::NEVER;
         }
