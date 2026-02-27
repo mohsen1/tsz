@@ -1,8 +1,43 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9340/12570 (74.3%) — full suite, error-code level
-> Up from 9338 after TS2536 indexed access fix; from 9334 after TS2838 infer constraint check + upstream fixes.
+**Current score**: ~9341/12570 (74.3%) — full suite, error-code level
+> Up from 9338 after TS2456 column fix; from 9338 after TS2536 indexed access fix.
+
+---
+
+## Session 2026-02-27 — externalModules/typeOnly area analysis
+
+### Area: externalModules/typeOnly (50.77% → ~51.5%, 33→35 of 65→68 passing)
+
+### Fix: TS2456 column offset — point at name instead of `type` keyword (+2 tests)
+- **Root cause**: `error_at_node(decl_idx, ...)` pointed at the `type` keyword node, but
+  tsc points at the type alias name identifier.
+- **Fix**: Changed to `error_at_node(type_alias.name, ...)` in computed.rs.
+- **Tests flipped**: `circular2.ts`, `circular4.ts` (fingerprint match on column position).
+
+### Investigated but not fixed: cross-file module resolution for namespace re-exports
+- **Root cause**: `resolve_effective_module_exports("./b")` resolves the relative path from
+  `current_file_idx` (the consuming file) instead of the symbol's `decl_file_idx` (the file
+  that declared `export * as ns from './b'`). The `resolved_module_paths` map is keyed by
+  `(source_file_idx, specifier)`, so the wrong file index produces no match.
+- **Attempted fix**: Added `_from_file` variants of resolution methods that accept `source_file_idx`.
+- **Result**: Reverted — caused 5 regressions. The `decl_file_idx` value isn't reliably correct
+  for all symbol types obtained through cross-file resolution chains. In conformance tests, all
+  files are co-located so the fix wouldn't help anyway.
+- **Recommendation**: Needs deeper investigation of how `decl_file_idx` gets propagated through
+  cross-file symbol merges in `src/parallel.rs`. The fix pattern is correct in principle.
+
+### Remaining typeOnly failures classification (33 tests):
+- **TS1362 missing** (namespace member access on type-only exports): ~4 tests. Need detection of
+  type-only exports during property access, not just filtering from namespace object type.
+- **TS2741 missing** (property missing): ~4 tests. Cross-file type-only rename chains may resolve
+  to wrong type.
+- **TS2322 extra** (false positive): ~4 tests. Solver identity issues with cross-file enum literals.
+- **TS2308 missing** (duplicate export): ~2 tests. Need `export * from` duplicate detection.
+- **Type display** (`typeof import("b")` vs `{}`): ~3 tests. Namespace types should display as
+  `typeof import(...)` instead of structural objects.
+- **Other** (TS2303, TS8006, TS1380, TS2300): ~6 tests. Diverse issues.
 
 ---
 
