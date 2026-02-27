@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-02-27T07:00:22Z",
-  "git_sha": "7fc708b5053755e3cda08fc365f5220533a052b8",
+  "timestamp": "2026-02-27T07:25:30Z",
+  "git_sha": "04f8f1575bec7d6da4c218b4a989da8be67a47a9",
   "summary": {
     "total_tests": 12570,
     "passed": 9338,
@@ -8,13 +8,6 @@
     "pass_rate": 74.3
   },
   "areas_by_pass_rate": [
-    {
-      "area": "generators",
-      "total": 15,
-      "passed": 7,
-      "failed": 8,
-      "pass_rate": 46.67
-    },
     {
       "area": "types/conditional",
       "total": 10,
@@ -69,6 +62,13 @@
       "total": 30,
       "passed": 16,
       "failed": 14,
+      "pass_rate": 53.33
+    },
+    {
+      "area": "generators",
+      "total": 15,
+      "passed": 8,
+      "failed": 7,
       "pass_rate": 53.33
     },
     {
@@ -219,13 +219,6 @@
       "pass_rate": 60.61
     },
     {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 18,
-      "failed": 11,
-      "pass_rate": 62.07
-    },
-    {
       "area": "expressions/functionCalls",
       "total": 24,
       "passed": 15,
@@ -273,6 +266,13 @@
       "passed": 123,
       "failed": 67,
       "pass_rate": 64.74
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 19,
+      "failed": 10,
+      "pass_rate": 65.52
     },
     {
       "area": "types/primitives",
@@ -409,10 +409,10 @@
     },
     {
       "area": "compiler",
-      "total": 6510,
-      "passed": 4885,
-      "failed": 1625,
-      "pass_rate": 75.04
+      "total": 6509,
+      "passed": 4883,
+      "failed": 1626,
+      "pass_rate": 75.02
     },
     {
       "area": "es6/unicodeExtendedEscapes",
@@ -883,7 +883,7 @@
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 157
+      "count": 155
     },
     {
       "code": "TS2339",

@@ -241,6 +241,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             return TypeId::ANY;
         }
 
+        // For yield*, tracks the delegated iterator's return type.
+        // The yield* expression result is TReturn of the delegated iterator, NOT TNext
+        // of the containing generator (which is what regular yield returns).
+        let mut yield_star_return_type: Option<TypeId> = None;
+
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
@@ -311,10 +316,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
 
                 if is_async_generator {
-                    let element = tsz_solver::operations::get_async_iterable_element_type(
+                    let async_info = tsz_solver::operations::get_iterator_info(
                         self.checker.ctx.types,
                         expression_type,
+                        true,
                     );
+                    let element = async_info.as_ref().map_or_else(
+                        || {
+                            tsz_solver::operations::get_async_iterable_element_type(
+                                self.checker.ctx.types,
+                                expression_type,
+                            )
+                        },
+                        |i| i.yield_type,
+                    );
+                    // Capture the delegated iterator's return type for yield* expression result.
+                    // Try get_iterator_info first (structural), then fall back to
+                    // get_generator_return_type_argument (direct Application arg extraction)
+                    // which handles Generator/AsyncGenerator types from lib.d.ts.
+                    if let Some(ref i) = async_info {
+                        yield_star_return_type = Some(i.return_type);
+                    }
+                    if yield_star_return_type.is_none() {
+                        yield_star_return_type = self
+                            .checker
+                            .get_generator_return_type_argument(expression_type);
+                    }
                     // Collect yield* element type for unannotated generators
                     if self.checker.ctx.current_yield_type().is_none() {
                         self.checker.ctx.generator_yield_operand_types.push(element);
@@ -326,6 +353,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         expression_type,
                         false,
                     );
+                    // Capture the delegated iterator's return type for yield* expression result.
+                    // Try get_iterator_info first (structural), then fall back to
+                    // get_generator_return_type_argument (direct Application arg extraction).
+                    if let Some(ref i) = info {
+                        yield_star_return_type = Some(i.return_type);
+                    }
+                    if yield_star_return_type.is_none() {
+                        yield_star_return_type = self
+                            .checker
+                            .get_generator_return_type_argument(expression_type);
+                    }
                     // Collect yield* element type for unannotated generators when resolvable
                     // (skip when get_iterator_info returns None/fallback ANY)
                     if self.checker.ctx.current_yield_type().is_none()
@@ -393,8 +431,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
             // TS delegates nuanced `yield*` compatibility through iterator protocols.
             // Avoid direct TS2322 checks here to prevent false positives.
+            // For yield*, return the delegated iterator's return type instead of ANY.
             if yield_expr.asterisk_token {
-                return TypeId::ANY;
+                return yield_star_return_type.unwrap_or(TypeId::ANY);
             }
 
             if bare_yield_requires_error {
@@ -412,6 +451,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             {
                 // Diagnostic emitted by check_assignable_or_report.
             }
+        }
+
+        // For yield*, the expression result type is the RETURN type of the delegated
+        // iterator (TReturn), not the TNext of the containing generator. This applies
+        // regardless of whether the containing generator has a return type annotation.
+        // e.g., `const x = yield* gen` where gen: Generator<Y, R, N> → x has type R.
+        if yield_expr.asterisk_token {
+            if let Some(ret_type) = yield_star_return_type {
+                return ret_type;
+            }
+            return TypeId::ANY;
         }
 
         // TypeScript models `yield` result type as the value received by `.next(...)` (TNext).
