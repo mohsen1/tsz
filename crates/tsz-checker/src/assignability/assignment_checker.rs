@@ -1072,6 +1072,7 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PercentEqualsToken as u16 => Some("%"),
             k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => Some("&&"),
             k if k == SyntaxKind::BarBarEqualsToken as u16 => Some("||"),
+            k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => Some("??"),
             _ => None,
         };
 
@@ -1081,11 +1082,6 @@ impl<'a> CheckerState<'a> {
                 // Return ANY instead of UNKNOWN for type errors to prevent cascading errors
                 BinaryOpResult::TypeError { .. } => TypeId::ANY,
             };
-        }
-
-        if operator == SyntaxKind::QuestionQuestionEqualsToken as u16 {
-            let factory = self.ctx.types.factory();
-            return factory.union(vec![left_type, right_type]);
         }
 
         if matches!(
