@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-27T06:50:59Z",
-  "git_sha": "95c739937551a94af4ade23e0f0bcaab25539f90",
+  "timestamp": "2026-02-27T07:00:22Z",
+  "git_sha": "7fc708b5053755e3cda08fc365f5220533a052b8",
   "summary": {
     "total_tests": 12570,
-    "passed": 9337,
-    "failed": 3233,
+    "passed": 9338,
+    "failed": 3232,
     "pass_rate": 74.3
   },
   "areas_by_pass_rate": [
@@ -156,6 +156,13 @@
       "pass_rate": 57.14
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
+    {
       "area": "internalModules/moduleDeclarations",
       "total": 12,
       "passed": 7,
@@ -226,20 +233,6 @@
       "pass_rate": 62.5
     },
     {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 15,
-      "failed": 9,
-      "pass_rate": 62.5
-    },
-    {
-      "area": "scanner/ecmascript5",
-      "total": 27,
-      "passed": 17,
-      "failed": 10,
-      "pass_rate": 62.96
-    },
-    {
       "area": "expressions/typeGuards",
       "total": 63,
       "passed": 40,
@@ -287,6 +280,13 @@
       "passed": 23,
       "failed": 12,
       "pass_rate": 65.71
+    },
+    {
+      "area": "scanner/ecmascript5",
+      "total": 27,
+      "passed": 18,
+      "failed": 9,
+      "pass_rate": 66.67
     },
     {
       "area": "types/import",
@@ -457,18 +457,18 @@
       "pass_rate": 81.54
     },
     {
-      "area": "parser/ecmascript5",
-      "total": 687,
-      "passed": 565,
-      "failed": 122,
-      "pass_rate": 82.24
-    },
-    {
       "area": "declarationEmit",
       "total": 17,
       "passed": 14,
       "failed": 3,
       "pass_rate": 82.35
+    },
+    {
+      "area": "parser/ecmascript5",
+      "total": 687,
+      "passed": 566,
+      "failed": 121,
+      "pass_rate": 82.39
     },
     {
       "area": "jsdoc/declarations",
@@ -911,7 +911,7 @@
     },
     {
       "code": "TS2304",
-      "count": 42
+      "count": 40
     },
     {
       "code": "TS2307",
