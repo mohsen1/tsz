@@ -580,17 +580,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .number_index
                     .as_ref()
                     .is_some_and(|idx| idx.readonly && idx.key_type == TypeId::NUMBER);
-                if has_readonly_index
-                    && let Some(index) = &shape.number_index {
-                        tracing::trace!(
-                            "evaluate_mapped: readonly-array-constrained type parameter → producing readonly array"
-                        );
-                        return Some(self.evaluate_mapped_array_with_readonly(
-                            mapped,
-                            index.value_type,
-                            true,
-                        ));
-                    }
+                if has_readonly_index && let Some(index) = &shape.number_index {
+                    tracing::trace!(
+                        "evaluate_mapped: readonly-array-constrained type parameter → producing readonly array"
+                    );
+                    return Some(self.evaluate_mapped_array_with_readonly(
+                        mapped,
+                        index.value_type,
+                        true,
+                    ));
+                }
                 None
             }
             _ => None,
