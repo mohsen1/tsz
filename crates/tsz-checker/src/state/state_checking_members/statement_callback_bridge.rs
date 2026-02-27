@@ -903,6 +903,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_for_in_expression_type(self, expr_type, expression);
     }
 
+    fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
+        CheckerState::compute_for_in_variable_type(self, expr_type)
+    }
+
     fn assign_for_in_of_initializer_types(
         &mut self,
         decl_list_idx: NodeIndex,

@@ -96,6 +96,16 @@ pub trait StatementCheckCallbacks {
         let _ = (expr_type, expression);
     }
 
+    /// Compute the type of a for-in loop variable.
+    ///
+    /// tsc types `for (let k in obj)` where `obj: T` (type parameter) as
+    /// `k: Extract<keyof T, string>` (= `keyof T & string`), not plain `string`.
+    fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
+        // Default: plain string (overridden in CheckerState)
+        let _ = expr_type;
+        TypeId::STRING
+    }
+
     /// Assign types for for-in/for-of initializers.
     /// `is_for_in` should be true for for-in loops (to emit TS2404 on type annotations).
     fn assign_for_in_of_initializer_types(
@@ -539,8 +549,9 @@ impl StatementChecker {
                         } else {
                             // TS2407: for-in expression must be any, object type, or type parameter
                             state.check_for_in_expression_type(expr_type, expression);
-                            // `for (x in obj)` iterates keys (string in TS).
-                            TypeId::STRING
+                            // tsc: for-in variable type is keyof T & string when the expression
+                            // has a type parameter, otherwise plain string.
+                            state.compute_for_in_variable_type(expr_type)
                         }
                     };
 
