@@ -1057,8 +1057,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
-                    // Validate await expression context
-                    if !self.ctx.in_async_context() {
+                    // Validate await expression context.
+                    // tsc suppresses these grammar checks when the file has parse errors
+                    // (e.g., `@dec await 1` — the decorator error suppresses TS1378).
+                    if !self.ctx.in_async_context() && !self.ctx.has_syntax_parse_errors {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                         // Check if we're at top level of a module
