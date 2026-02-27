@@ -1540,7 +1540,7 @@ impl ParserState {
     /// import * as x from "mod";
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
+        
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
 
@@ -1555,14 +1555,7 @@ impl ParserState {
         let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
         } else {
-            if !self.is_token(SyntaxKind::FromKeyword) {
-                self.parse_error_at_current_token(
-                    "Import statement expects a 'from' clause.",
-                    diagnostic_codes::IMPORT_EXPECTS_FROM_CLAUSE,
-                );
-            } else {
-                self.parse_expected(SyntaxKind::FromKeyword);
-            }
+            self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         };
 
