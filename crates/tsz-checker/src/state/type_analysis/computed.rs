@@ -891,6 +891,24 @@ impl<'a> CheckerState<'a> {
                         }
                         return (inferred_type, Vec::new());
                     }
+
+                    // For-of/for-in loop variable: no syntactic initializer, but the
+                    // type comes from the iterable expression.  Eagerly compute the
+                    // element type so that definite-assignment analysis (TS2454) sees
+                    // the real type instead of the fallback `any`.
+                    if let Some(for_element_type) =
+                        self.compute_for_in_of_variable_type(resolved_value_decl)
+                    {
+                        let widened = if !self.ctx.compiler_options.sound_mode {
+                            tsz_solver::relations::freshness::widen_freshness(
+                                self.ctx.types,
+                                for_element_type,
+                            )
+                        } else {
+                            for_element_type
+                        };
+                        return (widened, Vec::new());
+                    }
                 }
                 // Check if this is a function parameter
                 else if let Some(param) = self.ctx.arena.get_parameter(node) {
@@ -1350,5 +1368,41 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    /// For a variable declaration inside a for-of/for-in header, compute the
+    /// element type from the loop's iterable expression.
+    ///
+    /// Walks: `VariableDeclaration` → parent (`VariableDeclarationList`) → parent (ForOfStatement/ForInStatement)
+    /// Returns `None` if the declaration is not in a for-of/for-in context.
+    fn compute_for_in_of_variable_type(&mut self, decl_idx: NodeIndex) -> Option<TypeId> {
+        // Walk up: VariableDeclaration -> VariableDeclarationList
+        let decl_parent = self
+            .ctx
+            .arena
+            .get_extended(decl_idx)
+            .map(|ext| ext.parent)?;
+        let decl_list_node = self.ctx.arena.get(decl_parent)?;
+        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+
+        // Walk up: VariableDeclarationList -> ForOfStatement/ForInStatement
+        let list_parent = self
+            .ctx
+            .arena
+            .get_extended(decl_parent)
+            .map(|ext| ext.parent)?;
+        let for_node = self.ctx.arena.get(list_parent)?;
+
+        if for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
+            let for_data = self.ctx.arena.get_for_in_of(for_node).cloned()?;
+            let expr_type = self.get_type_of_node(for_data.expression);
+            Some(self.for_of_element_type(expr_type))
+        } else if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
+            Some(TypeId::STRING)
+        } else {
+            None
+        }
     }
 }

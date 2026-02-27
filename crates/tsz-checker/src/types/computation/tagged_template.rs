@@ -82,11 +82,13 @@ impl<'a> CheckerState<'a> {
         // Tagged templates are function calls — constructor-only types are not callable.
         if let Some(callable) =
             tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_tag_type)
-            && callable.call_signatures.is_empty() && !callable.construct_signatures.is_empty() {
-                self.type_check_template_substitutions_no_context(&tagged);
-                self.error_not_callable_at(tag_type, tagged.tag);
-                return TypeId::ERROR;
-            }
+            && callable.call_signatures.is_empty()
+            && !callable.construct_signatures.is_empty()
+        {
+            self.type_check_template_substitutions_no_context(&tagged);
+            self.error_not_callable_at(tag_type, tagged.tag);
+            return TypeId::ERROR;
+        }
 
         // If `get_contextual_signature` found no signatures (not even construct), check
         // if the type is truly non-callable.  Types like `Function` or interfaces with
