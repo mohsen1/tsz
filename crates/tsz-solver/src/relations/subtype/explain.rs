@@ -323,6 +323,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.explain_function_failure(&s_fn, &t_fn);
         }
 
+        // Callable target with properties: when assigning to a callable type that has
+        // additional properties (e.g., `{ (): string; prop: number }`), check for missing
+        // properties from the source. This produces TS2741/TS2739 instead of generic TS2322.
+        if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
+            let t_callable = self.interner.callable_shape(t_callable_id);
+            if !t_callable.properties.is_empty() {
+                let source_props: Vec<PropertyInfo> = if let Some(s_callable_id) =
+                    callable_shape_id(self.interner, resolved_source)
+                {
+                    self.interner
+                        .callable_shape(s_callable_id)
+                        .properties
+                        .clone()
+                } else if let Some(s_shape_id) = object_shape_id(self.interner, resolved_source) {
+                    self.interner.object_shape(s_shape_id).properties.clone()
+                } else {
+                    vec![]
+                };
+                return self.explain_object_failure(
+                    source,
+                    target,
+                    &source_props,
+                    None,
+                    &t_callable.properties,
+                );
+            }
+        }
+
+        // Callable source with properties vs Object target: when a callable type with
+        // properties is assigned to an object type, check property compatibility.
+        if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
+            let s_callable = self.interner.callable_shape(s_callable_id);
+            if !s_callable.properties.is_empty()
+                && let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
+                    let t_shape = self.interner.object_shape(t_shape_id);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &s_callable.properties,
+                        None,
+                        &t_shape.properties,
+                    );
+                }
+        }
+
         if let (Some(s_elem), Some(t_elem)) = (
             array_element_type(self.interner, source),
             array_element_type(self.interner, target),

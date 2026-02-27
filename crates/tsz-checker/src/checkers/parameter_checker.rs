@@ -150,7 +150,7 @@ impl<'a> CheckerState<'a> {
         parameters: &tsz_parser::parser::NodeList,
         has_body: bool,
     ) {
-        let mut seen_names = rustc_hash::FxHashSet::default();
+        let mut seen_names = rustc_hash::FxHashMap::default();
 
         for &param_idx in &parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
     fn collect_and_check_parameter_names(
         &mut self,
         name_idx: NodeIndex,
-        seen: &mut rustc_hash::FxHashSet<String>,
+        seen: &mut rustc_hash::FxHashMap<String, NodeIndex>,
         has_body: bool,
     ) {
         use crate::diagnostics::{diagnostic_messages, format_message};
@@ -185,15 +185,26 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(name) = self.node_text(name_idx) {
                     let name_str = name;
-                    if !seen.insert(name_str.clone()) {
-                        self.error_at_node(
-                            name_idx,
-                            &format_message(
+                    match seen.entry(name_str.clone()) {
+                        std::collections::hash_map::Entry::Occupied(entry) => {
+                            let msg = format_message(
                                 diagnostic_messages::DUPLICATE_IDENTIFIER,
                                 &[&name_str],
-                            ),
-                            crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
+                            );
+                            let code = crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER;
+                            // Report on the first occurrence (only once)
+                            let first_idx = *entry.get();
+                            if first_idx != NodeIndex::NONE {
+                                self.error_at_node(first_idx, &msg, code);
+                                // Mark as already reported
+                                *entry.into_mut() = NodeIndex::NONE;
+                            }
+                            // Report on this (duplicate) occurrence
+                            self.error_at_node(name_idx, &msg, code);
+                        }
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            entry.insert(name_idx);
+                        }
                     }
                 }
             }
@@ -223,7 +234,7 @@ impl<'a> CheckerState<'a> {
     fn collect_and_check_binding_element(
         &mut self,
         elem_idx: NodeIndex,
-        seen: &mut rustc_hash::FxHashSet<String>,
+        seen: &mut rustc_hash::FxHashMap<String, NodeIndex>,
         has_body: bool,
     ) {
         if elem_idx.is_none() {
