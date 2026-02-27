@@ -205,6 +205,27 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return Some(rhs_type);
             }
+            // Fallback for conditional expressions: when node_types doesn't have the
+            // RHS type yet (e.g., during loop fixed-point analysis), try to compute it
+            // from the AST structure. For `cond ? a : b`, the type is union(a, b).
+            // This is critical for loops like `code = code === 1 ? 0 : 1` where the
+            // conditional hasn't been typed yet but both branches are literals.
+            if let Some(rhs_node) = self.arena.get(rhs)
+                && rhs_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                && let Some(cond) = self.arena.get_conditional_expr(rhs_node)
+            {
+                let consequent_type = self.literal_type_from_node(cond.when_true);
+                let alternate_type = self.literal_type_from_node(cond.when_false);
+                match (consequent_type, alternate_type) {
+                    (Some(t), Some(f)) => {
+                        return Some(self.interner.union(vec![t, f]));
+                    }
+                    (Some(t), None) | (None, Some(t)) => {
+                        return Some(t);
+                    }
+                    _ => {}
+                }
+            }
             return None;
         }
 

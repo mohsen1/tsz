@@ -1016,27 +1016,24 @@ impl<'a> CheckerState<'a> {
                         // Cross-file fallback: when resolve_alias_symbol returns the alias
                         // itself (can't resolve cross-file), check the exported symbol's
                         // flags directly in the other binders.
-                        if !import_has_value
-                            && let Some(ref module_name) = sym.import_module {
-                                let export_name = sym.import_name.as_deref().unwrap_or(&name);
-                                if let Some(binders) = &self.ctx.all_binders {
-                                    for binder in binders.iter() {
-                                        if let Some(exports) =
-                                            binder.module_exports.get(module_name.as_str())
-                                            && let Some(target_sym_id) = exports.get(export_name)
-                                                && let Some(target_sym) =
-                                                    binder.symbols.get(target_sym_id)
-                                                    && (target_sym.flags
-                                                        & (symbol_flags::VALUE
-                                                            | symbol_flags::EXPORT_VALUE))
-                                                        != 0
-                                                    {
-                                                        import_has_value = true;
-                                                        break;
-                                                    }
+                        if !import_has_value && let Some(ref module_name) = sym.import_module {
+                            let export_name = sym.import_name.as_deref().unwrap_or(&name);
+                            if let Some(binders) = &self.ctx.all_binders {
+                                for binder in binders.iter() {
+                                    if let Some(exports) =
+                                        binder.module_exports.get(module_name.as_str())
+                                        && let Some(target_sym_id) = exports.get(export_name)
+                                        && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                                        && (target_sym.flags
+                                            & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                            != 0
+                                    {
+                                        import_has_value = true;
+                                        break;
                                     }
                                 }
                             }
+                        }
 
                         if !import_has_value {
                             continue;
@@ -1169,7 +1166,7 @@ impl<'a> CheckerState<'a> {
                                                         }
                                                     },
                                                 );
-                                            
+
                                             match (import_scope, decl_containing) {
                                                 (Some(a), Some(b)) => a == b,
                                                 _ => true,

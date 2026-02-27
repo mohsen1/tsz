@@ -1374,10 +1374,11 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == syntax_kind_ext::MODULE_DECLARATION
                 && let Some(mod_data) = self.ctx.arena.get_module_at(current)
-                    && let Some(name_node) = self.ctx.arena.get(mod_data.name)
-                        && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
-                            return true;
-                        }
+                && let Some(name_node) = self.ctx.arena.get(mod_data.name)
+                && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            {
+                return true;
+            }
         }
         false
     }

@@ -650,17 +650,30 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 (has_str, has_num)
             }
+            Some(TypeData::Conditional(cond_id)) => {
+                // For unresolved conditional types, check both branches for index
+                // signatures. If either branch has one, it's considered present.
+                let cond = self.interner.conditional_type(cond_id).clone();
+                let (ts, tn) = self.check_index_signatures(cond.true_type);
+                let (fs, fn_) = self.check_index_signatures(cond.false_type);
+                (ts || fs, tn || fn_)
+            }
             _ => (false, false),
         }
     }
 
     fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
-        // Handle Mapped and Application types by evaluating them to concrete types
-        // We resolve before matching so the existing logic handles the result.
+        // Handle Mapped, Application, Lazy, and Conditional types by evaluating/resolving
+        // them to concrete types before property collection.
         let type_id = match self.interner.lookup(type_id) {
             Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
                 self.subtype.evaluate_type(type_id)
             }
+            Some(TypeData::Lazy(def_id)) => self
+                .subtype
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .unwrap_or(type_id),
             _ => type_id,
         };
 
@@ -690,6 +703,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 for prop_info in &shape.properties {
                     properties.insert(prop_info.name);
                 }
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                // For unresolved conditional types (e.g. T extends U ? X : Y where T
+                // is a type parameter), a property is "known" if it exists in either
+                // branch. This matches tsc's isKnownProperty behavior — excess property
+                // checking should not reject properties that may be valid once the
+                // conditional resolves.
+                let cond = self.interner.conditional_type(cond_id).clone();
+                let true_props = self.collect_target_properties(cond.true_type);
+                let false_props = self.collect_target_properties(cond.false_type);
+                properties.extend(true_props);
+                properties.extend(false_props);
             }
             _ => {}
         }
