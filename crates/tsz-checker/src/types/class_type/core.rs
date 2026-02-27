@@ -209,7 +209,7 @@ impl<'a> CheckerState<'a> {
                     if self.member_requires_nominal(&prop.modifiers, prop.name) {
                         has_nominal_members = true;
                     }
-                    let Some(name) = self.get_property_name(prop.name) else {
+                    let Some(name) = self.get_property_name_resolved(prop.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
                     if self.member_requires_nominal(&method.modifiers, method.name) {
                         has_nominal_members = true;
                     }
-                    let Some(name) = self.get_property_name(method.name) else {
+                    let Some(name) = self.get_property_name_resolved(method.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
                     if self.member_requires_nominal(&accessor.modifiers, accessor.name) {
                         has_nominal_members = true;
                     }
-                    let Some(name) = self.get_property_name(accessor.name) else {
+                    let Some(name) = self.get_property_name_resolved(accessor.name) else {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);

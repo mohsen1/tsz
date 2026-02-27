@@ -584,13 +584,52 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(symbol_name);
             }
-            // NOTE: Do NOT return the identifier text for computed property names
-            // like `[e]`. Only statically-known values (string/number literals, unique
-            // symbols) can be resolved here.
             return get_literal_property_name(self.ctx.arena, computed.expression);
         }
 
         None
+    }
+
+    /// Like `get_property_name` but additionally resolves computed property names
+    /// by evaluating the expression's type when the syntax alone cannot determine
+    /// the name. This handles cases like `const k = 'foo' as const; class C { [k]() {} }`
+    /// and `const k = 'foo'; class C { [k]() {} }` (tsc infers the literal type from
+    /// the const initializer).
+    pub(crate) fn get_property_name_resolved(&mut self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        // For computed property names with identifier expressions (e.g., `[k]` where
+        // `const k = 'foo'`), skip `get_property_name` which would incorrectly return
+        // the identifier text ("k") instead of the resolved value ("foo").
+        // Instead, evaluate the expression type to resolve the actual property name.
+        let is_computed_identifier = name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && self
+                .ctx
+                .arena
+                .get_computed_property(name_node)
+                .and_then(|computed| self.ctx.arena.get(computed.expression))
+                .is_some_and(|expr_node| self.ctx.arena.get_identifier(expr_node).is_some());
+
+        if !is_computed_identifier
+            && let Some(name) = self.get_property_name(name_idx) {
+                return Some(name);
+            }
+
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.ctx.arena.get_computed_property(name_node)?;
+            // Preserve literal types so that `const k = 'foo'` (no `as const`)
+            // still resolves to the literal `"foo"` rather than widening to `string`.
+            let prev = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let prop_name_type = self.get_type_of_node(computed.expression);
+            self.ctx.preserve_literal_types = prev;
+            crate::query_boundaries::type_computation::access::literal_property_name(
+                self.ctx.types,
+                prop_name_type,
+            )
+            .map(|atom| self.ctx.types.resolve_atom(atom))
+        } else {
+            None
+        }
     }
 
     /// Get class name from a class declaration node.
