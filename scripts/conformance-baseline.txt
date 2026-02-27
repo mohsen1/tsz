@@ -554,6 +554,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1602,7 +1603,6 @@ FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_classDecorators.2.ts
 FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_jsx.tsx
 FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_propertyAssignment.ts
 FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_superClass.ts
-FAIL TypeScript/tests/cases/compiler/useUnknownInCatchVariables01.ts
 FAIL TypeScript/tests/cases/compiler/valueOfTypedArray.ts
 FAIL TypeScript/tests/cases/compiler/vararg.ts
 FAIL TypeScript/tests/cases/compiler/variableDeclarationInStrictMode1.ts
@@ -2789,12 +2789,9 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Types/parserTypeQuery
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/VariableDeclarations/parserVariableDeclaration8.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName1.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName27.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName3.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName30.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName33.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName36.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName4.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName5.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName6.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement2.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement21.ts
@@ -5531,7 +5528,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
@@ -8058,6 +8054,7 @@ PASS TypeScript/tests/cases/compiler/useBeforeDefinitionInDeclarationFiles.ts
 PASS TypeScript/tests/cases/compiler/useDefineForClassFieldsFlagDefault.ts
 PASS TypeScript/tests/cases/compiler/usedImportNotElidedInJs.ts
 PASS TypeScript/tests/cases/compiler/useStrictLikePrologueString01.ts
+PASS TypeScript/tests/cases/compiler/useUnknownInCatchVariables01.ts
 PASS TypeScript/tests/cases/compiler/usingModuleWithExportImportInValuePosition.ts
 PASS TypeScript/tests/cases/compiler/validRegexp.ts
 PASS TypeScript/tests/cases/compiler/validUseOfThisInSuper.ts
@@ -11445,6 +11442,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName26.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName28.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName29.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName31.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName32.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName34.ts
@@ -11452,8 +11450,10 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName37.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName38.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName39.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName40.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName41.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName5.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName8.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName9.ts

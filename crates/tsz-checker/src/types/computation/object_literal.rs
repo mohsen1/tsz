@@ -463,6 +463,18 @@ impl<'a> CheckerState<'a> {
             }
             // Method shorthand: { foo() {} }
             else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                // Always type-check computed property name expressions for methods,
+                // even when the identifier can be resolved as a literal name.
+                // E.g., `{ [e]() {} }` needs TS2304 for undeclared `e`.
+                // We call get_type_of_node directly (not check_computed_property_name)
+                // to avoid triggering TS2467 for type parameters in nested object literals.
+                if let Some(prop_name_node) = self.ctx.arena.get(method.name)
+                    && prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
+                {
+                    self.get_type_of_node(computed.expression);
+                }
                 let name_opt = self.get_property_name(method.name).or_else(|| {
                     let prop_name_node = self.ctx.arena.get(method.name)?;
                     if prop_name_node.kind
@@ -603,6 +615,18 @@ impl<'a> CheckerState<'a> {
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
             else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
+                // Always type-check computed property name expressions for accessors,
+                // even when the identifier can be resolved as a literal name.
+                // E.g., `{ get [e]() {} }` needs TS2304 for undeclared `e`.
+                // We call get_type_of_node directly (not check_computed_property_name)
+                // to avoid triggering TS2467 for type parameters in nested object literals.
+                if let Some(prop_name_node) = self.ctx.arena.get(accessor.name)
+                    && prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
+                {
+                    self.get_type_of_node(computed.expression);
+                }
                 // Check for missing body - error 1005 at end of accessor
                 if accessor.body.is_none() {
                     use crate::diagnostics::diagnostic_codes;
