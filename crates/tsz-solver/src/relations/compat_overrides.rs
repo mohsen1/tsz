@@ -555,8 +555,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        // For two union types, check that they have the same constituent types
-        // (each member of one must be identical to a member of the other).
+        // For two union types, first try fast TypeId-level identity, then fall through
+        // to bidirectional subtype for cases like intersection distribution where
+        // `(A | B) & (C | D)` and `A & C | A & D | B & C | B & D` are structurally
+        // equivalent but have different member TypeIds.
         if a_is_union
             && b_is_union
             && let (Some(TypeData::Union(a_list)), Some(TypeData::Union(b_list))) =
@@ -564,18 +566,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         {
             let a_members = self.interner.type_list(a_list);
             let b_members = self.interner.type_list(b_list);
-            // Since both unions are sorted and deduped during interning,
-            // they should have the same members in the same order if identical
-            if a_members.len() != b_members.len() {
-                return false;
+            if a_members.len() == b_members.len()
+                && a_members
+                    .iter()
+                    .zip(b_members.iter())
+                    .all(|(a_m, b_m)| a_m == b_m)
+            {
+                return true;
             }
-            return a_members
-                .iter()
-                .zip(b_members.iter())
-                .all(|(a_m, b_m)| a_m == b_m);
+            // Fast identity failed — fall through to bidirectional subtype
         }
 
-        // For non-union types, delegate to the Judge for bidirectional subtyping
+        // For both union and non-union types, delegate to bidirectional subtyping.
+        // This handles intersection distribution, typeof resolution, and other
+        // structural equivalences that TypeId-level identity misses.
         let fwd = self.subtype.is_subtype_of(a, b);
         let bwd = self.subtype.is_subtype_of(b, a);
         tracing::trace!(

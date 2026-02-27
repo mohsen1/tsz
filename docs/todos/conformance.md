@@ -1,39 +1,58 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9454/12570 (75.2%) — full suite, error-code level
+**Current score**: ~9230/12570 (73.4%) — full suite, error-code level
 
 ---
 
-## Session 2026-02-27 — internalModules/DeclarationMerging: cross-file namespace merging
+## Session 2026-02-27 — jsx area: TS7026 namespaced tags + TS2604 non-callable components
 
-### Area: internalModules/DeclarationMerging (53.3% → 56.2%, 16→18 passing of 30→32)
+### Area: jsx (51.3% → 53.6%, 108→113 passing of 211)
 
-### Fix: Cross-file namespace declaration merging (+6 conformance tests from this fix alone)
-- **Files changed**:
-  - `src/parallel.rs` — recursive nested namespace export merging in `merge_bind_results_ref`:
-    when two files export a nested namespace with the same name (e.g., `namespace A { export namespace Utils }`),
-    collect merge targets in a deferred pass (to avoid borrow checker issues with `global_symbols`),
-    then merge flags/declarations/exports/members of nested symbols
-  - `crates/tsz-checker/src/symbols/symbol_resolver.rs` — three new cross-file resolution methods:
-    - `resolve_namespace_member_from_all_binders()`: qualified name fallback (e.g., `A.Utils.Plane`)
-    - `resolve_unqualified_name_in_enclosing_namespace()`: bare names in namespace body (e.g., `Point`
-      inside `namespace A` body referring to `Point` from another file's `namespace A`)
-    - Added fallbacks in both value and type position resolution paths
-  - `crates/tsz-checker/src/types/queries/lib.rs` — cross-file fallback in `resolve_namespace_value_member`
-- **Root cause**: Three issues:
-  1. `merge_bind_results_ref` skipped duplicate exports (`if !new_exports.has(name)`) without merging
-     nested namespace internals — so `Utils.Plane` from file2 was lost
-  2. Cross-file lookup binders have EMPTY symbol arenas (`BinderState::new()`), so
-     `binder.get_symbol()` always returned None — fix: use `self.ctx.binder.get_symbol()` (global arena)
-  3. No fallback existed for unqualified names in namespace bodies — `Point` in file2's `namespace A`
-     was never resolved from file1's `namespace A` exports
-- **Guard**: Only applies to global scripts; skips external modules (`is_external_module()`) since
-  `export namespace` in module files does NOT merge cross-file (matches tsc behavior)
-- **Remaining issues**:
-  - TS2403 false positives when `Point` resolves but structural comparison fails (type identity issue)
-  - TS2433 "namespace declaration cannot be in a different file from a class/function" (5 tests, unimplemented)
-  - TS2351 false positives on cross-file constructors (3 tests)
+### Fix 1: TS7026 for namespaced JSX tags (e.g., `<svg:path>`) (+3 tests)
+- **Root cause**: `get_type_of_jsx_opening_element()` only handled `Identifier` nodes for tag names.
+  Namespaced tags (`JSX_NAMESPACED_NAME` kind 296) have separate namespace/name child nodes.
+  These were silently treated as component references (falling through to the else branch),
+  so TS7026 was never emitted when `JSX.IntrinsicElements` was absent.
+- **Fix**: Added `JSX_NAMESPACED_NAME` handling in both opening and closing element handlers.
+  For opening elements, build `"namespace:name"` string (e.g., `"svg:path"`) for
+  `IntrinsicElements` property lookup. For closing elements, set `is_intrinsic = true`
+  when the tag is a namespaced name.
+- **Files**: `crates/tsz-checker/src/checkers/jsx_checker.rs`
+- **Tests fixed**: `tsxNamespacedAttributeName1.tsx`, `tsxNamespacedAttributeName2.tsx`,
+  `tsxNamespacedTagName1.tsx`
+
+### Fix 2: TS2604 for non-callable JSX components (+4 tests)
+- **Root cause**: When `get_jsx_props_type_for_component()` returned `None` (no props found),
+  the checker silently skipped attribute checking. It never verified whether the component
+  type actually had call/construct signatures. Values like `var Div = 3` or interface types
+  without signatures were accepted as JSX components without error.
+- **Fix**: Added `check_jsx_element_has_signatures()` method. Called in the `else` branch of
+  `get_jsx_props_type_for_component()`. Checks all union members for call/construct signatures
+  or function shapes. Suppresses for:
+  - `any`/`error`/`unknown`/`never` types
+  - Type parameters (may resolve to callable)
+  - String types (dynamic intrinsic tag lookups like `<CustomTag>`)
+  - Files with parse errors (avoid cascading)
+  Uses tag name (variable name) in the diagnostic message, matching tsc behavior.
+- **Files**: `crates/tsz-checker/src/checkers/jsx_checker.rs`
+- **Tests fixed**: `tsxElementResolution8.tsx`, `tsxUnionTypeComponent2.tsx`,
+  `tsxReactEmit8.tsx`, `tsxReactEmitSpreadAttribute.ts`
+
+### Remaining jsx failures (98 of 211):
+- **13 diff=0 tests** (fingerprint-only): Type display mismatches — we show `string | undefined`
+  for optional props where tsc shows `string`, and `'{}'` or raw props where tsc shows
+  `'IntrinsicAttributes & {...}'`. These are message-text-level issues in how the error
+  reporter formats TS2322 target types.
+- **9 tests missing TS2322**: Diverse causes — spread attributes, generic attributes, literal
+  type checking. Some involve `IntrinsicAttributes` intersection handling.
+- **4 tests missing TS2769**: Overload resolution in JSX.
+- **4 tests missing TS2783**: Spread attribute duplicate property detection.
+- **3 tests with extra TS2874**: JSX factory scope issues.
+- **3 tests missing TS2604**: Remaining cases — `<this/>` needs keyword-to-type-name mapping,
+  `tsxDynamicTagName2.tsx` needs `JSX.IntrinsicElements` property check for dynamic tags.
+- **TS2786** (2 tests): Component return type validation (must be JSX.Element-compatible).
+- **TS2657** (2 tests): JSX expressions must have one parent element (parser recovery).
 
 ---
 

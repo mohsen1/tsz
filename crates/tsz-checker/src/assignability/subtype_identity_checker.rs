@@ -131,16 +131,38 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        // Fallback: bidirectional subtype check handles structural equivalences
-        // that the identity check may miss, such as:
-        // - Intersection distribution: (A | B) & (C | D) ≡ A&C | A&D | B&C | B&D
-        // - typeof resolution: `typeof M` ≡ the actual type of M
-        // - Optional tuple normalization: [1, 2?] ≡ [1, (2 | undefined)?]
-        // Skip `any` since tsc considers `var x: any; var x: string;` as incompatible.
+        // Bidirectional subtype fallback for complex structural equivalences.
+        // The solver's identity check cannot normalize intersection distribution
+        // (e.g., `(A | B) & (C | D)` vs `A & C | A & D | B & C | B & D`), so we
+        // fall back to bidirectional subtype checking which handles this correctly.
+        //
+        // Excluded cases:
+        // - `any` is never identical to non-`any` for redeclaration (tsc behavior)
+        // - Simple non-union vs union mismatch (e.g., `C` vs `C | D` where D extends C)
+        //   must NOT use this fallback — tsc's isTypeIdenticalTo rejects these
         if prev_type == TypeId::ANY || current_type == TypeId::ANY {
             return false;
         }
-        self.is_subtype_of(prev_type, current_type) && self.is_subtype_of(current_type, prev_type)
+        // Only allow bidirectional subtype when at least one side has complex structure
+        // (intersection, conditional, etc.) that may need evaluation during subtype checking.
+        // A simple object/primitive vs union is never identical per tsc's isTypeIdenticalTo.
+        if self.has_complex_type_structure(prev_type)
+            || self.has_complex_type_structure(current_type)
+        {
+            return self.is_subtype_of(prev_type, current_type)
+                && self.is_subtype_of(current_type, prev_type);
+        }
+        false
+    }
+
+    /// Check if a type has complex structure (intersection, conditional, etc.) that
+    /// may need evaluation during subtype checking but isn't handled by the solver's
+    /// identity check normalization.
+    fn has_complex_type_structure(&self, type_id: TypeId) -> bool {
+        use tsz_solver::type_queries;
+        type_queries::is_intersection_type(self.ctx.types, type_id)
+            || type_queries::is_conditional_type(self.ctx.types, type_id)
+            || type_queries::is_mapped_type(self.ctx.types, type_id)
     }
 
     /// Try checking redeclaration compatibility using enum object shape substitution.

@@ -283,3 +283,86 @@ fn redeclaration_identity_evaluates_keyof_to_literal_union() {
         "\"a\" | \"b\" should be identical to keyof {{a: number, b: string}} for redeclaration"
     );
 }
+
+#[test]
+fn redeclaration_identity_union_vs_nonunion_not_identical() {
+    // C | D is NOT identical to C even when D is a subtype of C.
+    // This matches tsc's isTypeIdenticalTo semantics for TS2403.
+    let interner = TypeInterner::new();
+    let policy = RelationPolicy::from_flags(0);
+
+    let name = interner.intern_string("name");
+    let foo = interner.intern_string("foo");
+
+    // C = { name: string }
+    let c = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    // D = { name: string, foo: string } (D <: C)
+    let d = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(foo, TypeId::STRING),
+    ]);
+
+    // C | D (preserved as union via literal-only reduction)
+    let c_or_d = interner.union_literal_reduce(vec![c, d]);
+
+    // C | D should NOT be identical to C for redeclaration
+    let result = query_relation(
+        &interner,
+        c,
+        c_or_d,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(
+        !result.is_related(),
+        "C should NOT be identical to C | D for redeclaration (union vs non-union mismatch)"
+    );
+
+    // Also test the reverse direction
+    let result_rev = query_relation(
+        &interner,
+        c_or_d,
+        c,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(
+        !result_rev.is_related(),
+        "C | D should NOT be identical to C for redeclaration (union vs non-union mismatch)"
+    );
+}
+
+#[test]
+fn redeclaration_identity_same_union_is_identical() {
+    // C | D should be identical to C | D for redeclaration.
+    let interner = TypeInterner::new();
+    let policy = RelationPolicy::from_flags(0);
+
+    let name = interner.intern_string("name");
+    let foo = interner.intern_string("foo");
+
+    let c = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let d = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(foo, TypeId::STRING),
+    ]);
+
+    let c_or_d_1 = interner.union_literal_reduce(vec![c, d]);
+    let c_or_d_2 = interner.union_literal_reduce(vec![c, d]);
+
+    // Same union should be identical (physically same TypeId due to interning)
+    let result = query_relation(
+        &interner,
+        c_or_d_1,
+        c_or_d_2,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(
+        result.is_related(),
+        "C | D should be identical to C | D for redeclaration"
+    );
+}

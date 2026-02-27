@@ -1325,10 +1325,54 @@ impl TypeInterner {
         self.intern(TypeData::ReadonlyType(array_type))
     }
 
-    /// Intern a tuple type
+    /// Intern a tuple type.
+    ///
+    /// Normalizes optional element types: for `optional=true` elements, strips
+    /// explicit `undefined` from union types since the optionality already implies
+    /// `| undefined`. This ensures `[1, 2?]` and `[1, (2 | undefined)?]` produce
+    /// the same interned TypeId, matching tsc's behavior.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        let elements = self.normalize_optional_tuple_elements(elements);
         let list_id = self.intern_tuple_list(elements);
         self.intern(TypeData::Tuple(list_id))
+    }
+
+    /// For optional tuple elements, strip `undefined` from the element type
+    /// since the `optional` flag already implies `| undefined`.
+    fn normalize_optional_tuple_elements(
+        &self,
+        mut elements: Vec<TupleElement>,
+    ) -> Vec<TupleElement> {
+        for elem in &mut elements {
+            if elem.optional && !elem.rest {
+                elem.type_id = self.strip_undefined_from_type(elem.type_id);
+            }
+        }
+        elements
+    }
+
+    /// Remove `undefined` from a union type. If the type is not a union or
+    /// doesn't contain `undefined`, returns the type unchanged.
+    fn strip_undefined_from_type(&self, type_id: TypeId) -> TypeId {
+        if type_id == TypeId::UNDEFINED {
+            return type_id;
+        }
+        if let Some(TypeData::Union(list_id)) = self.lookup(type_id) {
+            let members = self.type_list(list_id);
+            if members.contains(&TypeId::UNDEFINED) {
+                let filtered: Vec<TypeId> = members
+                    .iter()
+                    .copied()
+                    .filter(|&m| m != TypeId::UNDEFINED)
+                    .collect();
+                return match filtered.len() {
+                    0 => TypeId::NEVER,
+                    1 => filtered[0],
+                    _ => self.union_from_sorted_vec(filtered),
+                };
+            }
+        }
+        type_id
     }
 
     /// Intern a readonly tuple type

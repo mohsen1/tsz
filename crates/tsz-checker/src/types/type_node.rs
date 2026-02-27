@@ -322,6 +322,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             rest: true,
                         });
                     }
+                } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+                    // Named tuple element (e.g., `[x: number, y?: string, ...rest: boolean[]]`)
+                    if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
+                        let elem_type = self.check(data.type_node);
+                        let name = self
+                            .ctx
+                            .arena
+                            .get(data.name)
+                            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                            .map(|id_data| self.ctx.types.intern_string(&id_data.escaped_text));
+
+                        if data.question_token {
+                            seen_optional = true;
+                        } else if seen_optional && !data.dot_dot_dot_token {
+                            self.ctx.error(
+                                elem_node.pos,
+                                elem_node.end - elem_node.pos,
+                                crate::diagnostics::diagnostic_messages::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT.to_string(),
+                                crate::diagnostics::diagnostic_codes::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT,
+                            );
+                        }
+
+                        elements.push(TupleElement {
+                            type_id: elem_type,
+                            name,
+                            optional: data.question_token,
+                            rest: data.dot_dot_dot_token,
+                        });
+                    }
                 } else {
                     // Regular element
                     // TS1257: A required element cannot follow an optional element
