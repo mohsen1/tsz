@@ -1090,6 +1090,32 @@ impl BinderState {
             }
 
             let existing_flags = self.symbols.get(existing_id).map_or(0, |s| s.flags);
+
+            // In tsc, file-scope value declarations (function, var, class) shadow
+            // identically-named globals from lib files — they live in different scopes.
+            // Our model merges lib symbols into the file scope, so we simulate shadowing
+            // by creating a new symbol instead of merging when a user value declaration
+            // collides with a lib-originated value symbol.
+            // Interfaces and namespaces still merge (augmentation is correct behavior).
+            if self.lib_symbol_ids.contains(&existing_id)
+                && (flags & symbol_flags::FUNCTION) != 0
+                && (existing_flags & symbol_flags::FUNCTION) != 0
+                && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
+            {
+                let sym_id = self.symbols.alloc(flags, name.to_string());
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.declarations.push(declaration);
+                    if (flags & symbol_flags::VALUE) != 0 {
+                        sym.value_declaration = declaration;
+                    }
+                    sym.is_exported = is_exported;
+                }
+                self.current_scope.set(name.to_string(), sym_id);
+                self.file_locals.set(name.to_string(), sym_id);
+                self.node_symbols.insert(declaration.0, sym_id);
+                self.declare_in_persistent_scope(name.to_string(), sym_id);
+                return sym_id;
+            }
             let can_merge = Self::can_merge_flags(existing_flags, flags);
 
             let combined_flags = if can_merge {
