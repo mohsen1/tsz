@@ -405,6 +405,9 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_missing_names(cond.check_type);
                     self.check_type_for_missing_names(cond.extends_type);
 
+                    // TS2838: Check that duplicate infer type params have identical constraints
+                    self.check_infer_constraint_consistency(cond.extends_type);
+
                     // Collect infer type parameters from extends_type and add them to scope for true_type
                     let infer_params = self.collect_infer_type_parameters(cond.extends_type);
                     let mut param_bindings = Vec::new();
@@ -1263,6 +1266,68 @@ impl<'a> CheckerState<'a> {
                             self.get_type_of_node(decorator.expression);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// TS2838: Check that all `infer X` declarations with the same name in a
+    /// conditional type's extends clause have identical constraints.
+    ///
+    /// For example, `T extends { a: infer U extends string, b: infer U extends number }`
+    /// should emit TS2838 because `U` has constraints `string` and `number`.
+    fn check_infer_constraint_consistency(&mut self, extends_type: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        use std::collections::HashMap;
+
+        let infer_decls = self.collect_infer_type_params_with_constraints(extends_type);
+        if infer_decls.len() < 2 {
+            return;
+        }
+
+        // Group by name: collect all (constraint, type_param_node) for each infer name
+        let mut groups: HashMap<String, Vec<[NodeIndex; 2]>> = HashMap::new();
+        for (name, constraint, tp_node) in &infer_decls {
+            groups
+                .entry(name.clone())
+                .or_default()
+                .push([*constraint, *tp_node]);
+        }
+
+        // For each duplicate group, check constraint consistency.
+        // Only declarations with EXPLICIT constraints participate — unconstrained
+        // `infer U` declarations inherit from the constrained ones (TSC behavior).
+        for (name, entries) in &groups {
+            if entries.len() < 2 {
+                continue;
+            }
+
+            // Collect only entries that have an explicit constraint
+            let constrained: Vec<(TypeId, NodeIndex)> = entries
+                .iter()
+                .filter(|pair| pair[0] != NodeIndex::NONE)
+                .map(|pair| (self.get_type_from_type_node(pair[0]), pair[1]))
+                .collect();
+
+            // Need at least 2 explicitly constrained declarations to have a conflict
+            if constrained.len() < 2 {
+                continue;
+            }
+
+            // Check if all explicit constraints are identical
+            let first_type = constrained[0].0;
+            let all_identical = constrained
+                .iter()
+                .all(|(type_id, _)| *type_id == first_type);
+
+            if !all_identical {
+                // Emit TS2838 at each explicitly constrained declaration site
+                for (_, tp_node) in &constrained {
+                    self.error_at_node_msg(
+                        *tp_node,
+                        diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_CONSTRAINTS,
+                        &[name],
+                    );
                 }
             }
         }

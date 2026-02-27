@@ -194,6 +194,9 @@ mod ts2683_tests;
 #[path = "../tests/ts2774_tests.rs"]
 mod ts2774_tests;
 #[cfg(test)]
+#[path = "../tests/ts2838_tests.rs"]
+mod ts2838_tests;
+#[cfg(test)]
 #[path = "../tests/ts2839_tests.rs"]
 mod ts2839_tests;
 #[cfg(test)]
