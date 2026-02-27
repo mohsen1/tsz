@@ -618,9 +618,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if this is a known test runner global → TS2582
+        // Check if this is a known test runner global → TS2593
         if is_known_test_runner_global(name) {
             self.error_cannot_find_name_install_test_types(name, idx);
+            return;
+        }
+
+        // Check if this is a known Bun global → TS2868
+        if name == "Bun" {
+            self.error_cannot_find_name_install_bun_types(name, idx);
             return;
         }
 
@@ -779,6 +785,18 @@ impl<'a> CheckerState<'a> {
                 &[name],
             );
             self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N_2));
+        }
+    }
+
+    /// Report TS2868: Cannot find name 'Bun' - suggest installing @types/bun
+    /// and adding 'bun' to the types field in tsconfig.
+    pub fn error_cannot_find_name_install_bun_types(&mut self, name: &str, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2,
+                &[name],
+            );
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2));
         }
     }
 
