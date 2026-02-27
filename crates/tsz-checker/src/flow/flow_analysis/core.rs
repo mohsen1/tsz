@@ -172,7 +172,9 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            k if k == syntax_kind_ext::BLOCK => {
+            k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+            {
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     return self.analyze_block(&block.statements.nodes, assigned_in, tracked);
                 }
