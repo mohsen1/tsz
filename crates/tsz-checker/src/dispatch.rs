@@ -638,9 +638,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         {
             // Check if yield is in the arguments list (not the callee expression)
             if let Some(call) = self.checker.ctx.arena.get_call_expr(parent)
-                && let Some(ref args) = call.arguments {
-                    return args.nodes.contains(&idx);
-                }
+                && let Some(ref args) = call.arguments
+            {
+                return args.nodes.contains(&idx);
+            }
         }
         false
     }
