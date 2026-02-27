@@ -6416,6 +6416,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
     // | { (x: number): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -6441,6 +6442,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -6456,6 +6458,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
             this_type: None,
@@ -6505,6 +6508,7 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
     // | ((x: number) => void).
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -6578,6 +6582,7 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
     // T extends { (): infer R } ? R : never, with T = (() => string) | (() => number).
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: Vec::new(),
             this_type: None,
@@ -6652,6 +6657,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     // | { (x: number): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -6687,6 +6693,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -6702,6 +6709,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::NUMBER)],
             this_type: None,
@@ -6751,6 +6759,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     // | { (x?: number): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6781,6 +6790,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6801,6 +6811,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6855,6 +6866,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     // | { (x?: number): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6895,6 +6907,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6915,6 +6928,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6969,6 +6983,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
     // | { (...args: number[]): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -6999,6 +7014,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -7019,6 +7035,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -7076,6 +7093,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     // | { (...args: number[]): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -7116,6 +7134,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -7136,6 +7155,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     });
     let number_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo {
                 name: None,
@@ -7192,6 +7212,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
     // T extends { (x: infer R): void } ? R : never, with T = { (x: string): void } | number.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -7217,6 +7238,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -7264,6 +7286,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void } | number.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -7299,6 +7322,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
     let mut subst = TypeSubstitution::new();
     let string_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(TypeId::STRING)],
             this_type: None,
@@ -7346,6 +7370,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void; (x: number): void }.
     let extends_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_r)],
             this_type: None,
@@ -7381,6 +7406,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
     let mut subst = TypeSubstitution::new();
     let overload_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 params: vec![ParamInfo::unnamed(TypeId::STRING)],
@@ -16070,6 +16096,7 @@ fn test_application_ref_expansion_with_callable_body() {
     };
     let callback_body = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -16101,6 +16128,7 @@ fn test_application_ref_expansion_with_callable_body() {
     };
     let expected = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![expected_call_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -16145,6 +16173,7 @@ fn test_application_ref_expansion_with_construct_signature() {
     };
     let constructor_body = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![construct_sig],
         properties: vec![],
@@ -16179,6 +16208,7 @@ fn test_application_ref_expansion_with_construct_signature() {
     };
     let expected = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![expected_construct_sig],
         properties: vec![],
@@ -19082,6 +19112,7 @@ fn test_return_type_overloaded_function() {
     // Overloaded function: { (x: string): number; (x: number): boolean; }
     let overloaded = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 type_params: Vec::new(),
@@ -19430,6 +19461,7 @@ fn test_constructor_parameters_callable_construct_signature() {
     // Callable with construct signature: { new(x: string): Object }
     let callable_with_ctor = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
@@ -24613,6 +24645,7 @@ fn test_parameters_with_overloads() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
@@ -24725,6 +24758,7 @@ fn test_constructor_parameters_callable() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -24804,6 +24838,7 @@ fn test_instance_type_callable() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -24947,6 +24982,7 @@ fn test_return_type_overloads() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
@@ -35051,6 +35087,7 @@ fn test_return_type_constructor_signature() {
 
     let ctor = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -35235,6 +35272,7 @@ fn test_parameters_constructor_signature() {
 
     let ctor = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -35747,6 +35785,7 @@ fn test_instance_type_from_constructor() {
     // Constructor type
     let ctor = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -35798,6 +35837,7 @@ fn test_constructor_parameters_with_generics() {
 
     let generic_ctor = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![TypeParamInfo {
@@ -36767,6 +36807,7 @@ fn test_infer_from_overloaded_callable() {
     // Input: { (x: string): number; (x: number): string }
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 type_params: vec![],
@@ -36831,6 +36872,7 @@ fn test_infer_from_construct_signature() {
     // Pattern: { new (): infer T }
     let pattern = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -36848,6 +36890,7 @@ fn test_infer_from_construct_signature() {
     // Input: { new (): string }
     let input = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![],
         construct_signatures: vec![CallSignature {
             type_params: vec![],
@@ -37994,6 +38037,7 @@ fn test_keyof_intersection_with_callable() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: Vec::new(),
@@ -38180,6 +38224,7 @@ fn test_callable_param_infer_overloaded_callable() {
     // Pattern: { (x: infer P): any }
     let pattern_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             params: vec![ParamInfo::unnamed(infer_p)],
             return_type: TypeId::ANY,
@@ -38207,6 +38252,7 @@ fn test_callable_param_infer_overloaded_callable() {
     // Create overloaded callable with two call signatures
     let overloaded = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 params: vec![ParamInfo::unnamed(TypeId::STRING)],

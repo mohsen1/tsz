@@ -472,6 +472,7 @@ impl<'a> InferSubstitutor<'a> {
                         string_index,
                         number_index,
                         symbol: None,
+                        is_abstract: shape.is_abstract,
                     })
                 } else {
                     type_id

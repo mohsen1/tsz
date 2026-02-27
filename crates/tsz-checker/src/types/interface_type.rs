@@ -308,6 +308,7 @@ impl<'a> CheckerState<'a> {
                 string_index,
                 number_index,
                 symbol: None,
+                is_abstract: false,
             };
             factory.callable(shape)
         } else if string_index.is_some() || number_index.is_some() {
@@ -556,6 +557,7 @@ impl<'a> CheckerState<'a> {
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
                     symbol: derived_shape.symbol,
+                    is_abstract: false,
                 })
             }
             (
@@ -573,6 +575,7 @@ impl<'a> CheckerState<'a> {
                     string_index: derived_shape.string_index.clone(),
                     number_index: derived_shape.number_index.clone(),
                     symbol: derived_shape.symbol,
+                    is_abstract: false,
                 })
             }
             (
@@ -596,6 +599,7 @@ impl<'a> CheckerState<'a> {
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
                     symbol: derived_shape.symbol,
+                    is_abstract: false,
                 })
             }
             (
@@ -613,6 +617,7 @@ impl<'a> CheckerState<'a> {
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
                     symbol: derived_shape.symbol,
+                    is_abstract: false,
                 })
             }
             (
@@ -636,6 +641,7 @@ impl<'a> CheckerState<'a> {
                         .clone()
                         .or_else(|| base_shape.number_index.clone()),
                     symbol: derived_shape.symbol,
+                    is_abstract: false,
                 })
             }
             (
@@ -1210,6 +1216,7 @@ impl<'a> CheckerState<'a> {
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
                     symbol: None,
+                    is_abstract: false,
                 })
             }
             AugmentationTargetKind::Other => {

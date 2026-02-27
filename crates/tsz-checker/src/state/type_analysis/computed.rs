@@ -142,6 +142,7 @@ impl<'a> CheckerState<'a> {
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
+            is_abstract: false,
         })
     }
 
@@ -501,6 +502,7 @@ impl<'a> CheckerState<'a> {
                     string_index: None,
                     number_index: None,
                     symbol: None,
+                    is_abstract: false,
                 };
                 factory.callable(shape)
             } else if value_decl.is_some() {

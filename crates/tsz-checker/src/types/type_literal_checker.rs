@@ -383,6 +383,7 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut has_abstract_construct_sig = false;
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -416,6 +417,9 @@ impl<'a> CheckerState<'a> {
                     }
                     CONSTRUCT_SIGNATURE => {
                         if let Some(ref _params) = sig.parameters {}
+                        if self.has_abstract_modifier(&sig.modifiers) {
+                            has_abstract_construct_sig = true;
+                        }
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
                         // Check for unused type parameters (TS6133)
@@ -628,6 +632,7 @@ impl<'a> CheckerState<'a> {
                 string_index,
                 number_index,
                 symbol: None,
+                is_abstract: has_abstract_construct_sig,
             });
         }
 

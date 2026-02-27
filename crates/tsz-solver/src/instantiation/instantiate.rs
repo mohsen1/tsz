@@ -489,6 +489,7 @@ impl<'a> TypeInstantiator<'a> {
                     string_index: shape.string_index.clone(),
                     number_index: shape.number_index.clone(),
                     symbol: shape.symbol,
+                    is_abstract: shape.is_abstract,
                 })
             }
 

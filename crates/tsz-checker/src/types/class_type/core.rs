@@ -510,6 +510,7 @@ impl<'a> CheckerState<'a> {
                 string_index: None,
                 number_index: None,
                 symbol: None,
+                is_abstract: false,
             });
             properties.insert(
                 name,

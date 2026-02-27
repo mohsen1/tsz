@@ -361,6 +361,7 @@ impl TypeInterner {
             string_index,
             number_index,
             symbol: None,
+            is_abstract: false,
         };
 
         let shape_id = self.intern_callable_shape(callable_shape);

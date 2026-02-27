@@ -1141,6 +1141,7 @@ impl<'a> TypeLowering<'a> {
                     string_index,
                     number_index,
                     symbol: None,
+                    is_abstract: false,
                 });
             }
 
@@ -1526,6 +1527,7 @@ impl<'a> TypeLowering<'a> {
                 string_index: parts.string_index,
                 number_index: parts.number_index,
                 symbol: symbol_id,
+                is_abstract: false,
             });
         }
 

@@ -1048,6 +1048,7 @@ fn test_property_access_callable_members() {
     };
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -1321,6 +1322,7 @@ fn make_array_test_env(
     };
     let reduce_callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![reduce_sig_1, reduce_sig_2],
         construct_signatures: vec![],
         properties: vec![],
@@ -2278,6 +2280,7 @@ fn test_call_generic_callable_signature() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: vec![t_param],
             params: vec![ParamInfo {
@@ -2577,6 +2580,7 @@ fn test_infer_generic_callable_param_from_function() {
 
     let callable_param = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
@@ -2674,6 +2678,7 @@ fn test_infer_generic_function_param_from_callable() {
 
     let callable_arg = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
@@ -2741,6 +2746,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
 
     let callable_arg = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![
             CallSignature {
                 type_params: Vec::new(),
@@ -3117,6 +3123,7 @@ fn test_infer_generic_callable_param_from_callable() {
 
     let callable_param = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
@@ -3152,6 +3159,7 @@ fn test_infer_generic_callable_param_from_callable() {
 
     let callable_arg = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![CallSignature {
             type_params: Vec::new(),
             params: vec![ParamInfo {
@@ -3189,6 +3197,7 @@ fn test_infer_generic_construct_signature_param() {
 
     let ctor_param = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),
@@ -3224,6 +3233,7 @@ fn test_infer_generic_construct_signature_param() {
 
     let ctor_arg = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: Vec::new(),
         construct_signatures: vec![CallSignature {
             type_params: Vec::new(),

@@ -716,6 +716,7 @@ fn test_narrow_by_typeof_function_includes_callable() {
     };
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![sig],
         construct_signatures: vec![],
         properties: vec![],

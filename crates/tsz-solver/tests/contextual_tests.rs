@@ -126,6 +126,7 @@ fn test_contextual_callable_signature() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig],
         construct_signatures: vec![],
         properties: vec![],
@@ -181,6 +182,7 @@ fn test_contextual_callable_overload_union() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig_a, call_sig_b],
         construct_signatures: vec![],
         properties: vec![],
@@ -242,6 +244,7 @@ fn test_contextual_callable_overload_by_arity() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig_a, call_sig_b],
         construct_signatures: vec![],
         properties: vec![],
@@ -1013,6 +1016,7 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
 
     let callable = interner.callable(CallableShape {
         symbol: None,
+        is_abstract: false,
         call_signatures: vec![call_sig_a, call_sig_b],
         construct_signatures: vec![],
         properties: vec![],
