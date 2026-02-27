@@ -50,6 +50,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check whether the `export =` target symbol is NOT a module or variable.
+    /// Used for TS2497: modules whose `export =` targets a class/function/interface
+    /// (not Module | Variable) cannot be namespace-imported or named-imported
+    /// without `esModuleInterop` / `allowSyntheticDefaultImports`.
+    fn export_equals_target_is_not_module_or_variable(
+        &self,
+        exports_table: &tsz_binder::SymbolTable,
+    ) -> bool {
+        let Some(export_equals_sym) = exports_table.get("export=") else {
+            return false;
+        };
+
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+
+        // Resolve aliases to find the actual target symbol
+        let resolved = if let Some(sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+            && (sym.flags & symbol_flags::ALIAS) != 0
+        {
+            let mut visited = Vec::new();
+            self.resolve_alias_symbol(export_equals_sym, &mut visited)
+                .unwrap_or(export_equals_sym)
+        } else {
+            export_equals_sym
+        };
+
+        let Some(target) = self.ctx.binder.get_symbol_with_libs(resolved, &lib_binders) else {
+            return false;
+        };
+
+        // tsc checks: !(symbol.flags & (SymbolFlags.Module | SymbolFlags.Variable))
+        let is_module_or_variable = (target.flags
+            & (symbol_flags::MODULE
+                | symbol_flags::FUNCTION_SCOPED_VARIABLE
+                | symbol_flags::BLOCK_SCOPED_VARIABLE))
+            != 0;
+        !is_module_or_variable
+    }
+
     /// Check whether a named import can be satisfied via `export =` target members.
     fn has_named_export_via_export_equals(
         &self,
@@ -261,8 +307,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let has_namespace_import =
+            bindings_node.is_some_and(|n| n.kind == syntax_kind_ext::NAMESPACE_IMPORT);
+
         // Nothing to check
-        if !has_default_import && !has_named_imports {
+        if !has_default_import && !has_named_imports && !has_namespace_import {
             return;
         }
 
@@ -272,6 +321,32 @@ impl<'a> CheckerState<'a> {
         // Module '"./foo"' has no exported member 'X'
         let quoted_module = format!("\"{module_name}\"");
         let exports_table = self.resolve_effective_module_exports(module_name);
+
+        // TS2497: Module with `export =` targeting a non-module/non-variable symbol
+        // can only be referenced via default import when esModuleInterop is off.
+        // Applies to namespace imports (`import * as X`) and named imports (`import { X }`).
+        if !self.ctx.allow_synthetic_default_imports()
+            && (has_namespace_import || has_named_imports)
+            && let Some(ref table) = exports_table
+            && table.has("export=")
+            && self.export_equals_target_is_not_module_or_variable(table) {
+                let flag_name = if (self.ctx.compiler_options.module as u32)
+                    >= (tsz_common::ModuleKind::ES2015 as u32)
+                {
+                    "allowSyntheticDefaultImports"
+                } else {
+                    "esModuleInterop"
+                };
+                let message = format_message(
+                    diagnostic_messages::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
+                    &[flag_name],
+                );
+                self.error_at_node(
+                    import.module_specifier,
+                    &message,
+                    diagnostic_codes::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
+                );
+            }
 
         // Check default import: import X from "module"
         // If the module has no "default" export and allowSyntheticDefaultImports is off,
