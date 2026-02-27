@@ -821,6 +821,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::CONSTRUCTOR => {
+                    // Skip constructor overload checks when the file has parse errors.
+                    // Malformed constructors (e.g., `constructor` without parentheses)
+                    // produce TS1005 from the parser, and tsc does not additionally
+                    // emit TS2390 in these cases.
+                    if self.has_parse_errors() {
+                        i += 1;
+                        continue;
+                    }
                     if let Some(ctor) = self.ctx.arena.get_constructor(node)
                         && ctor.body.is_none()
                     {
