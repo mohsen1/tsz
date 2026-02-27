@@ -1,8 +1,37 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9334/12570 (74.3%) — full suite, error-code level
-> Up from 9333 after conditional type constraint fix.
+**Current score**: ~9338/12570 (74.3%) — full suite, error-code level
+> Up from 9334 after TS2838 infer constraint check + upstream fixes.
+
+---
+
+## Checker Fixes — Session 2026-02-27 (continued)
+
+### Fix: TS2838 "All declarations of '{0}' must have identical constraints" (+1 test)
+- **Root cause**: When `infer U` appeared multiple times in the same conditional type extends
+  clause with different explicit constraints (e.g., `infer U extends string` and
+  `infer U extends number`), the checker never validated constraint consistency.
+  The diagnostic message was defined in `tsz-common` but never emitted.
+- **Fix**: Added `check_infer_constraint_consistency()` to the conditional type checking path
+  in `member_declaration_checks.rs`. It:
+  1. Collects all `infer` declarations with their constraints from the extends clause
+  2. Groups by name
+  3. For names with 2+ explicit constraints, resolves each to a TypeId
+  4. If TypeIds differ, emits TS2838 at each constrained declaration site
+- **Key subtlety**: Unconstrained `infer U` (no `extends` clause) is excluded from the check.
+  TSC allows mixing constrained and unconstrained declarations — the unconstrained ones
+  inherit from the constrained ones. Only conflicting EXPLICIT constraints trigger TS2838.
+- **Files**: `crates/tsz-checker/src/state/state_checking_members/member_declaration_checks.rs`,
+  `crates/tsz-checker/src/types/queries/class.rs`
+- **Tests**: 6 new tests in `ts2838_tests.rs` covering:
+  - Different constraints (TS2838 emitted)
+  - Same constraints (no error)
+  - One constrained + one unconstrained (no error)
+  - Neither constrained (no error)
+  - Nested conditionals with same name in different scopes (no error)
+  - Single declaration (no error)
+- **Flipped tests**: `inferTypesWithExtends2.ts`
 
 ---
 

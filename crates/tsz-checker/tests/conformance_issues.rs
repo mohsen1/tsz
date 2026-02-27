@@ -335,6 +335,26 @@ type Bad<T extends Boxed> = T['value'][number];
 }
 
 #[test]
+fn test_indexed_access_type_param_in_mapped_intersection_no_ts2536() {
+    // Repro from conditionalTypes1.ts (#21862): type param T indexes an intersection
+    // whose keyof includes T itself (from mapped types).
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type OldDiff<T extends keyof any, U extends keyof any> = (
+    & { [P in T]: P; }
+    & { [P in U]: never; }
+    & { [x: string]: never; }
+)[T];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when type param T indexes an intersection containing mapped type over T.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
     if load_lib_files_for_test().is_empty() {
         return;
