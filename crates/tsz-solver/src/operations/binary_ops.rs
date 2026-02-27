@@ -924,15 +924,28 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
             return true;
         }
-        // For union types, each member must individually be valid
-        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
-            let members = self.interner.type_list(list_id);
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&m| self.is_valid_computed_property_name_type(m));
+        match self.interner.lookup(type_id) {
+            // For union types, each member must individually be valid
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&m| self.is_valid_computed_property_name_type(m))
+            }
+            // For type parameters, check the constraint (e.g., K extends keyof T).
+            // tsc uses getBaseConstraintOfType(type) for this check.
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
+                .constraint
+                .is_some_and(|c| self.is_valid_computed_property_name_type(c)),
+            // keyof always produces string | number | symbol, which are all valid.
+            Some(TypeData::KeyOf(_)) => true,
+            _ => {
+                self.is_string_like(type_id)
+                    || self.is_number_like(type_id)
+                    || self.is_symbol_like(type_id)
+            }
         }
-        self.is_string_like(type_id) || self.is_number_like(type_id) || self.is_symbol_like(type_id)
     }
 
     /// Check if a type is boolean-like (boolean or boolean literal).
