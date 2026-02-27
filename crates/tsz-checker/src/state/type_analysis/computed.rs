@@ -297,7 +297,9 @@ impl<'a> CheckerState<'a> {
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
                 ),
-                None => return (TypeId::UNKNOWN, Vec::new()),
+                None => {
+                    return (TypeId::UNKNOWN, Vec::new());
+                }
             };
 
         tracing::trace!(
@@ -1019,6 +1021,10 @@ impl<'a> CheckerState<'a> {
                             if self.is_type_only_export_symbol(sym_id) {
                                 continue;
                             }
+                            // Also skip exports reached through `export type *` wildcards
+                            if self.is_export_from_type_only_wildcard(&module_specifier, name) {
+                                continue;
+                            }
                             let mut prop_type = self.get_type_of_symbol(sym_id);
                             prop_type =
                                 self.apply_module_augmentations(&module_specifier, name, prop_type);
@@ -1143,8 +1149,19 @@ impl<'a> CheckerState<'a> {
                         .module_namespace_resolution_set
                         .insert(module_name.to_string());
 
-                    let exports_table = self.resolve_effective_module_exports(module_name);
-
+                    // For cross-file symbols (e.g., `export * as ns from './b'` in
+                    // another file), the module_name is relative to the declaring file,
+                    // not the current file. Use the symbol's declaring file for resolution.
+                    let declaring_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    let exports_table = self.resolve_effective_module_exports_from_file(
+                        module_name,
+                        declaring_file_idx,
+                    );
                     if let Some(exports_table) = exports_table {
                         // Record cross-file symbol targets for all symbols in the table
                         for (name, &sym_id) in exports_table.iter() {
@@ -1168,6 +1185,13 @@ impl<'a> CheckerState<'a> {
                             // position (e.g., `let x: ns.A`), which uses symbol-based
                             // resolution rather than object property lookup.
                             if self.is_type_only_export_symbol(export_sym_id) {
+                                continue;
+                            }
+                            // Also skip exports reached through `export type *` wildcard
+                            // re-export chains. The symbol itself may not have is_type_only
+                            // set (it's normal in the source module), but the re-export path
+                            // makes it type-only in this module's namespace.
+                            if self.is_export_from_type_only_wildcard(module_name, name) {
                                 continue;
                             }
                             let mut prop_type = self.get_type_of_symbol(export_sym_id);
