@@ -225,3 +225,40 @@ fn spread_union_template_literal_with_object_is_invalid() {
     let union = db.union(vec![tpl, obj]);
     assert!(!is_valid_spread_type(&db, union));
 }
+
+// =============================================================================
+// Intersection with falsy types
+// =============================================================================
+
+#[test]
+fn spread_union_with_intersection_containing_undefined_is_valid() {
+    // `T | T & undefined` — the intersection `T & undefined` is definitely falsy
+    // (any value in `T & undefined` must be undefined), so it gets filtered out.
+    // Remaining: `T` (unconstrained type param) → valid spread type.
+    let db = TypeInterner::new();
+    let tp = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+    let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
+    let union = db.union(vec![tp_id, intersection]);
+    assert!(is_valid_spread_type(&db, union));
+}
+
+#[test]
+fn spread_intersection_with_undefined_is_invalid_on_its_own() {
+    // `T & undefined` alone is not a valid spread type (it's always undefined).
+    let db = TypeInterner::new();
+    let tp = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+    let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
+    assert!(!is_valid_spread_type(&db, intersection));
+}
