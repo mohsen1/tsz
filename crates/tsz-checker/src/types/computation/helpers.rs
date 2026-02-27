@@ -150,14 +150,15 @@ impl<'a> CheckerState<'a> {
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
 
-        // When the condition is a known literal boolean, skip evaluating the
-        // unreachable branch.  Evaluating it would trigger false diagnostics
-        // (e.g. TS2454 "variable used before assignment") for code that can
-        // never execute at runtime.  tsc does the same: it recognises that
-        // `true ? a : b` makes the false branch dead code.
+        // tsc always evaluates BOTH branches and unions them for the result
+        // type, even when the condition is a literal boolean.  This ensures
+        // `var r = true ? t : u; var r = true ? u : t;` computes the same
+        // union type regardless of branch order (fixing false TS2403).
         //
-        // We check the AST node kind rather than the type because the `true`
-        // keyword gets widened to `boolean` through `resolve_literal`.
+        // When the condition IS a literal boolean, the dead branch may contain
+        // code that would emit false diagnostics (e.g. TS2454 for variables
+        // that are genuinely uninitialized on that path).  We suppress
+        // diagnostics from the dead branch by snapshot/restore.
         use tsz_scanner::SyntaxKind;
         let condition_is_true = self
             .ctx
@@ -174,14 +175,30 @@ impl<'a> CheckerState<'a> {
         // Branch typing may mutate contextual state while recursing, so restore
         // it explicitly before each branch.
         let when_true = if condition_is_false {
-            TypeId::NEVER
+            // Dead branch — suppress diagnostics but still compute type.
+            // Must save/restore BOTH the diagnostics vec AND the dedup set,
+            // otherwise entries added to the dedup set would prevent the same
+            // diagnostic from being emitted later by the regular checker pass
+            // (e.g. TS8010 grammar errors in JS files).
+            let diag_len = self.ctx.diagnostics.len();
+            let dedup_snapshot = self.ctx.emitted_diagnostics.clone();
+            let ty = self.get_type_of_node(cond.when_true);
+            self.ctx.diagnostics.truncate(diag_len);
+            self.ctx.emitted_diagnostics = dedup_snapshot;
+            ty
         } else {
             self.get_type_of_node(cond.when_true)
         };
 
         self.ctx.contextual_type = prev_context;
         let when_false = if condition_is_true {
-            TypeId::NEVER
+            // Dead branch — suppress diagnostics but still compute type.
+            let diag_len = self.ctx.diagnostics.len();
+            let dedup_snapshot = self.ctx.emitted_diagnostics.clone();
+            let ty = self.get_type_of_node(cond.when_false);
+            self.ctx.diagnostics.truncate(diag_len);
+            self.ctx.emitted_diagnostics = dedup_snapshot;
+            ty
         } else {
             self.get_type_of_node(cond.when_false)
         };
