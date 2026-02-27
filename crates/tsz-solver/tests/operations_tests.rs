@@ -1756,17 +1756,25 @@ fn test_binary_op_logical() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
-    // number && string = number | string
+    // number && string = 0 | string (definitely-falsy part of number is literal 0)
     let result = evaluator.evaluate(TypeId::NUMBER, TypeId::STRING, "&&");
     match result {
         BinaryOpResult::Success(t) => {
-            // Should be a union type
+            // Should be a union type with 0 (literal) and string
             let key = interner.lookup(t).unwrap();
             match key {
                 TypeData::Union(members) => {
                     let members = interner.type_list(members);
-                    assert!(members.contains(&TypeId::NUMBER));
+                    assert_eq!(members.len(), 2, "Expected 2 members, got {members:?}");
                     assert!(members.contains(&TypeId::STRING));
+                    // The other member should be a number literal 0
+                    let zero_type = members.iter().find(|&&m| m != TypeId::STRING).unwrap();
+                    match interner.lookup(*zero_type) {
+                        Some(TypeData::Literal(LiteralValue::Number(n))) => {
+                            assert_eq!(n.0, 0.0, "Expected 0, got {}", n.0);
+                        }
+                        other => panic!("Expected number literal 0, got {other:?}"),
+                    }
                 }
                 _ => panic!("Expected union, got {key:?}"),
             }

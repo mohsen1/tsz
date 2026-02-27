@@ -314,7 +314,8 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
     }
 
     match db.lookup(resolved) {
-        // Primitives, null/undefined/void, literals: not spreadable on their own.
+        // Primitives, null/undefined/void, literals, template literals, string intrinsics:
+        // not spreadable on their own.
         // (Definitely-falsy members are filtered out in the union branch instead.)
         Some(
             TypeData::Intrinsic(
@@ -328,7 +329,9 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 | IntrinsicKind::Null
                 | IntrinsicKind::Undefined,
             )
-            | TypeData::Literal(_),
+            | TypeData::Literal(_)
+            | TypeData::TemplateLiteral(_)
+            | TypeData::StringIntrinsic { .. },
         ) => false,
         // Union: remove definitely-falsy members, then check remaining.
         // Matches tsc's removeDefinitelyFalsyTypes before checking.

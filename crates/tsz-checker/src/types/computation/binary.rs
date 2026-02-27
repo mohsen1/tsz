@@ -795,6 +795,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let result = evaluator.evaluate(eval_left, eval_right, op_str);
+                    // Equality and relational operators always produce boolean,
+                    // even when the operands don't overlap (TS2367).
+                    // The TS2367 diagnostic is a warning about the comparison
+                    // being unintentional, but the expression type is still boolean.
+                    let is_comparison_op = matches!(
+                        op_str,
+                        "==" | "!=" | "===" | "!==" | "<" | ">" | "<=" | ">="
+                    );
                     let result_type = match result {
                         BinaryOpResult::Success(result_type) => result_type,
                         BinaryOpResult::TypeError { .. } => {
@@ -811,7 +819,11 @@ impl<'a> CheckerState<'a> {
                                     emitted_nullish_error,
                                 );
                             }
-                            TypeId::UNKNOWN
+                            if is_comparison_op {
+                                TypeId::BOOLEAN
+                            } else {
+                                TypeId::UNKNOWN
+                            }
                         }
                     };
                     type_stack.push(result_type);
@@ -1083,9 +1095,7 @@ impl<'a> CheckerState<'a> {
                             false
                         };
 
-                        if is_comparable {
-                            TypeId::BOOLEAN
-                        } else {
+                        if !is_comparable {
                             // Don't emit errors if either operand is ERROR - prevents cascading errors
                             if left != TypeId::ERROR && right != TypeId::ERROR {
                                 // For relational ops, use widened types in error messages
@@ -1106,8 +1116,10 @@ impl<'a> CheckerState<'a> {
                                     emitted_nullish_error,
                                 );
                             }
-                            TypeId::UNKNOWN
                         }
+                        // Equality and relational operators always produce boolean,
+                        // regardless of operand validity.
+                        TypeId::BOOLEAN
                     }
                 }
             };

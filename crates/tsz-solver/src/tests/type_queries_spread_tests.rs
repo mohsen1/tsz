@@ -10,7 +10,7 @@
 use super::*;
 use crate::intern::TypeInterner;
 use crate::type_queries::is_valid_spread_type;
-use crate::types::TypeParamInfo;
+use crate::types::{StringIntrinsicKind, TemplateSpan, TypeParamInfo};
 
 // =============================================================================
 // Basic spreadable / non-spreadable types
@@ -173,4 +173,55 @@ fn spread_type_param_constrained_to_string_is_invalid() {
     };
     let tp_id = db.type_param(tp);
     assert!(!is_valid_spread_type(&db, tp_id));
+}
+
+// =============================================================================
+// Template literal types and string intrinsics (not spreadable)
+// =============================================================================
+
+#[test]
+fn spread_template_literal_is_invalid() {
+    // `\`${number}\`` is a string subtype — not spreadable (TS2698).
+    let db = TypeInterner::new();
+    let tpl = db.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    assert!(!is_valid_spread_type(&db, tpl));
+}
+
+#[test]
+fn spread_template_literal_with_text_is_invalid() {
+    // `\`prefix_${string}\`` — still a template literal, not spreadable.
+    let db = TypeInterner::new();
+    let prefix = db.intern_string("prefix_");
+    let tpl = db.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    assert!(!is_valid_spread_type(&db, tpl));
+}
+
+#[test]
+fn spread_string_intrinsic_uppercase_is_invalid() {
+    // `Uppercase<string>` is a string intrinsic — not spreadable.
+    let db = TypeInterner::new();
+    let upper = db.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+    assert!(!is_valid_spread_type(&db, upper));
+}
+
+#[test]
+fn spread_string_intrinsic_lowercase_is_invalid() {
+    // `Lowercase<string>` — not spreadable.
+    let db = TypeInterner::new();
+    let lower = db.string_intrinsic(StringIntrinsicKind::Lowercase, TypeId::STRING);
+    assert!(!is_valid_spread_type(&db, lower));
+}
+
+#[test]
+fn spread_union_template_literal_with_object_is_invalid() {
+    // `\`${number}\` | { x: number }` — template literal is NOT falsy,
+    // so it stays in the union and makes spread invalid.
+    let db = TypeInterner::new();
+    let tpl = db.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let obj = db.object(vec![]);
+    let union = db.union(vec![tpl, obj]);
+    assert!(!is_valid_spread_type(&db, union));
 }
