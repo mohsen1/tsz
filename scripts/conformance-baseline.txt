@@ -309,7 +309,6 @@ FAIL TypeScript/tests/cases/compiler/defaultIsNotVisibleInLocalScope.ts
 FAIL TypeScript/tests/cases/compiler/defaultParameterAddsUndefinedWithStrictNullChecks.ts
 FAIL TypeScript/tests/cases/compiler/defaultPropsEmptyCurlyBecomesAnyForJs.ts
 FAIL TypeScript/tests/cases/compiler/defaultValueInFunctionTypes.ts
-FAIL TypeScript/tests/cases/compiler/deferredLookupTypeResolution2.ts
 FAIL TypeScript/tests/cases/compiler/definiteAssignmentWithErrorStillStripped.ts
 FAIL TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional_exactOptionalPropertyTypes.ts
 FAIL TypeScript/tests/cases/compiler/deleteExpressionMustBeOptional.ts
@@ -957,7 +956,6 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference2.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArrayLike.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts
-FAIL TypeScript/tests/cases/compiler/mappedTypeWithNameClauseAppliedToArrayType.ts
 FAIL TypeScript/tests/cases/compiler/mapUpsert.ts
 FAIL TypeScript/tests/cases/compiler/maxConstraints.ts
 FAIL TypeScript/tests/cases/compiler/maxNodeModuleJsDepthDefaultsToZero.ts
@@ -1278,7 +1276,6 @@ FAIL TypeScript/tests/cases/compiler/pushTypeGetTypeOfAlias.ts
 FAIL TypeScript/tests/cases/compiler/qualifiedModuleLocals.ts
 FAIL TypeScript/tests/cases/compiler/qualifiedName_entity-name-resolution-does-not-affect-class-heritage.ts
 FAIL TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts
-FAIL TypeScript/tests/cases/compiler/ramdaToolsNoInfinite.ts
 FAIL TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks2.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecks3.ts
@@ -2200,7 +2197,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/conditonalOperator/condition
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/arrayLiteralExpressionContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping2.ts
-FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/objectLiteralContextualTyping.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping2.ts
 FAIL TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping3.ts
@@ -3148,7 +3144,6 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/predefinedTypes/ob
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/unionTypeLiterals.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
-FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
@@ -4865,6 +4860,7 @@ PASS TypeScript/tests/cases/compiler/defaultValueInFunctionOverload1.ts
 PASS TypeScript/tests/cases/compiler/deferredConditionalTypes.ts
 PASS TypeScript/tests/cases/compiler/deferredConditionalTypes2.ts
 PASS TypeScript/tests/cases/compiler/deferredLookupTypeResolution.ts
+PASS TypeScript/tests/cases/compiler/deferredLookupTypeResolution2.ts
 PASS TypeScript/tests/cases/compiler/deferredTypeReferenceWithinArrayWithinTuple.ts
 PASS TypeScript/tests/cases/compiler/defineVariables_useDefineForClassFields.ts
 PASS TypeScript/tests/cases/compiler/definiteAssignmentOfDestructuredVariable.ts
@@ -6313,6 +6309,7 @@ PASS TypeScript/tests/cases/compiler/jsxHash.tsx
 PASS TypeScript/tests/cases/compiler/jsxHasLiteralType.tsx
 PASS TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 PASS TypeScript/tests/cases/compiler/jsxImportInAttribute.tsx
+PASS TypeScript/tests/cases/compiler/jsxInferenceProducesLiteralAsExpected.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicElementsCompatability.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicElementsExtendsRecord.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
@@ -6413,6 +6410,7 @@ PASS TypeScript/tests/cases/compiler/mappedTypePartialNonHomomorphicBaseConstrai
 PASS TypeScript/tests/cases/compiler/mappedTypeTupleConstraintAssignability.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeUnionConstraintInferences.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty2.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeWithNameClauseAppliedToArrayType.ts
 PASS TypeScript/tests/cases/compiler/matchingOfObjectLiteralConstraints.ts
 PASS TypeScript/tests/cases/compiler/matchReturnTypeInAllBranches.ts
 PASS TypeScript/tests/cases/compiler/maximum10SpellingSuggestions.ts
@@ -7180,6 +7178,7 @@ PASS TypeScript/tests/cases/compiler/quotedPropertyName1.ts
 PASS TypeScript/tests/cases/compiler/quotedPropertyName2.ts
 PASS TypeScript/tests/cases/compiler/quotedPropertyName3.ts
 PASS TypeScript/tests/cases/compiler/raiseErrorOnParameterProperty.ts
+PASS TypeScript/tests/cases/compiler/ramdaToolsNoInfinite.ts
 PASS TypeScript/tests/cases/compiler/randomSemicolons1.ts
 PASS TypeScript/tests/cases/compiler/reachabilityChecks1.ts
 PASS TypeScript/tests/cases/compiler/reachabilityChecks10.ts
@@ -9992,6 +9991,7 @@ PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExp
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/functionExpressionContextualTyping3.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/generatedContextualTyping.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/getSetAccessorContextualTyping.ts
+PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/iterableContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/parenthesizedContexualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping1.ts
 PASS TypeScript/tests/cases/conformance/expressions/contextualTyping/superCallParameterContextualTyping2.ts
@@ -12062,6 +12062,7 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
+PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts
