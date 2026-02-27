@@ -518,7 +518,7 @@ impl CompilerOptions {
 
     /// Get the effective value for noImplicitAny.
     pub fn get_no_implicit_any(&self) -> bool {
-        self.no_implicit_any.unwrap_or(self.strict.unwrap_or(true))
+        self.resolve_bool(self.no_implicit_any, true)
     }
 
     /// Get the effective value for strictNullChecks.
