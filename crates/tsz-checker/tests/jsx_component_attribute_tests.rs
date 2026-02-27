@@ -254,6 +254,127 @@ let x = <Comp name="hi" anyOtherProp="fine" />;
 }
 
 // =============================================================================
+// Intrinsic element attribute checking with interface-referenced props
+// =============================================================================
+//
+// When JSX.IntrinsicElements maps a tag to an *interface reference* (e.g.,
+// `test1: Attribs1`), the props type arrives as Lazy(DefId). The checker must
+// resolve it before attribute checking; otherwise, the solver's
+// PropertyAccessEvaluator returns TypeId::ANY (QueryCache.resolve_lazy → None),
+// silently suppressing all type errors.
+
+#[test]
+fn test_intrinsic_interface_ref_type_mismatch() {
+    // Interface-referenced props (Attribs1) should be resolved from Lazy(DefId)
+    // so that type mismatches are detected.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test1: Attribs1;
+    }
+}
+interface Attribs1 {
+    x?: number;
+    s?: string;
+}
+let a = <test1 x={'not a number'} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for string not assignable to number on interface-ref props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_interface_ref_excess_property() {
+    // Excess properties on interface-referenced props should be detected.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test1: Attribs1;
+    }
+}
+interface Attribs1 {
+    x?: number;
+}
+let a = <test1 y={0} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for excess property 'y' on interface-ref props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_interface_ref_correct_props() {
+    // Correct props on interface-referenced types should not produce errors.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test1: Attribs1;
+    }
+}
+interface Attribs1 {
+    x?: number;
+    s?: string;
+}
+let a = <test1 x={42} />;
+let b = <test1 />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 for correct interface-ref props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_inline_type_still_works() {
+    // Inline object types (not interface references) should continue to work.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test2: { reqd: string };
+    }
+}
+let a = <test2 reqd={42} />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for number not assignable to string on inline props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intrinsic_interface_ref_missing_required() {
+    // Missing required props on interface-referenced types should be detected.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test2: { n: boolean };
+    }
+}
+let a = <test2 />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Expected TS2741 for missing required 'n' on inline props, got: {diags:?}"
+    );
+}
+
+// =============================================================================
 // Hyphenated attribute handling
 // =============================================================================
 
