@@ -483,9 +483,21 @@ fn convert_options_to_tsconfig(
             .iter()
             .any(|&opt| opt.to_lowercase() == key_lower)
         {
+            // For typeRoots: strip leading '/' from virtual absolute paths (e.g.
+            // "/types" → "types").  Tests use absolute paths as virtual FS roots;
+            // files are written at {test_dir}/{path}, so relative paths are needed.
+            let is_type_roots = key_lower == "typeroots";
             let items: Vec<serde_json::Value> = value
                 .split(',')
-                .map(|s| serde_json::Value::String(s.trim().to_string()))
+                .map(|s| {
+                    let s = s.trim();
+                    let s = if is_type_roots {
+                        s.trim_start_matches('/')
+                    } else {
+                        s
+                    };
+                    serde_json::Value::String(s.to_string())
+                })
                 .collect();
             serde_json::Value::Array(items)
         } else {

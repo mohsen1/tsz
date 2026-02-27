@@ -1,7 +1,71 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9456/12570 (75.2%) — full suite, error-code level
+**Current score**: ~9464/12570 (75.3%) — full suite, error-code level
+
+---
+
+## Session 2026-02-27 — references area: wrong TS2688 cache entries from typeRoots path mapping
+
+### Area: references (53.3% → 93.3%, 8→14 passing of 15)
+
+### Root cause: TSC cache generator typeRoots path mapping bug
+The tsserver-based cache generator (`generate-tsc-cache-tsserver.rs`) passed virtual absolute
+paths like `/src/types` directly to tsserver without stripping the leading `/`. Since test files
+are written to a temp directory at `<tmpdir>/src/types/...`, the absolute path `/src/types` doesn't
+exist on the real filesystem. This caused tsserver to emit TS2688 ("Cannot find type definition
+file for '{0}'.") for tests that should have 0 errors.
+
+The tsc-based cache generator (`generate-tsc-cache.rs`) uses `prepare_test_dir()` from
+`tsz_wrapper.rs`, which already strips leading `/` from typeRoots values. So it produces correct
+results.
+
+### Fix 1: TSC cache entries corrected for 16 tests
+Updated cache entries for 16 tests where TS2688 was incorrectly expected. Verified against:
+1. Official tsc baselines in `TypeScript/tests/baselines/reference/` (no `.errors.txt` = 0 errors)
+2. Regenerated cache using the tsc-based generator (produces correct results)
+
+Tests fixed (previously failing, now passing):
+- `library-reference-1.ts`, `library-reference-2.ts`, `library-reference-8.ts`,
+  `library-reference-10.ts`, `library-reference-14.ts`, `library-reference-15.ts` (+6 references)
+- `declarationEmitHasTypesRefOnNamespaceUse.ts` (+1 compiler)
+- `tripleSlashTypesReferenceWithMissingExports.ts` (+1 compiler)
+- `typeofAnExportedType.ts` (+1, collateral improvement)
+
+### Fix 2: tsserver cache generator typeRoots handling
+Added typeRoots path stripping in `generate-tsc-cache-tsserver.rs` to match the behavior of
+`tsz_wrapper.rs`. Prevents future cache generation from producing wrong TS2688 entries.
+
+### Remaining 1 failure in references area
+- **library-reference-5.ts**: Missing TS2403 ("Subsequent variable declarations must have the
+  same type"). Requires tracking declarations across transitive type reference resolution chains
+  where `/// <reference types="foo" />` and `/// <reference types="bar" />` both pull in different
+  versions of the same type definition (foo/node_modules/alpha vs bar/node_modules/alpha with
+  different types for the same variable).
+
+### Investigated but not fixed: TS5107 alwaysStrict=false masking issue
+The conformance wrapper expands `@strict: false` to explicit sub-options including
+`alwaysStrict: false`. In TypeScript 6.0, `alwaysStrict=false` is deprecated (TS5107), and
+TS5107 is fatal — preventing tsc from producing any other diagnostics. This means:
+- ~1984 cache entries have only `[TS5107]` as expected output
+- Our compiler also emits TS5107 due to the same expansion → tests pass
+- The REAL expected output (from tsc's test harness, which handles `@strict: false` differently)
+  would be various other errors depending on the test
+
+Fixing this requires:
+1. Stop expanding `strict: false` to explicit sub-options (only expand `strict: true`)
+2. Regenerate the cache for all ~1984 affected tests
+3. This is a large batch operation that should be done carefully
+
+### Tests still failing due to wrong cache entries (from other typeRoots tests, 8 compiler tests)
+These pass with correct cache but fail due to other issues:
+- `moduleResolutionAsTypeReferenceDirective.ts`: Extra TS2307 (our module resolution differs)
+- `moduleResolutionAsTypeReferenceDirectiveAmbient.ts`: Missing TS2451 (redeclaration detection)
+- `typeReferenceDirectiveWithTypeAsFile.ts`: Extra TS2304 (scope issue)
+- `typeReferenceDirectives7.ts`: Missing TS2451 (redeclaration detection)
+- `typeReferenceDirectives2.ts`, `typeReferenceDirectives8.ts`: Extra TS5107 from expansion
+- `typeReferenceDirectives11.ts`: Missing TS6131 (outFile module compilation check)
+- `typeReferenceDirectiveScopedPackageCustomTypeRoot.ts`: Extra TS2304/TS2448
 
 ---
 
