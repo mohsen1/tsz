@@ -415,6 +415,11 @@ impl<'a> NarrowingContext<'a> {
         // so the false branch of `instanceof Object` keeps only primitives.
         let is_object_target = self.is_object_interface(instance_type);
 
+        // Check if the instance type is an Array type. At runtime, ReadonlyArray
+        // values are also Array instances, so `instanceof Array` false branch
+        // should exclude ReadonlyArray members too.
+        let is_array_target = crate::type_queries::is_array_type(self.db, instance_type);
+
         if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
@@ -427,6 +432,12 @@ impl<'a> NarrowingContext<'a> {
                     // When the target is Object, ALL non-primitives are excluded
                     // because every non-primitive value is an Object instance.
                     if is_object_target {
+                        return false;
+                    }
+                    // When the target is Array, all array-like types (including
+                    // ReadonlyArray and tuples) are excluded because at runtime
+                    // they are all Array instances.
+                    if is_array_target && self.is_array_like(member) {
                         return false;
                     }
                     // A member only fails to reach the false branch if it is GUARANTEED
@@ -448,6 +459,9 @@ impl<'a> NarrowingContext<'a> {
 
         // Non-union: if it's guaranteed to be an instance, it will never reach the false branch.
         if is_object_target && !self.is_js_primitive(resolved_source) {
+            return TypeId::NEVER;
+        }
+        if is_array_target && self.is_array_like(resolved_source) {
             return TypeId::NEVER;
         }
         if self.is_assignable_to(resolved_source, instance_type) {
