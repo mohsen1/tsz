@@ -108,6 +108,9 @@ pub struct CompilerOptions {
     #[serde(rename = "jsxFragmentFactory")]
     pub jsx_fragment_factory: Option<String>,
     #[serde(default)]
+    #[serde(rename = "jsxImportSource")]
+    pub jsx_import_source: Option<String>,
+    #[serde(default)]
     #[serde(rename = "reactNamespace")]
     pub react_namespace: Option<String>,
 
@@ -579,6 +582,9 @@ pub fn resolve_compiler_options(
     if let Some(frag) = options.jsx_fragment_factory.as_deref() {
         resolved.checker.jsx_fragment_factory = frag.to_string();
         resolved.checker.jsx_fragment_factory_from_config = true;
+    }
+    if let Some(source) = options.jsx_import_source.as_deref() {
+        resolved.checker.jsx_import_source = source.to_string();
     }
 
     if let Some(jsx) = options.jsx.as_deref() {
@@ -2085,6 +2091,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             jsx,
             jsx_factory,
             jsx_fragment_factory,
+            jsx_import_source,
             react_namespace,
 
             lib,

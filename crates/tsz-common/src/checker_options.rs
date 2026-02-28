@@ -119,6 +119,11 @@ pub struct CheckerOptions {
     /// TS2792 ("Did you mean to set moduleResolution to nodenext?") is only emitted
     /// when Classic resolution is in effect.
     pub implied_classic_resolution: bool,
+    /// JSX import source for automatic JSX transform (react-jsx/react-jsxdev).
+    /// When set (e.g., "react", "preact"), the compiler checks that
+    /// `<source>/jsx-runtime` can be resolved. If not, TS2875 is emitted.
+    /// Empty string means not set (default).
+    pub jsx_import_source: String,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -185,6 +190,7 @@ impl Default for CheckerOptions {
             suppress_implicit_any_index_errors: false,
             allow_importing_ts_extensions: false,
             implied_classic_resolution: false,
+            jsx_import_source: String::new(),
         }
     }
 }

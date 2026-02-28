@@ -29575,6 +29575,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_implicit_use_strict: false,
             allow_importing_ts_extensions: false,
             implied_classic_resolution: false,
+            jsx_import_source: String::new(),
         },
     );
     assert!(
