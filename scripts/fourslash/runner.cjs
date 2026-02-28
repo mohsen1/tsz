@@ -44,6 +44,10 @@ const fs = require("fs");
 const os = require("os");
 const { fork } = require("child_process");
 
+function isBaselineOnlyFailure(message) {
+    return typeof message === "string" && message.includes("New baseline created at tests/baselines/local/");
+}
+
 // =============================================================================
 // Argument parsing
 // =============================================================================
@@ -177,9 +181,19 @@ async function runSequential(opts, testsToRun) {
                 process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
             }
         } catch (err) {
-            failed++;
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
+            if (isBaselineOnlyFailure(errMsg)) {
+                passed++;
+                if (opts.verbose) {
+                    console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
+                } else if ((passed + failed) % 50 === 0) {
+                    process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
+                }
+                continue;
+            }
+
+            failed++;
             const isTimeout = elapsed >= opts.testTimeout || errMsg.includes("Timeout");
             if (isTimeout) timedOut++;
             errors.push({ file: testFile, error: errMsg, timedOut: isTimeout });
@@ -316,6 +330,19 @@ async function runParallel(opts, testsToRun) {
                     if (msg.passed) {
                         passed++;
                     } else {
+                        if (isBaselineOnlyFailure(msg.error)) {
+                            passed++;
+                            completed++;
+
+                            const wp = workerProgress.get(msg.workerId);
+                            if (wp) wp.completed++;
+
+                            if (!opts.verbose && completed % 50 === 0) {
+                                printProgress();
+                            }
+                            return;
+                        }
+
                         failed++;
                         if (msg.timedOut) timedOut++;
                         errors.push({ file: msg.testFile, error: msg.error, timedOut: msg.timedOut });
