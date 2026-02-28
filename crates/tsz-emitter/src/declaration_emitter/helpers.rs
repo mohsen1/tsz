@@ -97,6 +97,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::QUALIFIED_NAME
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 || k == SyntaxKind::ThisKeyword as u16
                 || k == SyntaxKind::SuperKeyword as u16 =>
             {
@@ -268,14 +269,12 @@ impl<'a> DeclarationEmitter<'a> {
         // type-only export modules and import-only modules.
         let has_module_syntax = source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
-                matches!(
-                    stmt_node.kind,
-                    k if k == syntax_kind_ext::IMPORT_DECLARATION
-                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                        || k == syntax_kind_ext::EXPORT_DECLARATION
-                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                        || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                )
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
             })
         });
 
@@ -410,6 +409,98 @@ impl<'a> DeclarationEmitter<'a> {
                     return true;
                 }
                 _ => {}
+            }
+        }
+        false
+    }
+
+    /// Equivalent to tsc's `needsScopeMarker`: returns true when a statement is
+    /// *not* an import/re-export, *not* an export assignment, and does *not*
+    /// have the `export` modifier. Used for namespace body scope-fix logic.
+    ///
+    /// Only returns true for declaration kinds that appear in `.d.ts` output.
+    pub(crate) fn stmt_needs_scope_marker(
+        &self,
+        stmt_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let k = stmt_node.kind;
+
+        // Import / re-export / export assignment -> never needs marker
+        if k == syntax_kind_ext::IMPORT_DECLARATION
+            || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            || k == syntax_kind_ext::EXPORT_DECLARATION
+            || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+        {
+            return false;
+        }
+
+        // Only consider declaration kinds that survive into .d.ts output
+        let is_declaration_kind = k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::CLASS_DECLARATION
+            || k == syntax_kind_ext::INTERFACE_DECLARATION
+            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            || k == syntax_kind_ext::ENUM_DECLARATION
+            || k == syntax_kind_ext::VARIABLE_STATEMENT
+            || k == syntax_kind_ext::MODULE_DECLARATION;
+
+        if !is_declaration_kind {
+            return false;
+        }
+
+        // Statement with export modifier -> not a scope-marker candidate
+        if self.stmt_has_export_modifier(stmt_node) {
+            return false;
+        }
+
+        // Non-exported declaration that survives to output
+        true
+    }
+
+    /// Check if a statement node has the `export` keyword modifier.
+    fn stmt_has_export_modifier(&self, stmt_node: &tsz_parser::parser::node::Node) -> bool {
+        let k = stmt_node.kind;
+        if k == syntax_kind_ext::FUNCTION_DECLARATION {
+            if let Some(func) = self.arena.get_function(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::CLASS_DECLARATION {
+            if let Some(class) = self.arena.get_class(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(iface) = self.arena.get_interface(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            if let Some(alias) = self.arena.get_type_alias(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::ENUM_DECLARATION {
+            if let Some(enum_data) = self.arena.get_enum(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::VARIABLE_STATEMENT {
+            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
+            }
+        } else if k == syntax_kind_ext::MODULE_DECLARATION {
+            if let Some(module) = self.arena.get_module(stmt_node) {
+                return self
+                    .arena
+                    .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
             }
         }
         false
@@ -1609,6 +1700,9 @@ impl<'a> DeclarationEmitter<'a> {
                         // Handle negative numeric/bigint literals: PrefixUnaryExpression(-X)
                         || (k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                             && self.is_negative_literal(init_node))
+                        // Handle enum member accesses: E.A, E["non identifier"]
+                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 } else {
                     false
                 }

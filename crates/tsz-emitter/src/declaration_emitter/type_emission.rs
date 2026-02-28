@@ -504,6 +504,14 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_entity_name(access.name_or_argument);
                 }
             }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    self.emit_entity_name(access.expression);
+                    self.write("[");
+                    self.emit_node(access.name_or_argument);
+                    self.write("]");
+                }
+            }
             _ => {}
         }
     }

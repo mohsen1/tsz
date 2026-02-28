@@ -977,6 +977,32 @@ impl<'a> DeclarationEmitter<'a> {
                         for &stmt_idx in &stmts.nodes {
                             self.emit_statement(stmt_idx);
                         }
+
+                        // tsc emits `export {};` inside a non-ambient namespace
+                        // body when there is a mix of exported and non-exported
+                        // members (the "scope-fix marker").  If the namespace is
+                        // in an ambient context (has `declare` keyword, is inside
+                        // a `declare` parent, or comes from a .d.ts file) the
+                        // marker is suppressed because everything is implicitly
+                        // exported already.
+                        let is_ambient_module = self
+                            .arena
+                            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                            || prev_inside_declare_namespace
+                            || self.source_is_declaration_file;
+
+                        if !is_ambient_module {
+                            let needs_scope_fix = stmts.nodes.iter().any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|n| self.stmt_needs_scope_marker(n))
+                            });
+                            if needs_scope_fix {
+                                self.write_indent();
+                                self.write("export {};");
+                                self.write_line();
+                            }
+                        }
                     }
                 } else {
                     // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
