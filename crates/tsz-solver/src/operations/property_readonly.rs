@@ -5,7 +5,9 @@
 
 use crate::TypeDatabase;
 use crate::evaluation::evaluate::evaluate_type;
-use crate::types::{CallableShapeId, ObjectShapeId, PropertyInfo, TypeData, TypeId};
+use crate::types::{
+    CallableShapeId, MappedModifier, ObjectShapeId, PropertyInfo, TypeData, TypeId,
+};
 use crate::utils;
 
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
@@ -63,6 +65,12 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             types
                 .iter()
                 .all(|t| property_is_readonly(interner, *t, prop_name))
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            // Mapped types with explicit readonly modifier (e.g., Readonly<T>)
+            // have ALL properties readonly.
+            let mapped = interner.mapped_type(mapped_id);
+            mapped.readonly_modifier == Some(MappedModifier::Add)
         }
         _ => false,
     }
@@ -163,6 +171,15 @@ pub fn is_readonly_index_signature(
 ) -> bool {
     use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 
+    // Handle Mapped types with explicit readonly modifier (e.g., Readonly<T>).
+    // All index access on such types is readonly regardless of string/number kind.
+    if let Some(TypeData::Mapped(mapped_id)) = interner.lookup(type_id) {
+        let mapped = interner.mapped_type(mapped_id);
+        if mapped.readonly_modifier == Some(MappedModifier::Add) {
+            return true;
+        }
+    }
+
     // Handle Union types - index signature is readonly if ANY member has it readonly
     if let Some(TypeData::Union(types)) = interner.lookup(type_id) {
         let type_list = interner.type_list(types);
@@ -184,6 +201,39 @@ pub fn is_readonly_index_signature(
     }
 
     false
+}
+
+/// Check if a type is a mapped type with an explicit readonly modifier.
+///
+/// Returns `true` for types like `Readonly<T>` (`{ readonly [P in keyof T]: T[P] }`),
+/// where the mapped type has `+readonly`. Resolves Lazy/Application wrappers.
+///
+/// For `Application(base, args)` (e.g., `Readonly<T>` where T is generic),
+/// evaluates the base type alias to check if the underlying mapped type
+/// has a readonly modifier.
+pub fn is_mapped_type_with_readonly_modifier(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match interner.lookup(type_id) {
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = interner.mapped_type(mapped_id);
+            mapped.readonly_modifier == Some(MappedModifier::Add)
+        }
+        Some(TypeData::Application(app_id)) => {
+            let resolved = evaluate_type(interner, type_id);
+            if resolved != type_id {
+                return is_mapped_type_with_readonly_modifier(interner, resolved);
+            }
+            let app = interner.type_application(app_id);
+            is_mapped_type_with_readonly_modifier(interner, app.base)
+        }
+        Some(TypeData::Lazy(_)) => {
+            let resolved = evaluate_type(interner, type_id);
+            if resolved == type_id {
+                return false;
+            }
+            is_mapped_type_with_readonly_modifier(interner, resolved)
+        }
+        _ => false,
+    }
 }
 
 /// Check if a string represents a valid numeric property name.
