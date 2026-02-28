@@ -493,6 +493,38 @@ fn getter_setter_pair_in_object_literal_no_error() {
     assert_eq!(ts1118, 0, "Getter+setter pair should NOT produce TS1118");
 }
 
+/// Test that `class Object {}` at file scope in a module does NOT produce TS2300.
+/// In tsc, the local class shadows the global `Object` from lib (different scopes).
+/// Our binder simulates this by creating a new symbol instead of merging with the
+/// lib symbol when a CLASS declaration collides with a lib VALUE symbol.
+#[test]
+fn class_shadowing_lib_global_no_ts2300() {
+    let diagnostics = verify_errors(
+        "export {}; class Object {}",
+        &[], // No TS2300 expected — local class shadows global Object
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "class Object at file scope should shadow lib Object, NOT produce TS2300"
+    );
+}
+
+/// Test that `function require() {}` at file scope in a module does NOT produce TS2300.
+/// Same shadowing principle as class — local function shadows lib function.
+#[test]
+fn function_shadowing_lib_global_no_ts2300() {
+    let diagnostics = verify_errors(
+        "export {}; function require() {}",
+        &[], // No TS2300 expected
+    );
+    let ts2300 = diagnostics.iter().filter(|d| d.code == 2300).count();
+    assert_eq!(
+        ts2300, 0,
+        "function require at file scope should shadow lib require, NOT produce TS2300"
+    );
+}
+
 /// Test that exported and non-exported classes with the same name in merging
 /// namespaces do NOT produce TS2300. tsc allows this because they occupy
 /// different visibility scopes.

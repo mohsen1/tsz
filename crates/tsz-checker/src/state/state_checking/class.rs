@@ -72,7 +72,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2725: Class name cannot be 'Object' when targeting ES5 and above with module X
-        // Only applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes
+        // Applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes.
+        // For Node16/NodeNext/Node18/Node20, only applies when the file is CJS format
+        // (determined by package.json "type" field and file extension).
         if class.name.is_some()
             && !self.has_declare_modifier(&class.modifiers)
             && let Some(name_node) = self.ctx.arena.get(class.name)
@@ -86,6 +88,32 @@ impl<'a> CheckerState<'a> {
                 ModuleKind::AMD => Some("AMD"),
                 ModuleKind::UMD => Some("UMD"),
                 ModuleKind::System => Some("System"),
+                // For Node module kinds, only emit for CJS-format files
+                ModuleKind::Node16
+                | ModuleKind::Node18
+                | ModuleKind::Node20
+                | ModuleKind::NodeNext => {
+                    let file_is_cjs = match self.ctx.file_is_esm {
+                        Some(true) => false,
+                        Some(false) => true,
+                        None => {
+                            // Fallback: use file extension heuristic
+                            let f = &self.ctx.file_name;
+                            !f.ends_with(".mjs") && !f.ends_with(".mts")
+                        }
+                    };
+                    if file_is_cjs {
+                        match module {
+                            ModuleKind::Node16 => Some("Node16"),
+                            ModuleKind::Node18 => Some("Node18"),
+                            ModuleKind::Node20 => Some("Node20"),
+                            ModuleKind::NodeNext => Some("NodeNext"),
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        None
+                    }
+                }
                 _ => None, // ES modules and None don't trigger this error
             };
             if let Some(module_name) = module_name {
