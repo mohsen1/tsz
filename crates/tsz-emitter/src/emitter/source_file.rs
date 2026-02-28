@@ -325,8 +325,11 @@ impl<'a> Printer<'a> {
         let first_stmt_is_auto_accessor_class = source
             .statements
             .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
+            .iter()
+            .filter_map(|&idx| self.arena.get(idx))
+            .find(|stmt_node| {
+                !self.ctx.flags.in_declaration_emit && !self.is_erased_statement(stmt_node)
+            })
             .is_some_and(|stmt_node| {
                 stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && self

@@ -30,5 +30,13 @@ globset = { workspace = true }
 stacker = "0.1.23"
 web-time = { workspace = true }
 
+[[test]]
+name = "ts2725_tests"
+path = "tests/ts2725_tests.rs"
+
+[[test]]
+name = "ts2300_tests"
+path = "tests/ts2300_tests.rs"
+
 [lints]
 workspace = true

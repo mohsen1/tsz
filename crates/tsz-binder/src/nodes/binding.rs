@@ -1094,12 +1094,16 @@ impl BinderState {
             // In tsc, file-scope value declarations (function, var, class) shadow
             // identically-named globals from lib files — they live in different scopes.
             // Our model merges lib symbols into the file scope, so we simulate shadowing
-            // by creating a new symbol instead of merging when a user value declaration
-            // collides with a lib-originated value symbol.
+            // by creating a new symbol instead of merging when a user function or class
+            // declaration collides with a lib-originated value symbol.
+            // Note: var/const/let (VARIABLE) shadowing is not yet safe because the checker
+            // may need to infer the local variable's type from an expression referencing the
+            // global (e.g. `const Symbol = globalThis.Symbol`), and creating a separate
+            // symbol breaks that inference path. Functions and classes define their own types.
             // Interfaces and namespaces still merge (augmentation is correct behavior).
             if self.lib_symbol_ids.contains(&existing_id)
-                && (flags & symbol_flags::FUNCTION) != 0
-                && (existing_flags & symbol_flags::FUNCTION) != 0
+                && (flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                && (existing_flags & symbol_flags::VALUE) != 0
                 && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
             {
                 let sym_id = self.symbols.alloc(flags, name.to_string());

@@ -36,12 +36,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Wrap negative const enum inline values in parens to avoid
+        // ambiguity: `(-1 /* Foo.A */).toString()` vs `-1.toString()`.
+        let needs_negative_parens =
+            self.expression_is_negative_const_enum_inline(access.expression);
+
+        if needs_negative_parens {
+            self.write("(");
+        }
+
         // Signal that the expression is in access position so `emit_parenthesized`
         // preserves parens around `new` expressions: `(new a).b` vs `new a.b`.
         let prev = self.paren_in_access_position;
         self.paren_in_access_position = true;
         self.emit(access.expression);
         self.paren_in_access_position = prev;
+
+        if needs_negative_parens {
+            self.write(")");
+        }
 
         // Preserve multi-line property access chains from the original source.
         // TypeScript preserves the original line break pattern. If there's a
@@ -375,12 +388,16 @@ impl<'a> Printer<'a> {
         let member_name = &self.arena.get_identifier(name_node)?.escaped_text;
 
         let value = members.get(member_name.as_str())?;
-        Some(format!(
-            "{} /* {}.{} */",
-            value.to_js_literal(),
-            enum_name,
-            member_name
-        ))
+        if self.ctx.options.remove_comments {
+            Some(value.to_js_literal())
+        } else {
+            Some(format!(
+                "{} /* {}.{} */",
+                value.to_js_literal(),
+                enum_name,
+                member_name
+            ))
+        }
     }
 
     /// Try to inline an element access to a const enum member.
@@ -404,12 +421,63 @@ impl<'a> Printer<'a> {
         let member_name = &self.arena.get_literal(arg_node)?.text;
 
         let value = members.get(member_name.as_str())?;
-        Some(format!(
-            "{} /* {}[\"{}\"] */",
-            value.to_js_literal(),
-            enum_name,
-            member_name
-        ))
+        if self.ctx.options.remove_comments {
+            Some(value.to_js_literal())
+        } else {
+            Some(format!(
+                "{} /* {}[\"{}\"] */",
+                value.to_js_literal(),
+                enum_name,
+                member_name
+            ))
+        }
+    }
+
+    /// Check if a node expression would inline to a negative const enum value.
+    /// Used to determine if parentheses are needed around the expression
+    /// (e.g., `(-1 /* Foo.A */).toString()` vs `100 /* Foo.X */.toString()`).
+    fn expression_is_negative_const_enum_inline(&self, idx: NodeIndex) -> bool {
+        if self.const_enum_values.is_empty() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        // Check property access: EnumName.Member
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            let expr_node = self.arena.get(access.expression);
+            let name_node = self.arena.get(access.name_or_argument);
+            if let (Some(expr), Some(name)) = (expr_node, name_node)
+                && expr.kind == SyntaxKind::Identifier as u16
+                && name.kind == SyntaxKind::Identifier as u16
+                && let Some(enum_ident) = self.arena.get_identifier(expr)
+                && let Some(member_ident) = self.arena.get_identifier(name)
+                && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                && let Some(value) = members.get(member_ident.escaped_text.as_str())
+            {
+                return value.is_negative();
+            }
+        }
+        // Check element access: EnumName["Member"]
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            let expr_node = self.arena.get(access.expression);
+            let arg_node = self.arena.get(access.name_or_argument);
+            if let (Some(expr), Some(arg)) = (expr_node, arg_node)
+                && expr.kind == SyntaxKind::Identifier as u16
+                && arg.kind == SyntaxKind::StringLiteral as u16
+                && let Some(enum_ident) = self.arena.get_identifier(expr)
+                && let Some(lit) = self.arena.get_literal(arg)
+                && let Some(members) = self.const_enum_values.get(enum_ident.escaped_text.as_str())
+                && let Some(value) = members.get(lit.text.as_str())
+            {
+                return value.is_negative();
+            }
+        }
+        false
     }
 
     /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.

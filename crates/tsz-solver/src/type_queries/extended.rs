@@ -70,6 +70,23 @@ pub fn is_number_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Check if two types are literals of the same base kind.
+///
+/// Returns true when both are string literals, both are number literals,
+/// both are boolean literals, or both are bigint literals.
+/// This implements tsc's rule: "If the contextual type is a literal type,
+/// we consider this a literal context for all literals of the same base type."
+pub fn are_same_base_literal_kind(db: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
+    use LiteralTypeKind::*;
+    matches!(
+        (classify_literal_type(db, a), classify_literal_type(db, b)),
+        (String(_), String(_))
+            | (Number(_), Number(_))
+            | (Boolean(_), Boolean(_))
+            | (BigInt(_), BigInt(_))
+    )
+}
+
 /// Get number value from a number literal type.
 pub fn get_number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<f64> {
     match classify_literal_type(db, type_id) {
