@@ -626,6 +626,23 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
                 }
             }
+            // import("module") call in import type position
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    self.write("import(");
+                    if let Some(ref args) = call.arguments {
+                        let mut first = true;
+                        for &arg_idx in &args.nodes {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
+                            self.emit_node(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                }
+            }
             _ => {}
         }
     }
