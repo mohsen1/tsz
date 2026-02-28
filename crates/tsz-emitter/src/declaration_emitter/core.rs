@@ -959,10 +959,22 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Members
         for &member_idx in &class.members.nodes {
+            let before_jsdoc_len = self.writer.len();
+            let saved_comment_idx = self.comment_emit_idx;
             if let Some(mn) = self.arena.get(member_idx) {
                 self.emit_leading_jsdoc_comments(mn.pos);
             }
+            let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
+            if self.writer.len() == before_member_len {
+                // Member didn't emit anything (e.g., skipped implementation overload).
+                // Rollback the speculatively emitted JSDoc comments.
+                self.writer.truncate(before_jsdoc_len);
+                self.comment_emit_idx = saved_comment_idx;
+                if let Some(mn) = self.arena.get(member_idx) {
+                    self.skip_comments_in_node(mn.pos, mn.end);
+                }
+            }
         }
 
         self.decrease_indent();
