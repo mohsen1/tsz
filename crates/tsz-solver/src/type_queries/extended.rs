@@ -546,7 +546,17 @@ pub enum ElementIndexableKind {
 
 /// Classify a type for element indexing capability.
 pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> ElementIndexableKind {
-    // Evaluate the type first to resolve Lazy/Application/Conditional wrappers
+    // Check union on the RAW type BEFORE evaluation.
+    // evaluate_type can collapse unions via subtype simplification
+    // (e.g. `{ a: number } | { [s: string]: number }` becomes just the indexed type),
+    // which loses per-constituent indexability information needed for TS7053 checks.
+    // Note: we only do this for unions, not intersections. Intersections need evaluation
+    // to resolve to their structural form (e.g. conditional type inference with `infer`).
+    if let Some(TypeData::Union(members_id)) = db.lookup(type_id) {
+        return ElementIndexableKind::Union(db.type_list(members_id).to_vec());
+    }
+
+    // Evaluate to resolve Lazy/Application/Conditional wrappers
     // to their underlying structural form (e.g., Application(Boxified, [T]) → Mapped).
     let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
     match db.lookup(evaluated) {
