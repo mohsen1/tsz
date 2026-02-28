@@ -27,6 +27,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
+        if self.should_skip_ns_internal_member(&iface.modifiers) {
+            return;
+        }
 
         self.write_indent();
         if is_exported {

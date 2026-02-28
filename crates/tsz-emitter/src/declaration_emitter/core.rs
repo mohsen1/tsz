@@ -66,6 +66,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) import_plan: ImportPlan,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     pub(super) inside_declare_namespace: bool,
+    /// Whether we're inside a non-ambient namespace (filter non-exported members)
+    pub(super) inside_non_ambient_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     pub(super) in_constructor_params: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
@@ -141,6 +143,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -187,6 +190,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -707,6 +711,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
+        if self.should_skip_ns_internal_member(&func.modifiers) {
+            return;
+        }
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -804,6 +811,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.should_emit_public_api_member(&class.modifiers)
             && !self.should_emit_public_api_dependency(class.name)
         {
+            return;
+        }
+        if self.should_skip_ns_internal_member(&class.modifiers) {
             return;
         }
         let is_abstract = self
@@ -1394,6 +1404,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return;
         }
+        if self.should_skip_ns_internal_member(&alias.modifiers) {
+            return;
+        }
 
         self.write_indent();
         if is_exported {
@@ -1431,6 +1444,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.should_emit_public_api_member(&enum_data.modifiers)
             && !self.should_emit_public_api_dependency(enum_data.name)
         {
+            return;
+        }
+        if self.should_skip_ns_internal_member(&enum_data.modifiers) {
             return;
         }
         let is_const = self
@@ -1828,6 +1844,9 @@ impl<'a> DeclarationEmitter<'a> {
             if !has_dependency {
                 return;
             }
+        }
+        if self.should_skip_ns_internal_member(&var_stmt.modifiers) {
+            return;
         }
 
         for &decl_list_idx in &var_stmt.declarations.nodes {

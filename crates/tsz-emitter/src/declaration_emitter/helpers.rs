@@ -259,6 +259,25 @@ impl<'a> DeclarationEmitter<'a> {
         is_exported
     }
 
+    /// Return true if a declaration should be skipped because it's a
+    /// non-exported value/type inside a non-ambient namespace.
+    /// Namespace and import-alias declarations are NOT filtered here
+    /// (they may be needed for name resolution and are filtered recursively).
+    pub(crate) fn should_skip_ns_internal_member(&self, modifiers: &Option<NodeList>) -> bool {
+        if !self.inside_non_ambient_namespace {
+            return false;
+        }
+        // If the member has an `export` keyword, keep it
+        if self
+            .arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
+        {
+            return false;
+        }
+        // Non-exported member inside non-ambient namespace: skip
+        true
+    }
+
     /// Check if a statement node has the `export` keyword modifier.
     pub(crate) fn stmt_has_export_modifier(
         &self,
