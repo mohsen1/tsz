@@ -1,8 +1,7 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~7139/12570 (56.8%) — full suite, fingerprint-level matching
-**Note**: Scoring now uses fingerprint-level (code+line+column+message) after tsc-cache update. Previous error-code-only score was ~9696/12570 (77.1%).
+**Current score**: ~9700/12570 (77.2%) — full suite, error-code level
 
 ---
 
