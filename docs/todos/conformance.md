@@ -1,8 +1,55 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9641/12570 (76.7%) — full suite, error-code level
+**Current score**: ~9644/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28g — classes/constructorDeclarations: TS2415 parameter properties + TS2673/TS2674 false positive
+
+### Fixed: Parameter property type/visibility checking against base classes — Checker (class_checker.rs)
+
+**Root cause**: Constructor parameter properties (e.g., `constructor(public p?: number)`) are syntactic sugar for class properties but were NOT checked for compatibility with base class members. The main member loop in `check_property_inheritance_compatibility` only handles PROPERTY_DECLARATION, METHOD_DECLARATION, and ACCESSOR nodes via `extract_class_member_info`. Parameter properties live inside the constructor node and were completely skipped.
+
+**Fix**: Added `check_parameter_property_compatibility()` method in `class_checker.rs` that:
+1. Iterates constructor parameters with property modifiers (public, private, protected, readonly)
+2. Finds matching base class members (including private, for visibility conflict detection)
+3. Checks visibility conflicts → emits TS2415 at class name
+4. Checks type compatibility → emits TS2415 at class name
+5. Handles optional parameter property types (`p?: T` → `T | undefined` under strictNullChecks)
+
+**Files**: `crates/tsz-checker/src/classes/class_checker.rs`
+
+### Fixed: Nested class constructor accessibility false positive — Checker (constructor_checker.rs)
+
+**Root cause**: `find_enclosing_class_for_new()` only returned the FIRST (immediately enclosing) class. For nested classes inside a method (e.g., `class A { method() { class B { method() { new A(); } } } }`), it found B but not A, so `new A()` was incorrectly flagged as accessing a private constructor from outside A.
+
+**Fix**: Replaced `find_enclosing_class_for_new()` with `find_all_enclosing_classes()` that walks the COMPLETE AST parent chain, collecting ALL enclosing class symbols. The accessibility check then iterates through all of them — if ANY enclosing class matches the target (for private) or is a subclass (for protected), access is allowed.
+
+**Files**: `crates/tsz-checker/src/classes/constructor_checker.rs`
+
+### Test impact: +5 net (9639→9644)
+- `optionalParameterProperty` (TS2415 parameter property type)
+- `readonlyConstructorAssignment` (TS2415 visibility conflict)
+- `classConstructorAccessibility4` (TS2673/TS2674 false positive)
+- `privateNamesConstructorChain-1` (nested class scope bonus)
+- `typeofANonExportedType` (bonus)
+
+### Unit tests added: 5 new tests in `constructor_accessibility.rs`
+- `test_nested_class_in_method_accesses_private_constructor`
+- `test_nested_class_in_method_accesses_protected_constructor`
+- `test_private_constructor_blocked_from_external_nested`
+- `test_parameter_property_optional_incompatible_with_base`
+- `test_parameter_property_visibility_conflict_with_base`
+
+### Remaining gaps in classes/constructorDeclarations area:
+1. **TS5107** (3 tests): Deprecated compiler option warnings — config-level, low priority
+2. **TS2300/TS2687** (1 test): Duplicate identifier + modifier mismatch for parameter properties — binder/checker
+3. **TS1098** (2 tests): Empty type parameter list — parser level
+4. **TS1441** (1 test): Cannot start function call in type annotation — parser level
+5. **declarationEmitPrivateSymbolCausesVarDeclarationEmit2** (1 test): Symbol-keyed private properties in multi-file test — `get_property_name()` returns None for computed symbol property names
+6. **12 fingerprint-only failures**: Error codes match but line/message mismatches
 
 ---
 
