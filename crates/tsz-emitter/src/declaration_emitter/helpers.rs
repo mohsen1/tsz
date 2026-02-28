@@ -264,30 +264,57 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
-        // `export {};` is needed when the file is a module (has any import/export
-        // syntax, including declarations with `export` modifier) AND the .d.ts
-        // output contains at least one non-exported declaration that needs a
-        // scope marker to preserve module semantics.
+        // Mirrors tsc's `transformDeclarations` logic:
+        //   `isExternalModule(node) && (!resultHasExternalModuleIndicator
+        //       || (needsScopeFixMarker && !resultHasScopeMarker))`
+        //
+        // `export {};` is added when:
+        //   1. The original file is an external module, AND
+        //   2. Either the .d.ts output has no module indicator, OR there is a
+        //      non-exported declaration AND no export/exportAssignment statement
+        //      that already acts as a scope marker.
+        //
+        // In tsc, only ExportDeclaration, ExportAssignment, and
+        // NamespaceExportDeclaration set `resultHasScopeMarker`. Import
+        // declarations do NOT set the scope marker.
         let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
                 let k = stmt_node.kind;
-                // Import/export statement kinds
                 k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                    // Any declaration with an `export` modifier also makes this a module
                     || self.stmt_has_export_modifier(stmt_node)
             })
         });
 
-        is_module
-            && source_file.statements.nodes.iter().any(|&stmt_idx| {
-                self.arena
-                    .get(stmt_idx)
-                    .is_some_and(|stmt_node| self.stmt_needs_scope_marker(stmt_node))
+        if !is_module {
+            return false;
+        }
+
+        let needs_scope_fix = source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena
+                .get(stmt_idx)
+                .is_some_and(|stmt_node| self.stmt_needs_scope_marker(stmt_node))
+        });
+
+        if !needs_scope_fix {
+            return false;
+        }
+
+        // In tsc, only export statements set resultHasScopeMarker.
+        // Import declarations do NOT count as scope markers.
+        let has_scope_marker = source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
             })
+        });
+
+        !has_scope_marker
     }
 
     /// Equivalent to tsc's `needsScopeMarker`: returns true when a statement is
@@ -1666,7 +1693,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Format a literal value as an initializer string for `const` declarations in .d.ts.
     ///
     /// Produces the value form used in `declare const x = "abc"` style declarations.
-    fn format_literal_initializer(
+    pub(crate) fn format_literal_initializer(
         lit: &tsz_solver::types::LiteralValue,
         interner: &tsz_solver::TypeInterner,
     ) -> String {

@@ -864,6 +864,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("?");
         }
 
+        // Check if readonly for literal initializer form
+        let is_readonly = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::ReadonlyKeyword);
+
         // Type - use explicit annotation if present, otherwise use inferred type
         // SPECIAL CASE: For private properties, TypeScript omits type annotations in .d.ts
         if prop.type_annotation.is_some() && !is_private {
@@ -873,8 +878,20 @@ impl<'a> DeclarationEmitter<'a> {
             // For abstract properties OR properties with initializers (non-private), use inferred type
             // Private properties never get inferred types (prevents type leak)
             if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                self.write(": ");
-                self.write(&self.print_type_id(type_id));
+                // For readonly properties with literal types, use `= value` form
+                // (same as const declarations in tsc)
+                if is_readonly
+                    && !is_abstract
+                    && !prop.question_token
+                    && let Some(interner) = self.type_interner
+                    && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
+                {
+                    self.write(" = ");
+                    self.write(&Self::format_literal_initializer(&lit, interner));
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(type_id));
+                }
             } else if let Some(type_text) = self.infer_fallback_type_text(prop.initializer) {
                 self.write(": ");
                 self.write(&type_text);
