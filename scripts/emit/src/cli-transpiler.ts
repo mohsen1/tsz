@@ -189,6 +189,7 @@ export class CliTranspiler {
       alwaysStrict?: boolean;
       sourceMap?: boolean;
       inlineSourceMap?: boolean;
+      declarationMap?: boolean;
       downlevelIteration?: boolean;
       noEmitHelpers?: boolean;
       noEmitOnError?: boolean;
@@ -216,6 +217,7 @@ export class CliTranspiler {
       alwaysStrict = false,
       sourceMap = false,
       inlineSourceMap = false,
+      declarationMap = false,
       downlevelIteration = false,
       noEmitHelpers = false,
       noEmitOnError = false,
@@ -308,6 +310,7 @@ export class CliTranspiler {
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
       if (sourceMap) args.push('--sourceMap');
       if (inlineSourceMap) args.push('--inlineSourceMap');
+      if (declarationMap) args.push('--declarationMap');
       if (downlevelIteration) args.push('--downlevelIteration');
       if (noEmitHelpers) args.push('--noEmitHelpers');
       if (noEmitOnError) args.push('--noEmitOnError');
@@ -374,6 +377,7 @@ export class CliTranspiler {
           if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
           if (sourceMap) retryArgs.push('--sourceMap');
           if (inlineSourceMap) retryArgs.push('--inlineSourceMap');
+          if (declarationMap) retryArgs.push('--declarationMap');
           if (downlevelIteration) retryArgs.push('--downlevelIteration');
           if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
           if (noEmitOnError) retryArgs.push('--noEmitOnError');
