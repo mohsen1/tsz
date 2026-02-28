@@ -103,9 +103,10 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> u32 {
         // Check shared cache first
         if let Some(cache) = &self.shared_symbol_last_assignment_pos
-            && let Some(&pos) = cache.borrow().get(&symbol_id) {
-                return pos;
-            }
+            && let Some(&pos) = cache.borrow().get(&symbol_id)
+        {
+            return pos;
+        }
 
         let result = self.compute_last_assignment_pos(reference);
 
