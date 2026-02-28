@@ -1537,6 +1537,40 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         })
     }
 
+    /// Erase a signature's own type parameters by substituting defaults (or constraints, or unknown).
+    /// Returns a new CallSignature with no type_params and all types instantiated.
+    /// This is used when the source signature is generic but the target is not --
+    /// tsc instantiates the source's type params with their defaults before inferring.
+    fn erase_signature_type_params(&self, sig: &CallSignature) -> CallSignature {
+        if sig.type_params.is_empty() {
+            return sig.clone();
+        }
+        let mut sub = TypeSubstitution::new();
+        for tp in &sig.type_params {
+            let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
+            sub.insert(tp.name, replacement);
+        }
+        CallSignature {
+            type_params: Vec::new(),
+            params: sig
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_type(self.interner, p.type_id, &sub),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect(),
+            this_type: sig
+                .this_type
+                .map(|t| instantiate_type(self.interner, t, &sub)),
+            return_type: instantiate_type(self.interner, sig.return_type, &sub),
+            type_predicate: sig.type_predicate.clone(),
+            is_method: sig.is_method,
+        }
+    }
+
     fn erase_placeholders_for_inference(
         &self,
         ty: TypeId,
@@ -1570,11 +1604,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         is_constructor: bool,
     ) -> Option<usize> {
         let target_erased = self.erase_placeholders_for_inference(target_fn, var_map);
+        // First pass: try non-generic signatures
         for (index, sig) in signatures.iter().enumerate() {
             if !sig.type_params.is_empty() {
                 continue;
             }
             let source_fn = self.function_type_from_signature(sig, is_constructor);
+            if self.checker.is_assignable_to(source_fn, target_erased) {
+                return Some(index);
+            }
+        }
+        // Second pass: try generic signatures with type params erased to defaults
+        for (index, sig) in signatures.iter().enumerate() {
+            if sig.type_params.is_empty() {
+                continue;
+            }
+            let erased = self.erase_signature_type_params(sig);
+            let source_fn = self.function_type_from_signature(&erased, is_constructor);
             if self.checker.is_assignable_to(source_fn, target_erased) {
                 return Some(index);
             }
@@ -1598,10 +1644,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if source_signatures.len() == 1 && target_signatures.len() == 1 {
             let source_sig = &source_signatures[0];
             let target_sig = &target_signatures[0];
-            if source_sig.type_params.is_empty() && target_sig.type_params.is_empty() {
-                self.constrain_call_signature_to_call_signature(
-                    ctx, var_map, source_sig, target_sig, priority,
-                );
+            if target_sig.type_params.is_empty() {
+                if source_sig.type_params.is_empty() {
+                    self.constrain_call_signature_to_call_signature(
+                        ctx, var_map, source_sig, target_sig, priority,
+                    );
+                } else {
+                    // Source has type params (e.g., generic class construct sig) but target doesn't.
+                    // Erase source type params using defaults/constraints before constraining.
+                    let erased = self.erase_signature_type_params(source_sig);
+                    self.constrain_call_signature_to_call_signature(
+                        ctx, var_map, &erased, target_sig, priority,
+                    );
+                }
             }
             return;
         }
@@ -1609,9 +1664,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if target_signatures.len() == 1 {
             let target_sig = &target_signatures[0];
             if target_sig.type_params.is_empty() {
-                let source_sig = if source_signatures.len() == 1 {
-                    let sig = &source_signatures[0];
-                    sig.type_params.is_empty().then_some(sig)
+                let source_idx = if source_signatures.len() == 1 {
+                    Some(0)
                 } else {
                     let target_fn = self.function_type_from_signature(target_sig, is_constructor);
                     self.select_signature_for_target(
@@ -1620,12 +1674,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         var_map,
                         is_constructor,
                     )
-                    .and_then(|index| source_signatures.get(index))
                 };
-                if let Some(source_sig) = source_sig {
-                    self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, source_sig, target_sig, priority,
-                    );
+                if let Some(idx) = source_idx {
+                    let source_sig = &source_signatures[idx];
+                    if source_sig.type_params.is_empty() {
+                        self.constrain_call_signature_to_call_signature(
+                            ctx, var_map, source_sig, target_sig, priority,
+                        );
+                    } else {
+                        let erased = self.erase_signature_type_params(source_sig);
+                        self.constrain_call_signature_to_call_signature(
+                            ctx, var_map, &erased, target_sig, priority,
+                        );
+                    }
                 }
             }
             return;
@@ -1633,13 +1694,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         if source_signatures.len() == 1 {
             let source_sig = &source_signatures[0];
-            if source_sig.type_params.is_empty() {
-                for target_sig in target_signatures {
-                    if target_sig.type_params.is_empty() {
-                        self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, source_sig, target_sig, priority,
-                        );
-                    }
+            let erased_sig;
+            let effective_sig = if source_sig.type_params.is_empty() {
+                source_sig
+            } else {
+                erased_sig = self.erase_signature_type_params(source_sig);
+                &erased_sig
+            };
+            for target_sig in target_signatures {
+                if target_sig.type_params.is_empty() {
+                    self.constrain_call_signature_to_call_signature(
+                        ctx,
+                        var_map,
+                        effective_sig,
+                        target_sig,
+                        priority,
+                    );
                 }
             }
             return;
@@ -1655,9 +1725,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     is_constructor,
                 ) {
                     let source_sig = &source_signatures[index];
-                    self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, source_sig, target_sig, priority,
-                    );
+                    if source_sig.type_params.is_empty() {
+                        self.constrain_call_signature_to_call_signature(
+                            ctx, var_map, source_sig, target_sig, priority,
+                        );
+                    } else {
+                        let erased = self.erase_signature_type_params(source_sig);
+                        self.constrain_call_signature_to_call_signature(
+                            ctx, var_map, &erased, target_sig, priority,
+                        );
+                    }
                 }
             }
         }
