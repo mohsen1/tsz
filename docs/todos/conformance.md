@@ -1,8 +1,52 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9582/12570 (76.2%) — full suite, error-code level
+**Current score**: ~9643/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28c — Node area: exports encapsulation + TS2823 import attributes
+
+### Fixed: Package.json exports field blocks subpath fallback — CLI (resolution.rs)
+
+**Root cause**: When a package has an `"exports"` field in package.json, the Node.js resolution algorithm requires that ONLY subpaths listed in the exports map are importable. Our resolver (`resolve_package_specifier`) fell through to direct file lookup when the exports map didn't match a subpath, incorrectly resolving modules like `"inner/other"` when the package only exported its root entry point.
+
+**Fix**: Added `has_exports` tracking in `resolve_package_specifier()`. When the `exports` field exists and `resolve_package_json_exports` is enabled, we return `None` instead of falling through to `resolve_package_entry()` or `resolve_package_root()`.
+
+**Files**: `crates/tsz-cli/src/driver/resolution.rs:1440-1492`
+**Tests flipped**: 10 tests across the codebase (+4 in node area specifically)
+**Conformance**: 9627 → 9637
+
+### Fixed: Node16 should not support import attributes — Checker (declaration.rs)
+
+**Root cause**: `check_import_attributes_module_option()` included `ModuleKind::Node16` in the "supported" list. But tsc's message explicitly says import attributes are only supported for `esnext`, `node18`, `node20`, `nodenext`, `preserve`. Node 16 only had the deprecated `assert` syntax.
+
+**Fix**: Removed `ModuleKind::Node16` from the `supported` match arm.
+
+**Files**: `crates/tsz-checker/src/declarations/import/declaration.rs:162-169`
+**Tests flipped**: 3 tests (nodeModulesImportAssertions.ts, nodeModulesImportAttributes.ts, nodeModulesResolveJsonModule.ts)
+**Conformance**: 9637 → 9643
+
+### Node area analysis — remaining gaps
+
+After fixes, node area went from 56/94 (59.6%) to 63/94 (67.0%). Remaining 31 failures:
+
+| Issue | Count | Priority |
+|-------|-------|----------|
+| TS2307 missing (module resolution gaps) | 8 | HIGH — various subpath resolution edge cases |
+| TS2305 missing (no exported member) | 6 | MEDIUM — import mode declaration emit |
+| TS1479 missing (CJS→ESM import check) | 5 | MEDIUM — edge cases in current TS1479 logic |
+| TS2343 missing (tslib helper version) | 4 | LOW — emitter concern |
+| TS2823 extra at fingerprint level | 4 | LOW — emitting on too many lines under node16 |
+| TS2835 "EcmaScript" vs "ECMAScript" | 4 | LOW — message text capitalization |
+| TS5107 extra (deprecation warning) | 2 | LOW — false positive config warning |
+| Other (TS1471, TS1128, TS1434, etc.) | varies | MEDIUM |
+
+Key remaining TS2307 gaps:
+- `nodeModulesImportResolutionNoCycle`: `#type` → self-referential `"package"` mapping
+- `nodeModulesPackageImportsRootWildcardNode16`: `#/*` wildcard imports under node16
+- `ConditionalPackageExports`/`PackageExports`: `./package` relative import in `.cts` files
 
 ---
 
