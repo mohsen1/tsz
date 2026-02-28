@@ -84,7 +84,20 @@ impl<'a> DeclarationEmitter<'a> {
             // Array type
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.arena.get_array_type(type_node) {
+                    let needs_parens = self.arena.get(arr.element_type).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::FUNCTION_TYPE
+                            || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                            || n.kind == syntax_kind_ext::UNION_TYPE
+                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                    });
+                    if needs_parens {
+                        self.write("(");
+                    }
                     self.emit_type(arr.element_type);
+                    if needs_parens {
+                        self.write(")");
+                    }
                     self.write("[]");
                 }
             }
@@ -98,7 +111,17 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | ");
                         }
                         first = false;
+                        let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                        });
+                        if needs_parens {
+                            self.write("(");
+                        }
                         self.emit_type(type_idx);
+                        if needs_parens {
+                            self.write(")");
+                        }
                     }
                 }
             }
@@ -112,7 +135,17 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" & ");
                         }
                         first = false;
+                        let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                        });
+                        if needs_parens {
+                            self.write("(");
+                        }
                         self.emit_type(type_idx);
+                        if needs_parens {
+                            self.write(")");
+                        }
                     }
                 }
             }

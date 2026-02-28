@@ -89,6 +89,10 @@ pub struct DeclarationEmitter<'a> {
     /// Tracks whether any module indicator was emitted in the output
     /// (exported declarations, imports, scope markers)
     pub(super) emitted_module_indicator: bool,
+    /// When true, the current ambient module/namespace body has a mix of
+    /// exported and non-exported members, so `export` keywords should be
+    /// preserved even though `inside_declare_namespace` is true.
+    pub(super) ambient_module_has_scope_marker: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -154,6 +158,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
+            ambient_module_has_scope_marker: false,
         }
     }
 
@@ -201,6 +206,7 @@ impl<'a> DeclarationEmitter<'a> {
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
+            ambient_module_has_scope_marker: false,
         }
     }
 
@@ -1585,10 +1591,13 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Check whether a computed property name expression is suitable for `.d.ts` emission.
     ///
-    /// In tsc, only these computed property names survive into declaration output:
+    /// In tsc, computed property names survive into declaration output when they are
+    /// "entity name expressions" — late-bindable names that can be statically resolved:
     /// 1. String literals: `["hello"]`
-    /// 2. Numeric literals: `[42]`
+    /// 2. Numeric literals: `[42]`, `[-1]`
     /// 3. Well-known symbol accesses: `[Symbol.iterator]`, `[Symbol.hasInstance]`, etc.
+    /// 4. Identifiers referencing unique symbols or const enums: `[key]`, `[O]`
+    /// 5. Property accesses on entity names: `[E.A]`, `[TestEnum.Test1]`
     pub(super) fn should_emit_computed_property(&self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.arena.get(name_idx) else {
             return true;
@@ -1603,7 +1612,13 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        let Some(expr_node) = self.arena.get(computed.expression) else {
+        self.is_entity_name_expression(computed.expression)
+    }
+
+    /// Check if an expression is an "entity name expression" — an expression that can
+    /// appear as a computed property name in declaration output.
+    fn is_entity_name_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
         };
 
@@ -1612,18 +1627,18 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::StringLiteral as u16 => true,
             // Numeric literal: [42]
             k if k == SyntaxKind::NumericLiteral as u16 => true,
-            // Property access: check for Symbol.xxx (well-known symbol)
+            // Identifier: [key], [O], [symb]
+            k if k == SyntaxKind::Identifier as u16 => true,
+            // Property access: [Symbol.iterator], [E.A], [TestEnum.Test1]
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                if let Some(access) = self.arena.get_access_expr(expr_node)
-                    && let Some(lhs_node) = self.arena.get(access.expression)
-                    && lhs_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.arena.get_identifier(lhs_node)
-                    && ident.escaped_text == "Symbol"
-                {
-                    return true;
+                if let Some(access) = self.arena.get_access_expr(expr_node) {
+                    self.is_entity_name_expression(access.expression)
+                } else {
+                    false
                 }
-                false
             }
+            // Prefix unary: [-1]
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => true,
             _ => false,
         }
     }
