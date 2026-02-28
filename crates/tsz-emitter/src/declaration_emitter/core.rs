@@ -763,10 +763,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
         if !self.inside_declare_namespace {
-            if is_exported {
-                self.write("export ");
-            }
             self.write("declare ");
         }
         self.write("function ");
@@ -1451,10 +1451,10 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
         if !self.inside_declare_namespace {
-            if is_exported {
-                self.write("export ");
-            }
             self.write("declare ");
         }
         if is_const {
@@ -1889,10 +1889,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
                     self.write_indent();
+                    if is_exported {
+                        self.write("export ");
+                    }
                     if !self.inside_declare_namespace {
-                        if is_exported {
-                            self.write("export ");
-                        }
                         self.write("declare ");
                     }
                     self.write(keyword);
@@ -1975,10 +1975,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         for ident_idx in bindings {
             self.write_indent();
+            if is_exported {
+                self.write("export ");
+            }
             if !self.inside_declare_namespace {
-                if is_exported {
-                    self.write("export ");
-                }
                 self.write("declare ");
             }
             self.write(keyword);
