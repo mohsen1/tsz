@@ -43,7 +43,14 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            if !reference_path.contains('.') {
+            // Try adding extensions if the filename part doesn't already have one.
+            // Check the filename (after last /) for a dot, not the whole path,
+            // since paths like "./idx" contain dots in directory components.
+            let file_name_part = Path::new(reference_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(reference_path);
+            if !file_name_part.contains('.') {
                 for ext in [".ts", ".tsx", ".d.ts"] {
                     let candidate = base.join(format!("{reference_path}{ext}"));
                     if known_files.contains(candidate.to_string_lossy().as_ref()) {

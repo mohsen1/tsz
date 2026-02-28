@@ -214,8 +214,14 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
             return true;
         }
 
-        // If the path already has an extension, don't try others
-        if reference_path.contains('.') {
+        // If the filename already has an extension, don't try others.
+        // Check the filename part (after last /), not the whole path,
+        // since paths like "./idx" contain dots in directory components.
+        let has_extension = Path::new(reference_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .is_some_and(|f| f.contains('.'));
+        if has_extension {
             return false;
         }
 
