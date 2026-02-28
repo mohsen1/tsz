@@ -249,9 +249,13 @@ impl<'a> TypePrinter<'a> {
             return "{}".to_string();
         }
 
-        // Filter out `prototype` property - tsc strips it from .d.ts output
-        let is_prototype =
-            |prop: &tsz_solver::types::PropertyInfo| self.resolve_atom(prop.name) == "prototype";
+        // Filter out internal properties that tsc strips from .d.ts output:
+        // - `prototype`: class constructor prototype property
+        // - `__private_brand_*`: internal private member brand fields
+        let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
+            let name = self.resolve_atom(prop.name);
+            name == "prototype" || name.starts_with("__private_brand_")
+        };
 
         // When indent context is set, format as multi-line (matching tsc's .d.ts output)
         if let Some(indent) = self.indent_level {
@@ -264,7 +268,7 @@ impl<'a> TypePrinter<'a> {
 
             let mut lines = Vec::new();
             for property in &shape.properties {
-                if is_prototype(property) {
+                if should_skip_property(property) {
                     continue;
                 }
                 let mut line = String::new();
@@ -306,7 +310,7 @@ impl<'a> TypePrinter<'a> {
             // Flat format when no indent context (non-DTS usage)
             let mut members = Vec::new();
             for property in &shape.properties {
-                if is_prototype(property) {
+                if should_skip_property(property) {
                     continue;
                 }
                 let mut member = String::new();
@@ -532,10 +536,10 @@ impl<'a> TypePrinter<'a> {
             parts.push(self.print_call_signature(sig, true));
         }
 
-        // Add properties (filter out `prototype` - tsc strips it from .d.ts)
+        // Add properties (filter out internal props tsc strips from .d.ts)
         for prop in &callable.properties {
             let name = self.resolve_atom(prop.name);
-            if name == "prototype" {
+            if name == "prototype" || name.starts_with("__private_brand_") {
                 continue;
             }
             let optional = if prop.optional { "?" } else { "" };
