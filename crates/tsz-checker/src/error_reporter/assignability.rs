@@ -1035,6 +1035,28 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
+            SubtypeFailureReason::ReadonlyToMutableAssignment {
+                source_type,
+                target_type,
+            } => {
+                // TS4104: "The type 'X' is 'readonly' and cannot be assigned to the mutable type 'Y'."
+                // TSC emits this as the primary error (replacing TS2322) when a readonly
+                // array/tuple is assigned to a mutable target in a variable assignment context.
+                let source_str = self.format_type(*source_type);
+                let target_str = self.format_type(*target_type);
+                let message = format_message(
+                    diagnostic_messages::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE,
+                    &[&source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE,
+                )
+            }
+
             _ => {
                 // All remaining variants produce a generic "Type X is not assignable to type Y"
                 // with TS2322 code. This covers: PropertyVisibilityMismatch,

@@ -209,6 +209,12 @@ pub enum SubtypeFailureReason {
         property_name: Atom,
         target_type: TypeId,
     },
+    /// Readonly type assigned to mutable target (TS4104).
+    /// Emitted when a readonly array/tuple is assigned to a mutable array/tuple.
+    ReadonlyToMutableAssignment {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
 }
 
 /// Diagnostic severity level.
@@ -402,6 +408,7 @@ pub mod codes {
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
+    pub use dc::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE as READONLY_TO_MUTABLE;
     pub use dc::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE as NO_COMMON_PROPERTIES;
     pub use dc::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE as MISSING_PROPERTIES;
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
@@ -527,6 +534,7 @@ impl SubtypeFailureReason {
             | Self::TooManyParameters { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
+            Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
         }
     }
 
@@ -817,6 +825,16 @@ impl SubtypeFailureReason {
                 PendingDiagnostic::error(
                     codes::EXCESS_PROPERTY,
                     vec![(*property_name).into(), (*target_type).into()],
+                )
+            }
+            Self::ReadonlyToMutableAssignment {
+                source_type,
+                target_type,
+            } => {
+                // TS4104: The type 'X' is 'readonly' and cannot be assigned to the mutable type 'Y'.
+                PendingDiagnostic::error(
+                    codes::READONLY_TO_MUTABLE,
+                    vec![(*source_type).into(), (*target_type).into()],
                 )
             }
         }
