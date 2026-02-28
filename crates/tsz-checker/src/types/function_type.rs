@@ -1032,6 +1032,18 @@ impl<'a> CheckerState<'a> {
                             self.ctx.contextual_type = prev_ctx;
                             t
                         });
+                    // For async expression-bodied arrows, unwrap Promise from the
+                    // actual return type, matching check_return_statement behavior.
+                    // `async (): Promise<T> => p` where p is Promise<T>: the body
+                    // expression type is Promise<T> but the expected type is T
+                    // (already unwrapped). We must unwrap the actual type too so
+                    // the assignability check compares T vs T, not Promise<T> vs T.
+                    let actual_return = if is_async_for_context {
+                        self.unwrap_promise_type(actual_return)
+                            .unwrap_or(actual_return)
+                    } else {
+                        actual_return
+                    };
                     self.check_assignable_or_report(actual_return, expected_return_type, body);
                 }
             }
