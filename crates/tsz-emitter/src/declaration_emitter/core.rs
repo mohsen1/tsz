@@ -1596,6 +1596,16 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    /// Check whether a property/element access is a simple enum member access (E.A or E["key"]).
+    /// Returns true only when the left-hand side is a simple identifier (not a chain like a.b.c).
+    pub(super) fn is_simple_enum_access(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        if let Some(access) = self.arena.get_access_expr(node)
+            && let Some(expr_node) = self.arena.get(access.expression) {
+                return expr_node.kind == SyntaxKind::Identifier as u16;
+            }
+        false
+    }
+
     /// Check whether a computed property name expression is suitable for `.d.ts` emission.
     ///
     /// In tsc, computed property names survive into declaration output when they are

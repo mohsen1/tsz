@@ -1536,9 +1536,11 @@ impl<'a> DeclarationEmitter<'a> {
                         // Handle negative numeric/bigint literals: PrefixUnaryExpression(-X)
                         || (k == tsz_parser::parser::syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                             && self.is_negative_literal(init_node))
-                        // Handle enum member accesses: E.A, E["non identifier"]
-                        || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                        // Handle simple enum member accesses: E.A, E["key"]
+                        // Only allow when left-hand side is a simple identifier (not deep chains)
+                        || ((k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                            && self.is_simple_enum_access(init_node))
                 } else {
                     false
                 }
