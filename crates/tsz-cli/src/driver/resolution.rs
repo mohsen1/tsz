@@ -1175,6 +1175,8 @@ const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
 #[derive(Debug, Deserialize)]
 struct PackageJson {
     #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
     types: Option<String>,
     #[serde(default)]
     typings: Option<String>,
@@ -1296,6 +1298,44 @@ fn resolve_node_module_specifier(
 ) -> Option<PathBuf> {
     let (package_name, subpath) = split_package_specifier(module_specifier)?;
     let conditions = export_conditions(options);
+
+    // Self-reference: check if any ancestor package.json has a "name" matching
+    // the import specifier. Node.js supports importing your own package by name
+    // using the "exports" field in package.json.
+    {
+        let mut dir = from_file.parent().unwrap_or(base_dir);
+        loop {
+            let pj_path = dir.join("package.json");
+            if pj_path.is_file() {
+                if let Some(pj) = read_package_json(&pj_path) {
+                    if pj.name.as_deref() == Some(&package_name) {
+                        let resolved = resolve_package_specifier(
+                            dir,
+                            subpath.as_deref(),
+                            Some(&pj),
+                            &conditions,
+                            options,
+                        );
+                        if resolved.is_some() {
+                            return resolved;
+                        }
+                    }
+                    // Stop at the first package.json with a name (that's the package boundary)
+                    if pj.name.is_some() {
+                        break;
+                    }
+                }
+            }
+            if dir == base_dir {
+                break;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
