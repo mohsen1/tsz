@@ -58,6 +58,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS7010/TS7011 when the file has parse errors.
+        // TSC does not emit implicit-any return diagnostics for files with syntax errors,
+        // since the parse error itself is sufficient and the AST shape may be unreliable.
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
         // In checkJs mode, be conservative and skip implicit-any return diagnostics in JS files.
         if self.is_js_file() {
             return;
