@@ -159,16 +159,17 @@ impl<'a> DeclarationEmitter<'a> {
                         first = false;
                         if let Some(elem_node) = self.arena.get(elem_idx)
                             && elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
-                                && let Some(elem) = self.arena.get_binding_element(elem_node) {
-                                    if elem.dot_dot_dot_token {
-                                        self.write("...");
-                                    }
-                                    if elem.property_name.is_some() {
-                                        self.emit_node(elem.property_name);
-                                        self.write(": ");
-                                    }
-                                    self.emit_node(elem.name);
-                                }
+                            && let Some(elem) = self.arena.get_binding_element(elem_node)
+                        {
+                            if elem.dot_dot_dot_token {
+                                self.write("...");
+                            }
+                            if elem.property_name.is_some() {
+                                self.emit_node(elem.property_name);
+                                self.write(": ");
+                            }
+                            self.emit_node(elem.name);
+                        }
                     }
                     self.write(" }");
                 }
