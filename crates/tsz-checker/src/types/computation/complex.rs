@@ -370,9 +370,24 @@ impl<'a> CheckerState<'a> {
 
         // TS18046: Constructing an expression of type `unknown` is not allowed.
         // tsc emits TS18046 instead of TS2351 when the constructor type is `unknown`.
+        // Without strictNullChecks, unknown is treated like any (constructable, returns any).
         if constructor_type == TypeId::UNKNOWN {
-            self.error_is_of_type_unknown(new_expr.expression);
-            // Still need to check arguments for definite assignment (TS2454)
+            if self.error_is_of_type_unknown(new_expr.expression) {
+                // Still need to check arguments for definite assignment (TS2454)
+                let args = match new_expr.arguments.as_ref() {
+                    Some(a) => a.nodes.as_slice(),
+                    None => &[],
+                };
+                let check_excess_properties = false;
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |_i, _arg_count| None,
+                    check_excess_properties,
+                    None,
+                );
+                return TypeId::ERROR;
+            }
+            // Without strictNullChecks, treat unknown like any
             let args = match new_expr.arguments.as_ref() {
                 Some(a) => a.nodes.as_slice(),
                 None => &[],
@@ -384,7 +399,7 @@ impl<'a> CheckerState<'a> {
                 check_excess_properties,
                 None,
             );
-            return TypeId::ERROR;
+            return TypeId::ANY;
         }
 
         // Resolve TypeQuery types (`typeof X`) that may come through interface/object

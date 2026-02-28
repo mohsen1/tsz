@@ -517,9 +517,8 @@ impl<'a> CheckerState<'a> {
                 // Evaluate operand for side effects / flow analysis
                 let operand_type = self.get_type_of_node(unary.operand);
 
-                // TS18046: unary +/- on unknown is not allowed
-                if operand_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(unary.operand);
+                // TS18046: unary +/- on unknown is not allowed (strictNullChecks only)
+                if operand_type == TypeId::UNKNOWN && self.error_is_of_type_unknown(unary.operand) {
                     return TypeId::ERROR;
                 }
 
@@ -618,10 +617,9 @@ impl<'a> CheckerState<'a> {
                 // fails (TS2356), the lvalue check (TS2357) is skipped.
                 let operand_type = self.get_type_of_node(unary.operand);
 
-                // TS18046: ++/-- on unknown is not allowed.
+                // TS18046: ++/-- on unknown is not allowed (strictNullChecks only).
                 // tsc emits TS18046 instead of TS2356 for unknown operands.
-                if operand_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(unary.operand);
+                if operand_type == TypeId::UNKNOWN && self.error_is_of_type_unknown(unary.operand) {
                     return TypeId::NUMBER;
                 }
 
