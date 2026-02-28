@@ -36,7 +36,12 @@ impl<'a> CheckerState<'a> {
     // Binary Operator Errors
     // =========================================================================
 
-    /// Emits TS18050 for null/undefined operands in binary operations.
+    /// Emits TS18050 or TS18048/TS18047 for null/undefined operands in binary operations.
+    ///
+    /// tsc distinguishes between:
+    /// - **TS18050**: The literal `undefined`/`null` keyword is used directly (e.g., `undefined < 3`)
+    /// - **TS18048**: A variable whose type is `undefined` (e.g., `x < 3` where `x: undefined`)
+    /// - **TS18047**: A variable whose type is `null` (e.g., `x < 3` where `x: null`)
     pub(crate) fn check_and_emit_nullish_binary_operands(
         &mut self,
         left_idx: NodeIndex,
@@ -105,34 +110,33 @@ impl<'a> CheckerState<'a> {
         }
 
         if left_is_nullish && should_emit_nullish_error {
-            let value_name = if left_type == TypeId::NULL {
-                "null"
-            } else {
-                "undefined"
-            };
-            if let Some(loc) = self.get_source_location(left_idx) {
-                let message = format_message(
-                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
-                    &[value_name],
-                );
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    loc.start,
-                    loc.length(),
-                    message,
-                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                ));
-                emitted_nullish_error = true;
-            }
+            self.emit_nullish_operand_error(left_idx, left_type);
+            emitted_nullish_error = true;
         }
 
         if right_is_nullish && should_emit_nullish_error {
-            let value_name = if right_type == TypeId::NULL {
+            self.emit_nullish_operand_error(right_idx, right_type);
+            emitted_nullish_error = true;
+        }
+
+        emitted_nullish_error
+    }
+
+    /// Emit the appropriate diagnostic for a nullish binary operand.
+    ///
+    /// - If the expression is the literal `null`/`undefined` keyword → TS18050
+    /// - If the expression is a variable with a null/undefined type → TS18048/TS18047
+    fn emit_nullish_operand_error(&mut self, idx: NodeIndex, operand_type: TypeId) {
+        let is_literal = self.is_literal_null_or_undefined_node(idx);
+
+        if is_literal {
+            // Literal null/undefined keyword → TS18050 "The value 'X' cannot be used here."
+            let value_name = if operand_type == TypeId::NULL {
                 "null"
             } else {
                 "undefined"
             };
-            if let Some(loc) = self.get_source_location(right_idx) {
+            if let Some(loc) = self.get_source_location(idx) {
                 let message = format_message(
                     diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
                     &[value_name],
@@ -144,11 +148,59 @@ impl<'a> CheckerState<'a> {
                     message,
                     diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
                 ));
-                emitted_nullish_error = true;
+            }
+        } else {
+            // Variable/expression with null/undefined type → TS18047/TS18048
+            let name = self
+                .ctx
+                .arena
+                .get(idx)
+                .and_then(|node| self.ctx.arena.get_identifier(node))
+                .map(|ident| ident.escaped_text.clone());
+
+            if let Some(ref name) = name {
+                let (code, message) = if operand_type == TypeId::NULL {
+                    (
+                        diagnostic_codes::IS_POSSIBLY_NULL,
+                        format!("'{name}' is possibly 'null'."),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::IS_POSSIBLY_UNDEFINED,
+                        format!("'{name}' is possibly 'undefined'."),
+                    )
+                };
+                if let Some(loc) = self.get_source_location(idx) {
+                    self.ctx.diagnostics.push(Diagnostic::error(
+                        self.ctx.file_name.clone(),
+                        loc.start,
+                        loc.length(),
+                        message,
+                        code,
+                    ));
+                }
+            } else {
+                // Non-identifier expression with nullish type — fall back to TS18050
+                let value_name = if operand_type == TypeId::NULL {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                if let Some(loc) = self.get_source_location(idx) {
+                    let message = format_message(
+                        diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
+                        &[value_name],
+                    );
+                    self.ctx.diagnostics.push(Diagnostic::error(
+                        self.ctx.file_name.clone(),
+                        loc.start,
+                        loc.length(),
+                        message,
+                        diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                    ));
+                }
             }
         }
-
-        emitted_nullish_error
     }
 
     /// Check if a type is string-like (intrinsic `string` or a string literal).

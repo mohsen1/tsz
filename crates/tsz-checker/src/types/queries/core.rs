@@ -988,7 +988,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is a literal `null` keyword or an identifier named `undefined`.
     /// Used to distinguish `null.foo` / `undefined.bar` from `x.foo` where `x: null`.
-    fn is_literal_null_or_undefined_node(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_literal_null_or_undefined_node(&self, idx: NodeIndex) -> bool {
         use tsz_scanner::SyntaxKind;
         if let Some(node) = self.ctx.arena.get(idx) {
             node.kind == SyntaxKind::NullKeyword as u16
