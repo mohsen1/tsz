@@ -69,6 +69,13 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file() {
             return;
         }
+
+        // Suppress TS7010/TS7011 when parse errors exist near the function declaration.
+        // Parser error recovery can produce malformed function nodes (e.g. `function =>`)
+        // where the implicit-any-return diagnostic is noise on top of the syntax error.
+        if self.has_syntax_parse_errors() && self.node_has_nearby_parse_error(fallback_node) {
+            return;
+        }
         // TypeScript does not report TS7010/TS7011 when all value-return paths use
         // an explicit `as any`/`<any>` assertion.
         if let Some(node) = self.ctx.arena.get(fallback_node) {
