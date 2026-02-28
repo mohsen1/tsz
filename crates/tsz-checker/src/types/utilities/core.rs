@@ -79,7 +79,34 @@ impl<'a> CheckerState<'a> {
             } else {
                 // Parameters without type annotations get implicit 'any' type.
                 // TypeScript uses 'any' (with TS7006 when noImplicitAny is enabled).
-                Some(TypeId::ANY)
+                //
+                // In JS files, check the parent function's JSDoc @param {Type} annotations
+                // first. This is how tsc handles JS: @param types are the primary source of
+                // parameter type information, taking precedence over contextual types.
+                let jsdoc_type = if self.is_js_file() {
+                    let pname = self.parameter_name_for_error(param.name);
+                    let mut current = param_idx;
+                    let mut found = None;
+                    for _ in 0..4 {
+                        if let Some(ext) = self.ctx.arena.get_extended(current)
+                            && ext.parent.is_some()
+                        {
+                            current = ext.parent;
+                            if let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
+                                && let Some(t) = self.resolve_jsdoc_param_type(&func_jsdoc, &pname)
+                                {
+                                    found = Some(t);
+                                    break;
+                                }
+                        } else {
+                            break;
+                        }
+                    }
+                    found
+                } else {
+                    None
+                };
+                Some(jsdoc_type.unwrap_or(TypeId::ANY))
             };
             self.pop_symbol_dependency();
 

@@ -319,9 +319,26 @@ impl<'a> CheckerState<'a> {
                         outer_this_type.unwrap_or(TypeId::ANY)
                     }
                 } else {
+                    // In JS files with JSDoc, @param {Type} annotations provide explicit
+                    // parameter types that take priority over contextual types.
+                    // This is how tsc handles JS files: @param types are the primary
+                    // source of parameter type information.
+                    let jsdoc_param_type = if is_js_file {
+                        if let Some(ref jsdoc) = func_jsdoc {
+                            let pname = self.parameter_name_for_error(param.name);
+                            self.resolve_jsdoc_param_type(jsdoc, &pname)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     // Infer from contextual type, default to ANY for implicit any parameters
                     // TypeScript uses `any` (with TS7006) when no contextual type is available.
-                    let inferred_type = if is_js_file {
+                    let inferred_type = if let Some(jsdoc_type) = jsdoc_param_type {
+                        jsdoc_type
+                    } else if is_js_file {
                         // In checkJs mode, contextual `unknown` from weak callback types
                         // (e.g. `(...args: unknown[]) => T`) should not force parameters
                         // to become `unknown`; TypeScript treats these as effectively `any`.

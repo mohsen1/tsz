@@ -1,8 +1,50 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9644/12570 (76.7%) — full suite, error-code level
+**Current score**: ~9641/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28h — jsdoc: JSDoc @param type resolution for JS file parameters
+
+### Fixed: JSDoc @param {Type} annotations now resolved to actual parameter types — Checker (core.rs, function_type.rs, computed.rs, jsdoc_params.rs)
+
+**Root cause**: In JS files, `@param {string} x` annotations were only checked for EXISTENCE (boolean) to suppress TS7006 (implicit any), but the actual TYPE was never extracted and used as the parameter's declared type. Parameters always got `TypeId::ANY` cached in `cache_parameter_types(None)`, called from `statement_callback_bridge` before the function body is checked.
+
+**Fix**: Three-layer approach ensuring JSDoc @param types are resolved at every entry point:
+
+1. **`cache_parameter_types` (core.rs)** — Primary fix. When called without pre-computed types (the `None` path from `statement_callback_bridge`), for JS files, walks up from parameter to parent function, finds JSDoc, extracts `@param {Type}` annotation, and resolves it to a TypeId instead of defaulting to `ANY`.
+
+2. **`build_function_type` (function_type.rs)** — During function signature building, resolves JSDoc @param types before falling back to contextual types. This ensures the function's callable type has correct parameter types.
+
+3. **`compute_type_of_symbol` (computed.rs)** — In the parameter branch, walks up to parent function's JSDoc to resolve @param types. Fallback for symbol-type lookups that bypass `cache_parameter_types`.
+
+**Infrastructure added** (jsdoc_params.rs):
+- `extract_jsdoc_param_type_string()` — extracts type expression string from `@param {Type} name`
+- `resolve_jsdoc_param_type()` — resolves type expression to TypeId, handles optional syntax
+- `is_jsdoc_param_optional_by_brackets()` — detects `[name]` / `[name=default]` bracket syntax
+
+**Optional parameter handling**: JSDoc optional syntax (`@param {number} [p]`, `@param {number} [p=0]`, `@param {number=} q`) correctly resolves to `number | undefined` under strictNullChecks.
+
+**Files**:
+- `crates/tsz-checker/src/types/utilities/core.rs` — JSDoc @param lookup in cache_parameter_types
+- `crates/tsz-checker/src/types/function_type.rs` — JSDoc @param in build_function_type
+- `crates/tsz-checker/src/state/type_analysis/computed.rs` — JSDoc @param in compute_type_of_symbol
+- `crates/tsz-checker/src/types/utilities/jsdoc_params.rs` — type extraction and resolution helpers
+- `crates/tsz-checker/src/types/utilities/jsdoc.rs` — made jsdoc_type_from_expression pub(crate)
+
+### Test impact: ~0 net (9641/12570, was 9642 — 1 timeout likely flaky)
+- `jsdocIndexSignature.ts` now PASS (was missing TS2322)
+- `paramTagBracketsAddOptionalUndefined.ts` remains PASS (optional bracket syntax handled)
+- 1 timeout in `jsDeclarationsReactComponents.ts` accounts for the -1
+
+### Remaining gaps in jsdoc area (100 failing):
+1. **@type on variables** (TS2322): `Array`, `Object`, `Promise` without type params resolve incorrectly in @type annotations
+2. **@satisfies** (TS7006): `@satisfies` tag contextual typing not implemented
+3. **@typedef/@callback**: Complex type definition tags not fully supported
+4. **TS2304/TS2339**: Missing type name resolution and property access on JSDoc-typed objects
+5. **TS1005/TS1003**: JSDoc parsing edge cases (syntax errors)
 
 ---
 
