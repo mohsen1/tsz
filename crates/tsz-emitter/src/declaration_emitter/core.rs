@@ -240,7 +240,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena_to_path = arena_to_path;
     }
 
-    pub fn set_remove_comments(&mut self, remove: bool) {
+    pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
     }
 
