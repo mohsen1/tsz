@@ -320,6 +320,30 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Skip self-referential constraints (e.g., `T extends Foo<T>`).
+                // TypeScript's `hasNonCircularBaseConstraint` returns false for these,
+                // causing `getConstraintOfTypeParameter` to return undefined, which
+                // means the constraint check is skipped entirely.
+                {
+                    let param_name = param.name;
+                    let db = self.ctx.types.as_type_database();
+                    let is_circular = tsz_solver::contains_type_matching(
+                        db,
+                        constraint,
+                        |td| matches!(td, tsz_solver::TypeData::TypeParameter(info) if info.name == param_name),
+                    );
+                    eprintln!(
+                        "[TS2344 CIRCULAR] param_name={:?} constraint={:?} data={:?} is_circular={}",
+                        self.ctx.types.resolve_atom(param_name),
+                        constraint,
+                        db.lookup(constraint),
+                        is_circular
+                    );
+                    if is_circular {
+                        continue;
+                    }
+                }
+
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
 
