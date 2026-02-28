@@ -180,14 +180,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Skip if there's an explicit type annotation
-            if param.type_annotation.is_some() {
-                continue;
-            }
-
             let Some(name_node) = self.ctx.arena.get(param.name) else {
                 continue;
             };
+
+            if param.type_annotation.is_some() {
+                continue;
+            }
 
             // Only process binding patterns (destructuring)
             let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
