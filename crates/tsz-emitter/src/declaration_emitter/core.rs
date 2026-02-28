@@ -546,6 +546,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
+        // Emit source mapping URL comment when declaration maps are enabled
+        if let Some(state) = &self.source_map_state {
+            let map_file = format!("{}.map", state.output_name);
+            self.write(&format!("//# sourceMappingURL={map_file}"));
+            self.write_line();
+        }
+
         self.writer.get_output().to_string()
     }
 
@@ -632,11 +639,33 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
+
+        let kind = stmt_node.kind;
+
+        // For non-declaration statements (expression statements, assignments, etc.),
+        // skip their comments entirely rather than emitting them as leading JSDoc.
+        let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            || kind == syntax_kind_ext::ENUM_DECLARATION
+            || kind == syntax_kind_ext::VARIABLE_STATEMENT
+            || kind == syntax_kind_ext::EXPORT_DECLARATION
+            || kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || kind == syntax_kind_ext::IMPORT_DECLARATION
+            || kind == syntax_kind_ext::MODULE_DECLARATION
+            || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+
+        if !is_declaration_kind {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+
         self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
 
-        let kind = stmt_node.kind;
         let has_export_modifier = self.stmt_has_export_modifier(stmt_node);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -679,9 +708,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 self.emit_namespace_export_declaration(stmt_idx);
             }
-            _ => {
-                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
-            }
+            _ => unreachable!(),
         }
 
         let did_emit = self.writer.len() != before_len;
@@ -851,6 +878,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+
+        // Skip comments within the function body to prevent them from
+        // leaking as leading comments on the next statement.
+        if let Some(body_node) = self.arena.get(func_body) {
+            self.skip_comments_in_node(body_node.pos, body_node.end);
+        }
     }
 
     fn emit_class_declaration(&mut self, class_idx: NodeIndex) {
@@ -2030,6 +2063,13 @@ impl<'a> DeclarationEmitter<'a> {
                             decl.type_annotation.is_some(),
                             decl.initializer.is_some(),
                         );
+
+                        // Skip comments within the declaration's omitted parts (initializer,
+                        // inline type comments) to prevent them from leaking as leading
+                        // comments on the next statement.
+                        if let Some(dn) = self.arena.get(*decl_idx) {
+                            self.skip_comments_in_node(dn.pos, dn.end);
+                        }
                     }
 
                     self.write(";");
