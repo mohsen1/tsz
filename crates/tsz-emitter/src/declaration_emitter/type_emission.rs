@@ -334,10 +334,16 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Mapped type
+            // Mapped type - tsc emits multi-line:
+            //   {
+            //       [P in keyof T]: Type;
+            //   }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
-                    self.write("{ ");
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
 
                     // Emit readonly modifier if present (inside the braces)
                     if mapped_type.readonly_token.is_some() {
@@ -380,7 +386,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // Emit type annotation
                     self.emit_type(mapped_type.type_node);
 
-                    self.write("; }");
+                    self.write(";");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write_indent();
+                    self.write("}");
                 }
             }
 
