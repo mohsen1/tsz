@@ -842,7 +842,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
         if self.remove_comments {
             return;
