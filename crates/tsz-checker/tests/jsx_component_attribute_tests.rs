@@ -1080,3 +1080,96 @@ const x = <div>{{(item: string) => item}}</div>;
     // Just verify no crash — intrinsic elements have broad children types
     let _ = diags;
 }
+
+// =============================================================================
+// Spread attribute type checking (TS2322)
+// =============================================================================
+
+/// JSX preamble with typed intrinsic elements for spread tests
+const JSX_INTRINSIC_PREAMBLE: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        test1: { x: string; y?: number };
+    }
+}
+"#;
+
+#[test]
+fn test_spread_attribute_type_mismatch_emits_ts2322() {
+    // Spreading an object with wrong property type should emit TS2322
+    let source = format!(
+        r#"
+{JSX_INTRINSIC_PREAMBLE}
+var obj = {{ x: 32 }};
+<test1 {{...obj}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for spread with wrong property type, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_spread_attribute_compatible_no_error() {
+    // Spreading a compatible object should not emit TS2322
+    let source = format!(
+        r#"
+{JSX_INTRINSIC_PREAMBLE}
+var obj = {{ x: "hello" }};
+<test1 {{...obj}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 for compatible spread, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_spread_attribute_override_no_ts2322() {
+    // When a later explicit attribute overrides a wrong spread property,
+    // no TS2322 should be emitted for the spread
+    let source = format!(
+        r#"
+{JSX_INTRINSIC_PREAMBLE}
+var obj = {{ x: 32, y: 10 }};
+<test1 {{...obj}} x="ok" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when explicit attr overrides spread, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_spread_attribute_missing_required_is_ts2741_not_ts2322() {
+    // Spreading an object with missing required property should emit TS2741,
+    // not TS2322 — missing properties are handled by the separate TS2741 check
+    let source = format!(
+        r#"
+{JSX_INTRINSIC_PREAMBLE}
+var obj = {{ y: 10 }};
+<test1 {{...obj}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Should have TS2741 (missing 'x')
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Expected TS2741 for missing required property, got: {diags:?}"
+    );
+    // Should NOT have TS2322 — missing properties are TS2741, not TS2322
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 for just-missing properties (use TS2741), got: {diags:?}"
+    );
+}

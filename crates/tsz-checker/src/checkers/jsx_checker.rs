@@ -1153,6 +1153,12 @@ impl<'a> CheckerState<'a> {
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
 
+        // Track spread attributes for deferred assignability checking (TS2322).
+        // We collect (spread_type, spread_expr_idx, attr_index_in_list) and check
+        // after the loop so we can account for explicit attributes that override
+        // spread properties.
+        let mut spread_entries: Vec<(TypeId, NodeIndex, usize)> = Vec::new();
+
         // Check each attribute
         let attr_nodes = &attrs.properties.nodes;
         for (attr_i, &attr_idx) in attr_nodes.iter().enumerate() {
@@ -1442,13 +1448,54 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // NOTE: Per-property spread type checking was removed. tsc checks
-                // spreads as a whole type against the props type (via assignability),
-                // not individual property-by-property. The TS2741 (missing required
-                // property) check below handles the main spread validation case.
-                // Full whole-spread assignability checking (TS2322 for mismatched
-                // spread properties) is deferred until the assignability gate can
-                // produce tsc-matching error messages for spread types.
+                // Track this spread for deferred assignability checking (TS2322).
+                // We check after the loop to account for explicit attribute overrides.
+                if !skip_prop_checks {
+                    spread_entries.push((spread_type, spread_expr_idx, attr_i));
+                }
+            }
+        }
+
+        // TS2322: Check spread attribute property types against props type.
+        // For each spread, check whether properties it provides are type-compatible
+        // with the expected props. tsc checks each spread's properties individually
+        // against the corresponding props type properties and emits TS2322 for type
+        // mismatches. Missing required properties are handled separately by TS2741.
+        //
+        // Collect explicit attribute names that appear AFTER each spread position,
+        // since those override the spread's contribution for those properties.
+        if !spread_entries.is_empty() {
+            // Collect all explicit attribute names with their position in the attr list.
+            let mut explicit_attr_names_with_pos: Vec<(usize, String)> = Vec::new();
+            for (i, &node_idx) in attr_nodes.iter().enumerate() {
+                let Some(node) = self.ctx.arena.get(node_idx) else {
+                    continue;
+                };
+                if node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                    && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(node)
+                    && let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    explicit_attr_names_with_pos.push((i, ident.escaped_text.as_str().to_string()));
+                }
+            }
+
+            for &(spread_type, _spread_expr_idx, _spread_pos) in &spread_entries {
+                // Skip properties that also appear as explicit attributes — either
+                // before or after the spread. When after: the explicit attr overrides
+                // the spread. When before: the spread overwrites the explicit attr
+                // (TSC handles that case with TS2783, not TS2322 on the spread).
+                let overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect();
+
+                self.check_spread_property_types(
+                    spread_type,
+                    props_type,
+                    tag_name_idx,
+                    &overridden,
+                );
             }
         }
 
@@ -1515,6 +1562,109 @@ impl<'a> CheckerState<'a> {
                 attributes_idx,
                 &message,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            );
+        }
+    }
+
+    /// TS2322: Check that spread attribute property types are compatible with props.
+    ///
+    /// tsc checks if the spread type is assignable to the expected props type and
+    /// emits TS2322 with "Type '{`spread_type`}' is not assignable to type '{`props_type`}'"
+    /// when a property type mismatch is found. Missing properties are handled
+    /// separately by TS2741, not TS2322.
+    ///
+    /// Properties overridden by explicit attributes (either before or after the spread)
+    /// are excluded from the check.
+    ///
+    /// tsc anchors these errors at the JSX opening tag (not the spread expression).
+    fn check_spread_property_types(
+        &mut self,
+        spread_type: TypeId,
+        props_type: TypeId,
+        tag_name_idx: NodeIndex,
+        overridden_names: &rustc_hash::FxHashSet<&str>,
+    ) {
+        use tsz_solver::operations::property::PropertyAccessResult;
+
+        // Safety guard: skip when types involve unresolved generics or errors
+        if tsz_solver::contains_type_parameters(self.ctx.types, spread_type)
+            || tsz_solver::contains_error_type(self.ctx.types, spread_type)
+        {
+            return;
+        }
+
+        // If the whole spread type is assignable to props, no error needed.
+        // This is the fast path and also prevents false positives from imprecise
+        // per-property extraction (e.g., mapped/conditional/utility types).
+        if self.is_assignable_to(spread_type, props_type) {
+            return;
+        }
+
+        // Resolve the spread type to extract its properties
+        let resolved_spread = self.evaluate_type_with_env(spread_type);
+        let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
+
+        let Some(spread_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
+        else {
+            // If spread type has no object shape (e.g., type parameter), emit
+            // whole-type TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'".
+            let spread_name = self.format_type(spread_type);
+            let props_name = self.format_type(props_type);
+            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                tag_name_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            return;
+        };
+
+        // Check if the mismatch is a TYPE mismatch (not just missing properties).
+        // tsc only emits TS2322 for spread type mismatches, not for missing properties
+        // (those are handled by TS2741).
+        let mut has_type_mismatch = false;
+        for prop in &spread_shape.properties {
+            let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
+
+            // Skip properties overridden by explicit attributes
+            if overridden_names.contains(prop_name.as_str()) {
+                continue;
+            }
+
+            // Skip key/ref — same as other JSX attribute handling
+            if prop_name == "key" || prop_name == "ref" {
+                continue;
+            }
+
+            // Look up the expected type for this property in the props type
+            let expected_type = match self.resolve_property_access_with_env(props_type, &prop_name)
+            {
+                PropertyAccessResult::Success { type_id, .. } => {
+                    tsz_solver::remove_undefined(self.ctx.types, type_id)
+                }
+                _ => continue,
+            };
+
+            // Check if the spread property type is assignable to the expected type
+            if !self.is_assignable_to(prop.type_id, expected_type) {
+                has_type_mismatch = true;
+                break;
+            }
+        }
+
+        // Emit a single TS2322 with whole-type message matching tsc's format:
+        // "Type '{ x: number; }' is not assignable to type 'Attribs1'."
+        if has_type_mismatch {
+            let spread_name = self.format_type(spread_type);
+            let props_name = self.format_type(props_type);
+            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                tag_name_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
     }
