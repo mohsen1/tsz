@@ -110,6 +110,13 @@ impl<'a> NarrowingContext<'a> {
             return false;
         }
 
+        // OBJECT intrinsic (the `object` non-primitive type): typeof === "object"
+        // Check this BEFORE lookup, since OBJECT may have interned data that doesn't
+        // match the structural TypeData variants below.
+        if type_id == TypeId::OBJECT {
+            return true;
+        }
+
         // Check type data for structural types
         if let Some(data) = self.db.lookup(type_id) {
             // Object, intersection, mapped, tuple, array: typeof === "object"
@@ -123,8 +130,7 @@ impl<'a> NarrowingContext<'a> {
                     | TypeData::Array(_)
             )
         } else {
-            // OBJECT intrinsic: typeof === "object"
-            type_id == TypeId::OBJECT
+            false
         }
     }
 

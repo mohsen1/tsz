@@ -90,6 +90,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Suppress TS7006 when a scanner-level parse error (e.g. TS1127 invalid character)
+        // exists near the parameter. This handles cases like `function f(a,¬) {}`
+        // where the sibling token is invalid but the param node itself has no error flag.
+        if self.has_syntax_parse_errors() && self.node_has_nearby_parse_error(param.name) {
+            return;
+        }
+
         let param_name = self.parameter_name_for_error(param.name);
         // Skip if the parameter name is empty (parse recovery artifact)
         if param_name.is_empty() {

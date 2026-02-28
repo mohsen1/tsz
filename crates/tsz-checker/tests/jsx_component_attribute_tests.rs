@@ -628,3 +628,90 @@ let p = <Poisoned x />;
     // TODO: full TS2322 for class component props requires cross-file class heritage
     // resolution which is a deeper issue. For now, verify module resolution works.
 }
+
+// =============================================================================
+// TS2783: JSX spread overwrite detection
+// =============================================================================
+
+#[test]
+fn test_ts2783_jsx_spread_overwrites_explicit_attribute() {
+    // When a required property in a spread follows an explicit attribute with
+    // the same name, TS2783 should be emitted on the explicit attribute.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    a: number;
+    b: number;
+}}
+function Foo(props: Props) {{ return <div />; }}
+const p: Props = {{ a: 1, b: 1 }};
+let x = <Foo a={{1}} {{...p}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        ),
+        "Should emit TS2783 when spread overwrites explicit attribute, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2783_not_emitted_for_optional_spread_property() {
+    // When the spread property is optional, the explicit attribute may NOT be
+    // overwritten at runtime, so TS2783 should NOT be emitted.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    a: number;
+    b: number;
+    d?: number;
+}}
+function Foo(props: Props) {{ return <div />; }}
+const p: Props = {{ a: 1, b: 1 }};
+let x = <Foo d={{1}} {{...p}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        ),
+        "Should NOT emit TS2783 when spread has optional property, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2783_multiple_spreads_track_required_only() {
+    // First spread has optional `d`, so no TS2783. Second spread has required
+    // `d`, so TS2783 fires for the original explicit attribute.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    a: number;
+    d?: number;
+}}
+function Foo(props: Props) {{ return <div />; }}
+const p: Props = {{ a: 1 }};
+let x = <Foo a={{1}} d={{1}} {{...p}} {{...{{ d: 1 }}}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2783_count = diags
+        .iter()
+        .filter(|(c, _)| {
+            *c == diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        })
+        .count();
+    // 'a' overwritten by first spread (required in Props), 'd' overwritten by second spread
+    assert!(
+        ts2783_count >= 2,
+        "Should emit TS2783 for both 'a' (required in first spread) and 'd' (required in second spread), got {ts2783_count} TS2783 errors: {diags:?}"
+    );
+}

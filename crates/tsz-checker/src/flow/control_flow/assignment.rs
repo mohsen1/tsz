@@ -21,11 +21,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         widen_literals_for_destructuring: bool,
     ) -> Option<TypeId> {
-        tracing::trace!(
-            "get_assigned_type called: assignment_node={:?} target={:?}",
-            assignment_node,
-            target
-        );
         let node = self.arena.get(assignment_node)?;
 
         // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
@@ -266,7 +261,7 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(&expr_type) = node_types.get(&for_data.expression.0)
         {
             if parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
-                return Some(TypeId::STRING);
+                return Some(self.for_in_variable_type(expr_type));
             }
             // for-of: extract element type from the array/iterable expression type
             if let Some(elem) = get_array_element_type(self.interner, expr_type) {
@@ -275,6 +270,29 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    /// Compute the type of a for-in loop variable.
+    ///
+    /// Matches tsc: when the expression type has a type parameter, the variable
+    /// gets `keyof T & string` (= `Extract<keyof T, string>`) so that `obj[k]`
+    /// is well-typed. Otherwise returns plain `string`.
+    fn for_in_variable_type(&self, expr_type: TypeId) -> TypeId {
+        use tsz_solver::type_queries::{is_keyof_type, is_type_parameter_like};
+
+        let db = self.interner.as_type_database();
+        let non_nullable = tsz_solver::remove_nullish(db, expr_type);
+        let keyof_type = self.interner.factory().keyof(non_nullable);
+
+        // If keyof evaluates to a type parameter or remains an unevaluated keyof,
+        // return the intersection with string (= Extract<keyof T, string>).
+        if is_type_parameter_like(db, keyof_type) || is_keyof_type(db, keyof_type) {
+            self.interner
+                .factory()
+                .intersection(vec![keyof_type, TypeId::STRING])
+        } else {
+            TypeId::STRING
+        }
     }
 
     pub(crate) fn assignment_rhs_for_reference(

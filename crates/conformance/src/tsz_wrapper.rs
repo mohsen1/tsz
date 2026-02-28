@@ -172,6 +172,9 @@ pub fn prepare_test_dir(
     let allow_js = matches!(explicit_allow_js, Some(v) if v == "true");
     // Match the cache generator's include patterns exactly.
     // The tsc cache always uses .ts/.tsx/.js/.jsx (no .cts/.mts/.mjs/.cjs).
+    // Note: tsc discovers .mts/.cts/.mjs/.cjs files via import resolution
+    // (following imports), not via include patterns. Our source discovery
+    // (driver/sources.rs) handles this through import-following.
     let include = serde_json::json!([
         "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
     ]);

@@ -263,6 +263,11 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
+    /// Cache for last assignment position per symbol, used by closure narrowing.
+    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub symbol_last_assignment_pos: RefCell<FxHashMap<SymbolId, u32>>,
+
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index. Used by flow narrowing to get
     /// predicates with inferred type arguments applied (e.g., `T` -> `string`).

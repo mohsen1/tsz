@@ -415,3 +415,32 @@ pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let (non_nullish, _) = split_nullish_type(types, type_id);
     non_nullish.unwrap_or(TypeId::NEVER)
 }
+
+/// Remove `undefined` from a type while preserving `null` and other members.
+///
+/// Used by JSX attribute checking: when a property is optional (`prop?: T`),
+/// `optional_property_type` adds `undefined` to produce `T | undefined` (the read type).
+/// For write positions (providing an attribute value), `undefined` should be stripped
+/// to match TSC's `removeMissingType` behavior.
+pub fn remove_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id == TypeId::UNDEFINED {
+        return TypeId::NEVER;
+    }
+    if let Some(members) = top_level_union_members(types, type_id) {
+        let filtered: Vec<TypeId> = members
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::UNDEFINED)
+            .collect();
+        if filtered.len() == members.len() {
+            return type_id; // no undefined to remove
+        }
+        match filtered.len() {
+            0 => TypeId::NEVER,
+            1 => filtered[0],
+            _ => types.union(filtered),
+        }
+    } else {
+        type_id
+    }
+}

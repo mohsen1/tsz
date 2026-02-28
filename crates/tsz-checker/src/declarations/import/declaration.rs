@@ -535,17 +535,20 @@ impl<'a> CheckerState<'a> {
                         let skip_exports = is_js_like && !source_file.is_declaration_file;
                         // Determine if target file is ESM. .mjs/.mts are always ESM.
                         // For .js/.ts targets, also check package.json "type" field via
-                        // file_is_esm_map — but only for .ts/.tsx source files. TSC does
-                        // not emit TS1479 for .js source files importing .js ESM targets,
-                        // only when the target is .mjs/.mts (unambiguously ESM).
+                        // file_is_esm_map. TSC does not emit TS1479 when a .js source file
+                        // imports a .js ESM target — only when the target is .mjs/.mts
+                        // (unambiguously ESM). However, .cjs files are unambiguously CJS,
+                        // so they DO get TS1479 when importing .js ESM targets.
                         let target_ext_is_esm =
                             file_name.ends_with(".mjs") || file_name.ends_with(".mts");
-                        let current_is_js_like = self.ctx.file_name.ends_with(".js")
+                        // Skip file_is_esm_map check only for ambiguous JS sources (.js/.jsx).
+                        // .cjs is unambiguously CJS, so it should check file_is_esm_map
+                        // to detect .js targets that are ESM via package.json "type".
+                        let skip_esm_map = self.ctx.file_name.ends_with(".js")
                             || self.ctx.file_name.ends_with(".jsx")
-                            || self.ctx.file_name.ends_with(".mjs")
-                            || self.ctx.file_name.ends_with(".cjs");
+                            || self.ctx.file_name.ends_with(".mjs");
                         let target_is_esm = target_ext_is_esm
-                            || (!current_is_js_like
+                            || (!skip_esm_map
                                 && self
                                     .ctx
                                     .file_is_esm_map

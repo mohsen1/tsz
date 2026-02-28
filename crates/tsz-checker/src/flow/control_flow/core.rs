@@ -166,6 +166,10 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
     pub(crate) flow_visited: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
     pub(crate) flow_results: Option<&'a RefCell<FxHashMap<FlowNodeId, TypeId>>>,
+    /// Shared cache for last assignment position per symbol.
+    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
+    pub(crate) shared_symbol_last_assignment_pos:
+        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -209,6 +213,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_in_worklist: None,
             flow_visited: None,
             flow_results: None,
+            shared_symbol_last_assignment_pos: None,
         }
     }
 
@@ -240,6 +245,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_in_worklist: None,
             flow_visited: None,
             flow_results: None,
+            shared_symbol_last_assignment_pos: None,
         }
     }
 
@@ -297,6 +303,15 @@ impl<'a> FlowAnalyzer<'a> {
         self.flow_in_worklist = Some(in_worklist);
         self.flow_visited = Some(visited);
         self.flow_results = Some(results);
+        self
+    }
+
+    /// Set a shared last-assignment-position cache for "effectively const" detection.
+    pub const fn with_symbol_last_assignment_pos(
+        mut self,
+        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>,
+    ) -> Self {
+        self.shared_symbol_last_assignment_pos = Some(cache);
         self
     }
 
@@ -517,6 +532,17 @@ impl<'a> FlowAnalyzer<'a> {
 
             // Check if we've reached a fixed point (type stopped changing)
             if current_type == prev_type {
+                // Update cache with the final converged type for all intermediate keys.
+                // During iteration, we inject `(loop, sym, entry_type) -> entry_type` which
+                // is a pessimistic guess. Once the fixed point is reached, we must update
+                // the cache so subsequent queries with initial_type=entry_type get the
+                // correct converged result, not the stale intermediate.
+                if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache)
+                    && entry_type != current_type
+                {
+                    let entry_key = (loop_flow_id, sym_id, entry_type);
+                    cache.borrow_mut().insert(entry_key, current_type);
+                }
                 return current_type;
             }
         }
@@ -877,13 +903,6 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|nt| nt.get(&sym.value_declaration.0).copied())
                                 });
                             let narrowing_base = declared_type.unwrap_or(initial_type);
-                            tracing::trace!(
-                                "killing def: initial={:?} declared={:?} base={:?} assigned={:?}",
-                                initial_type,
-                                declared_type,
-                                narrowing_base,
-                                assigned_type
-                            );
                             self.narrow_assignment(narrowing_base, assigned_type)
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
@@ -1066,10 +1085,15 @@ impl<'a> FlowAnalyzer<'a> {
                 // Call expression - check for type predicates
                 self.handle_call_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::START) {
-                // Start node - check if we're crossing a closure boundary
-                // For mutable variables (let/var), we cannot trust narrowing from outer scope
-                // because the closure may capture the variable and it could be mutated.
-                // For const variables, narrowing is preserved (they're immutable).
+                // Start node - check if we're crossing a closure boundary.
+                //
+                // For "effectively mutable" captured variables (let/var that are
+                // actually reassigned), we cannot trust narrowing from outer scope
+                // because the closure may execute after the variable is mutated.
+                //
+                // For "effectively const" variables (const, or parameters/let/var
+                // that are never reassigned), narrowing is preserved. This implements
+                // tsc's "implicit const parameter" feature.
                 let outer_flow_id = flow.antecedent.first().copied().or_else(|| {
                     // START with no antecedents - try to find outer flow via node_flow map
                     if flow.node.is_some() {
@@ -1080,8 +1104,11 @@ impl<'a> FlowAnalyzer<'a> {
                 });
 
                 if let Some(outer_flow) = outer_flow_id {
-                    if self.is_mutable_variable(reference) && self.is_captured_variable(reference) {
-                        // Captured mutable variable - cannot use narrowing from outer scope
+                    if self.is_captured_variable(reference)
+                        && !self.is_effectively_const_for_narrowing(reference)
+                    {
+                        // Captured mutable variable that IS reassigned -
+                        // cannot use narrowing from outer scope
                         initial_type
                     } else {
                         // Const or local variable - preserve narrowing from outer scope.
@@ -1121,10 +1148,17 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     query::union_types(self.interner, types)
                 }
-            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
-                && !flow.antecedent.is_empty()
-            {
-                // Union all antecedent types for branch/loop
+            } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
+                // LOOP_LABEL: use result_type directly from analyze_loop_fixed_point.
+                // The fixed-point iteration already computes the correct union of entry
+                // type and back-edge types. Re-unioning antecedent results here would
+                // give the wrong answer because back-edge results are computed inside
+                // analyze_loop_fixed_point's internal get_flow_type calls (which have
+                // their own check_flow invocations with separate `results` maps) and
+                // are NOT present in our local `results` map.
+                result_type
+            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL) && !flow.antecedent.is_empty() {
+                // Union all antecedent types for branch merge points
                 let ant_types: Vec<TypeId> = flow
                     .antecedent
                     .iter()

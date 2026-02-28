@@ -975,6 +975,54 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
     )
 }
 
+/// Classify a parse diagnostic as a **structural** parse error — one that causes
+/// actual AST malformation and error recovery, leading to cascading semantic errors.
+///
+/// This is a more restrictive subset of `is_real_syntax_error`. It excludes:
+/// - Grammar checks that don't affect AST structure (strict mode, trailing commas)
+/// - Contextual restrictions that don't cause parse recovery (import modifiers, etc.)
+///
+/// Used for the cascading suppression heuristic: semantic errors near structural
+/// parse failures are likely artifacts of error recovery and should be suppressed.
+pub(super) const fn is_structural_parse_error(code: u32) -> bool {
+    matches!(
+        code,
+        1002  // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1005 // '{0}' expected (missing token)
+        | 1007 // The parser expected to find a '}'
+        | 1010 // 'while' expected
+        | 1011 // '(' or '<' expected
+        | 1012 // '{' expected
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1124 // Digit expected
+        | 1126 // Unexpected end of text
+        | 1127 // Invalid character
+        | 1128 // Declaration or statement expected
+        | 1129 // '{' or ';' expected
+        | 1130 // '}' expected
+        | 1131 // Property assignment expected
+        | 1134 // Variable declaration expected
+        | 1135 // Argument expression expected
+        | 1136 // Property or signature expected
+        | 1137 // Expression or comma expected
+        | 1138 // Parameter declaration expected
+        | 1141 // Type parameter declaration expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1146 // Declaration expected
+        | 1155 // 'const' declarations must be initialized
+        | 1160 // Unterminated template literal
+        | 1161 // Unterminated regular expression literal
+        | 1185 // Merge conflict marker encountered
+        | 1313 // 'else' is not allowed after rest element
+        | 1351 // An identifier or keyword cannot immediately follow a numeric literal
+        | 1382 // Unexpected token in JSX
+        | 1442 // Identifier or expression expected
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

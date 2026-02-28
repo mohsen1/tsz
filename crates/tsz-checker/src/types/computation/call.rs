@@ -700,19 +700,21 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                if actual < expected_min && expected_max.is_none() {
-                    // Too few arguments with rest parameters (unbounded) - use TS2555
-                    self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
-                } else {
-                    // Use TS2554 for exact count, range, or too many args
-                    let max = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(
-                        expected_min,
-                        max,
-                        actual,
-                        call_idx,
-                        args,
-                    );
+                if !self.ctx.has_parse_errors {
+                    if actual < expected_min && expected_max.is_none() {
+                        // Too few arguments with rest parameters (unbounded) - use TS2555
+                        self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
+                    } else {
+                        // Use TS2554 for exact count, range, or too many args
+                        let max = expected_max.unwrap_or(expected_min);
+                        self.error_argument_count_mismatch_at(
+                            expected_min,
+                            max,
+                            actual,
+                            call_idx,
+                            args,
+                        );
+                    }
                 }
                 TypeId::ERROR
             }
@@ -721,13 +723,15 @@ impl<'a> CheckerState<'a> {
                 expected_low,
                 expected_high,
             } => {
-                self.error_at_node(
-                    call_idx,
-                    &format!(
-                        "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
-                    ),
-                    diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
-                );
+                if !self.ctx.has_parse_errors {
+                    self.error_at_node(
+                        call_idx,
+                        &format!(
+                            "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
+                        ),
+                        diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
+                    );
+                }
                 TypeId::ERROR
             }
             CallResult::ArgumentTypeMismatch {

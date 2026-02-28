@@ -979,3 +979,112 @@ fn test_empty_object_rule_intersection() {
         "string & empty_object & number should be never (disjoint primitives)"
     );
 }
+
+// =========================================================================
+// Union member ordering tests
+// =========================================================================
+
+/// String literals in unions should be sorted by lexicographic content,
+/// not by TypeId (interning order). This matches tsc's behavior where
+/// String literal unions are canonical: the same set of members always
+/// produces the same TypeId regardless of input order.
+#[test]
+fn test_union_string_literal_ordering() {
+    let interner = TypeInterner::new();
+
+    let type_d = interner.literal_string("D");
+    let type_c = interner.literal_string("C");
+    let type_b = interner.literal_string("B");
+    let type_a = interner.literal_string("A");
+
+    let union1 = interner.union(vec![type_d, type_c, type_b, type_a]);
+    let union2 = interner.union(vec![type_a, type_b, type_c, type_d]);
+    let union3 = interner.union(vec![type_b, type_d, type_a, type_c]);
+
+    // All orderings should produce the same canonical union
+    assert_eq!(
+        union1, union2,
+        "Unions with same members in different order should be identical"
+    );
+    assert_eq!(
+        union1, union3,
+        "Unions with same members in any order should be identical"
+    );
+
+    // Verify we get a 4-member union
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union1) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 4);
+    } else {
+        panic!("Expected Union type");
+    }
+}
+
+/// Built-in types should maintain their fixed sort order regardless of
+/// input order. null and undefined should sort last.
+#[test]
+fn test_union_builtin_ordering() {
+    let interner = TypeInterner::new();
+
+    // string | number should be consistent regardless of input order
+    let sn = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    let ns = interner.union2(TypeId::NUMBER, TypeId::STRING);
+    assert_eq!(sn, ns, "string | number == number | string");
+
+    // Verify string sorts before number (sort key 8 < 9)
+    if let Some(TypeData::Union(list_id)) = interner.lookup(sn) {
+        let members = interner.type_list(list_id);
+        assert_eq!(
+            members[0],
+            TypeId::STRING,
+            "string should sort before number"
+        );
+        assert_eq!(
+            members[1],
+            TypeId::NUMBER,
+            "number should sort after string"
+        );
+    }
+
+    // null and undefined should sort after primitives
+    let with_null = interner.union(vec![TypeId::NULL, TypeId::STRING, TypeId::UNDEFINED]);
+    if let Some(TypeData::Union(list_id)) = interner.lookup(with_null) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members[0], TypeId::STRING, "string should be first");
+        assert_eq!(
+            members[1],
+            TypeId::UNDEFINED,
+            "undefined should be second-to-last"
+        );
+        assert_eq!(members[2], TypeId::NULL, "null should be last");
+    }
+}
+
+/// Number literal unions are canonical: the same set of members always
+/// produces the same TypeId regardless of input order.
+#[test]
+fn test_union_number_literal_ordering() {
+    let interner = TypeInterner::new();
+
+    let n3 = interner.literal_number(3.0);
+    let n1 = interner.literal_number(1.0);
+    let n2 = interner.literal_number(2.0);
+
+    let union_mixed = interner.union(vec![n3, n1, n2]);
+    let union_sorted = interner.union(vec![n1, n2, n3]);
+    let union_rev = interner.union(vec![n2, n3, n1]);
+
+    assert_eq!(
+        union_mixed, union_sorted,
+        "Number literal unions should be order-independent"
+    );
+    assert_eq!(
+        union_mixed, union_rev,
+        "Number literal unions should be order-independent (reversed)"
+    );
+
+    if let Some(TypeData::Union(list_id)) = interner.lookup(union_mixed) {
+        let members = interner.type_list(list_id);
+        assert_eq!(members.len(), 3);
+    }
+}

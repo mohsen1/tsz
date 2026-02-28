@@ -224,6 +224,34 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if an import resolves to a `.ts`/`.tsx` source file (not a `.d.ts` declaration).
+    /// For source files, TS1192 always fires regardless of `allowSyntheticDefaultImports`,
+    /// because the developer controls the module and should add `export default`.
+    ///
+    /// Exception: Node module kinds (Node16/Node18/Node20/NodeNext) where CJS-format
+    /// `.ts` files always have a synthetic default. Since detecting CJS format requires
+    /// checking package.json, we conservatively return `false` for all Node module modes.
+    fn is_source_file_import(&self, module_name: &str) -> bool {
+        // In Node module resolution, CJS-format .ts files always have a default export.
+        // Since format depends on package.json "type" field, we can't easily determine
+        // it here. Conservatively respect allowSyntheticDefaultImports for all Node modes.
+        if self.ctx.compiler_options.module.is_node_module() {
+            return false;
+        }
+
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(sf) = arena.source_files.first() {
+                let name = sf.file_name.as_str();
+                // .ts/.tsx but NOT .d.ts/.d.tsx
+                return (name.ends_with(".ts") || name.ends_with(".tsx"))
+                    && !name.ends_with(".d.ts")
+                    && !name.ends_with(".d.tsx");
+            }
+        }
+        false
+    }
+
     // =========================================================================
     // Import Member Validation
     // =========================================================================
@@ -350,12 +378,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check default import: import X from "module"
-        // If the module has no "default" export and allowSyntheticDefaultImports is off,
-        // emit the canonical diagnostic (TS1192/TS1259) from the shared helper.
+        // If the module has no "default" export, emit the canonical diagnostic
+        // (TS1192 for no-default modules, TS1259 for export= modules).
+        // For .ts source files, TS1192 always fires regardless of allowSyntheticDefaultImports.
+        // For .d.ts/.js/.json files, allowSyntheticDefaultImports suppresses TS1192.
         if has_default_import && !has_named_default_binding {
+            let is_source_file = self.is_source_file_import(module_name);
             if let Some(ref table) = exports_table {
-                if !table.has("default") && !self.ctx.allow_synthetic_default_imports() {
-                    self.emit_no_default_export_error(module_name, clause.name);
+                if !table.has("default") {
+                    self.emit_no_default_export_error(module_name, clause.name, is_source_file);
                 }
             } else if self
                 .ctx
@@ -363,35 +394,14 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|resolved| resolved.contains(module_name))
                 && self.ctx.resolve_import_target(module_name).is_some()
-                && !self.ctx.allow_synthetic_default_imports()
             {
                 // Module resolved but no exports table found - still emit TS1192
-                self.emit_no_default_export_error(module_name, clause.name);
-            }
-        }
-
-        // When the default import already failed (no default export), skip named import
-        // validation to avoid cascading TS2305 errors on valid named exports.
-        // tsc does not emit TS2305 in this situation.
-        if has_default_import
-            && !has_named_default_binding
-            && !self.ctx.allow_synthetic_default_imports()
-        {
-            let no_default_export = if let Some(ref table) = exports_table {
-                !table.has("default")
-            } else {
-                self.ctx
-                    .resolved_modules
-                    .as_ref()
-                    .is_some_and(|resolved| resolved.contains(module_name))
-                    && self.ctx.resolve_import_target(module_name).is_some()
-            };
-            if no_default_export {
-                return;
+                self.emit_no_default_export_error(module_name, clause.name, is_source_file);
             }
         }
 
         // Check named imports: import { X, Y } from "module"
+        // Note: tsc validates named imports even when TS1192 fires for the default import.
         if has_named_imports {
             let Some(bindings_node) = bindings_node else {
                 return;
