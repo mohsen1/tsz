@@ -3,11 +3,14 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 
-use super::resolution::{canonicalize_or_owned, is_declaration_file};
+use super::resolution::{
+    canonicalize_or_owned, implied_resolution_mode_for_file, is_declaration_file,
+};
 use crate::config::{JsxEmit, ResolvedCompilerOptions};
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emitter::{NewLineKind, Printer};
 use tsz::parallel::MergedProgram;
+use tsz_common::common::ModuleKind;
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutputFile {
@@ -65,6 +68,18 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
             // Clone and update printer options with type_only_nodes
             let mut printer_options = context.options.printer.clone();
             printer_options.type_only_nodes = type_only_nodes;
+
+            // For Node16/NodeNext, resolve the per-file module format based on
+            // file extension and nearest package.json "type" field.
+            // .mts/.mjs -> ESM, .cts/.cjs -> CJS, .ts/.js -> depends on package.json
+            if printer_options.module.is_node_module() {
+                let mode = implied_resolution_mode_for_file(&input_path, context.base_dir);
+                printer_options.module = if mode == "import" {
+                    ModuleKind::ESNext
+                } else {
+                    ModuleKind::CommonJS
+                };
+            }
 
             // Run the lowering pass to generate transform directives
             let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
