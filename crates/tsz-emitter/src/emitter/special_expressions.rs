@@ -157,7 +157,12 @@ impl<'a> Printer<'a> {
         if needs_yield_parens {
             self.write("(");
         }
+
+        // Find keyword position in source to compute comment range
+        let keyword_pos = self.skip_trivia_forward(node.pos, node.end);
         self.write(keyword);
+        let after_keyword_pos = keyword_pos.saturating_add(keyword.len() as u32);
+
         if unary.expression.is_none() {
             // Preserve malformed syntax parity for missing await operands:
             // emit `await ` / `yield ` without synthesizing `void 0`.
@@ -167,7 +172,23 @@ impl<'a> Printer<'a> {
             }
             return;
         }
-        self.write(" ");
+
+        // Emit any comments between the keyword and the operand expression
+        let expr_node = self.arena.get(unary.expression);
+        if let Some(expr_node) = expr_node {
+            let (has_comment, _, comment_had_newline) =
+                self.emit_comments_in_range(after_keyword_pos, expr_node.pos, true, false);
+            if has_comment {
+                if !comment_had_newline {
+                    self.write(" ");
+                }
+            } else {
+                self.write(" ");
+            }
+        } else {
+            self.write(" ");
+        }
+
         self.emit_expression(unary.expression);
         if needs_yield_parens {
             self.write(")");

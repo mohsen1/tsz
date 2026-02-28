@@ -152,6 +152,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     use tsz_emitter::type_cache_view::TypeCacheView;
                     let cache_view = TypeCacheView {
                         node_types: cache.node_types.clone(),
+                        symbol_types: cache.symbol_types.clone(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };
                     let mut emitter = DeclarationEmitter::with_type_info(
@@ -203,6 +204,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     let import_name_map = FxHashMap::default();
                     let cache_view = TypeCacheView {
                         node_types: cache.node_types.clone(),
+                        symbol_types: cache.symbol_types.clone(),
                         def_to_symbol: cache.def_to_symbol.clone(),
                     };
 

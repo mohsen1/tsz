@@ -5,6 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
+use tsz_common::comments::CommentRange;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -73,6 +74,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) class_has_constructor_overloads: bool,
     /// Track method names that have overload signatures in current class (to skip implementation signatures)
     pub(super) method_names_with_overloads: FxHashSet<String>,
+    pub(super) all_comments: Vec<CommentRange>,
+    pub(super) comment_emit_idx: usize,
 }
 
 pub(super) struct SourceMapState {
@@ -131,6 +134,8 @@ impl<'a> DeclarationEmitter<'a> {
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
             method_names_with_overloads: FxHashSet::default(),
+            all_comments: Vec::new(),
+            comment_emit_idx: 0,
         }
     }
 
@@ -171,6 +176,8 @@ impl<'a> DeclarationEmitter<'a> {
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
             method_names_with_overloads: FxHashSet::default(),
+            all_comments: Vec::new(),
+            comment_emit_idx: 0,
         }
     }
 
@@ -449,6 +456,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.emit_public_api_only = self.has_public_api_exports(source_file);
 
+        self.all_comments = source_file.comments.clone();
+        self.comment_emit_idx = 0;
+
         debug!(
             "[DEBUG] source_file has {} comments",
             source_file.comments.len()
@@ -516,16 +526,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
+        self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
 
         let kind = stmt_node.kind;
-        debug!(
-            "[DEBUG STATEMENT] kind={}, syntax_kind_ext::EXPORT_ASSIGNMENT={}",
-            kind,
-            syntax_kind_ext::EXPORT_ASSIGNMENT
-        );
-
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -567,7 +572,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 self.emit_namespace_export_declaration(stmt_idx);
             }
-            _ => {}
+            _ => {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
         }
 
         if self.writer.len() == before_len {
@@ -615,7 +622,7 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(ref name) = function_name
                 && self.function_names_with_overloads.contains(name)
             {
-                // Skip implementation signature when overloads exist
+                self.skip_comments_in_node(func_node.pos, func_node.end);
                 return;
             }
         }
@@ -656,7 +663,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&func_idx.0)
                 .copied()
-                .or_else(|| self.get_node_type_or_names(&[func_name]));
+                .or_else(|| self.get_node_type_or_names(&[func_name]))
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
 
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
@@ -742,6 +750,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Members
         for &member_idx in &class.members.nodes {
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
             self.emit_class_member(member_idx);
         }
 
@@ -758,6 +769,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Skip members with private identifier names (#foo) - these are replaced by `#private;`
         if self.member_has_private_identifier_name(member_idx) {
+            return;
+        }
+
+        // Skip members with computed property names that are not emittable in .d.ts
+        // (e.g., ["" + ""], [Symbol()], [variable] — only literals and well-known symbols survive)
+        if self.member_has_non_emittable_computed_name(member_idx) {
             return;
         }
 
@@ -890,6 +907,7 @@ impl<'a> DeclarationEmitter<'a> {
             // For private methods, skip all overload signatures
             // (will emit single `private foo;` at implementation)
             if is_private {
+                self.skip_comments_in_node(method_node.pos, method_node.end);
                 return;
             }
         } else if is_implementation {
@@ -906,6 +924,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_line();
                 }
                 // Skip implementation signature when overloads exist
+                self.skip_comments_in_node(method_node.pos, method_node.end);
                 return;
             }
         }
@@ -922,6 +941,7 @@ impl<'a> DeclarationEmitter<'a> {
         if is_private {
             self.write(";");
             self.write_line();
+            self.skip_comments_in_node(method_node.pos, method_node.end);
             return;
         }
 
@@ -1172,6 +1192,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("?");
                 }
             }
+            self.skip_comments_in_node(accessor_node.pos, accessor_node.end);
         } else {
             self.emit_parameters_without_types(&accessor.parameters, is_private);
         }
@@ -1301,6 +1322,9 @@ impl<'a> DeclarationEmitter<'a> {
         let member_values = evaluator.evaluate_enum(enum_idx);
 
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
             self.write_indent();
             if let Some(member_node) = self.arena.get(member_idx)
                 && let Some(member) = self.arena.get_enum_member(member_node)
@@ -1390,6 +1414,81 @@ impl<'a> DeclarationEmitter<'a> {
             return k == SyntaxKind::NumericLiteral as u16 || k == SyntaxKind::BigIntLiteral as u16;
         }
         false
+    }
+
+    /// Check whether a computed property name expression is suitable for `.d.ts` emission.
+    ///
+    /// In tsc, only these computed property names survive into declaration output:
+    /// 1. String literals: `["hello"]`
+    /// 2. Numeric literals: `[42]`
+    /// 3. Well-known symbol accesses: `[Symbol.iterator]`, `[Symbol.hasInstance]`, etc.
+    pub(super) fn should_emit_computed_property(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return true;
+        };
+
+        // Not a computed property name — always emit
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return true;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        let Some(expr_node) = self.arena.get(computed.expression) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            // String literal: ["hello"]
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            // Numeric literal: [42]
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            // Property access: check for Symbol.xxx (well-known symbol)
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(expr_node) {
+                    if let Some(lhs_node) = self.arena.get(access.expression)
+                        && lhs_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(ident) = self.arena.get_identifier(lhs_node)
+                        && ident.escaped_text == "Symbol"
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the name `NodeIndex` of a class or interface member, if it has one.
+    fn get_member_name_idx(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return Some(prop.name);
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return Some(method.name);
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return Some(accessor.name);
+        }
+        if let Some(sig) = self.arena.get_signature(member_node) {
+            return Some(sig.name);
+        }
+        None
+    }
+
+    /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.
+    /// Returns `true` if the member should be skipped.
+    pub(super) fn member_has_non_emittable_computed_name(&self, member_idx: NodeIndex) -> bool {
+        if let Some(name_idx) = self.get_member_name_idx(member_idx) {
+            !self.should_emit_computed_property(name_idx)
+        } else {
+            false
+        }
     }
 
     /// Check if a class has any member with a `#private` identifier name.

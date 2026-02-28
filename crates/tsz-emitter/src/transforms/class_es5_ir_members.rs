@@ -243,6 +243,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
+        let params = self.extract_parameters(&accessor_data.parameters);
+
         let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
 
         let body = if accessor_data.body.is_none() {
@@ -262,7 +264,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         Some(IRNode::FunctionExpr {
             name: None,
-            parameters: vec![],
+            parameters: params,
             body,
             is_expression_body: false,
             body_source_range,

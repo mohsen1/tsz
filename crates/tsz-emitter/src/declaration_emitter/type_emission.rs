@@ -219,17 +219,30 @@ impl<'a> DeclarationEmitter<'a> {
             // Type literal - multi-line format with proper indentation
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(lit) = self.arena.get_type_literal(type_node) {
-                    self.write("{\n");
-                    self.increase_indent();
-                    for &member_idx in &lit.members.nodes {
+                    // Filter out members with non-emittable computed property names
+                    let emittable_members: Vec<_> = lit
+                        .members
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&idx| !self.member_has_non_emittable_computed_name(idx))
+                        .collect();
+
+                    if emittable_members.is_empty() {
+                        self.write("{}");
+                    } else {
+                        self.write("{\n");
+                        self.increase_indent();
+                        for member_idx in emittable_members {
+                            self.write_indent();
+                            self.emit_interface_member_inline(member_idx);
+                            self.write(";");
+                            self.write_line();
+                        }
+                        self.decrease_indent();
                         self.write_indent();
-                        self.emit_interface_member_inline(member_idx);
-                        self.write(";");
-                        self.write_line();
+                        self.write("}");
                     }
-                    self.decrease_indent();
-                    self.write_indent();
-                    self.write("}");
                 }
             }
 
@@ -489,6 +502,14 @@ impl<'a> DeclarationEmitter<'a> {
                     self.emit_entity_name(access.expression);
                     self.write(".");
                     self.emit_entity_name(access.name_or_argument);
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    self.emit_entity_name(access.expression);
+                    self.write("[");
+                    self.emit_node(access.name_or_argument);
+                    self.write("]");
                 }
             }
             _ => {}

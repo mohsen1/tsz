@@ -58,6 +58,7 @@ pub(super) fn collect_diagnostics(
     base_dir: &Path,
     cache: Option<&mut CompilationCache>,
     lib_contexts: &[LibContext],
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
@@ -457,7 +458,7 @@ pub(super) fn collect_diagnostics(
         // Check all files in parallel — each file gets its own CheckerState.
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
         #[cfg(not(target_arch = "wasm32"))]
-        let file_results: Vec<Vec<Diagnostic>> = {
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = {
             use rayon::iter::{
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
@@ -519,7 +520,7 @@ pub(super) fn collect_diagnostics(
         };
 
         #[cfg(target_arch = "wasm32")]
-        let file_results: Vec<Vec<Diagnostic>> = work_items
+        let file_results: Vec<(Vec<Diagnostic>, Option<TypeCache>)> = work_items
             .iter()
             .zip(per_file_binders.into_iter())
             .map(|(&file_idx, binder)| {
@@ -545,8 +546,15 @@ pub(super) fn collect_diagnostics(
             })
             .collect();
 
-        for file_diags in file_results {
-            diagnostics.extend(file_diags);
+        {
+            let mut tc_out = type_cache_output.lock().unwrap();
+            for (idx, (file_diags, type_cache)) in file_results.into_iter().enumerate() {
+                diagnostics.extend(file_diags);
+                if let Some(tc) = type_cache {
+                    let file_path = PathBuf::from(&program.files[work_items[idx]].file_name);
+                    tc_out.insert(file_path, tc);
+                }
+            }
         }
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
@@ -906,7 +914,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
 /// while sharing thread-safe structures (`TypeInterner` via `DashMap`, `QueryCache` via `RwLock`).
 pub(super) fn check_file_for_parallel<'a>(
     context: CheckFileForParallelContext<'a>,
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Option<TypeCache>) {
     let CheckFileForParallelContext {
         file_idx,
         binder,
@@ -929,18 +937,20 @@ pub(super) fn check_file_for_parallel<'a>(
 
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
     if skip_lib_check && is_declaration_file(&file.file_name) {
-        return Vec::new();
+        return (Vec::new(), None);
     }
 
     // Skip semantic checking of declaration files in node_modules but still report
     // parse errors. tsc suppresses semantic diagnostics for external library files
     // but does surface syntax errors (e.g. a broken .d.ts in a published package).
     if is_node_modules_declaration_file(&file.file_name) {
-        return file
-            .parse_diagnostics
-            .iter()
-            .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
-            .collect();
+        return (
+            file.parse_diagnostics
+                .iter()
+                .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
+                .collect(),
+            None,
+        );
     }
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
@@ -1063,7 +1073,8 @@ pub(super) fn check_file_for_parallel<'a>(
         file_diagnostics.extend(checker_diagnostics);
     }
 
-    file_diagnostics
+    let type_cache = checker.extract_cache();
+    (file_diagnostics, Some(type_cache))
 }
 
 #[cfg(test)]

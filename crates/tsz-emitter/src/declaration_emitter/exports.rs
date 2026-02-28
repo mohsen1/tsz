@@ -211,14 +211,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         let func_body = func.body;
+        let func_name = func.name;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
-            // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
-                && let Some(return_type_id) =
-                    type_queries::get_return_type(*interner, *func_type_id)
+            // No explicit return type, try to infer it from the type cache
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
@@ -530,14 +535,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         let func_body = func.body;
+        let func_name = func.name;
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
-            // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
-                && let Some(return_type_id) =
-                    type_queries::get_return_type(*interner, *func_type_id)
+            // No explicit return type, try to infer it from the type cache
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
@@ -948,7 +958,27 @@ impl<'a> DeclarationEmitter<'a> {
         });
         self.emit_node(module.name);
 
-        if module.body.is_some() {
+        // Collect dotted namespace name segments: namespace A.B.C { ... }
+        // is represented as a chain of ModuleDeclaration nodes
+        let mut current_body = module.body;
+        loop {
+            if !current_body.is_some() {
+                break;
+            }
+            let Some(body_node) = self.arena.get(current_body) else {
+                break;
+            };
+            if let Some(nested_mod) = self.arena.get_module(body_node) {
+                // Body is another module declaration — emit dotted name
+                self.write(".");
+                self.emit_node(nested_mod.name);
+                current_body = nested_mod.body;
+            } else {
+                break;
+            }
+        }
+
+        if current_body.is_some() {
             self.write(" {");
             self.write_line();
             self.increase_indent();
@@ -961,17 +991,34 @@ impl<'a> DeclarationEmitter<'a> {
                 self.public_api_scope_depth += 1;
             }
 
-            if let Some(body_node) = self.arena.get(module.body) {
+            if let Some(body_node) = self.arena.get(current_body) {
                 if let Some(module_block) = self.arena.get_module_block(body_node) {
                     if let Some(ref stmts) = module_block.statements {
                         for &stmt_idx in &stmts.nodes {
                             self.emit_statement(stmt_idx);
                         }
-                    }
-                } else {
-                    // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
-                    if let Some(_nested_module) = self.arena.get_module(body_node) {
-                        self.emit_module_declaration(module.body);
+
+                        // tsc emits `export {};` inside a non-ambient namespace
+                        // body when there is a mix of exported and non-exported
+                        // members (the "scope-fix marker").
+                        let is_ambient_module = self
+                            .arena
+                            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                            || prev_inside_declare_namespace
+                            || self.source_is_declaration_file;
+
+                        if !is_ambient_module {
+                            let needs_scope_fix = stmts.nodes.iter().any(|&idx| {
+                                self.arena
+                                    .get(idx)
+                                    .is_some_and(|n| self.stmt_needs_scope_marker(n))
+                            });
+                            if needs_scope_fix {
+                                self.write_indent();
+                                self.write("export {};");
+                                self.write_line();
+                            }
+                        }
                     }
                 }
             }
