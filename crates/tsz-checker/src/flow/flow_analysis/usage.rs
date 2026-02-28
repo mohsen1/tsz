@@ -455,7 +455,10 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check if we're inside a function-like or source-file container scope
-                if node.is_function_like() || node.kind == syntax_kind_ext::SOURCE_FILE {
+                if node.is_function_like()
+                    || node.kind == syntax_kind_ext::SOURCE_FILE
+                    || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                {
                     found_container_scope = true;
                     break;
                 }
@@ -713,11 +716,16 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a variable is definitely assigned at a given point.
-    ///
-    /// This performs flow-sensitive analysis to determine if a variable
-    /// has been assigned on all code paths leading to the usage point.
-    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
+    /// Check if a variable is definitely assigned at a given point,
+    /// optionally using a known symbol to pre-seed the flow analyzer's
+    /// reference symbol cache. This is needed when `binder.resolve_identifier`
+    /// fails to resolve the identifier (e.g., inside `export default expr`),
+    /// but the checker has already resolved the symbol through other means.
+    pub(crate) fn is_definitely_assigned_at_with_symbol(
+        &self,
+        idx: NodeIndex,
+        known_sym: Option<SymbolId>,
+    ) -> bool {
         // Get the flow node for this identifier usage.
         // Identifier reference nodes (e.g., `a` in `console.log(a)`) typically
         // don't have direct flow nodes recorded — the binder only records flow
@@ -783,6 +791,29 @@ impl<'a> CheckerState<'a> {
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(Rc::clone(&self.ctx.type_environment));
+
+        // Pre-seed the reference symbol cache when the checker has already
+        // resolved the symbol for this reference. This handles cases where
+        // `binder.resolve_identifier` fails (e.g., identifiers inside
+        // `export default expr`) but the checker resolved the symbol through
+        // its own resolution logic.
+        if let Some(sym) = known_sym {
+            analyzer
+                .reference_symbol_cache
+                .borrow_mut()
+                .insert(idx.0, Some(sym));
+
+            // Invalidate any stale entries in the shared reference match cache
+            // that involve this node. A prior `apply_flow_narrowing` call may
+            // have cached `false` for `is_matching_reference(assignment, idx)`
+            // because `reference_symbol(idx)` returned None without the pre-seeded
+            // symbol. With the correct symbol now available, those cached results
+            // are invalid and must be recomputed.
+            self.ctx
+                .flow_reference_match_cache
+                .borrow_mut()
+                .retain(|&(a, b), _| a != idx.0 && b != idx.0);
+        }
 
         analyzer.is_definitely_assigned(idx, flow_node)
     }
@@ -1362,7 +1393,10 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
-            if node.is_function_like() || node.kind == syntax_kind_ext::SOURCE_FILE {
+            if node.is_function_like()
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+                || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
                 return current;
             }
             let Some(ext) = self.ctx.arena.get_extended(current) else {

@@ -153,6 +153,10 @@ impl<'a> CheckerState<'a> {
                         required_count,
                         idx,
                     );
+                    // tsc returns errorType when a generic type is used without
+                    // required type arguments. This prevents cascading errors
+                    // like TS2454 on variables with erroneous type annotations.
+                    return TypeId::ERROR;
                 }
 
                 // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
@@ -707,6 +711,10 @@ impl<'a> CheckerState<'a> {
                             required_count,
                             idx,
                         );
+                        // tsc returns errorType when a generic type is used without
+                        // required type arguments. This prevents cascading errors
+                        // like TS2454 on variables with erroneous type annotations.
+                        return TypeId::ERROR;
                     }
                     // Apply default type arguments if no explicit args were provided
                     if type_ref
