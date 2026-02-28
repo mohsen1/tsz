@@ -1184,7 +1184,8 @@ impl<'a> CheckerState<'a> {
                             // on the namespace object — they are only accessible in type
                             // position (e.g., `let x: ns.A`), which uses symbol-based
                             // resolution rather than object property lookup.
-                            if self.is_type_only_export_symbol(export_sym_id) {
+                            let is_to = self.is_type_only_export_symbol(export_sym_id);
+                            if is_to {
                                 continue;
                             }
                             // Also skip exports reached through `export type *` wildcard
@@ -1241,6 +1242,11 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let namespace_type = factory.object(props);
+                        // Store display name for error messages: TSC shows namespace
+                        // types as `typeof import("module")` in diagnostics.
+                        self.ctx
+                            .namespace_module_names
+                            .insert(namespace_type, module_name.to_string());
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {

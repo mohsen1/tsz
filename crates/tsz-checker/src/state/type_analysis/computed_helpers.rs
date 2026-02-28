@@ -498,25 +498,13 @@ impl<'a> CheckerState<'a> {
     /// checking if the symbol has BOTH `ALIAS` and `VALUE` flags — the `ALIAS`
     /// came from the import type, and the `VALUE` from the const/function/class.
     pub(crate) fn is_type_only_export_symbol(&self, sym_id: SymbolId) -> bool {
-        let symbol =
-            self.get_symbol_globally(sym_id)
-                .or_else(|| {
-                    // Cross-file fallback
-                    let file_idx = self
-                        .ctx
-                        .cross_file_symbol_targets
-                        .borrow()
-                        .get(&sym_id)
-                        .copied()?;
-                    let binder = self.ctx.get_binder_for_file(file_idx)?;
-                    binder.get_symbol(sym_id)
-                })
-                .or_else(|| {
-                    // Search all binders
-                    self.ctx.all_binders.as_ref().and_then(|binders| {
-                        binders.iter().find_map(|binder| binder.get_symbol(sym_id))
-                    })
-                });
+        // Use get_cross_file_symbol to check cross_file_symbol_targets FIRST,
+        // avoiding SymbolId collisions: each binder uses its own SymbolId space
+        // (starting from 0), so a SymbolId from another file may collide with a
+        // different symbol in the local binder. get_symbol_globally checks the
+        // local binder first and can return the wrong symbol, causing the
+        // is_type_only check to silently fail.
+        let symbol = self.get_cross_file_symbol(sym_id);
 
         let Some(symbol) = symbol else {
             return false;

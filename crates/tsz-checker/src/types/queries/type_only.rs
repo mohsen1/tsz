@@ -352,19 +352,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {
-            // Namespace imports (`import * as ns from '...'`) always create a runtime
-            // module namespace object. They are never type-only unless explicitly
-            // `import type * as ns` (handled by is_type_only above).
-            // Namespace imports are distinguished by having import_name = None.
-            if symbol.import_name.is_none() {
-                return false;
-            }
+            // Namespace imports (import * as ns) and namespace re-exports
+            // (export * as ns from) create value bindings — the namespace object.
+            // They should not be treated as type-only even if the target module
+            // only has type-only exports. Individual members surface as TS2339.
+            let is_namespace_binding =
+                symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
             let export_name = symbol
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
             // Check across all binders for transitive type-only export chains
-            if self.is_export_type_only_across_binders(module_specifier, export_name) {
+            if !is_namespace_binding
+                && self.is_export_type_only_across_binders(module_specifier, export_name)
+            {
                 return true;
             }
         }

@@ -292,12 +292,20 @@ impl<'a> CheckerState<'a> {
 
             // If this alias resolves through an import chain that came from a type-only
             // re-export or import, classify accordingly.
+            // Skip for namespace imports (import * as ns) and namespace re-exports
+            // (export * as ns from). These create value bindings — the namespace
+            // object itself is a value even if the module's exports are type-only.
+            // Individual type-only members surface as TS2339 via property lookup.
             if let Some(module_specifier) = symbol.import_module.as_deref() {
+                let is_namespace_binding =
+                    symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
                 let export_name = symbol
                     .import_name
                     .as_deref()
                     .unwrap_or(&symbol.escaped_name);
-                if self.is_export_type_only_across_binders(module_specifier, export_name) {
+                if !is_namespace_binding
+                    && self.is_export_type_only_across_binders(module_specifier, export_name)
+                {
                     // Determine whether the type-only came from `import type` or `export type`
                     // in the target module. Resolve the export symbol and walk its declarations.
                     if let Some(kind) =
