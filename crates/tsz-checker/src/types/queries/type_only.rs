@@ -322,12 +322,8 @@ impl<'a> CheckerState<'a> {
                 .import_name
                 .as_deref()
                 .unwrap_or(&symbol.escaped_name);
-            if let Some((_, is_type_only)) = self
-                .ctx
-                .binder
-                .resolve_import_with_reexports_type_only(module_specifier, export_name)
-                && is_type_only
-            {
+            // Check across all binders for transitive type-only export chains
+            if self.is_export_type_only_across_binders(module_specifier, export_name) {
                 return true;
             }
         }
@@ -525,5 +521,135 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId, name_hint: Option<&str>) -> bool {
         self.lookup_symbol_with_name(sym_id, name_hint)
             .is_some_and(|(symbol, _arena)| symbol.is_type_only)
+    }
+
+    /// Check if an export is type-only by resolving across file boundaries.
+    ///
+    /// Uses the checker's module resolution (`resolve_import_target` → `get_binder_for_file`)
+    /// to follow transitive type-only chains: if module A does `export type { X }`,
+    /// module B imports X and re-exports with `export { X }`, X is still type-only.
+    pub(crate) fn is_export_type_only_across_binders(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.is_export_type_only_in_file(
+            self.ctx.current_file_idx,
+            module_specifier,
+            export_name,
+            &mut visited,
+        )
+    }
+
+    /// Resolve a module specifier from a given source file, then check if
+    /// `export_name` in that target module is type-only.
+    fn is_export_type_only_in_file(
+        &self,
+        source_file_idx: usize,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
+        // Resolve the specifier to a target file index
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+        else {
+            return false;
+        };
+
+        let key = (target_file_idx, export_name.to_string());
+        if !visited.insert(key) {
+            return false; // cycle
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+
+        // Get the target file's canonical name (module_exports key)
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+
+        // Check direct exports in target binder
+        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+            && let Some(sym_id) = exports_table.get(export_name) {
+                // Use the main binder (which has the full merged symbol arena)
+                // rather than the cross-file lookup binder (which has empty symbols).
+                if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                    if sym.is_type_only {
+                        return true;
+                    }
+                    // Follow import alias chains transitively, but only if the
+                    // symbol doesn't have a concrete runtime value binding.
+                    // A merged symbol like `import { A }` + `const A = 0` (VARIABLE)
+                    // provides a real value and overrides type-only from the import.
+                    // But `namespace A {}` (VALUE_MODULE) alone doesn't override.
+                    let concrete_value = symbol_flags::VARIABLE
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::CLASS
+                        | symbol_flags::ENUM;
+                    if sym.flags & symbol_flags::ALIAS != 0 && sym.flags & concrete_value == 0
+                        && let Some(ref import_module) = sym.import_module {
+                            let import_name =
+                                sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                            if self.is_export_type_only_in_file(
+                                target_file_idx,
+                                import_module,
+                                import_name,
+                                visited,
+                            ) {
+                                return true;
+                            }
+                        }
+                    // Direct export exists and is not type-only — don't check wildcard re-exports.
+                    return false;
+                }
+            }
+
+        // Check named re-exports
+        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+            && let Some((source_module, original_name)) = file_reexports.get(export_name)
+        {
+            let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
+            return self.is_export_type_only_in_file(
+                target_file_idx,
+                source_module,
+                name_to_lookup,
+                visited,
+            );
+        }
+
+        // Check wildcard re-exports (only if no direct export was found)
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let source_type_only_flags = target_binder
+                .wildcard_reexports_type_only
+                .get(&target_file_name);
+            for (i, source_module) in source_modules.iter().enumerate() {
+                let source_is_type_only = source_type_only_flags
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
+                if source_is_type_only {
+                    return true;
+                }
+                if self.is_export_type_only_in_file(
+                    target_file_idx,
+                    source_module,
+                    export_name,
+                    visited,
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
