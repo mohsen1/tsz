@@ -162,16 +162,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
                 if let Some(sig) = self.arena.get_index_signature(member_node) {
-                    // Emit readonly modifier if present
-                    if let Some(ref mods) = sig.modifiers {
-                        for &mod_idx in &mods.nodes {
-                            if let Some(mod_node) = self.arena.get(mod_idx)
-                                && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
-                            {
-                                self.write("readonly ");
-                            }
-                        }
-                    }
+                    self.emit_member_modifiers(&sig.modifiers);
                     self.write("[");
                     self.emit_parameters(&sig.parameters);
                     self.write("]");
@@ -348,6 +339,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
                 if let Some(sig) = self.arena.get_index_signature(member_node) {
+                    self.emit_member_modifiers(&sig.modifiers);
                     self.write("[");
                     self.emit_parameters(&sig.parameters);
                     self.write("]");

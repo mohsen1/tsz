@@ -1037,30 +1037,35 @@ impl<'a> DeclarationEmitter<'a> {
         // - If this is an implementation with no overloads, emit it
         // SPECIAL: For private methods with overloads, emit just `private foo;`
         if is_overload {
+            // For private methods, emit `private foo;` on first encounter only
+            if is_private {
+                let already_seen = if let Some(ref name) = method_name {
+                    !self.method_names_with_overloads.insert(name.clone())
+                } else {
+                    false
+                };
+                if !already_seen {
+                    // First private overload: emit `private foo;`
+                    self.write_indent();
+                    self.emit_member_modifiers(&method.modifiers);
+                    self.emit_node(method.name);
+                    self.write(";");
+                    self.write_line();
+                }
+                self.skip_comments_in_node(method_node.pos, method_node.end);
+                return;
+            }
             // Mark that this method name has overload signatures
             if let Some(ref name) = method_name {
                 self.method_names_with_overloads.insert(name.clone());
-            }
-            // For private methods, skip all overload signatures
-            // (will emit single `private foo;` at implementation)
-            if is_private {
-                self.skip_comments_in_node(method_node.pos, method_node.end);
-                return;
             }
         } else if is_implementation {
             // This is an implementation - check if we've seen overloads for this name
             if let Some(ref name) = method_name
                 && self.method_names_with_overloads.contains(name)
             {
-                if is_private {
-                    // Private method with overloads: emit just `private foo;`
-                    self.write_indent();
-                    self.write("private ");
-                    self.emit_node(method.name);
-                    self.write(";");
-                    self.write_line();
-                }
                 // Skip implementation signature when overloads exist
+                // (for private methods, `private foo;` was already emitted at first overload)
                 self.skip_comments_in_node(method_node.pos, method_node.end);
                 return;
             }
@@ -1121,11 +1126,19 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if !self.source_is_declaration_file {
                     self.write(": any");
                 }
-            }
-        } else if !is_private && method_body.is_some() {
-            if self.body_returns_void(method_body) {
-                self.write(": void");
             } else if !self.source_is_declaration_file {
+                // Ambient method without body or type annotation: emit `: any`
+                self.write(": any");
+            }
+        } else if !is_private {
+            if method_body.is_some() {
+                if self.body_returns_void(method_body) {
+                    self.write(": void");
+                } else if !self.source_is_declaration_file {
+                    self.write(": any");
+                }
+            } else if !self.source_is_declaration_file {
+                // Ambient method without body or type annotation: emit `: any`
                 self.write(": any");
             }
         }
