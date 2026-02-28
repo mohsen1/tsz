@@ -245,7 +245,19 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::INFER_TYPE => {
                 if let Some(infer) = self.arena.get_infer_type(type_node) {
                     self.write("infer ");
-                    self.emit_node(infer.type_parameter);
+                    // Emit the type parameter name
+                    if let Some(tp_node) = self.arena.get(infer.type_parameter)
+                        && let Some(tp) = self.arena.get_type_parameter(tp_node)
+                    {
+                        self.emit_node(tp.name);
+                        // Emit constraint if present (infer U extends string)
+                        if tp.constraint.is_some() {
+                            self.write(" extends ");
+                            self.emit_type(tp.constraint);
+                        }
+                    } else {
+                        self.emit_node(infer.type_parameter);
+                    }
                 }
             }
 
@@ -483,7 +495,22 @@ impl<'a> DeclarationEmitter<'a> {
             // Optional type (T? in tuple elements)
             k if k == syntax_kind_ext::OPTIONAL_TYPE => {
                 if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    // Parenthesize union/intersection types before `?` to avoid ambiguity
+                    let needs_parens = if let Some(inner) = self.arena.get(wrapped.type_node) {
+                        inner.kind == syntax_kind_ext::UNION_TYPE
+                            || inner.kind == syntax_kind_ext::INTERSECTION_TYPE
+                            || inner.kind == syntax_kind_ext::FUNCTION_TYPE
+                            || inner.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                    } else {
+                        false
+                    };
+                    if needs_parens {
+                        self.write("(");
+                    }
                     self.emit_type(wrapped.type_node);
+                    if needs_parens {
+                        self.write(")");
+                    }
                     self.write("?");
                 }
             }
