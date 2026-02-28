@@ -374,6 +374,14 @@ impl<'a> CheckerState<'a> {
         let check_excess_properties = overload_signatures.is_none();
         // Two-pass argument collection for generic calls is only needed when at least one
         // argument is contextually sensitive (e.g. lambdas/object literals needing contextual type).
+        // Preserve literal types in array literals during generic call argument collection.
+        // This ensures `['foo', 'bar']` is typed as `("foo" | "bar")[]` (not `string[]`),
+        // enabling correct type parameter inference (e.g., K = "foo" | "bar").
+        // tsc preserves literals during inference and only widens at assignment sites.
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        if is_generic_call {
+            self.ctx.preserve_literal_types = true;
+        }
         let arg_types = if is_generic_call {
             if let Some(shape) = callee_shape {
                 // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.
@@ -634,6 +642,7 @@ impl<'a> CheckerState<'a> {
                 None, // No skipping needed for single-pass
             )
         };
+        self.ctx.preserve_literal_types = prev_preserve_literals;
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 

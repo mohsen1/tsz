@@ -1,8 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9641/12570 (76.7%) — full suite, error-code level
+**Current score**: ~9651/12570 (76.8%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28i — types/mapped: preserve literal types during generic call inference
+
+### Fixed: Array literal element types widened to primitives during generic call inference — Checker (call.rs, helpers.rs)
+
+**Root cause**: When an array literal like `['foo', 'bar']` was passed as an argument to a generic function (e.g., `getProps<T, K extends keyof T>(obj: T, list: K[])`), the array's element types were widened by `compute_best_common_type` (which calls `widen_literals`) BEFORE the solver saw them. This meant `K` was inferred as `string` instead of `"foo" | "bar"`. tsc preserves literal types during generic inference and only widens at assignment sites.
+
+**Fix**: Two-part change:
+1. **`call.rs`**: Set `preserve_literal_types = true` before collecting argument types for generic calls, restoring it afterward. This tells the array literal type computation to skip widening.
+2. **`helpers.rs`**: In `get_type_of_array_literal`, when `preserve_literal_types` is true, compute the union of element types directly instead of going through BCT's `widen_literals`. This preserves `"foo" | "bar"` instead of widening to `string`.
+
+**Files**:
+- `crates/tsz-checker/src/types/computation/call.rs` — set preserve_literal_types for generic calls
+- `crates/tsz-checker/src/types/computation/helpers.rs` — skip BCT widening when preserving literals
+
+### Test impact: +1 net (9650→9651)
+
+### Unit test added: `test_generic_call_preserves_array_literal_types` in `generic_tests.rs`
+
+### Remaining gaps in isomorphicMappedTypeInference (4 false positives):
+1. **Lines 33, 108 (TS7053)**: `result[k] = unbox(obj[k])` in `unboxify<T extends object>` — string indexing the type parameter `T` via `for (let k in obj)`. The `for-in` key type is `string` and we reject `T[string]` when `T extends object`. tsc allows this because `for-in` keys are implicitly valid keys of the iterated object.
+2. **Lines 90-91 (TS2322)**: `makeRecord<T, K extends string>(obj: { [P in K]: T })` — T is correctly inferred as the union of property values, but the mapped type `{ [P in K]: T }` after instantiation is not properly evaluated to its object form during the final argument check. The mapped type stays in `Mapped(...)` form and the subtype checker can't compare it with the concrete argument object. **Root cause**: `evaluate_type_with_env` either fails to evaluate the instantiated mapped type or the result is not cached/used properly in the assignability path.
+
+### Remaining gaps in types/mapped area (11 failing):
+1. **mappedTypeConstraints2** (5 missing TS2322): Indexed access on mapped types with key remapping (`as` clauses) — solver doesn't recognize that remapped keys lose their original type relationship. **SOLVER level**.
+2. **mappedTypeErrors/mappedTypeErrors2** (missing TS2536, TS2313, TS2322): Indexed access validation on mapped types with generic type parameters — solver-level gap in `Type 'K' cannot be used to index type 'T1<K>'` detection.
+3. **recursiveMappedTypes** (missing TS2313, TS2456, TS2502, TS2589, TS2615): Recursive/circular mapped type detection — solver needs to detect infinite recursion in mapped type evaluation and emit appropriate errors.
+4. **mappedTypeProperties** (TS5107 + parser errors): Deprecated compiler option warnings + parser-level issues.
+5. **mappedTypeAsClauses, mappedTypeInferenceErrors, mappedTypeWithAny, mappedTypes6**: Fingerprint-level only (error codes match, but line/message mismatches).
 
 ---
 
