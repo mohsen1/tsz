@@ -1088,9 +1088,13 @@ impl<'a> CheckerState<'a> {
                         // Only distribute when all members are object-like (not
                         // false/null/undefined). Spreading primitives just
                         // contributes {} which isn't useful to distribute.
-                        let all_object_like = members
-                            .iter()
-                            .all(|m| self.ctx.types.collect_object_spread_properties(*m).len() > 0);
+                        let all_object_like = members.iter().all(|m| {
+                            !self
+                                .ctx
+                                .types
+                                .collect_object_spread_properties(*m)
+                                .is_empty()
+                        });
                         all_object_like && branch_count.saturating_mul(members.len()) <= 16
                     });
 

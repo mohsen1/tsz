@@ -239,15 +239,11 @@ impl<'a> UsageAnalyzer<'a> {
                         // node_symbols maps this reference to the export symbol, not the
                         // underlying declaration symbol.
                         k if k == SyntaxKind::Identifier as u16 => {
-                            if let Some(ident) = self.arena.get_identifier(clause_node) {
-                                if let Some(sym_id) =
+                            if let Some(ident) = self.arena.get_identifier(clause_node)
+                                && let Some(sym_id) =
                                     self.binder.file_locals.get(&ident.escaped_text)
-                                {
-                                    self.mark_symbol_used(
-                                        sym_id,
-                                        UsageKind::VALUE | UsageKind::TYPE,
-                                    );
-                                }
+                            {
+                                self.mark_symbol_used(sym_id, UsageKind::VALUE | UsageKind::TYPE);
                             }
                         }
                         _ => {}
