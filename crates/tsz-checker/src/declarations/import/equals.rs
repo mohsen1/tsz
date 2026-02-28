@@ -800,9 +800,10 @@ impl<'a> CheckerState<'a> {
                     .resolve_alias_symbol(member_sym, &mut visited)
                     .unwrap_or(member_sym);
                 if resolved != member_sym
-                    && let Some(kind) = self.check_symbol_type_only_kind(resolved) {
-                        return Some(kind);
-                    }
+                    && let Some(kind) = self.check_symbol_type_only_kind(resolved)
+                {
+                    return Some(kind);
+                }
                 // Check all visited aliases in the chain
                 for &alias_id in &visited {
                     if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
@@ -928,9 +929,10 @@ impl<'a> CheckerState<'a> {
                             && let Some(kind) = self.check_import_equals_rhs_type_only_cross_file(
                                 import_decl.module_specifier,
                                 sym_arena,
-                            ) {
-                                return Some(kind);
-                            }
+                            )
+                        {
+                            return Some(kind);
+                        }
                     } else if decl_node.kind == syntax_kind_ext::EXPORT_SPECIFIER {
                         // For `export { A }`, the specifier's name/property_name
                         // identifier references the local binding. Use node_symbols
@@ -945,11 +947,11 @@ impl<'a> CheckerState<'a> {
                             if let Some(&local_sym_id) =
                                 self.ctx.binder.node_symbols.get(&local_ident.0)
                                 && local_sym_id != check_sym_id
-                                    && let Some(kind) = self
-                                        .check_symbol_type_only_kind_inner(local_sym_id, depth + 1)
-                                    {
-                                        return Some(kind);
-                                    }
+                                && let Some(kind) =
+                                    self.check_symbol_type_only_kind_inner(local_sym_id, depth + 1)
+                            {
+                                return Some(kind);
+                            }
                         }
                     }
                 }
@@ -1006,18 +1008,18 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = file_binder.file_locals.get(name)
                         && let Some(sym) =
                             self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                        {
-                            if sym.is_type_only {
-                                return if sym.import_module.is_some() {
-                                    Some(TypeOnlyKind::ImportType)
-                                } else {
-                                    Some(TypeOnlyKind::ExportType)
-                                };
-                            }
-                            if self.alias_resolves_to_type_only(sym_id) {
-                                return Some(self.determine_type_only_kind_from_alias(sym_id));
-                            }
+                    {
+                        if sym.is_type_only {
+                            return if sym.import_module.is_some() {
+                                Some(TypeOnlyKind::ImportType)
+                            } else {
+                                Some(TypeOnlyKind::ExportType)
+                            };
                         }
+                        if self.alias_resolves_to_type_only(sym_id) {
+                            return Some(self.determine_type_only_kind_from_alias(sym_id));
+                        }
+                    }
                 }
             }
 
