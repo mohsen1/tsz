@@ -278,60 +278,7 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
 
-        has_module_syntax
-            && !self.has_public_api_value_exports(source_file)
-            && !self.has_public_api_type_exports(source_file)
-    }
-
-    /// Return true if the emitted output will contain exported type declarations
-    /// (type aliases, interfaces) that preserve module-ness without needing `export {}`.
-    fn has_public_api_type_exports(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            match stmt_node.kind {
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                        // `export type { ... }` or `export type * from ...`
-                        if export.is_type_only {
-                            return true;
-                        }
-                        // `export interface ...` / `export type X = ...` wrapped in EXPORT_DECLARATION
-                        if export.export_clause.is_some()
-                            && let Some(clause_node) = self.arena.get(export.export_clause)
-                            && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
+        has_module_syntax && !self.has_public_api_value_exports(source_file)
     }
 
     /// Return true if exported declarations include runtime/value-side exports.
