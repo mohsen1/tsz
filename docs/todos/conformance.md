@@ -1,8 +1,51 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9651/12570 (76.8%) — full suite, error-code level
+**Current score**: ~9691/12570 (77.1%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28j — types/tuple: TS2493/TS2339 for tuple and union-of-tuple index access
+
+### Fixed: Emit TS2493 for type-level tuple out-of-bounds and TS2339 for union-of-tuples — Solver + Checker
+
+**Root cause**: Three gaps in tuple index access diagnostics:
+1. **Type-level indexed access** (`type T12 = T1[2]`) never emitted TS2493 for out-of-bounds. The checker's `get_type_from_indexed_access_type` in `type_node.rs` created a deferred IndexAccess type but had no bounds check for positive indices.
+2. **Union-of-tuples** (`T2 = [boolean] | [string, number]`, accessing `T2[2]`) should emit TS2339 ("Property '2' does not exist on type 'T2'"), not TS2493. tsc uses different diagnostics for single tuples vs union types.
+3. **Solver's element_access.rs** had no union-of-tuples out-of-bounds detection — it only checked `TypeData::Tuple`, which fails for `TypeData::Union`.
+
+**Fix**: Five files changed across 4 code paths:
+
+1. **`crates/tsz-solver/src/objects/element_access.rs`** — Added `PropertyNotFound` variant to `ElementAccessResult`. Added union-of-tuples out-of-bounds detection: iterates union members, checks if ALL tuple members lack the index.
+
+2. **`crates/tsz-checker/src/types/type_node.rs`** — Added positive out-of-bounds checks in `get_type_from_indexed_access_type`. For single tuples: emits TS2493. For unions of tuples: emits TS2339. Extracted `resolve_object_for_tuple_check` helper (refactored from negative-index check).
+
+3. **`crates/tsz-checker/src/types/computation/access.rs`** — Runtime element access (`t2[2]`): Added `is_union_of_tuples_all_out_of_bounds` helper and TS2339 emission when all union members are out of bounds.
+
+4. **`crates/tsz-checker/src/state/variable_checking/destructuring.rs`** — Destructuring declarations (`let [a,b,c] = t2`): Added TS2339 check when union members all lack the destructured index.
+
+5. **`crates/tsz-checker/src/assignability/assignment_checker.rs`** — Destructuring reassignment (`[a,b,c] = t2`): Extended `check_tuple_destructuring_bounds` with union handling, emitting TS2339.
+
+**Key insight**: tsc distinguishes TS2493 (single tuple out-of-bounds) from TS2339 (property not found on union). The error message uses the type alias name ("T2") in both type-level and runtime contexts, while we currently expand to the full type ("[boolean] | [string, number]") in runtime contexts — this causes fingerprint-level mismatches.
+
+**Test impact**: Code-level fix for `unionsOfTupleTypes1.ts` (missing TS2339 → no missing codes). Fingerprint-only failure remains due to type alias name formatting. No regressions — 0 new false positive TS2339/TS2493 across all 12570 tests.
+
+**Unit tests added**: 5 tests in `tuple_index_access_tests.rs`
+- `test_type_level_tuple_out_of_bounds_ts2493`
+- `test_type_level_union_tuple_out_of_bounds_ts2339`
+- `test_runtime_union_tuple_out_of_bounds_ts2339`
+- `test_destructuring_union_tuple_out_of_bounds_ts2339`
+- `test_union_tuple_valid_index_no_error`
+
+### Remaining gaps in types/tuple area (13 failing):
+1. **Fingerprint-only** (7 tests): arityAndOrderCompatibility01, contextualTypeWithTuple, optionalTupleElements1, strictTupleLength, tupleElementTypes1, typeInferenceWithTupleType, variadicTuples3, unionsOfTupleTypes1 — error codes match but message text/line differ
+2. **TS1265/TS1266** (variadicTuples2): Parser-level — rest element must be last, trailing optional after rest
+3. **TS2344/TS4104** (variadicTuples1): Type constraint violations in variadic tuples
+4. **TS17019/TS2574** (restTupleElements1): Parser and rest tuple resolution
+5. **TS1354/TS2540/TS4104** (readonlyArraysAndTuples): Readonly property/export checks
+6. **TS2403** (tupleTypes): Subsequent variable declaration type mismatch
+7. **TS2352** (tupleTypeInference2): False positive type assertion
 
 ---
 
