@@ -123,6 +123,56 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
                 }
             }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    self.write("[");
+                    let mut first = true;
+                    for &elem_idx in &pattern.elements.nodes {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        if let Some(elem_node) = self.arena.get(elem_idx) {
+                            if elem_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+                                if let Some(elem) = self.arena.get_binding_element(elem_node) {
+                                    if elem.dot_dot_dot_token {
+                                        self.write("...");
+                                    }
+                                    self.emit_node(elem.name);
+                                }
+                            } else if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                                // Empty slot in array pattern: [, x] → skip (comma already emitted)
+                            }
+                        }
+                    }
+                    self.write("]");
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    self.write("{ ");
+                    let mut first = true;
+                    for &elem_idx in &pattern.elements.nodes {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        if let Some(elem_node) = self.arena.get(elem_idx)
+                            && elem_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                                && let Some(elem) = self.arena.get_binding_element(elem_node) {
+                                    if elem.dot_dot_dot_token {
+                                        self.write("...");
+                                    }
+                                    if elem.property_name.is_some() {
+                                        self.emit_node(elem.property_name);
+                                        self.write(": ");
+                                    }
+                                    self.emit_node(elem.name);
+                                }
+                    }
+                    self.write(" }");
+                }
+            }
             // Fallback for contextual keywords and other unhandled node kinds used as names.
             _ if self.source_file_text.is_some() => {
                 if let Some(text) = self.get_source_slice(node.pos, node.end) {
