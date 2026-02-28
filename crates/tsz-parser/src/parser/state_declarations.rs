@@ -33,7 +33,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
 
         // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
-        // BUT reserved words like 'void', 'null' cannot be used
+        // Type keywords like 'void' are parsed as names and rejected by the checker (TS2427)
         let name = if self.is_token(SyntaxKind::YieldKeyword) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
@@ -42,8 +42,15 @@ impl ParserState {
             );
             self.parse_identifier_name()
         } else if self.is_identifier_or_keyword() {
-            // TS1005: Reserved words cannot be used as interface names
-            if self.is_reserved_word() {
+            // Type keywords (void, null) are accepted as names by the parser.
+            // The checker emits TS2427 for predefined type names used as interface names.
+            // Other reserved words (class, function, return, etc.) still get TS1005.
+            if self.is_reserved_word()
+                && !matches!(
+                    self.current_token,
+                    SyntaxKind::VoidKeyword | SyntaxKind::NullKeyword
+                )
+            {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
                 // Consume the invalid token to avoid cascading errors

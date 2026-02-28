@@ -400,7 +400,7 @@ impl<'a> CheckerState<'a> {
             // Reserved type names that can't be used as interface names
             match ident.escaped_text.as_str() {
                 "string" | "number" | "boolean" | "symbol" | "void" | "object" | "any"
-                | "unknown" | "never" | "bigint" | "intrinsic" => {
+                | "unknown" | "never" | "bigint" | "intrinsic" | "undefined" | "null" => {
                     self.error_at_node(
                         iface.name,
                         &format!("Interface name cannot be '{}'.", ident.escaped_text),

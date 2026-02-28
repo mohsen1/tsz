@@ -68,6 +68,16 @@ impl<'a> CheckerState<'a> {
 
         let name = &ident.escaped_text;
 
+        // TS1212: Check if identifier is a strict-mode reserved word used in expression context.
+        // This fires for EVERY expression usage of reserved words like `interface`, `private`, etc.
+        // Declaration-site TS1212 is handled separately in variable_checking/parameter_checker/etc.
+        // We emit the error here but do NOT return early — the identifier may still resolve.
+        if crate::state_checking::is_strict_mode_reserved_name(name)
+            && self.is_strict_mode_for_node(idx)
+        {
+            self.emit_strict_mode_reserved_word_error(idx, name, true);
+        }
+
         if name == "arguments" {
             // Track that this function body uses `arguments` (for JS implicit rest params)
             self.ctx.js_body_uses_arguments = true;
@@ -977,5 +987,55 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, idx);
         TypeId::ERROR
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_codes;
+
+    /// TS1212 must fire when a strict-mode reserved word is used as an expression.
+    /// In ESM (.ts files), strict mode is always on, so `var interface = 1; interface;`
+    /// should emit TS1212 at the expression usage of `interface`.
+    #[test]
+    fn ts1212_expression_usage_of_strict_mode_reserved_word() {
+        let codes = check_source_codes("var interface = 1;\ninterface;");
+        assert!(
+            codes.contains(&1212),
+            "Expected TS1212 for expression usage of `interface`: {codes:?}"
+        );
+    }
+
+    /// All strict-mode reserved words should trigger TS1212 at expression position.
+    #[test]
+    fn ts1212_all_reserved_words_in_expression() {
+        for word in &[
+            "implements",
+            "interface",
+            "let",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "static",
+            "yield",
+        ] {
+            let source = format!("var {word} = 1;\n{word};");
+            let codes = check_source_codes(&source);
+            assert!(
+                codes.contains(&1212),
+                "Expected TS1212 for expression usage of `{word}`: {codes:?}"
+            );
+        }
+    }
+
+    /// Non-reserved identifiers should NOT get TS1212.
+    #[test]
+    fn no_ts1212_for_regular_identifiers() {
+        let codes = check_source_codes("var foo = 1;\nfoo;");
+        assert!(
+            !codes.contains(&1212),
+            "Should not emit TS1212 for regular identifier: {codes:?}"
+        );
     }
 }
