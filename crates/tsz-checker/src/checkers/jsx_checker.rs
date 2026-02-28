@@ -857,7 +857,13 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
+                // Set contextual type so attribute values preserve narrow literal
+                // types instead of widening. e.g., <Foo bar="A" /> where
+                // bar: "A" | "B" keeps "A" as literal, not widened to string.
+                let prev_contextual_type = self.ctx.contextual_type;
+                self.ctx.contextual_type = Some(expected_type);
                 let actual_type = self.compute_type_of_node(value_node_idx);
+                self.ctx.contextual_type = prev_contextual_type;
 
                 // Check assignability — tsc anchors JSX attribute errors at the
                 // attribute NAME (not the value expression)
