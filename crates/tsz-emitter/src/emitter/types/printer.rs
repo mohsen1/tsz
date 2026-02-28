@@ -339,8 +339,13 @@ impl<'a> TypePrinter<'a> {
                     line.push_str("readonly ");
                 }
 
-                // Property name
-                line.push_str(&self.resolve_atom(property.name));
+                // Property name (quote if needed)
+                let name = self.resolve_atom(property.name);
+                if needs_property_name_quoting(&name) {
+                    line.push_str(&quote_property_name(&name));
+                } else {
+                    line.push_str(&name);
+                }
 
                 // Optional marker
                 if property.optional {
@@ -414,8 +419,15 @@ impl<'a> TypePrinter<'a> {
                     member.push_str("readonly ");
                 }
 
-                // Property name
-                member.push_str(&self.resolve_atom(property.name));
+                // Property name (quote if needed)
+                let name = self.resolve_atom(property.name);
+                if needs_property_name_quoting(&name) {
+                    member.push('"');
+                    member.push_str(&name);
+                    member.push('"');
+                } else {
+                    member.push_str(&name);
+                }
 
                 // Optional marker
                 if property.optional {
@@ -445,8 +457,18 @@ impl<'a> TypePrinter<'a> {
 
         let mut result = String::new();
 
-        // Property name
-        result.push_str(&self.resolve_atom(property.name));
+        // Property name (quote if needed)
+        let name = self.resolve_atom(property.name);
+        if needs_property_name_quoting(&name) {
+            result.push_str(&quote_property_name(&name));
+        } else {
+            result.push_str(&name);
+        }
+
+        // Optional marker for method
+        if property.optional {
+            result.push('?');
+        }
 
         // Type parameters
         if !func_shape.type_params.is_empty() {
@@ -661,10 +683,15 @@ impl<'a> TypePrinter<'a> {
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
+            let quoted_name = if needs_property_name_quoting(&name) {
+                quote_property_name(&name)
+            } else {
+                name
+            };
             parts.push(format!(
                 "{}{}{}: {}",
                 readonly,
-                name,
+                quoted_name,
                 optional,
                 self.print_type(prop.type_id)
             ));
@@ -964,6 +991,35 @@ impl<'a> TypePrinter<'a> {
         };
         format!("{}<{}>", kind_name, self.print_type(type_arg))
     }
+}
+
+/// Quote a property name with the appropriate quote style.
+/// tsc uses double quotes for numeric-like strings (e.g. "-1", "0")
+/// and for other non-identifier names.
+fn quote_property_name(name: &str) -> String {
+    format!("\"{name}\"")
+}
+
+/// Check if a property name needs quoting (contains spaces, hyphens, etc.)
+/// Does NOT quote: valid identifiers, numeric literals, computed names `[...]`
+fn needs_property_name_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    // Computed property names like [Symbol.dispose] are emitted as-is
+    if name.starts_with('[') && name.ends_with(']') {
+        return false;
+    }
+    // Pure numeric names don't need quoting (e.g. 0, 1, 404)
+    if name.chars().all(|ch| ch.is_ascii_digit()) {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !(first == '_' || first == '$' || first.is_alphabetic()) {
+        return true;
+    }
+    !chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
 #[cfg(test)]
