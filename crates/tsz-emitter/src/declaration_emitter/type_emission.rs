@@ -391,8 +391,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_indent();
 
                     // Emit readonly modifier if present (inside the braces)
-                    if mapped_type.readonly_token.is_some() {
-                        self.write("readonly ");
+                    // Token kind determines the prefix: +readonly, -readonly, or readonly
+                    if let Some(readonly_node) = self.arena.get(mapped_type.readonly_token) {
+                        match readonly_node.kind {
+                            k if k == SyntaxKind::PlusToken as u16 => {
+                                self.write("+readonly ");
+                            }
+                            k if k == SyntaxKind::MinusToken as u16 => {
+                                self.write("-readonly ");
+                            }
+                            _ => {
+                                self.write("readonly ");
+                            }
+                        }
                     }
 
                     self.write("[");
@@ -422,8 +433,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
 
                     // Optionally emit question token (after the bracket)
-                    if mapped_type.question_token.is_some() {
-                        self.write("?");
+                    // Token kind determines the prefix: +?, -?, or ?
+                    if let Some(question_node) = self.arena.get(mapped_type.question_token) {
+                        match question_node.kind {
+                            k if k == SyntaxKind::PlusToken as u16 => {
+                                self.write("+?");
+                            }
+                            k if k == SyntaxKind::MinusToken as u16 => {
+                                self.write("-?");
+                            }
+                            _ => {
+                                self.write("?");
+                            }
+                        }
                     }
 
                     self.write(": ");
