@@ -9,7 +9,9 @@ use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
 // Re-export readonly helpers
-pub use super::property_readonly::{is_readonly_index_signature, property_is_readonly};
+pub use super::property_readonly::{
+    is_mapped_type_with_readonly_modifier, is_readonly_index_signature, property_is_readonly,
+};
 
 // Child module: resolution helpers (mapped types, primitives, arrays, applications, etc.)
 #[path = "property_helpers.rs"]

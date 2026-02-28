@@ -812,3 +812,216 @@ fn test_non_identity_name_type_degrades_to_object() {
         "Non-identity name type should NOT preserve array structure, got Array"
     );
 }
+
+// =============================================================================
+// Mapped Type Readonly Property Checking Tests
+// =============================================================================
+
+#[test]
+fn test_mapped_type_property_is_readonly_with_add_modifier() {
+    // type Readonly<T> = { readonly [P in keyof T]: T[P] }
+    // property_is_readonly should return true for any property name
+    use crate::operations::property::property_is_readonly;
+
+    let interner = TypeInterner::new();
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: TypeId::STRING, // placeholder
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: Some(MappedModifier::Add),
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+
+    // All properties should be readonly on a +readonly mapped type
+    assert!(property_is_readonly(&interner, mapped_id, "x"));
+    assert!(property_is_readonly(&interner, mapped_id, "y"));
+    assert!(property_is_readonly(&interner, mapped_id, "anything"));
+}
+
+#[test]
+fn test_mapped_type_property_is_not_readonly_without_modifier() {
+    // type Identity<T> = { [P in keyof T]: T[P] }
+    // property_is_readonly should return false (no readonly modifier)
+    use crate::operations::property::property_is_readonly;
+
+    let interner = TypeInterner::new();
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+
+    assert!(!property_is_readonly(&interner, mapped_id, "x"));
+}
+
+#[test]
+fn test_mapped_type_property_is_not_readonly_with_remove_modifier() {
+    // type Mutable<T> = { -readonly [P in keyof T]: T[P] }
+    // property_is_readonly should return false (removing readonly)
+    use crate::operations::property::property_is_readonly;
+
+    let interner = TypeInterner::new();
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped_type = MappedType {
+        type_param: type_param_info,
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: Some(MappedModifier::Remove),
+    };
+
+    let mapped_id = interner.mapped(mapped_type);
+
+    assert!(!property_is_readonly(&interner, mapped_id, "x"));
+}
+
+#[test]
+fn test_is_mapped_type_with_readonly_modifier() {
+    // Direct Mapped type with +readonly should be detected
+    use crate::operations::property::is_mapped_type_with_readonly_modifier;
+
+    let interner = TypeInterner::new();
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    // With +readonly
+    let readonly_mapped = MappedType {
+        type_param: type_param_info.clone(),
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: Some(MappedModifier::Add),
+    };
+    let readonly_id = interner.mapped(readonly_mapped);
+    assert!(is_mapped_type_with_readonly_modifier(
+        &interner,
+        readonly_id
+    ));
+
+    // Without readonly
+    let mutable_mapped = MappedType {
+        type_param: type_param_info.clone(),
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::STRING,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let mutable_id = interner.mapped(mutable_mapped);
+    assert!(!is_mapped_type_with_readonly_modifier(
+        &interner, mutable_id
+    ));
+
+    // With -readonly
+    let remove_readonly_mapped = MappedType {
+        type_param: type_param_info,
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        optional_modifier: None,
+        readonly_modifier: Some(MappedModifier::Remove),
+    };
+    let remove_id = interner.mapped(remove_readonly_mapped);
+    assert!(!is_mapped_type_with_readonly_modifier(&interner, remove_id));
+}
+
+#[test]
+fn test_is_readonly_index_signature_on_mapped_type() {
+    // Mapped type with +readonly should have readonly index signatures
+    use crate::operations::property::is_readonly_index_signature;
+
+    let interner = TypeInterner::new();
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let readonly_mapped = MappedType {
+        type_param: type_param_info.clone(),
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: Some(MappedModifier::Add),
+    };
+    let readonly_id = interner.mapped(readonly_mapped);
+
+    // Both string and number index should be readonly
+    assert!(is_readonly_index_signature(
+        &interner,
+        readonly_id,
+        true,
+        false
+    ));
+    assert!(is_readonly_index_signature(
+        &interner,
+        readonly_id,
+        false,
+        true
+    ));
+    assert!(is_readonly_index_signature(
+        &interner,
+        readonly_id,
+        true,
+        true
+    ));
+
+    // Non-readonly mapped type
+    let mutable_mapped = MappedType {
+        type_param: type_param_info,
+        constraint: TypeId::STRING,
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let mutable_id = interner.mapped(mutable_mapped);
+
+    assert!(!is_readonly_index_signature(
+        &interner, mutable_id, true, false
+    ));
+    assert!(!is_readonly_index_signature(
+        &interner, mutable_id, false, true
+    ));
+}

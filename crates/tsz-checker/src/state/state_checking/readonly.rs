@@ -68,6 +68,13 @@ impl<'a> CheckerState<'a> {
                         }
                         return true;
                     }
+                    // Check for mapped types with explicit readonly modifier (e.g., Readonly<T>).
+                    // This handles Application types like Readonly<T> where T is generic,
+                    // which require TypeEnvironment evaluation to resolve the base type alias.
+                    if self.is_readonly_mapped_type(object_type) {
+                        self.error_readonly_index_signature_at(object_type, target_idx);
+                        return true;
+                    }
                     // Check AST-level interface readonly for element access (obj["x"])
                     if let Some(name) = self.get_literal_string_from_node(access.name_or_argument) {
                         if let Some(type_name) =
@@ -530,6 +537,31 @@ impl<'a> CheckerState<'a> {
             return Some("index signature".to_string());
         }
 
+        // Note: Mapped types with explicit readonly modifier (e.g., Readonly<T>)
+        // are checked separately in check_readonly_assignment because they require
+        // mutable access to evaluate through the TypeEnvironment.
+
         None
+    }
+
+    /// Check if a type is a mapped type with an explicit `+readonly` modifier.
+    ///
+    /// Evaluates through the `TypeEnvironment` to resolve Application/Lazy wrappers
+    /// (e.g., `Readonly<T>` where T is generic), then delegates to the solver's
+    /// `is_mapped_type_with_readonly_modifier` query.
+    fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {
+        use tsz_solver::operations::property::is_mapped_type_with_readonly_modifier;
+
+        // First try the direct solver query (handles Mapped, Application, Lazy)
+        if is_mapped_type_with_readonly_modifier(self.ctx.types, type_id) {
+            return true;
+        }
+        // For Application types wrapping Lazy(DefId), the standalone solver evaluator
+        // can't resolve DefIds. Evaluate through the checker's TypeEnvironment first.
+        let resolved = self.evaluate_type_with_env(type_id);
+        if resolved != type_id {
+            return is_mapped_type_with_readonly_modifier(self.ctx.types, resolved);
+        }
+        false
     }
 }
