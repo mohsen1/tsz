@@ -410,6 +410,25 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) {
+        // TS1206: With --experimentalDecorators, decorators on class expressions
+        // are not valid. Only ES decorators (TC39 Stage 3) support class expressions.
+        if self.ctx.compiler_options.experimental_decorators
+            && let Some(modifiers) = &class.modifiers
+        {
+            for &mod_idx in &modifiers.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == syntax_kind_ext::DECORATOR
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        mod_idx,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                }
+            }
+        }
+
         // TS8004: Type parameters on class expression in JS files
         if self.is_js_file() {
             self.error_if_ts_only_type_params(&class.type_parameters);

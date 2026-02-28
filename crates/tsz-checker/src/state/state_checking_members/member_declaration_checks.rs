@@ -1155,34 +1155,41 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let (modifiers, parameters) = match node.kind {
+        let (modifiers, parameters, member_name_idx) = match node.kind {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
                 .ctx
                 .arena
                 .get_property_decl(node)
-                .map_or((None, None), |decl| (decl.modifiers.as_ref(), None)),
+                .map_or((None, None, NodeIndex::NONE), |decl| {
+                    (decl.modifiers.as_ref(), None, decl.name)
+                }),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .map_or((None, None), |decl| {
-                    (decl.modifiers.as_ref(), Some(&decl.parameters))
+                .map_or((None, None, NodeIndex::NONE), |decl| {
+                    (decl.modifiers.as_ref(), Some(&decl.parameters), decl.name)
                 }),
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
                 .ctx
                 .arena
                 .get_accessor(node)
-                .map_or((None, None), |decl| {
-                    (decl.modifiers.as_ref(), Some(&decl.parameters))
+                .map_or((None, None, NodeIndex::NONE), |decl| {
+                    (decl.modifiers.as_ref(), Some(&decl.parameters), decl.name)
                 }),
-            k if k == syntax_kind_ext::CONSTRUCTOR => self
-                .ctx
-                .arena
-                .get_constructor(node)
-                .map_or((None, None), |decl| {
-                    (decl.modifiers.as_ref(), Some(&decl.parameters))
-                }),
-            _ => (None, None),
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                self.ctx
+                    .arena
+                    .get_constructor(node)
+                    .map_or((None, None, NodeIndex::NONE), |decl| {
+                        (
+                            decl.modifiers.as_ref(),
+                            Some(&decl.parameters),
+                            NodeIndex::NONE,
+                        )
+                    })
+            }
+            _ => (None, None, NodeIndex::NONE),
         };
 
         let is_abstract = modifiers.is_some_and(|m| {
@@ -1209,6 +1216,19 @@ impl<'a> CheckerState<'a> {
 
         let is_ambient_field = is_ambient && node.kind == syntax_kind_ext::PROPERTY_DECLARATION;
 
+        // With --experimentalDecorators, decorators on private-named members
+        // and members of class expressions are not valid (TS1206).
+        let is_private_member =
+            member_name_idx != NodeIndex::NONE && self.is_private_identifier_name(member_name_idx);
+        let is_class_expression_member = self.ctx.enclosing_class.as_ref().is_some_and(|c| {
+            self.ctx
+                .arena
+                .get(c.class_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_EXPRESSION)
+        });
+        let legacy_decorator_not_valid = self.ctx.compiler_options.experimental_decorators
+            && (is_private_member || is_class_expression_member);
+
         if let Some(modifiers) = modifiers {
             for &modifier_idx in &modifiers.nodes {
                 let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
@@ -1220,6 +1240,7 @@ impl<'a> CheckerState<'a> {
 
                 if is_abstract
                     || (!self.ctx.compiler_options.experimental_decorators && is_ambient_field)
+                    || legacy_decorator_not_valid
                 {
                     use crate::diagnostics::diagnostic_codes;
                     if is_abstract && node.kind == syntax_kind_ext::METHOD_DECLARATION {

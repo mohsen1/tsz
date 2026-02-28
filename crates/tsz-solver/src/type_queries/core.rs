@@ -129,6 +129,19 @@ pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
+/// Check if a type is `symbol` or a `unique symbol` type.
+///
+/// Returns true for the built-in `symbol` type and for `TypeData::UniqueSymbol`.
+pub fn is_symbol_or_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::SYMBOL {
+        return true;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::UniqueSymbol(_) | TypeData::Intrinsic(crate::IntrinsicKind::Symbol))
+    )
+}
+
 /// Check if a type is usable as a property name (TS1166/TS1165/TS1169).
 ///
 /// Returns true for string literals, number literals, and unique symbol types.
