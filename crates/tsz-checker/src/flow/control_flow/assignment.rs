@@ -278,7 +278,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// gets `keyof T & string` (= `Extract<keyof T, string>`) so that `obj[k]`
     /// is well-typed. Otherwise returns plain `string`.
     fn for_in_variable_type(&self, expr_type: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{is_keyof_type, is_type_parameter_like};
+        use crate::query_boundaries::flow_analysis as query;
 
         let db = self.interner.as_type_database();
         let non_nullable = tsz_solver::remove_nullish(db, expr_type);
@@ -286,7 +286,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // If keyof evaluates to a type parameter or remains an unevaluated keyof,
         // return the intersection with string (= Extract<keyof T, string>).
-        if is_type_parameter_like(db, keyof_type) || is_keyof_type(db, keyof_type) {
+        if query::is_type_parameter_like(db, keyof_type) || query::is_keyof_type(db, keyof_type) {
             self.interner
                 .factory()
                 .intersection(vec![keyof_type, TypeId::STRING])
