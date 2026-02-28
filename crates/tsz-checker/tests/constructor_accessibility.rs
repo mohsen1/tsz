@@ -440,3 +440,102 @@ fn test_missing_super_call_emits_ts2377() {
         2377,
     );
 }
+
+/// Test that nested classes inside a method can access outer class's private constructor.
+/// This matches tsc behavior: lexically enclosed classes inherit scope access.
+#[test]
+fn test_nested_class_in_method_accesses_private_constructor() {
+    test_no_specific_error(
+        r#"
+        class A {
+            private constructor() {}
+            method() {
+                class B {
+                    method() {
+                        new A(); // OK - lexically inside A
+                    }
+                }
+            }
+        }
+        "#,
+        2673,
+    );
+}
+
+/// Test that nested classes inside a method can access outer class's protected constructor.
+#[test]
+fn test_nested_class_in_method_accesses_protected_constructor() {
+    test_no_specific_error(
+        r#"
+        class D {
+            protected constructor() {}
+            method() {
+                class E {
+                    method() {
+                        new D(); // OK - lexically inside D
+                    }
+                }
+            }
+        }
+        "#,
+        2674,
+    );
+}
+
+/// Test that private constructors are still blocked from truly external code.
+#[test]
+fn test_private_constructor_blocked_from_external_nested() {
+    // A nested class in a DIFFERENT class should NOT have access
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        class Other {
+            method() {
+                new A(); // Error: private constructor
+            }
+        }
+        "#,
+        2673,
+    );
+}
+
+/// Test TS2415: parameter property with optional type incompatible with base.
+/// `constructor(public p?: number)` creates `p: number | undefined` which is
+/// not assignable to base class's `p: number`.
+#[test]
+fn test_parameter_property_optional_incompatible_with_base() {
+    test_constructor_accessibility(
+        r#"
+        class C {
+            p: number = 0;
+        }
+        class D extends C {
+            constructor(public p?: number) {
+                super();
+            }
+        }
+        "#,
+        2415,
+    );
+}
+
+/// Test TS2415: parameter property with visibility conflict.
+/// Derived `readonly x` (public) vs base `private readonly x`.
+#[test]
+fn test_parameter_property_visibility_conflict_with_base() {
+    test_constructor_accessibility(
+        r#"
+        class D {
+            constructor(private readonly x: number) {
+                this.x = 0;
+            }
+        }
+        class E extends D {
+            constructor(readonly x: number) {
+                super(x);
+            }
+        }
+        "#,
+        2415,
+    );
+}

@@ -1422,6 +1422,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Check constructor parameter properties for type/visibility compatibility
+        // with base class members. The main member loop above only handles
+        // PROPERTY_DECLARATION/METHOD_DECLARATION/ACCESSOR nodes. Parameter properties
+        // (e.g., `constructor(public p?: number)`) are syntactic sugar for class properties
+        // but live inside the constructor node, so they need separate handling.
+        if !class_extends_error_reported {
+            self.check_parameter_property_compatibility(
+                class_data,
+                base_class,
+                base_idx,
+                &derived_class_name,
+                &base_class_name,
+                &substitution,
+            );
+        }
+
         // Check index signature compatibility between derived and base classes (TS2415)
         self.check_class_index_signature_compatibility(
             class_data,
@@ -1433,6 +1449,143 @@ impl<'a> CheckerState<'a> {
         );
 
         self.pop_type_parameters(base_type_param_updates);
+    }
+
+    /// Check constructor parameter properties against base class members for
+    /// type and visibility compatibility (TS2415).
+    ///
+    /// tsc emits TS2415 at the class name when a parameter property (e.g.,
+    /// `constructor(public p?: number)`) is incompatible with the corresponding
+    /// base class member. This can be due to:
+    /// - Visibility conflict: derived public vs base private
+    /// - Type incompatibility: derived `number | undefined` vs base `number`
+    fn check_parameter_property_compatibility(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        base_class: &tsz_parser::parser::node::ClassData,
+        base_idx: NodeIndex,
+        derived_class_name: &str,
+        base_class_name: &str,
+        substitution: &tsz_solver::TypeSubstitution,
+    ) {
+        use tsz_solver::instantiate_type;
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                continue;
+            };
+
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if !self.has_parameter_property_modifier(&param.modifiers) {
+                    continue;
+                }
+                let Some(param_name) = self.get_property_name(param.name) else {
+                    continue;
+                };
+
+                let derived_visibility = if self.has_private_modifier(&param.modifiers) {
+                    MemberVisibility::Private
+                } else if self.has_protected_modifier(&param.modifiers) {
+                    MemberVisibility::Protected
+                } else {
+                    MemberVisibility::Public
+                };
+
+                // Find matching member in base class (including private, for visibility checks)
+                let base_any_info = {
+                    let mut found = None;
+                    for &base_member_idx in &base_class.members.nodes {
+                        if let Some(info) = self.extract_class_member_info(base_member_idx, false)
+                            && info.name == param_name
+                            && !info.is_static
+                        {
+                            found = Some(info);
+                            break;
+                        }
+                    }
+                    if found.is_none() {
+                        found = self.find_member_in_class_chain(
+                            base_idx,
+                            &param_name,
+                            false,
+                            0,
+                            false, // don't skip private
+                        );
+                    }
+                    found
+                };
+
+                // Check visibility conflict (TS2415)
+                if let Some(ref base_any_info) = base_any_info
+                    && self.class_member_visibility_conflicts(
+                        derived_visibility,
+                        base_any_info.visibility,
+                    )
+                {
+                    self.error_at_node(
+                        class_data.name,
+                        &format!(
+                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'."
+                        ),
+                        diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+                    );
+                    return; // Only one TS2415 per class
+                }
+
+                // Check type compatibility — find visible base member
+                let base_info =
+                    self.find_member_in_class_chain(base_idx, &param_name, false, 0, true);
+                let Some(base_info) = base_info else {
+                    continue;
+                };
+                let base_type = instantiate_type(self.ctx.types, base_info.type_id, substitution);
+
+                // Get the parameter property type, accounting for optionality
+                let mut prop_type = if param.type_annotation.is_some() {
+                    self.get_type_from_type_node(param.type_annotation)
+                } else {
+                    TypeId::ANY
+                };
+
+                // Optional parameter properties (`p?: T`) have type `T | undefined`
+                // under strictNullChecks
+                if param.question_token && self.ctx.strict_null_checks() {
+                    let factory = self.ctx.types.factory();
+                    prop_type = factory.union(vec![prop_type, TypeId::UNDEFINED]);
+                }
+
+                // Skip if either type is ANY
+                if prop_type == TypeId::ANY || base_type == TypeId::ANY {
+                    continue;
+                }
+
+                // Check type compatibility through centralized mismatch policy
+                if should_report_member_type_mismatch(self, prop_type, base_type, param.name) {
+                    // tsc emits TS2415 at the class name for parameter property
+                    // type incompatibility (not TS2416 at the member)
+                    self.error_at_node(
+                        class_data.name,
+                        &format!(
+                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'."
+                        ),
+                        diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+                    );
+                    return; // Only one TS2415 per class
+                }
+            }
+        }
     }
 
     /// Append type parameter names (e.g., `<T, U>`) to a class/interface name string.

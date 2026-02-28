@@ -1,8 +1,176 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9582/12570 (76.2%) — full suite, error-code level
+**Current score**: ~9644/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28g — classes/constructorDeclarations: TS2415 parameter properties + TS2673/TS2674 false positive
+
+### Fixed: Parameter property type/visibility checking against base classes — Checker (class_checker.rs)
+
+**Root cause**: Constructor parameter properties (e.g., `constructor(public p?: number)`) are syntactic sugar for class properties but were NOT checked for compatibility with base class members. The main member loop in `check_property_inheritance_compatibility` only handles PROPERTY_DECLARATION, METHOD_DECLARATION, and ACCESSOR nodes via `extract_class_member_info`. Parameter properties live inside the constructor node and were completely skipped.
+
+**Fix**: Added `check_parameter_property_compatibility()` method in `class_checker.rs` that:
+1. Iterates constructor parameters with property modifiers (public, private, protected, readonly)
+2. Finds matching base class members (including private, for visibility conflict detection)
+3. Checks visibility conflicts → emits TS2415 at class name
+4. Checks type compatibility → emits TS2415 at class name
+5. Handles optional parameter property types (`p?: T` → `T | undefined` under strictNullChecks)
+
+**Files**: `crates/tsz-checker/src/classes/class_checker.rs`
+
+### Fixed: Nested class constructor accessibility false positive — Checker (constructor_checker.rs)
+
+**Root cause**: `find_enclosing_class_for_new()` only returned the FIRST (immediately enclosing) class. For nested classes inside a method (e.g., `class A { method() { class B { method() { new A(); } } } }`), it found B but not A, so `new A()` was incorrectly flagged as accessing a private constructor from outside A.
+
+**Fix**: Replaced `find_enclosing_class_for_new()` with `find_all_enclosing_classes()` that walks the COMPLETE AST parent chain, collecting ALL enclosing class symbols. The accessibility check then iterates through all of them — if ANY enclosing class matches the target (for private) or is a subclass (for protected), access is allowed.
+
+**Files**: `crates/tsz-checker/src/classes/constructor_checker.rs`
+
+### Test impact: +5 net (9639→9644)
+- `optionalParameterProperty` (TS2415 parameter property type)
+- `readonlyConstructorAssignment` (TS2415 visibility conflict)
+- `classConstructorAccessibility4` (TS2673/TS2674 false positive)
+- `privateNamesConstructorChain-1` (nested class scope bonus)
+- `typeofANonExportedType` (bonus)
+
+### Unit tests added: 5 new tests in `constructor_accessibility.rs`
+- `test_nested_class_in_method_accesses_private_constructor`
+- `test_nested_class_in_method_accesses_protected_constructor`
+- `test_private_constructor_blocked_from_external_nested`
+- `test_parameter_property_optional_incompatible_with_base`
+- `test_parameter_property_visibility_conflict_with_base`
+
+### Remaining gaps in classes/constructorDeclarations area:
+1. **TS5107** (3 tests): Deprecated compiler option warnings — config-level, low priority
+2. **TS2300/TS2687** (1 test): Duplicate identifier + modifier mismatch for parameter properties — binder/checker
+3. **TS1098** (2 tests): Empty type parameter list — parser level
+4. **TS1441** (1 test): Cannot start function call in type annotation — parser level
+5. **declarationEmitPrivateSymbolCausesVarDeclarationEmit2** (1 test): Symbol-keyed private properties in multi-file test — `get_property_name()` returns None for computed symbol property names
+6. **12 fingerprint-only failures**: Error codes match but line/message mismatches
+
+---
+
+## Session 2026-02-28f — expressions/binaryOperators: TS18050→TS18048 diagnostic fix
+
+### Fixed: Emit TS18048/TS18047 for variables instead of TS18050 in binary ops — Checker (operator_errors.rs)
+
+**Root cause**: When a variable with type `null` or `undefined` was used in a binary operation (e.g., `x < 1` where `x: typeof undefined`), the checker always emitted TS18050 ("The value 'undefined' cannot be used here"). tsc distinguishes between:
+- **TS18050**: Literal `null`/`undefined` keyword used directly (e.g., `undefined < 3`)
+- **TS18048**: Variable with `undefined` type (e.g., `x < 3` where `x: undefined`)
+- **TS18047**: Variable with `null` type
+
+**Fix**: Added `emit_nullish_operand_error()` helper in `operator_errors.rs` that checks `is_literal_null_or_undefined_node()` to determine if the AST node is the literal keyword or a variable reference, then emits the appropriate diagnostic code. Made `is_literal_null_or_undefined_node` `pub(crate)` in `core.rs` for cross-module access.
+
+**Files**:
+- `crates/tsz-checker/src/error_reporter/operator_errors.rs` — main fix
+- `crates/tsz-checker/src/types/queries/core.rs` — visibility change
+- `crates/tsz-checker/tests/value_usage_tests.rs` — 3 new unit tests
+
+### Test impact: +2 net (comparisonOperatorWithOneOperandIsUndefined passes)
+
+### Investigation notes: TS2454 and expressions/binaryOperators area
+
+- TS2454 was already correctly implemented. The strictNullChecks gate is correct — tsc 6.0 changed the DEFAULT to true, but still respects `--strictNullChecks false`. Our `CheckerOptions::default()` already has `strict_null_checks: true`.
+- The `expressions/binaryOperators` area is at 83.1% (54/65) at error-code level after fix.
+- Remaining 11 failures: 6 fingerprint-only (line offsets), 3 comparison operator type issues (TS2365/TS2367 with generic signatures — solver level), 1 `Symbol.hasInstance` (TS2860/TS2861 not implemented), 1 false positive TS2359/TS18019.
+- The `literals.ts` false positive TS18050 is a separate issue — tsc 6.0 doesn't emit TS18050 for `null / null` and `undefined / undefined` even though strictNullChecks defaults to true. May be related to multi-target `@target: ES5, ES2015` handling.
+
+---
+
+## Session 2026-02-28e — types/mapped area: reverse mapped type intersection constraints
+
+### Fixed: Reverse mapped type inference through intersection constraints — Solver (constraints.rs)
+
+**Root cause**: When a mapped type has constraint `keyof T & keyof Constraint`, tsc's `inferToMappedType` recursively decomposes Union and Intersection types to find `keyof T` where T is the inference placeholder. Our code only checked for a direct `KeyOf(T)` at the top level, missing the `keyof T` hidden inside an Intersection.
+
+**Fix**: Added `find_keyof_inference_target()` helper in `constraints.rs` that recursively walks Intersection and Union members to find the `keyof T` target. Modified the mapped type inference branch to use this helper.
+
+**File**: `crates/tsz-solver/src/operations/constraints.rs`
+
+### Fixed: Mapped type evaluation of intersection key constraints — Solver (mapped.rs)
+
+**Root cause**: After T is inferred and substituted, the constraint `keyof T & keyof U` gets partially evaluated and distributed by the interner: `keyof {x,y} & keyof U` → `("x" & keyof U) | ("y" & keyof U)`. The `evaluate_keyof_or_constraint` function returned Unions as-is without recursively evaluating members, and had no handler for Intersection types. This prevented `extract_mapped_keys()` from extracting concrete keys, causing mapped types to defer instead of evaluate.
+
+**Fix**:
+1. Updated `evaluate_keyof_or_constraint` to recursively evaluate Union members (handles distributed intersection forms)
+2. Added Intersection handler that evaluates each member's key set and computes their intersection via `intersect_keyof_sets`
+3. Updated `extract_source_from_keyof` to find keyof sources through Intersection types
+
+**File**: `crates/tsz-solver/src/evaluation/evaluate_rules/mapped.rs`
+
+### Test impact: +1 net (genericCallInferenceConditionalType1)
+
+The inference fix enables correct reverse mapped type inference for `keyof T & keyof Constraint` patterns. The evaluation fix enables the resulting mapped types to resolve their intersection constraints to concrete keys. Together they:
+- Fix 2 false TS2345 errors in reverse mapped type tests (at error-code level)
+- Flip `genericCallInferenceConditionalType1` from FAIL to PASS
+- No regressions detected (3 pre-existing solver test failures confirmed on clean main)
+
+### Remaining gaps (fingerprint-level, not yet fixed):
+
+1. **Mapped type display in diagnostics**: After inference, mapped types with intersection constraints show as `{ [K in keyof T & keyof X]: T[K] }` instead of the evaluated `{ x: 1 }`. The checker's TS2353 diagnostic renders the ORIGINAL parameter type rather than the instantiated/evaluated mapped type. Fixing this requires the checker to instantiate the mapped type before formatting the diagnostic message.
+
+2. **Nested generic call inference**: The `checkType_<T>()` pattern (`<T>() => <U extends T>(value: mapped) => value`) doesn't trigger reverse inference for the inner U because the outer T is already resolved before the inner call. The nested call loses the reverse mapping context.
+
+3. **`keyof T & keyof U` where U is unresolvable**: When one keyof operand is a Lazy ref that can't be resolved (e.g., interface from another module), `intersect_keyof_sets` fails and the mapped type defers. This is correct behavior — we can't evaluate if we don't know the keys — but it means some tests still defer.
+
+---
+
+## Session 2026-02-28c — Node area: package exports blocking + TS2823 for Node16
+
+### Fixed: Package exports field blocks unlisted subpaths — Resolution (resolution.rs)
+
+**Root cause**: When a package.json has an `"exports"` field and `resolve_exports_subpath()` returned `None` (subpath not in the exports map), the code fell through to `resolve_package_entry()` which bypassed the exports restriction entirely. This violated Node.js package encapsulation semantics — subpaths not listed in the exports map should not be resolvable.
+
+**Fix**:
+1. When exports exists but doesn't match, return `None` immediately (block fallback)
+2. Added support for deprecated trailing-slash directory patterns (`"./": "./"`) which act as prefix matches in the exports map
+3. Updated `apply_exports_subpath` to handle trailing-slash targets
+
+**Files**: `crates/tsz-cli/src/driver/resolution.rs`
+
+### Fixed: TS2823 false negative for Node16 module — Checker (declaration.rs)
+
+**Root cause**: `check_import_attributes_module_option` listed `ModuleKind::Node16` in the "supported" match arms. Import attributes (`with { type: "json" }`) are only supported starting from `Node18`, not `Node16`. The incorrect inclusion suppressed TS2823 for `node16` targets.
+
+**Fix**: Removed `ModuleKind::Node16` from the supported match arms.
+
+**File**: `crates/tsz-checker/src/declarations/import/declaration.rs`
+
+### Tests flipped PASS (+11 total, 0 regressions):
+- `nodeModulesExportsBlocksSpecifierResolution` (exports blocking)
+- `nodeModulesExportsSpecifierGenerationConditions` (exports blocking)
+- `nodeModulesExportsSpecifierGenerationPattern` (exports blocking)
+- `nodeModulesImportAssertions` (TS2823 for Node16)
+- `nodeModulesResolveJsonModule` (TS2823 for Node16)
+- +6 collateral improvements in other areas
+
+**Conformance**: 9628 → 9639 (+11)
+
+### Remaining node area failures (25 tests)
+
+| Test | Root Cause | Layer |
+|------|-----------|-------|
+| nodeModulesExportsSourceTs | TS2835 "EcmaScript" vs "ECMAScript" capitalization | Message text (LOW) |
+| nodeModulesExportsSpecifierGenerationDirectory | Extra TS2307 — `.js` → `.d.ts` substitution not done for exports-resolved paths | Resolution (MEDIUM) |
+| nodeModulesImportResolutionNoCycle | Missing TS2307 for `#type` — package imports not resolving `#type` subpath | Resolution (MEDIUM) |
+| nodeModulesPackageImportsRootWildcardNode16 | Missing TS2307 for `#/foo.js` — package imports root wildcard | Resolution (MEDIUM) |
+| legacyNodeModulesExportsSpecifierGenerationConditions | Missing TS2742 | Checker (MEDIUM) |
+| nodeModulesExportAssignments | Missing TS1203 | Checker (LOW) |
+| nodeModulesImportHelpersCollisions/2 | Missing TS2343 × 2 | Checker (MEDIUM) |
+| nodeModulesNoDirectoryModule | Missing TS2882 | Resolution (MEDIUM) |
+| nodeModulesConditionalPackageExports | Missing TS1479+TS2307 | Resolution (MEDIUM) |
+| nodeModulesPackageExports | Missing TS1479+TS2307 | Resolution (MEDIUM) |
+
+### Key gap: `.js` → `.d.ts` extension substitution for exports-resolved paths
+
+The `expand_export_path_candidates` function (resolution.rs:1024) has a comment saying tsc does NOT perform `.js` → `.d.ts` substitution for exports/imports entries. This is too broad — when the path comes from a directory pattern or wildcard match (not a literal exports string), tsc DOES perform extension substitution. The distinction is:
+- Explicit exports target `"./index.js"` → NO substitution (TS does not try `index.d.ts`)
+- Pattern-resolved `"./index.js"` from `"./": "./"` mapping `"./index.js"` → YES substitution
+
+Fixing this requires distinguishing the two cases, possibly by adding a flag to `resolve_export_entry`. Estimated LOC: ~20.
 
 ---
 

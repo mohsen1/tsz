@@ -3674,3 +3674,70 @@ type Bad = Obj["c"];
         "TS2536 should be emitted for concrete invalid index 'c'.\nActual: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// Interface Merged Declaration Property-vs-Method TS2300
+// =============================================================================
+
+#[test]
+fn test_ts2300_interface_property_vs_method_conflict() {
+    // When merged interfaces have the same member name as both a property
+    // and a method, tsc emits TS2300 "Duplicate identifier" on both.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface A {
+    foo: () => string;
+}
+interface A {
+    foo(): number;
+}
+",
+    );
+    let ts2300_count = diagnostics.iter().filter(|(c, _)| *c == 2300).count();
+    assert!(
+        ts2300_count >= 2,
+        "Expected at least 2 TS2300 for property-vs-method conflict, got {ts2300_count}.\nDiagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2300_for_method_overloads_in_merged_interfaces() {
+    // Method overloads across merged interfaces are valid and should NOT
+    // produce TS2300. Multiple methods with the same name are allowed.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface B {
+    bar(x: number): number;
+}
+interface B {
+    bar(x: string): string;
+}
+",
+    );
+    let ts2300_count = diagnostics.iter().filter(|(c, _)| *c == 2300).count();
+    assert!(
+        ts2300_count == 0,
+        "Method overloads should not produce TS2300, got {ts2300_count}.\nDiagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2304_for_method_type_params_in_merged_interface() {
+    // Method signatures with their own type parameters should not cause
+    // TS2304 "Cannot find name" during merged interface checking.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface C<T> {
+    foo(x: T): T;
+}
+interface C<T> {
+    foo<W>(x: W, y: W): W;
+}
+",
+    );
+    let ts2304_count = diagnostics.iter().filter(|(c, _)| *c == 2304).count();
+    assert!(
+        ts2304_count == 0,
+        "Method type params should not cause TS2304, got {ts2304_count}.\nDiagnostics: {diagnostics:?}"
+    );
+}
