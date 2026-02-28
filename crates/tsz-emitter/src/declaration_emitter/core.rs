@@ -78,6 +78,14 @@ pub struct DeclarationEmitter<'a> {
     pub(super) comment_emit_idx: usize,
     /// When true, strip all comments from .d.ts output (--removeComments)
     pub(super) remove_comments: bool,
+    /// Tracks whether emitted output has an external module indicator
+    /// (import, export, or export-modified declaration)
+    pub(super) result_has_external_module_indicator: bool,
+    /// Tracks whether emitted output has a non-exported declaration
+    /// (needs scope fix marker)
+    pub(super) needs_scope_fix_marker: bool,
+    /// Tracks whether emitted output has an ExportDeclaration or ExportAssignment
+    pub(super) result_has_scope_marker: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -139,6 +147,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            result_has_external_module_indicator: false,
+            needs_scope_fix_marker: false,
+            result_has_scope_marker: false,
         }
     }
 
@@ -182,6 +193,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            result_has_external_module_indicator: false,
+            needs_scope_fix_marker: false,
+            result_has_scope_marker: false,
         }
     }
 
@@ -398,6 +412,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.reset_writer();
         self.indent_level = 0;
+        self.result_has_external_module_indicator = false;
+        self.needs_scope_fix_marker = false;
+        self.result_has_scope_marker = false;
 
         // Prepare import metadata for elision BEFORE running UsageAnalyzer
         // This builds the SymbolId -> ModuleSpecifier map from existing imports
@@ -476,17 +493,42 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_triple_slash_directives(source_file);
 
         // Emit required imports first (before other declarations)
+        let before_imports = self.writer.len();
         self.emit_required_imports();
 
         // Emit auto-generated imports for foreign symbols
         self.emit_auto_imports();
+        if self.writer.len() > before_imports {
+            // Auto-generated imports count as external module indicators
+            self.result_has_external_module_indicator = true;
+        }
 
         for &stmt_idx in &source_file.statements.nodes {
             self.emit_statement(stmt_idx);
         }
 
-        if self.needs_empty_export_marker(source_file) {
+        // Determine if the source file is a module (has import/export syntax)
+        let is_external_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+            })
+        });
+
+        // tsc emits `export {};` when:
+        // 1. The source file is a module, AND
+        // 2. Either: the emitted output has no external module indicator
+        //    OR: the output has non-exported declarations AND no scope marker
+        if is_external_module
+            && (!self.result_has_external_module_indicator
+                || (self.needs_scope_fix_marker && !self.result_has_scope_marker))
+        {
             self.write("export {};");
+            self.write_line();
         }
 
         self.writer.get_output().to_string()
@@ -590,6 +632,88 @@ impl<'a> DeclarationEmitter<'a> {
 
         if self.writer.len() == before_len {
             self.pending_source_pos = None;
+        } else {
+            // Statement produced output - update export {} sentinel tracking
+            self.update_scope_tracking(stmt_idx, kind);
+        }
+    }
+
+    /// Update scope tracking flags for the `export {}` sentinel logic.
+    /// Called after a statement produces output in the .d.ts file.
+    fn update_scope_tracking(&mut self, stmt_idx: NodeIndex, kind: u16) {
+        match kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
+            {
+                self.result_has_external_module_indicator = true;
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                self.result_has_external_module_indicator = true;
+                self.result_has_scope_marker = true;
+            }
+            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                self.result_has_external_module_indicator = true;
+                self.result_has_scope_marker = true;
+            }
+            _ => {
+                // Check if the declaration has an export modifier
+                let has_export = if let Some(node) = self.arena.get(stmt_idx) {
+                    match node.kind {
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            self.arena.get_function(node).is_some_and(|f| {
+                                self.arena
+                                    .has_modifier(&f.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            self.arena.get_class(node).is_some_and(|c| {
+                                self.arena
+                                    .has_modifier(&c.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            self.arena.get_interface(node).is_some_and(|i| {
+                                self.arena
+                                    .has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                            self.arena.get_type_alias(node).is_some_and(|t| {
+                                self.arena
+                                    .has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            self.arena.get_enum(node).is_some_and(|e| {
+                                self.arena
+                                    .has_modifier(&e.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                            self.arena.get_variable(node).is_some_and(|v| {
+                                self.arena
+                                    .has_modifier(&v.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                            self.arena.get_module(node).is_some_and(|m| {
+                                self.arena
+                                    .has_modifier(&m.modifiers, SyntaxKind::ExportKeyword)
+                            })
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                };
+
+                if has_export {
+                    self.result_has_external_module_indicator = true;
+                } else {
+                    // Non-exported declaration that was emitted - needs scope fix
+                    self.needs_scope_fix_marker = true;
+                }
+            }
         }
     }
 

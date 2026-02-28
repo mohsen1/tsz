@@ -292,6 +292,9 @@ export class CliTranspiler {
       if (!declaration) {
         args.push('--noCheck', '--noLib');
       }
+      // Add --allowJs when any input file is a .js/.jsx/.mjs/.cjs file
+      const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
+      if (hasJsInput) args.push('--allowJs');
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
       if (sourceMap) args.push('--sourceMap');
       if (inlineSourceMap) args.push('--inlineSourceMap');
@@ -427,7 +430,6 @@ export class CliTranspiler {
         js = chunks.join('');
       }
       js = dedupeUseStrictPreamble(js);
-      const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
       // Only CJS (1) needs "use strict" compensation for JS input files.
       // AMD (2) and UMD (3) add "use strict" inside their wrapper functions.
       // Preserve (200) keeps ESM as ESM, which is implicitly strict.
