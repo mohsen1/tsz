@@ -991,34 +991,33 @@ impl<'a> DeclarationEmitter<'a> {
                 self.public_api_scope_depth += 1;
             }
 
-            if let Some(body_node) = self.arena.get(current_body) {
-                if let Some(module_block) = self.arena.get_module_block(body_node) {
-                    if let Some(ref stmts) = module_block.statements {
-                        for &stmt_idx in &stmts.nodes {
-                            self.emit_statement(stmt_idx);
-                        }
+            if let Some(body_node) = self.arena.get(current_body)
+                && let Some(module_block) = self.arena.get_module_block(body_node)
+                && let Some(ref stmts) = module_block.statements
+            {
+                for &stmt_idx in &stmts.nodes {
+                    self.emit_statement(stmt_idx);
+                }
 
-                        // tsc emits `export {};` inside a non-ambient namespace
-                        // body when there is a mix of exported and non-exported
-                        // members (the "scope-fix marker").
-                        let is_ambient_module = self
-                            .arena
-                            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                            || prev_inside_declare_namespace
-                            || self.source_is_declaration_file;
+                // tsc emits `export {};` inside a non-ambient namespace
+                // body when there is a mix of exported and non-exported
+                // members (the "scope-fix marker").
+                let is_ambient_module = self
+                    .arena
+                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                    || prev_inside_declare_namespace
+                    || self.source_is_declaration_file;
 
-                        if !is_ambient_module {
-                            let needs_scope_fix = stmts.nodes.iter().any(|&idx| {
-                                self.arena
-                                    .get(idx)
-                                    .is_some_and(|n| self.stmt_needs_scope_marker(n))
-                            });
-                            if needs_scope_fix {
-                                self.write_indent();
-                                self.write("export {};");
-                                self.write_line();
-                            }
-                        }
+                if !is_ambient_module {
+                    let needs_scope_fix = stmts.nodes.iter().any(|&idx| {
+                        self.arena
+                            .get(idx)
+                            .is_some_and(|n| self.stmt_needs_scope_marker(n))
+                    });
+                    if needs_scope_fix {
+                        self.write_indent();
+                        self.write("export {};");
+                        self.write_line();
                     }
                 }
             }

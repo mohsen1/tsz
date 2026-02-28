@@ -531,10 +531,9 @@ impl<'a> TypePrinter<'a> {
         if let Some(sym_id) = sym_id
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(sym_id)
+            && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
         {
-            if self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id) {
-                return symbol.escaped_name.clone();
-            }
+            return symbol.escaped_name.clone();
         }
 
         // Symbol is not visible or we don't have symbol info.
@@ -544,7 +543,7 @@ impl<'a> TypePrinter<'a> {
 
     /// Check if a symbol is a global (ambient) type that's always accessible.
     /// Global types like Object, Array, Function, etc. have no parent symbol
-    /// (parent == SymbolId::NONE) and are always referenceable in declarations.
+    /// (parent == `SymbolId::NONE`) and are always referenceable in declarations.
     fn is_global_symbol(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
             return false;
