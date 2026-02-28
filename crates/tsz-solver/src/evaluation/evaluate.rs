@@ -879,7 +879,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // lose those property declarations from the intersection type.
                         // This matters for optional properties: {a: string} <: {b?: number}
                         // but {a: string} & {b?: number} must preserve both properties.
-                        checker.is_subtype_of(members[j], members[i]) && !self.has_unique_properties(members[i], members[j])
+                        checker.is_subtype_of(members[j], members[i])
+                            && !self.has_unique_properties(members[i], members[j])
                     }
                 };
                 if is_subtype {
