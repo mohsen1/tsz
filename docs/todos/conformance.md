@@ -6,49 +6,41 @@
 
 ---
 
-## Session 2026-02-28d — Interface member merging: property-vs-method TS2300
+## Session 2026-02-28e — types/mapped area: reverse mapped type intersection constraints
 
-### Area: classes/constructorDeclarations (59.0%, 23/39 passing)
+### Fixed: Reverse mapped type inference through intersection constraints — Solver (constraints.rs)
 
-Investigated the area and found the most impactful cross-cutting gap was TS2300 "Duplicate identifier" (missing in 21 tests globally, 11 would-pass-if-added).
+**Root cause**: When a mapped type has constraint `keyof T & keyof Constraint`, tsc's `inferToMappedType` recursively decomposes Union and Intersection types to find `keyof T` where T is the inference placeholder. Our code only checked for a direct `KeyOf(T)` at the top level, missing the `keyof T` hidden inside an Intersection.
 
-### Fixed: Property-vs-method conflict detection in merged interfaces — Checker
+**Fix**: Added `find_keyof_inference_target()` helper in `constraints.rs` that recursively walks Intersection and Union members to find the `keyof T` target. Modified the mapped type inference branch to use this helper.
 
-**Root cause**: `check_merged_interface_declaration_diagnostics` only handled `PropertySignature` members. When merged interfaces had the same member name as both a `PropertySignature` (e.g., `foo: () => string`) and a `MethodSignature` (e.g., `foo(): number`), the method signature was completely ignored. tsc emits TS2300 on both declarations in this case.
+**File**: `crates/tsz-solver/src/operations/constraints.rs`
 
-**Fix**: Extended `check_merged_interface_declaration_diagnostics` to:
-1. Track both PropertySignature and MethodSignature members with a `(TypeId, bool, NodeIndex)` tuple in `merged_properties` (type, is_method, name_node)
-2. When a method follows a property with the same name, emit TS2300 on both declarations
-3. Skip type resolution for method signatures (avoid false TS2304 from method-local type params like `foo<W>(): W`)
-4. Skip TS2717 type compatibility for method overloads (multiple methods with same name are valid)
+### Fixed: Mapped type evaluation of intersection key constraints — Solver (mapped.rs)
 
-**File**: `crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs:1197-1395`
+**Root cause**: After T is inferred and substituted, the constraint `keyof T & keyof U` gets partially evaluated and distributed by the interner: `keyof {x,y} & keyof U` → `("x" & keyof U) | ("y" & keyof U)`. The `evaluate_keyof_or_constraint` function returned Unions as-is without recursively evaluating members, and had no handler for Intersection types. This prevented `extract_mapped_keys()` from extracting concrete keys, causing mapped types to defer instead of evaluate.
 
-**Unit tests added**:
-- `test_ts2300_interface_property_vs_method_conflict` — property-vs-method emits TS2300
-- `test_no_ts2300_for_method_overloads_in_merged_interfaces` — method overloads are allowed
-- `test_no_ts2304_for_method_type_params_in_merged_interface` — method type params don't leak
+**Fix**:
+1. Updated `evaluate_keyof_or_constraint` to recursively evaluate Union members (handles distributed intersection forms)
+2. Added Intersection handler that evaluates each member's key set and computes their intersection via `intersect_keyof_sets`
+3. Updated `extract_source_from_keyof` to find keyof sources through Intersection types
 
-**Conformance**: 9627 → 9639 (+12, error-code level, 76.7%)
+**File**: `crates/tsz-solver/src/evaluation/evaluate_rules/mapped.rs`
 
-**Note**: The directly targeted tests (duplicateIdentifierRelatedSpans3/5) are multi-file tests that still fail at error-code level because our cross-file interface merging doesn't yet detect property-vs-method conflicts across binders. The +12 improvement comes from:
-- Reduced false positive diagnostics from method return type resolution
-- Better property-vs-method detection in single-file interfaces
+### Test impact: +1 net (genericCallInferenceConditionalType1)
 
-### Remaining TS2300 gaps (for future sessions)
+The inference fix enables correct reverse mapped type inference for `keyof T & keyof Constraint` patterns. The evaluation fix enables the resulting mapped types to resolve their intersection constraints to concrete keys. Together they:
+- Fix 2 false TS2345 errors in reverse mapped type tests (at error-code level)
+- Flip `genericCallInferenceConditionalType1` from FAIL to PASS
+- No regressions detected (3 pre-existing solver test failures confirmed on clean main)
 
-| Pattern | Tests | Difficulty |
-|---------|-------|-----------|
-| Cross-file interface property-vs-method | duplicateIdentifierRelatedSpans3/5 + 9 more | Medium (need cross-binder member kind tracking) |
-| Duplicate export specifiers (`export {Foo, Foo}`) | exportInterfaceClassAndValueWithDuplicatesInImportList | Low (checker export checking) |
-| Constructor parameter property vs class property | constructorParameterProperties2 | Medium (checker constructor checking) |
-| Type alias conflicting with interface+namespace | noSymbolForMergeCrash | Medium (binder merge semantics) |
-| Cross-file declaration conflicts (VNode) | checkerInitializationCrash | Hard (cross-file type resolution) |
-| Unique symbol computed property names | uniqueSymbolsPropertyNames | Medium (unique symbol identity) |
+### Remaining gaps (fingerprint-level, not yet fixed):
 
-### TS2717 gap (property-after-method)
+1. **Mapped type display in diagnostics**: After inference, mapped types with intersection constraints show as `{ [K in keyof T & keyof X]: T[K] }` instead of the evaluated `{ x: 1 }`. The checker's TS2353 diagnostic renders the ORIGINAL parameter type rather than the instantiated/evaluated mapped type. Fixing this requires the checker to instantiate the mapped type before formatting the diagnostic message.
 
-When a property follows a method with the same name in merged interfaces, tsc emits TS2717 "Subsequent property declarations must have the same type" comparing the property's type against the method's full callable type. We currently skip this case — it requires computing the method's function type, which needs access to the method's full signature including parameters (not just the return type annotation). This affects `methodSignatureHandledDeclarationKindForSymbol.ts` (already was failing, no regression).
+2. **Nested generic call inference**: The `checkType_<T>()` pattern (`<T>() => <U extends T>(value: mapped) => value`) doesn't trigger reverse inference for the inner U because the outer T is already resolved before the inner call. The nested call loses the reverse mapping context.
+
+3. **`keyof T & keyof U` where U is unresolvable**: When one keyof operand is a Lazy ref that can't be resolved (e.g., interface from another module), `intersect_keyof_sets` fails and the mapped type defers. This is correct behavior — we can't evaluate if we don't know the keys — but it means some tests still defer.
 
 ---
 
