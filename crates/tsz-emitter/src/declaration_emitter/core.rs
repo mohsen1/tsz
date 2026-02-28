@@ -500,6 +500,9 @@ impl<'a> DeclarationEmitter<'a> {
             source_file.comments.len()
         );
 
+        // Emit detached copyright comments (/*! ... */) at the very top
+        self.emit_detached_copyright_comments(source_file);
+
         // Emit triple-slash directives at the very top (before imports)
         self.emit_triple_slash_directives(source_file);
 
@@ -544,6 +547,43 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.writer.get_output().to_string()
+    }
+
+    /// Emits detached copyright comments (`/*! ... */`) at the top of the .d.ts file.
+    ///
+    /// TSC preserves `/*!` comments (copyright notices) at the very start of the file
+    /// in declaration output, even when `--removeComments` is set.
+    fn emit_detached_copyright_comments(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        // Find the position of the first statement
+        let first_stmt_pos = source_file
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map(|n| n.pos);
+
+        for comment in &source_file.comments {
+            // Only consider comments that appear before the first statement
+            if let Some(stmt_pos) = first_stmt_pos
+                && comment.pos >= stmt_pos {
+                    break;
+                }
+
+            // Only preserve /*! ... */ copyright comments
+            if !comment.is_multi_line {
+                continue;
+            }
+            let text = comment.get_text(&source_file.text);
+            if !text.starts_with("/*!") {
+                continue;
+            }
+
+            self.write(text);
+            self.write_line();
+        }
     }
 
     /// Emits triple-slash directives at the top of the .d.ts file.
