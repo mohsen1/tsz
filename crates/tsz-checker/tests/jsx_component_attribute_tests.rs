@@ -986,3 +986,97 @@ let x = <Foo a={{1}} d={{1}} {{...p}} {{...{{ d: 1 }}}} />;
         "Should emit TS2783 for both 'a' (required in first spread) and 'd' (required in second spread), got {ts2783_count} TS2783 errors: {diags:?}"
     );
 }
+
+// =============================================================================
+// JSX Children Contextual Typing
+// =============================================================================
+
+#[test]
+fn test_jsx_children_callback_gets_contextual_type() {
+    // When a component has `children: (arg: SomeType) => Element`, a callback
+    // child like `{(arg) => ...}` should get its parameter typed from the
+    // `children` prop — no TS7006 should be emitted.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface User {{ Name: string }}
+function FetchUser(props: {{ children: (user: User) => JSX.Element }}) {{
+    return <div />;
+}}
+function UserName() {{
+    return <FetchUser>{{user => <div />}}</FetchUser>;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts7006 = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
+        .count();
+    assert!(
+        ts7006 == 0,
+        "Should NOT emit TS7006 when children callback is contextually typed, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_jsx_children_callback_union_props_gets_contextual_type() {
+    // Discriminated union props: children callback should get contextual type
+    // from the union of `children` prop types across union members.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+type Props =
+  | {{ renderNumber?: false; children: (arg: string) => void }}
+  | {{ renderNumber: true; children: (arg: number) => void }};
+declare function Foo(props: Props): JSX.Element;
+const Test = () => {{
+    return <Foo>{{(value) => {{}}}}</Foo>;
+}};
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts7006 = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
+        .count();
+    assert!(
+        ts7006 == 0,
+        "Should NOT emit TS7006 for children callback in discriminated union props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_jsx_children_no_contextual_type_for_generic_sfc() {
+    // Generic SFCs can't provide children contextual types (type params unresolved)
+    // — TS7006 is expected for the callback parameter.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function GenComp<T>(props: {{ prop: T; children: (t: T) => T }}) {{
+    return <div />;
+}}
+const x = <GenComp prop={{"x"}}>{{i => ({{}}) }}</GenComp>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // For generic SFCs, we can't infer T, so children contextual typing
+    // may or may not work. This test just verifies no crash occurs.
+    // (TS7006 is acceptable here since generic inference isn't implemented)
+    let _ = diags; // Just verify no panic
+}
+
+#[test]
+fn test_jsx_children_intrinsic_element_no_crash() {
+    // Intrinsic elements (e.g., <div>) should not crash when extracting
+    // children contextual type, even if children type is broad/any.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+const x = <div>{{(item: string) => item}}</div>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Just verify no crash — intrinsic elements have broad children types
+    let _ = diags;
+}
