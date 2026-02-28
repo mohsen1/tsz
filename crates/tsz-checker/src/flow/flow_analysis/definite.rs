@@ -170,7 +170,8 @@ impl<'a> CheckerState<'a> {
             &self.ctx.flow_in_worklist,
             &self.ctx.flow_visited,
             &self.ctx.flow_results,
-        );
+        )
+        .with_symbol_last_assignment_pos(&self.ctx.symbol_last_assignment_pos);
 
         let narrowed = analyzer.get_flow_type(idx, declared_type, flow_node);
 

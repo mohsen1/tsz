@@ -166,6 +166,10 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
     pub(crate) flow_visited: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
     pub(crate) flow_results: Option<&'a RefCell<FxHashMap<FlowNodeId, TypeId>>>,
+    /// Shared cache for last assignment position per symbol.
+    /// Key: `SymbolId` -> last assignment byte position (0 = never reassigned).
+    pub(crate) shared_symbol_last_assignment_pos:
+        Option<&'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -209,6 +213,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_in_worklist: None,
             flow_visited: None,
             flow_results: None,
+            shared_symbol_last_assignment_pos: None,
         }
     }
 
@@ -240,6 +245,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_in_worklist: None,
             flow_visited: None,
             flow_results: None,
+            shared_symbol_last_assignment_pos: None,
         }
     }
 
@@ -297,6 +303,15 @@ impl<'a> FlowAnalyzer<'a> {
         self.flow_in_worklist = Some(in_worklist);
         self.flow_visited = Some(visited);
         self.flow_results = Some(results);
+        self
+    }
+
+    /// Set a shared last-assignment-position cache for "effectively const" detection.
+    pub const fn with_symbol_last_assignment_pos(
+        mut self,
+        cache: &'a RefCell<FxHashMap<tsz_binder::SymbolId, u32>>,
+    ) -> Self {
+        self.shared_symbol_last_assignment_pos = Some(cache);
         self
     }
 
@@ -1070,10 +1085,15 @@ impl<'a> FlowAnalyzer<'a> {
                 // Call expression - check for type predicates
                 self.handle_call_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::START) {
-                // Start node - check if we're crossing a closure boundary
-                // For mutable variables (let/var), we cannot trust narrowing from outer scope
-                // because the closure may capture the variable and it could be mutated.
-                // For const variables, narrowing is preserved (they're immutable).
+                // Start node - check if we're crossing a closure boundary.
+                //
+                // For "effectively mutable" captured variables (let/var that are
+                // actually reassigned), we cannot trust narrowing from outer scope
+                // because the closure may execute after the variable is mutated.
+                //
+                // For "effectively const" variables (const, or parameters/let/var
+                // that are never reassigned), narrowing is preserved. This implements
+                // tsc's "implicit const parameter" feature.
                 let outer_flow_id = flow.antecedent.first().copied().or_else(|| {
                     // START with no antecedents - try to find outer flow via node_flow map
                     if flow.node.is_some() {
@@ -1084,8 +1104,11 @@ impl<'a> FlowAnalyzer<'a> {
                 });
 
                 if let Some(outer_flow) = outer_flow_id {
-                    if self.is_mutable_variable(reference) && self.is_captured_variable(reference) {
-                        // Captured mutable variable - cannot use narrowing from outer scope
+                    if self.is_captured_variable(reference)
+                        && !self.is_effectively_const_for_narrowing(reference)
+                    {
+                        // Captured mutable variable that IS reassigned -
+                        // cannot use narrowing from outer scope
                         initial_type
                     } else {
                         // Const or local variable - preserve narrowing from outer scope.

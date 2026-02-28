@@ -34,6 +34,134 @@ impl<'a> FlowAnalyzer<'a> {
         !self.arena.is_const_variable_declaration(decl_id)
     }
 
+    /// Check if a variable is "effectively const" at the given reference point
+    /// for closure narrowing purposes.
+    ///
+    /// A variable is effectively const at a reference if:
+    /// 1. Declared with `const`, OR
+    /// 2. A parameter or catch variable where all assignments are before the
+    ///    reference point, OR
+    /// 3. A local `let` variable (not `var`, not exported, not global) where
+    ///    all assignments are before the reference point.
+    ///
+    /// This implements tsc's `isPastLastAssignment()` + `isParameterOrMutableLocalVariable()`.
+    /// `var` declarations, exported variables, and global-scope variables are excluded
+    /// because they have broader visibility and hoisting semantics.
+    pub(crate) fn is_effectively_const_for_narrowing(&self, reference: NodeIndex) -> bool {
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
+            return false;
+        };
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        // If declared with const, always effectively const
+        if self.arena.is_const_variable_declaration(decl_id) {
+            return true;
+        }
+
+        // Check if the variable is eligible for "implicit const" treatment
+        let Some(decl_node) = self.arena.get(decl_id) else {
+            return false;
+        };
+
+        // Only parameters are eligible for "implicit const" treatment.
+        // `let`/`var` variables are excluded because they have edge cases
+        // (e.g., `let arguments = 100` shadowing built-in `arguments` with
+        // misresolved declared type). tsc also primarily targets parameters
+        // for this optimization.
+        let eligible = decl_node.kind == syntax_kind_ext::PARAMETER;
+
+        if !eligible {
+            return false;
+        }
+
+        // Get the reference position in source
+        let ref_pos = self.arena.get(reference).map(|n| n.pos).unwrap_or(0);
+
+        // Get the last assignment position for this symbol
+        let last_assign_pos = self.get_last_assignment_pos(symbol_id, reference);
+
+        // If never reassigned (0), or all reassignments are before the reference
+        // position, the variable is effectively const at this point
+        last_assign_pos == 0 || last_assign_pos < ref_pos
+    }
+
+    /// Get the position of the last reassignment to a symbol.
+    /// Returns 0 if the symbol is never reassigned.
+    ///
+    /// Walks all ASSIGNMENT flow nodes in the arena to find non-initialization
+    /// assignments that target the given reference. Results are cached per SymbolId.
+    fn get_last_assignment_pos(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        reference: NodeIndex,
+    ) -> u32 {
+        // Check shared cache first
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos
+            && let Some(&pos) = cache.borrow().get(&symbol_id) {
+                return pos;
+            }
+
+        let result = self.compute_last_assignment_pos(reference);
+
+        // Store in shared cache
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos {
+            cache.borrow_mut().insert(symbol_id, result);
+        }
+
+        result
+    }
+
+    /// Internal: walk all flow nodes to find the position of the last reassignment.
+    /// Returns 0 if no reassignment found.
+    fn compute_last_assignment_pos(&self, reference: NodeIndex) -> u32 {
+        use tsz_binder::flow_flags;
+
+        let mut last_pos: u32 = 0;
+        let flow_count = self.binder.flow_nodes.len();
+
+        for i in 0..flow_count {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+
+            // Only look at ASSIGNMENT flow nodes
+            if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                continue;
+            }
+
+            // Skip initialization assignments (variable declarations, parameters).
+            // Only binary expression assignments (x = ...), prefix/postfix unary (++x, x--)
+            // count as reassignments.
+            let Some(node) = self.arena.get(flow.node) else {
+                continue;
+            };
+            let kind = node.kind;
+            if kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || kind == syntax_kind_ext::PARAMETER
+            {
+                continue;
+            }
+
+            // Check if this assignment targets our reference
+            if self.assignment_targets_reference(flow.node, reference) {
+                let pos = node.pos;
+                if pos > last_pos {
+                    last_pos = pos;
+                }
+            }
+        }
+
+        last_pos
+    }
+
     /// Check if a variable is captured from an outer scope (vs declared locally).
     ///
     /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
