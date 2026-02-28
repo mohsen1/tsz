@@ -1132,8 +1132,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker.ensure_relation_input_ready(asserted_type);
 
                             // Don't check if either type is error, any, unknown, or never.
-                            // TS also skips this warning for unconcretized type-parameter
-                            // assertions like `{}` as T, which are common in generic code.
                             let should_check = !self.checker.type_contains_error(expr_type)
                                 && !self.checker.type_contains_error(asserted_type)
                                 && expr_type != TypeId::ANY
@@ -1142,17 +1140,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && asserted_type != TypeId::UNKNOWN
                                 && expr_type != TypeId::NEVER
                                 && asserted_type != TypeId::NEVER
-                                // Skip TS2352 when either type contains type parameters
-                                // (not just *is* a type parameter). TSC's comparableRelation
-                                // erases generics and resolves constraints, so assertions like
-                                // `x as <T>(x: T) => T` or `key as keyof T` are allowed.
+                                // Skip TS2352 when expr_type contains type parameters.
                                 && !generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
                                     expr_type,
-                                )
-                                && !generic_query::contains_type_parameters(
-                                    self.checker.ctx.types,
-                                    asserted_type,
                                 )
                                 // Suppress TS2352 when the assertion node is near a
                                 // parse error — the type assertion may be a parser
@@ -1161,15 +1152,55 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // disabled).
                                 && !self.checker.node_has_nearby_parse_error(idx);
 
+                            // For asserted types containing type parameters, TSC resolves
+                            // the constraint and checks overlap against it. E.g., for
+                            // `x as T` where `T extends null | undefined`, TSC checks
+                            // overlap of `x` with `null | undefined`.
+                            let (should_check, effective_asserted) = if should_check {
+                                if generic_query::contains_type_parameters(
+                                    self.checker.ctx.types,
+                                    asserted_type,
+                                ) {
+                                    // Try resolving the type parameter's constraint
+                                    if let Some(constraint) =
+                                        tsz_solver::type_queries::get_type_parameter_constraint(
+                                            self.checker.ctx.types,
+                                            asserted_type,
+                                        )
+                                    {
+                                        // Use constraint if it doesn't itself contain type params
+                                        if !generic_query::contains_type_parameters(
+                                            self.checker.ctx.types,
+                                            constraint,
+                                        ) && constraint != TypeId::UNKNOWN
+                                            && constraint != TypeId::ANY
+                                        {
+                                            (true, constraint)
+                                        } else {
+                                            (false, asserted_type)
+                                        }
+                                    } else {
+                                        // No constraint — skip (unconstrained T is compatible with anything)
+                                        (false, asserted_type)
+                                    }
+                                } else {
+                                    (true, asserted_type)
+                                }
+                            } else {
+                                (false, asserted_type)
+                            };
+
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
                                 // (i.e., the types don't "sufficiently overlap").
                                 // TSC uses isTypeComparableTo which is more relaxed than assignability:
                                 // types are comparable if they share at least one common property.
+                                // Use effective_asserted (which may be a resolved constraint)
+                                // for the overlap check.
                                 let source_to_target =
-                                    self.checker.is_assignable_to(expr_type, asserted_type);
+                                    self.checker.is_assignable_to(expr_type, effective_asserted);
                                 let target_to_source =
-                                    self.checker.is_assignable_to(asserted_type, expr_type);
+                                    self.checker.is_assignable_to(effective_asserted, expr_type);
                                 if !source_to_target && !target_to_source {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
@@ -1177,9 +1208,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     let mut have_overlap = false;
 
                                     // Decompose target union: any member assignable in either direction?
-                                    if let Some(members) =
-                                        query::union_members(self.checker.ctx.types, asserted_type)
-                                    {
+                                    if let Some(members) = query::union_members(
+                                        self.checker.ctx.types,
+                                        effective_asserted,
+                                    ) {
                                         for member in members {
                                             if self.checker.is_assignable_to(member, expr_type)
                                                 || self.checker.is_assignable_to(expr_type, member)
@@ -1196,10 +1228,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             query::union_members(self.checker.ctx.types, expr_type)
                                     {
                                         for member in members {
-                                            if self.checker.is_assignable_to(member, asserted_type)
+                                            if self
+                                                .checker
+                                                .is_assignable_to(member, effective_asserted)
                                                 || self
                                                     .checker
-                                                    .is_assignable_to(asserted_type, member)
+                                                    .is_assignable_to(effective_asserted, member)
                                             {
                                                 have_overlap = true;
                                                 break;
@@ -1213,7 +1247,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             self.checker.evaluate_type_for_assignability(expr_type);
                                         let evaluated_asserted = self
                                             .checker
-                                            .evaluate_type_for_assignability(asserted_type);
+                                            .evaluate_type_for_assignability(effective_asserted);
                                         have_overlap = query::types_are_comparable(
                                             self.checker.ctx.types,
                                             evaluated_expr,
