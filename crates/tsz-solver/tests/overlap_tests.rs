@@ -216,3 +216,144 @@ fn test_null_undefined_overlap_with_all_types() {
     assert!(checker.are_types_overlapping(TypeId::NULL, TypeId::STRING));
     assert!(checker.are_types_overlapping(TypeId::UNDEFINED, TypeId::NUMBER));
 }
+
+// ---- Intersection overlap tests ----
+
+#[test]
+fn test_intersection_with_disjoint_property_no_overlap() {
+    let interner = TypeInterner::new();
+
+    // Create { a: string } & { b: number } vs { a: number }
+    // The intersection has a:string. {a:number} has a:number. string vs number = no overlap.
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let intersection = interner.intersection(vec![obj_a, obj_b]);
+
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+
+    let checker = SubtypeChecker::new(&interner);
+    // {a:string, b:number} vs {a:number} — "a" has conflicting types, no overlap
+    assert!(!checker.are_types_overlapping(intersection, obj_c));
+}
+
+#[test]
+fn test_intersection_with_compatible_properties_overlap() {
+    let interner = TypeInterner::new();
+
+    // Create { a: string } & { b: number } vs { a: string }
+    // The intersection has a:string. {a:string} also has a:string. They overlap.
+    let obj_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let intersection = interner.intersection(vec![obj_a, obj_b]);
+
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+
+    let checker = SubtypeChecker::new(&interner);
+    assert!(checker.are_types_overlapping(intersection, obj_c));
+}
+
+#[test]
+fn test_intersection_of_disjoint_objects_with_unrelated_object() {
+    let interner = TypeInterner::new();
+
+    // { x: number } & { y: string } vs { z: boolean }
+    // No conflicting properties — types overlap (object could have all three props)
+    let obj_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj_y = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
+    let intersection = interner.intersection(vec![obj_x, obj_y]);
+
+    let obj_z = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("z"),
+        TypeId::BOOLEAN,
+    )]);
+
+    let checker = SubtypeChecker::new(&interner);
+    assert!(checker.are_types_overlapping(intersection, obj_z));
+}
+
+#[test]
+fn test_two_intersections_overlap_check() {
+    let interner = TypeInterner::new();
+
+    // { a: string } & { b: number } vs { a: string } & { c: boolean }
+    // Common property "a" has same type string — they overlap
+    let obj_a1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let inter1 = interner.intersection(vec![obj_a1, obj_b]);
+
+    let obj_a2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let obj_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::BOOLEAN,
+    )]);
+    let inter2 = interner.intersection(vec![obj_a2, obj_c]);
+
+    let checker = SubtypeChecker::new(&interner);
+    assert!(checker.are_types_overlapping(inter1, inter2));
+}
+
+#[test]
+fn test_two_intersections_no_overlap_discriminant() {
+    let interner = TypeInterner::new();
+
+    // { kind: "a" } & { x: number } vs { kind: "b" } & { y: string }
+    // Common property "kind" has disjoint literal types — no overlap (discriminant)
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        lit_a,
+    )]);
+    let obj_x = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let inter1 = interner.intersection(vec![obj1, obj_x]);
+
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("kind"),
+        lit_b,
+    )]);
+    let obj_y = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::STRING,
+    )]);
+    let inter2 = interner.intersection(vec![obj2, obj_y]);
+
+    let checker = SubtypeChecker::new(&interner);
+    assert!(!checker.are_types_overlapping(inter1, inter2));
+}

@@ -572,23 +572,88 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // For intersection types (e.g., `string & { $Brand: any }`), check if
-        // ANY member of the intersection overlaps with the other type. A branded
-        // string type overlaps with a string literal since the `string` member does.
+        // Intersection type overlap handling (three tiers matching TSC behavior):
+        //
+        // 1. Type parameters: Resolve to constraints and rebuild intersection.
+        //    `T & number` where T extends `string | number` → `number` → no overlap
+        //    with `"hello"`.
+        //
+        // 2. Primitive members (branded types): Per-member overlap check.
+        //    `string & { $Brand: any }` overlaps with `"hello"` because the `string`
+        //    member overlaps.
+        //
+        // 3. All-object intersections: Skip per-member check, fall through to the
+        //    bidirectional assignability check below. `I1 & I3` vs `I2` should NOT
+        //    overlap just because `I1` is assignable from `I2`.
         if let Some(left_members) = query::get_intersection_members(self.ctx.types, effective_left)
         {
-            for member in &left_members {
-                if !self.types_have_no_overlap(*member, effective_right) {
-                    return false;
+            let has_type_param = left_members
+                .iter()
+                .any(|m| is_type_parameter_like(self.ctx.types, *m));
+            if has_type_param {
+                // Tier 1: Resolve type parameters to constraints
+                let resolved: Vec<TypeId> = left_members
+                    .iter()
+                    .map(|&m| {
+                        if is_type_parameter_like(self.ctx.types, m) {
+                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                self.ctx.types,
+                                m,
+                            )
+                            .unwrap_or(TypeId::UNKNOWN)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                let resolved_type = self.ctx.types.intersection(resolved);
+                return self.types_have_no_overlap(resolved_type, effective_right);
+            }
+            // Tier 2: Only do per-member overlap when a primitive member exists
+            let has_primitive = left_members
+                .iter()
+                .any(|m| tsz_solver::is_primitive_type(self.ctx.types, *m) || *m == TypeId::OBJECT);
+            if has_primitive {
+                for member in &left_members {
+                    if !self.types_have_no_overlap(*member, effective_right) {
+                        return false;
+                    }
                 }
             }
+            // Tier 3: All-object intersections fall through to assignability below
         }
         if let Some(right_members) =
             query::get_intersection_members(self.ctx.types, effective_right)
         {
-            for member in &right_members {
-                if !self.types_have_no_overlap(effective_left, *member) {
-                    return false;
+            let has_type_param = right_members
+                .iter()
+                .any(|m| is_type_parameter_like(self.ctx.types, *m));
+            if has_type_param {
+                let resolved: Vec<TypeId> = right_members
+                    .iter()
+                    .map(|&m| {
+                        if is_type_parameter_like(self.ctx.types, m) {
+                            tsz_solver::type_queries::get_type_parameter_constraint(
+                                self.ctx.types,
+                                m,
+                            )
+                            .unwrap_or(TypeId::UNKNOWN)
+                        } else {
+                            m
+                        }
+                    })
+                    .collect();
+                let resolved_type = self.ctx.types.intersection(resolved);
+                return self.types_have_no_overlap(effective_left, resolved_type);
+            }
+            let has_primitive = right_members
+                .iter()
+                .any(|m| tsz_solver::is_primitive_type(self.ctx.types, *m) || *m == TypeId::OBJECT);
+            if has_primitive {
+                for member in &right_members {
+                    if !self.types_have_no_overlap(effective_left, *member) {
+                        return false;
+                    }
                 }
             }
         }

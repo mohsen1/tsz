@@ -198,10 +198,10 @@ impl<'a> CheckerState<'a> {
                             }
                         } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                             && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
-                                && !attr_data.initializer.is_none()
-                            {
-                                self.compute_type_of_node(attr_data.initializer);
-                            }
+                            && !attr_data.initializer.is_none()
+                        {
+                            self.compute_type_of_node(attr_data.initializer);
+                        }
                     }
                 }
             }

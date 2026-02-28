@@ -362,6 +362,32 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // TSC emits TS2322 instead of TS2741 when the target is an
+                // intersection type. Intersection types are not concrete object
+                // types, so "Property X is missing" is misleading — use the
+                // generic "not assignable" message instead.
+                // Example: `anb: A & B = a` → TS2322 "Type 'A' is not assignable
+                //          to type 'A & B'", NOT TS2741 "Property 'b' is missing..."
+                // Check both the reason's target_type (may be flattened by solver)
+                // and the original target (preserves intersection structure).
+                if tsz_solver::is_intersection_type(self.ctx.types, *target_type)
+                    || tsz_solver::is_intersection_type(self.ctx.types, target)
+                {
+                    let src_str = self.format_type(source);
+                    let tgt_str_full = self.format_type(target);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str_full],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 let src_str = self.format_type(*source_type);
                 let message = format_message(
@@ -427,12 +453,13 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TSC emits TS2322 (not assignable) instead of TS2739/TS2740
-                // when the target type is an intersection type (same rationale as
-                // MissingProperty above).
-                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
-                    let src_str = self.format_type(*source_type);
-                    let tgt_str = self.format_type(*target_type);
+                // TSC emits TS2322 instead of TS2739/TS2740 when the target is an
+                // intersection type (same reasoning as the TS2741 guard above).
+                if tsz_solver::is_intersection_type(self.ctx.types, *target_type)
+                    || tsz_solver::is_intersection_type(self.ctx.types, target)
+                {
+                    let src_str = self.format_type(source);
+                    let tgt_str = self.format_type(target);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str],
