@@ -264,101 +264,30 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
-        // `export {};` is needed when the source is module-like (imports/exports)
-        // but declaration output has no runtime-facing exports. This covers
-        // type-only export modules and import-only modules.
-        let has_module_syntax = source_file.statements.nodes.iter().any(|&stmt_idx| {
+        // `export {};` is needed when the file is a module (has any import/export
+        // syntax, including declarations with `export` modifier) AND the .d.ts
+        // output contains at least one non-exported declaration that needs a
+        // scope marker to preserve module semantics.
+        let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
                 let k = stmt_node.kind;
+                // Import/export statement kinds
                 k == syntax_kind_ext::IMPORT_DECLARATION
                     || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     || k == syntax_kind_ext::EXPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    // Any declaration with an `export` modifier also makes this a module
+                    || self.stmt_has_export_modifier(stmt_node)
             })
         });
 
-        has_module_syntax && !self.has_public_api_value_exports(source_file)
-    }
-
-    /// Return true if exported declarations include runtime/value-side exports.
-    pub(crate) fn has_public_api_value_exports(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            match stmt_node.kind {
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.arena.get_module(stmt_node)
-                        && self
-                            .arena
-                            .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        return true;
-                    }
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                        if export.is_type_only {
-                            continue;
-                        }
-                        if let Some(clause_node) = self.arena.get(export.export_clause) {
-                            match clause_node.kind {
-                                k if k == syntax_kind_ext::INTERFACE_DECLARATION => continue,
-                                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => continue,
-                                _ => return true,
-                            }
-                        } else {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                    return true;
-                }
-                _ => {}
-            }
-        }
-        false
+        is_module
+            && source_file.statements.nodes.iter().any(|&stmt_idx| {
+                self.arena
+                    .get(stmt_idx)
+                    .is_some_and(|stmt_node| self.stmt_needs_scope_marker(stmt_node))
+            })
     }
 
     /// Equivalent to tsc's `needsScopeMarker`: returns true when a statement is
