@@ -153,11 +153,20 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             if is_declaration {
-                // Direct export of declaration
-                self.write("export default ");
-                self.emit_node(assign.expression);
-                self.write(";");
-                self.write_line();
+                match expr_node.kind {
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.emit_export_default_function(assign.expression);
+                    }
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.emit_export_default_class(assign.expression);
+                    }
+                    _ => {
+                        self.write("export default ");
+                        self.emit_node(assign.expression);
+                        self.write(";");
+                        self.write_line();
+                    }
+                }
             } else if expr_node.kind == SyntaxKind::Identifier as u16 {
                 // export default <identifier> — emit directly
                 self.write("export default ");
