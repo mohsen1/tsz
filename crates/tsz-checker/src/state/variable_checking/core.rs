@@ -742,7 +742,15 @@ impl<'a> CheckerState<'a> {
                         |ty| self.resolve_lazy_type(ty),
                     );
 
-                if (ast_circular || semantic_circular)
+                // Third check: transitive typeof circularity.
+                // E.g., `var d: typeof e; var e: typeof d;` — the AST check only
+                // sees `typeof e` doesn't directly reference `d`, but following the
+                // chain through `e`'s annotation reveals `typeof d`.
+                let transitive_circular = !ast_circular
+                    && !semantic_circular
+                    && self.check_transitive_type_query_circularity(final_type, sym_id);
+
+                if (ast_circular || semantic_circular || transitive_circular)
                     && let Some(ref name) = var_name
                 {
                     let message = format!(
@@ -1369,6 +1377,99 @@ impl<'a> CheckerState<'a> {
         };
 
         Some(has_export)
+    }
+
+    /// Check if a TypeQuery type transitively leads back to the target symbol
+    /// through a chain of typeof references in variable declarations.
+    ///
+    /// Handles `var d: typeof e; var e: typeof d;` where the direct AST check
+    /// only sees one level but following the chain reveals circularity.
+    fn check_transitive_type_query_circularity(
+        &self,
+        type_id: TypeId,
+        target_sym: SymbolId,
+    ) -> bool {
+        use crate::query_boundaries::type_checking_utilities::{
+            TypeQueryKind, classify_type_query,
+        };
+
+        let mut current = type_id;
+        let mut visited = Vec::<u32>::new();
+
+        for _ in 0..8 {
+            let sym_id = match classify_type_query(self.ctx.types, current) {
+                TypeQueryKind::TypeQuery(sym_ref) => sym_ref.0,
+                TypeQueryKind::ApplicationWithTypeQuery { base_sym_ref, .. } => base_sym_ref.0,
+                _ => return false,
+            };
+
+            if visited.contains(&sym_id) {
+                return false;
+            }
+            visited.push(sym_id);
+
+            let sym_id_binder = SymbolId(sym_id);
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id_binder) else {
+                return false;
+            };
+
+            for &decl_idx in &symbol.declarations {
+                if !decl_idx.is_some() {
+                    continue;
+                }
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+                    continue;
+                };
+                if var_decl.type_annotation.is_none() {
+                    continue;
+                }
+                // Check if this declaration's type annotation references the target
+                if self
+                    .find_circular_reference_in_type_node(
+                        var_decl.type_annotation,
+                        target_sym,
+                        false,
+                    )
+                    .is_some()
+                {
+                    return true;
+                }
+                // If the annotation is a typeof, follow the chain
+                let Some(ann_node) = self.ctx.arena.get(var_decl.type_annotation) else {
+                    continue;
+                };
+                if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
+                    continue;
+                }
+                let Some(query_data) = self.ctx.arena.get_type_query(ann_node) else {
+                    continue;
+                };
+                let Some(expr_node) = self.ctx.arena.get(query_data.expr_name) else {
+                    continue;
+                };
+                if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                    continue;
+                }
+                if let Some(next_sym) = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(query_data.expr_name)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, query_data.expr_name)
+                    })
+                {
+                    let factory = self.ctx.types.factory();
+                    current = factory.type_query(tsz_solver::SymbolRef(next_sym.0));
+                    break;
+                }
+            }
+        }
+        false
     }
 }
 
