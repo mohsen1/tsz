@@ -191,13 +191,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let source_obj = self.interner.object_shape(source_shape);
                     if !source_obj.properties.is_empty() {
                         // Check for reverse mapped type inference pattern:
-                        // constraint is `keyof T` where T is an inference placeholder.
+                        // constraint contains `keyof T` where T is an inference placeholder.
                         // This handles homomorphic mapped types like Boxified<T> =
                         // { [P in keyof T]: Box<T[P]> }. For each source property,
                         // we reverse through the template to reconstruct T.
-                        if let Some(TypeData::KeyOf(keyof_target)) =
-                            self.interner.lookup(mapped.constraint)
-                            && var_map.contains_key(&keyof_target)
+                        //
+                        // Following tsc's inferToMappedType, we decompose Union and
+                        // Intersection constraints to find a `keyof T` member.
+                        // E.g., `{ [K in keyof T & keyof Constraint]: T[K] }` has
+                        // constraint `keyof T & keyof Constraint` — an Intersection
+                        // containing `keyof T`.
+                        if let Some(keyof_target) =
+                            self.find_keyof_inference_target(mapped.constraint, var_map)
                             && self.constrain_reverse_mapped_type(
                                 ctx,
                                 var_map,
@@ -1004,6 +1009,37 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Find the `keyof T` inference target from a mapped type constraint,
+    /// decomposing Union and Intersection constraints recursively.
+    ///
+    /// This follows tsc's `inferToMappedType` which handles:
+    /// - Direct `keyof T` → returns T if T is an inference placeholder
+    /// - `keyof T & keyof Constraint` (Intersection) → recurses into members
+    /// - `keyof A | keyof B` (Union) → recurses into members
+    ///
+    /// Returns the first `T` found where `keyof T` appears and T is a placeholder.
+    fn find_keyof_inference_target(
+        &self,
+        constraint: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> Option<TypeId> {
+        match self.interner.lookup(constraint) {
+            Some(TypeData::KeyOf(keyof_target)) if var_map.contains_key(&keyof_target) => {
+                Some(keyof_target)
+            }
+            Some(TypeData::Intersection(members) | TypeData::Union(members)) => {
+                let member_list = self.interner.type_list(members);
+                for &member in member_list.iter() {
+                    if let Some(target) = self.find_keyof_inference_target(member, var_map) {
+                        return Some(target);
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 

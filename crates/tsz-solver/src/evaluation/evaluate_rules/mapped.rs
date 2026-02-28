@@ -643,11 +643,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate_conditional(cond.as_ref());
         }
 
-        // If constraint is already a union of literals, return it
-        if let Some(TypeData::Union(_)) = self.interner().lookup(constraint) {
-            return constraint;
-        }
-
         // If constraint is a literal, return it
         if let Some(TypeData::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint)
         {
@@ -657,6 +652,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If constraint is KeyOf, evaluate it
         if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
             return self.evaluate_keyof(operand);
+        }
+
+        // Union: recursively evaluate each member. This handles the distributed form
+        // where `(keyof T & keyof U)` after T is inferred becomes
+        // `Union(Intersection("x", keyof U), Intersection("y", keyof U))` due to
+        // the interner's intersection-over-union distribution. Each Union member
+        // (which may be an Intersection) gets recursively simplified.
+        if let Some(TypeData::Union(members)) = self.interner().lookup(constraint) {
+            let member_list = self.interner().type_list(members);
+            let mut evaluated_members = Vec::with_capacity(member_list.len());
+            let mut any_changed = false;
+            for &member in member_list.iter() {
+                let evaluated = self.evaluate_keyof_or_constraint(member);
+                if evaluated != member {
+                    any_changed = true;
+                }
+                evaluated_members.push(evaluated);
+            }
+            if any_changed {
+                return self.interner().union(evaluated_members);
+            }
+            return constraint;
+        }
+
+        // Intersection: evaluate each member to get its key set, then compute
+        // their intersection. Handles both pre-distribution `keyof T & keyof U`
+        // and post-distribution `"x" & keyof U` forms.
+        if let Some(TypeData::Intersection(members)) = self.interner().lookup(constraint) {
+            let member_list = self.interner().type_list(members);
+            let mut key_sets = Vec::with_capacity(member_list.len());
+            for &member in member_list.iter() {
+                key_sets.push(self.evaluate_keyof_or_constraint(member));
+            }
+            if let Some(result) = self.intersect_keyof_sets(&key_sets) {
+                return result;
+            }
+            // If intersection computation failed, fall through to general evaluation
         }
 
         // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
@@ -882,7 +914,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract the source type T from a `keyof T` constraint.
-    /// Handles aliased constraints like `type Keys<T> = keyof T`.
+    /// Handles aliased constraints like `type Keys<T> = keyof T`,
+    /// and intersection constraints like `keyof T & keyof U` (returns first keyof source).
     fn extract_source_from_keyof(&mut self, constraint: TypeId) -> Option<TypeId> {
         match self.interner().lookup(constraint) {
             Some(TypeData::KeyOf(source)) => Some(source),
@@ -896,6 +929,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else {
                     None
                 }
+            }
+            // Handle intersection constraints like `keyof T & keyof U`.
+            // Return the first keyof source found (for property lookup/modifier preservation).
+            Some(TypeData::Intersection(members)) => {
+                let member_list = self.interner().type_list(members);
+                for &member in member_list.iter() {
+                    if let Some(source) = self.extract_source_from_keyof(member) {
+                        return Some(source);
+                    }
+                }
+                None
             }
             _ => None,
         }

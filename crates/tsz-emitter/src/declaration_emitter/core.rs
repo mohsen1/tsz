@@ -78,14 +78,15 @@ pub struct DeclarationEmitter<'a> {
     pub(super) comment_emit_idx: usize,
     /// When true, strip all comments from .d.ts output (--removeComments)
     pub(super) remove_comments: bool,
-    /// Tracks whether emitted output has an external module indicator
-    /// (import, export, or export-modified declaration)
-    pub(super) result_has_external_module_indicator: bool,
-    /// Tracks whether emitted output has a non-exported declaration
-    /// (needs scope fix marker)
-    pub(super) needs_scope_fix_marker: bool,
-    /// Tracks whether emitted output has an ExportDeclaration or ExportAssignment
-    pub(super) result_has_scope_marker: bool,
+    /// Tracks whether any non-exported declaration was actually emitted
+    /// (used for deciding whether `export {};` scope fix marker is needed)
+    pub(super) emitted_non_exported_declaration: bool,
+    /// Tracks whether any export statement was emitted that acts as a scope marker
+    /// (`ExportDeclaration` with named/namespace exports, `ExportAssignment`, `NamespaceExportDeclaration`)
+    pub(super) emitted_scope_marker: bool,
+    /// Tracks whether any module indicator was emitted in the output
+    /// (exported declarations, imports, scope markers)
+    pub(super) emitted_module_indicator: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -147,9 +148,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
-            result_has_external_module_indicator: false,
-            needs_scope_fix_marker: false,
-            result_has_scope_marker: false,
+            emitted_non_exported_declaration: false,
+            emitted_scope_marker: false,
+            emitted_module_indicator: false,
         }
     }
 
@@ -193,9 +194,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
-            result_has_external_module_indicator: false,
-            needs_scope_fix_marker: false,
-            result_has_scope_marker: false,
+            emitted_non_exported_declaration: false,
+            emitted_scope_marker: false,
+            emitted_module_indicator: false,
         }
     }
 
@@ -412,9 +413,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.reset_writer();
         self.indent_level = 0;
-        self.result_has_external_module_indicator = false;
-        self.needs_scope_fix_marker = false;
-        self.result_has_scope_marker = false;
+        self.emitted_non_exported_declaration = false;
+        self.emitted_scope_marker = false;
+        self.emitted_module_indicator = false;
 
         // Prepare import metadata for elision BEFORE running UsageAnalyzer
         // This builds the SymbolId -> ModuleSpecifier map from existing imports
@@ -500,15 +501,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_auto_imports();
         if self.writer.len() > before_imports {
             // Auto-generated imports count as external module indicators
-            self.result_has_external_module_indicator = true;
+            self.emitted_module_indicator = true;
         }
 
         for &stmt_idx in &source_file.statements.nodes {
             self.emit_statement(stmt_idx);
         }
 
-        // Determine if the source file is a module (has import/export syntax)
-        let is_external_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
+        // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
+        // Uses emission-time tracking instead of source-file analysis.
+        //
+        // tsc logic: if isExternalModule(node) &&
+        //   (!resultHasExternalModuleIndicator || (needsScopeFixMarker && !resultHasScopeMarker))
+        let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
                 let k = stmt_node.kind;
                 k == syntax_kind_ext::IMPORT_DECLARATION
@@ -516,16 +521,13 @@ impl<'a> DeclarationEmitter<'a> {
                     || k == syntax_kind_ext::EXPORT_DECLARATION
                     || k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || self.stmt_has_export_modifier(stmt_node)
             })
         });
 
-        // tsc emits `export {};` when:
-        // 1. The source file is a module, AND
-        // 2. Either: the emitted output has no external module indicator
-        //    OR: the output has non-exported declarations AND no scope marker
-        if is_external_module
-            && (!self.result_has_external_module_indicator
-                || (self.needs_scope_fix_marker && !self.result_has_scope_marker))
+        if is_module
+            && (!self.emitted_module_indicator
+                || (self.emitted_non_exported_declaration && !self.emitted_scope_marker))
         {
             self.write("export {};");
             self.write_line();
@@ -584,6 +586,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.queue_source_mapping(stmt_node);
 
         let kind = stmt_node.kind;
+        let has_export_modifier = self.stmt_has_export_modifier(stmt_node);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -630,88 +633,57 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if self.writer.len() == before_len {
+        let did_emit = self.writer.len() != before_len;
+        if !did_emit {
             self.pending_source_pos = None;
         } else {
-            // Statement produced output - update export {} sentinel tracking
-            self.update_scope_tracking(stmt_idx, kind);
-        }
-    }
+            // Track whether we emitted a scope marker or a non-exported declaration.
+            // This is used to decide whether `export {};` is needed at the end.
+            let is_scope_marker = kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                || (kind == syntax_kind_ext::EXPORT_DECLARATION && {
+                    // Only pure export declarations count as scope markers,
+                    // not `export class/function/etc` which are declarations with export
+                    self.arena
+                        .get(stmt_idx)
+                        .and_then(|n| self.arena.get_export_decl(n))
+                        .and_then(|ed| self.arena.get(ed.export_clause))
+                        .is_none_or(|clause| {
+                            let ck = clause.kind;
+                            ck != syntax_kind_ext::INTERFACE_DECLARATION
+                                && ck != syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                && ck != syntax_kind_ext::CLASS_DECLARATION
+                                && ck != syntax_kind_ext::FUNCTION_DECLARATION
+                                && ck != syntax_kind_ext::ENUM_DECLARATION
+                                && ck != syntax_kind_ext::VARIABLE_STATEMENT
+                                && ck != syntax_kind_ext::MODULE_DECLARATION
+                                && ck != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        })
+                });
 
-    /// Update scope tracking flags for the `export {}` sentinel logic.
-    /// Called after a statement produces output in the .d.ts file.
-    fn update_scope_tracking(&mut self, stmt_idx: NodeIndex, kind: u16) {
-        match kind {
-            k if k == syntax_kind_ext::IMPORT_DECLARATION
-                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
+            if is_scope_marker {
+                self.emitted_scope_marker = true;
+                self.emitted_module_indicator = true;
+            } else if has_export_modifier
+                || kind == syntax_kind_ext::EXPORT_DECLARATION
+                || kind == syntax_kind_ext::IMPORT_DECLARATION
+                || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
-                self.result_has_external_module_indicator = true;
+                // Any export/import statement is a module indicator
+                self.emitted_module_indicator = true;
             }
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                self.result_has_external_module_indicator = true;
-                self.result_has_scope_marker = true;
-            }
-            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                self.result_has_external_module_indicator = true;
-                self.result_has_scope_marker = true;
-            }
-            _ => {
-                // Check if the declaration has an export modifier
-                let has_export = if let Some(node) = self.arena.get(stmt_idx) {
-                    match node.kind {
-                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                            self.arena.get_function(node).is_some_and(|f| {
-                                self.arena
-                                    .has_modifier(&f.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                            self.arena.get_class(node).is_some_and(|c| {
-                                self.arena
-                                    .has_modifier(&c.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                            self.arena.get_interface(node).is_some_and(|i| {
-                                self.arena
-                                    .has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                            self.arena.get_type_alias(node).is_some_and(|t| {
-                                self.arena
-                                    .has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                            self.arena.get_enum(node).is_some_and(|e| {
-                                self.arena
-                                    .has_modifier(&e.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                            self.arena.get_variable(node).is_some_and(|v| {
-                                self.arena
-                                    .has_modifier(&v.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                            self.arena.get_module(node).is_some_and(|m| {
-                                self.arena
-                                    .has_modifier(&m.modifiers, SyntaxKind::ExportKeyword)
-                            })
-                        }
-                        _ => false,
-                    }
-                } else {
-                    false
-                };
 
-                if has_export {
-                    self.result_has_external_module_indicator = true;
-                } else {
-                    // Non-exported declaration that was emitted - needs scope fix
-                    self.needs_scope_fix_marker = true;
+            if !has_export_modifier && kind != syntax_kind_ext::EXPORT_DECLARATION {
+                // A declaration without export modifier was emitted
+                let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || kind == syntax_kind_ext::CLASS_DECLARATION
+                    || kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || kind == syntax_kind_ext::ENUM_DECLARATION
+                    || kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    || kind == syntax_kind_ext::MODULE_DECLARATION;
+                if is_declaration_kind {
+                    self.emitted_non_exported_declaration = true;
                 }
             }
         }

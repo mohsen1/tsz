@@ -299,6 +299,33 @@ impl<'a> CheckerState<'a> {
             return body_type;
         }
 
+        // Homomorphic identity mapped type passthrough: if the body is
+        // `{ [K in keyof T]: T[K] }` (identity mapping) and the argument for T
+        // is a primitive/any type, return the arg directly.
+        // This matches tsc behavior where e.g. `Simple<any>` evaluates to `any`.
+        // Only applies when the template is `T[K]` — NOT for non-identity templates
+        // like `{ [K in keyof T]: Data }` which should produce an index signature.
+        if let Some(mapped_id) = query::mapped_type_id(self.ctx.types, body_type) {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            if let Some(keyof_source) =
+                tsz_solver::keyof_inner_type(self.ctx.types, mapped.constraint)
+                && let Some(tp) = tsz_solver::type_param_info(self.ctx.types, keyof_source)
+                && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
+                && idx < args.len()
+                // Verify template is T[K] (identity indexed access)
+                && let Some((obj, key)) =
+                    tsz_solver::index_access_parts(self.ctx.types, mapped.template)
+                && obj == keyof_source
+                && tsz_solver::type_param_info(self.ctx.types, key)
+                    .is_some_and(|kp| kp.name == mapped.type_param.name)
+            {
+                let arg = self.evaluate_type_with_env(args[idx]);
+                if tsz_solver::is_primitive_type(self.ctx.types, arg) {
+                    return arg;
+                }
+            }
+        }
+
         // Resolve type arguments so distributive conditionals can see unions.
         // For conditional type bodies with Application extends containing infer
         // (e.g., `T extends Promise<infer U> ? U : T`), preserve Application args

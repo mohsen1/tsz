@@ -998,6 +998,12 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(module_block) = self.arena.get_module_block(body_node)
                 && let Some(ref stmts) = module_block.statements
             {
+                // Save emission-tracking flags for this namespace scope
+                let prev_emitted_non_exported = self.emitted_non_exported_declaration;
+                let prev_emitted_scope_marker = self.emitted_scope_marker;
+                self.emitted_non_exported_declaration = false;
+                self.emitted_scope_marker = false;
+
                 for &stmt_idx in &stmts.nodes {
                     self.emit_statement(stmt_idx);
                 }
@@ -1005,24 +1011,25 @@ impl<'a> DeclarationEmitter<'a> {
                 // tsc emits `export {};` inside a non-ambient namespace
                 // body when there is a mix of exported and non-exported
                 // members (the "scope-fix marker").
+                // Use emission-time tracking instead of source analysis.
                 let is_ambient_module = self
                     .arena
                     .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                     || prev_inside_declare_namespace
                     || self.source_is_declaration_file;
 
-                if !is_ambient_module {
-                    let needs_scope_fix = stmts.nodes.iter().any(|&idx| {
-                        self.arena
-                            .get(idx)
-                            .is_some_and(|n| self.stmt_needs_scope_marker(n))
-                    });
-                    if needs_scope_fix {
-                        self.write_indent();
-                        self.write("export {};");
-                        self.write_line();
-                    }
+                if !is_ambient_module
+                    && self.emitted_non_exported_declaration
+                    && !self.emitted_scope_marker
+                {
+                    self.write_indent();
+                    self.write("export {};");
+                    self.write_line();
                 }
+
+                // Restore tracking flags
+                self.emitted_non_exported_declaration = prev_emitted_non_exported;
+                self.emitted_scope_marker = prev_emitted_scope_marker;
             }
 
             self.public_api_scope_depth = prev_public_api_scope_depth;
@@ -1164,7 +1171,8 @@ impl<'a> DeclarationEmitter<'a> {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
                 } else if !self.source_is_declaration_file {
-                    // Non-rest parameters without explicit type → any
+                    // In declaration emit from source, parameters without
+                    // explicit type annotations default to `any` (matching tsc)
                     self.write(": any");
                 }
             }

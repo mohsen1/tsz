@@ -259,109 +259,11 @@ impl<'a> DeclarationEmitter<'a> {
         is_exported
     }
 
-    /// Return true when we need `export {};` to preserve module-ness in `.d.ts`.
-    pub(crate) fn needs_empty_export_marker(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        // Mirrors tsc's `transformDeclarations` logic:
-        //   `isExternalModule(node) && (!resultHasExternalModuleIndicator
-        //       || (needsScopeFixMarker && !resultHasScopeMarker))`
-        //
-        // `export {};` is added when:
-        //   1. The original file is an external module, AND
-        //   2. Either the .d.ts output has no module indicator, OR there is a
-        //      non-exported declaration AND no export/exportAssignment statement
-        //      that already acts as a scope marker.
-        //
-        // In tsc, only ExportDeclaration, ExportAssignment, and
-        // NamespaceExportDeclaration set `resultHasScopeMarker`. Import
-        // declarations do NOT set the scope marker.
-        let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
-            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
-                let k = stmt_node.kind;
-                k == syntax_kind_ext::IMPORT_DECLARATION
-                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                    || self.stmt_has_export_modifier(stmt_node)
-            })
-        });
-
-        if !is_module {
-            return false;
-        }
-
-        let needs_scope_fix = source_file.statements.nodes.iter().any(|&stmt_idx| {
-            self.arena
-                .get(stmt_idx)
-                .is_some_and(|stmt_node| self.stmt_needs_scope_marker(stmt_node))
-        });
-
-        if !needs_scope_fix {
-            return false;
-        }
-
-        // In tsc, only export statements set resultHasScopeMarker.
-        // Import declarations do NOT count as scope markers.
-        let has_scope_marker = source_file.statements.nodes.iter().any(|&stmt_idx| {
-            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
-                let k = stmt_node.kind;
-                k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-            })
-        });
-
-        !has_scope_marker
-    }
-
-    /// Equivalent to tsc's `needsScopeMarker`: returns true when a statement is
-    /// *not* an import/re-export, *not* an export assignment, and does *not*
-    /// have the `export` modifier. Used for namespace body scope-fix logic.
-    ///
-    /// Only returns true for declaration kinds that appear in `.d.ts` output.
-    pub(crate) fn stmt_needs_scope_marker(
+    /// Check if a statement node has the `export` keyword modifier.
+    pub(crate) fn stmt_has_export_modifier(
         &self,
         stmt_node: &tsz_parser::parser::node::Node,
     ) -> bool {
-        let k = stmt_node.kind;
-
-        // Import / re-export / export assignment -> never needs marker
-        if k == syntax_kind_ext::IMPORT_DECLARATION
-            || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            || k == syntax_kind_ext::EXPORT_DECLARATION
-            || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-            || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-        {
-            return false;
-        }
-
-        // Only consider declaration kinds that survive into .d.ts output
-        let is_declaration_kind = k == syntax_kind_ext::FUNCTION_DECLARATION
-            || k == syntax_kind_ext::CLASS_DECLARATION
-            || k == syntax_kind_ext::INTERFACE_DECLARATION
-            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-            || k == syntax_kind_ext::ENUM_DECLARATION
-            || k == syntax_kind_ext::VARIABLE_STATEMENT
-            || k == syntax_kind_ext::MODULE_DECLARATION;
-
-        if !is_declaration_kind {
-            return false;
-        }
-
-        // Statement with export modifier -> not a scope-marker candidate
-        if self.stmt_has_export_modifier(stmt_node) {
-            return false;
-        }
-
-        // Non-exported declaration that survives to output
-        true
-    }
-
-    /// Check if a statement node has the `export` keyword modifier.
-    fn stmt_has_export_modifier(&self, stmt_node: &tsz_parser::parser::node::Node) -> bool {
         let k = stmt_node.kind;
         if k == syntax_kind_ext::FUNCTION_DECLARATION {
             if let Some(func) = self.arena.get_function(stmt_node) {

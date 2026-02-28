@@ -1445,12 +1445,11 @@ fn resolve_package_specifier(
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
     let package_type = package_type_from_json(package_json);
-    let mut has_exports = false;
     if let Some(package_json) = package_json {
-        if options.resolve_package_json_exports
-            && let Some(exports) = package_json.exports.as_ref()
-        {
-            has_exports = true;
+        let has_exports = options.resolve_package_json_exports && package_json.exports.is_some();
+
+        if has_exports {
+            let exports = package_json.exports.as_ref().unwrap();
             let subpath_key = match subpath {
                 Some(value) => format!("./{value}"),
                 None => ".".to_string(),
@@ -1461,6 +1460,10 @@ fn resolve_package_specifier(
             {
                 return Some(resolved);
             }
+            // When an "exports" field exists, subpaths not listed in the exports
+            // map are blocked — do not fall through to file-system resolution.
+            // This matches Node.js package encapsulation semantics (TS2307).
+            return None;
         }
 
         if let Some(types_versions) = package_json.types_versions.as_ref() {
@@ -1475,13 +1478,6 @@ fn resolve_package_specifier(
                 return Some(resolved);
             }
         }
-    }
-
-    // When a package has an "exports" field, it is authoritative: subpaths not
-    // listed in the exports map must not resolve via direct file lookup.
-    // This matches Node.js resolution semantics (encapsulation).
-    if has_exports {
-        return None;
     }
 
     if let Some(subpath) = subpath {
@@ -2055,14 +2051,29 @@ fn resolve_imports_subpath(
 }
 
 fn match_exports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
+    let pattern_inner = pattern.strip_prefix("./")?;
+    let subpath = subpath_key.strip_prefix("./")?;
+
+    // Handle trailing-slash directory patterns (e.g., "./" matches "./index.js").
+    // These are deprecated in Node.js but TypeScript still supports them.
+    if !pattern_inner.is_empty() && pattern_inner.ends_with('/') && !pattern.contains('*') {
+        if subpath.starts_with(pattern_inner) {
+            return Some(subpath[pattern_inner.len()..].to_string());
+        }
+        return None;
+    }
+
+    // Handle the bare "./" pattern — it matches any subpath
+    if pattern == "./" && !subpath.is_empty() {
+        return Some(subpath.to_string());
+    }
+
     if !pattern.contains('*') {
         return None;
     }
-    let pattern = pattern.strip_prefix("./")?;
-    let subpath = subpath_key.strip_prefix("./")?;
 
-    let star = pattern.find('*')?;
-    let (prefix, suffix) = pattern.split_at(star);
+    let star = pattern_inner.find('*')?;
+    let (prefix, suffix) = pattern_inner.split_at(star);
     let suffix = &suffix[1..];
 
     if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
@@ -2105,6 +2116,9 @@ fn match_imports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
 fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
         target.replace('*', wildcard)
+    } else if target.ends_with('/') {
+        // Trailing-slash directory pattern: append the matched portion
+        format!("{target}{wildcard}")
     } else {
         target.to_string()
     }

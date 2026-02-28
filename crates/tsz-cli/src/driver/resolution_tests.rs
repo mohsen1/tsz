@@ -451,3 +451,65 @@ fn test_exports_blocks_subpath_resolution() {
         "root import 'inner' should still resolve via exports"
     );
 }
+
+#[test]
+fn test_exports_directory_slash_pattern_resolves() {
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_exports_directory_slash_pattern");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules/inner")).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    // Package has directory-slash exports pattern
+    fs::write(
+        dir.join("node_modules/inner/package.json"),
+        r#"{"name":"inner","exports":{"./":"./"}}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("node_modules/inner/index.d.ts"), "export {};").unwrap();
+    fs::write(
+        dir.join("node_modules/inner/other.d.ts"),
+        "export interface Thing {}",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { Thing } from 'inner/other.d.ts';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    // Import with explicit extension through directory pattern should resolve
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/other.d.ts",
+        &options,
+        &dir,
+        &mut cache,
+        &known_files,
+    );
+
+    assert!(
+        resolved.is_some(),
+        "subpath 'inner/other.d.ts' should resolve through './' directory pattern"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

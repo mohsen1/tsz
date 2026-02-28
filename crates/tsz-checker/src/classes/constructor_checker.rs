@@ -702,6 +702,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Emits TS2673 for private constructors and TS2674 for protected constructors
     /// when called from an invalid scope (outside the class or hierarchy).
+    ///
+    /// tsc checks ALL enclosing classes in the scope chain, not just the immediately
+    /// enclosing one. A nested class inside a method of class A can access A's
+    /// private/protected constructor because it's lexically within A's scope.
     pub(crate) fn check_constructor_accessibility_for_new(
         &mut self,
         new_expr_idx: tsz_parser::parser::NodeIndex,
@@ -726,40 +730,38 @@ impl<'a> CheckerState<'a> {
             None => return, // Can't determine class - skip check
         };
 
-        // Find the enclosing class by walking up the AST
-        let enclosing_class_sym = match self.find_enclosing_class_for_new(new_expr_idx) {
-            Some(sym) => sym,
-            None => {
-                // No enclosing class - this is an external instantiation
-                // Emit error based on constructor visibility
-                self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
-                return;
-            }
-        };
+        // Walk ALL enclosing classes in the scope chain. If ANY enclosing class
+        // matches the target class (for private) or is a subclass (for protected),
+        // access is allowed. This handles nested classes inside methods:
+        //   class A { private constructor() {}
+        //     method() { class B { method() { new A(); /* OK */ } } }
+        //   }
+        let enclosing_classes = self.find_all_enclosing_classes(new_expr_idx);
 
-        // Check if we're in the same class
-        if enclosing_class_sym == class_sym {
-            // Same class - always allowed (even for private constructors)
+        if enclosing_classes.is_empty() {
+            // No enclosing class - external instantiation
+            self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
             return;
         }
 
-        // Check if we're in a subclass
-        let is_subclass = self
-            .ctx
-            .inheritance_graph
-            .is_derived_from(enclosing_class_sym, class_sym);
-
-        if is_private {
-            // Private constructor: only accessible within the same class
-            if enclosing_class_sym != class_sym {
-                self.emit_constructor_access_error(new_expr_idx, class_sym, true);
+        for &enclosing_sym in &enclosing_classes {
+            if enclosing_sym == class_sym {
+                // Same class - always allowed (even for private constructors)
+                return;
             }
-        } else if is_protected {
-            // Protected constructor: accessible within the class hierarchy
-            if !is_subclass {
-                self.emit_constructor_access_error(new_expr_idx, class_sym, false);
+            if is_protected
+                && self
+                    .ctx
+                    .inheritance_graph
+                    .is_derived_from(enclosing_sym, class_sym)
+            {
+                // Protected constructor accessible from subclass
+                return;
             }
         }
+
+        // None of the enclosing classes grant access
+        self.emit_constructor_access_error(new_expr_idx, class_sym, is_private);
     }
 
     /// Find the class symbol from a `new` expression node.
@@ -790,16 +792,18 @@ impl<'a> CheckerState<'a> {
         (symbol.flags & symbol_flags::CLASS != 0).then_some(sym_id)
     }
 
-    /// Find the enclosing class symbol by walking up the AST parent chain.
+    /// Find ALL enclosing class symbols by walking up the AST parent chain.
     ///
-    /// This is similar to the logic in `super_checker.rs` but returns the class symbol.
-    fn find_enclosing_class_for_new(&self, idx: tsz_parser::parser::NodeIndex) -> Option<SymbolId> {
+    /// Returns all class symbols in the scope chain from innermost to outermost.
+    /// This is needed because a nested class inside a method has access to
+    /// the outer class's private/protected members (including constructors).
+    fn find_all_enclosing_classes(&self, idx: tsz_parser::parser::NodeIndex) -> Vec<SymbolId> {
         use tsz_parser::parser::syntax_kind_ext;
 
+        let mut result = Vec::new();
         let mut current = idx;
 
         while let Some(ext) = self.ctx.arena.get_extended(current) {
-            // Check if parent exists and get the node
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
                 break;
@@ -808,36 +812,25 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            // Check for Class Declaration or Expression
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && let Some(class_data) = self.ctx.arena.get_class(parent_node)
             {
-                let class_data = self.ctx.arena.get_class(parent_node)?;
-
-                // PRIORITY 1: Look up symbol on the Class Name (Identifier)
-                // This is where Binder attaches symbols for named classes
-                let name_idx = class_data.name;
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_idx) {
-                    return Some(sym_id);
+                // Try to resolve the class symbol
+                let sym_id = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(class_data.name)
+                    .or_else(|| self.ctx.binder.get_node_symbol(parent_idx));
+                if let Some(sym_id) = sym_id {
+                    result.push(sym_id);
                 }
-
-                // PRIORITY 2: Look up symbol on the Class Node itself
-                // This handles:
-                // 1. Default exports: `export default class { ... }`
-                // 2. Anonymous class expressions: `const C = class { ... }` (sometimes)
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(parent_idx) {
-                    return Some(sym_id);
-                }
-
-                // If we found a class node but couldn't resolve its symbol,
-                // we can't perform accessibility checks against it.
-                return None;
             }
 
             current = parent_idx;
         }
 
-        None
+        result
     }
 
     /// Emit the appropriate constructor accessibility error.
