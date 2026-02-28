@@ -1743,6 +1743,42 @@ impl<'a> DeclarationEmitter<'a> {
             } else if is_null_or_undefined {
                 self.write(": any");
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
+                // For const declarations, if the inferred type is a single literal,
+                // tsc emits `= value` (initializer form) instead of `: type`.
+                // e.g., `declare const c3 = "abc"` not `declare const c3: "abc"`.
+                if keyword == "const" {
+                    if let Some(interner) = self.type_interner {
+                        use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
+                        match classify_literal_type(interner, type_id) {
+                            LiteralTypeKind::String(atom) => {
+                                let s = interner.resolve_atom(atom);
+                                self.write(" = \"");
+                                self.write(&s);
+                                self.write("\"");
+                                return;
+                            }
+                            LiteralTypeKind::Number(n) => {
+                                self.write(" = ");
+                                self.write(&n.to_string());
+                                return;
+                            }
+                            LiteralTypeKind::BigInt(atom) => {
+                                let s = interner.resolve_atom(atom);
+                                self.write(" = ");
+                                self.write(&s);
+                                return;
+                            }
+                            LiteralTypeKind::Boolean(b) => {
+                                self.write(" = ");
+                                self.write(if b { "true" } else { "false" });
+                                return;
+                            }
+                            LiteralTypeKind::NotLiteral => {
+                                // Fall through to normal `: type` emission
+                            }
+                        }
+                    }
+                }
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
