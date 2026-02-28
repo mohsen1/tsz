@@ -162,7 +162,6 @@ impl<'a> CheckerState<'a> {
         let supported = matches!(
             self.ctx.compiler_options.module,
             ModuleKind::ESNext
-                | ModuleKind::Node16
                 | ModuleKind::Node18
                 | ModuleKind::Node20
                 | ModuleKind::NodeNext
