@@ -384,6 +384,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the `JSDoc` contains `@param {someType} paramName`.
     pub(crate) fn jsdoc_has_param_type(jsdoc: &str, param_name: &str) -> bool {
+        Self::extract_jsdoc_param_type_string(jsdoc, param_name).is_some()
+    }
+
+    /// Extract the type expression string from a `@param {type} name` JSDoc tag.
+    ///
+    /// Returns the type expression (e.g., "Object.<string, boolean>") for the given
+    /// parameter name, or None if no matching `@param` tag is found.
+    pub(crate) fn extract_jsdoc_param_type_string(
+        jsdoc: &str,
+        param_name: &str,
+    ) -> Option<String> {
         // JSDoc @param may span multiple lines. Collect all text after each @param
         // and process them. We also need to handle nested braces in types like
         // @param {{ x: T, y: T}} obj
@@ -401,8 +412,10 @@ impl<'a> CheckerState<'a> {
             if effective.starts_with('@') {
                 // Process any accumulated @param text
                 if in_param {
-                    if Self::extract_jsdoc_param_type_expr(&param_text, param_name).is_some() {
-                        return true;
+                    if let Some(type_expr) =
+                        Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+                    {
+                        return Some(type_expr.to_string());
                     }
                     param_text.clear();
                 }
@@ -419,8 +432,80 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Process the last @param if any
-        if in_param && Self::extract_jsdoc_param_type_expr(&param_text, param_name).is_some() {
-            return true;
+        if in_param
+            && let Some(type_expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name) {
+                return Some(type_expr.to_string());
+            }
+        None
+    }
+
+    /// Resolve the type from a JSDoc `@param {Type} name` annotation for a specific parameter.
+    ///
+    /// Extracts the type expression string from the `@param` tag matching `param_name`,
+    /// then resolves it to a `TypeId` using the JSDoc type expression parser.
+    ///
+    /// Handles JSDoc optional parameter syntax:
+    /// - `@param {number} [p]` → `number | undefined`
+    /// - `@param {number} [p=0]` → `number | undefined`
+    /// - `@param {number=} p` → `number | undefined` (= suffix in type)
+    ///
+    /// Returns `None` if no matching `@param` tag exists or the type can't be resolved.
+    pub(crate) fn resolve_jsdoc_param_type(
+        &mut self,
+        jsdoc: &str,
+        param_name: &str,
+    ) -> Option<tsz_solver::TypeId> {
+        let type_expr = Self::extract_jsdoc_param_type_string(jsdoc, param_name)?;
+        // Handle {Type=} suffix which means optional (Type | undefined)
+        let (effective_type_expr, is_optional_type) = if type_expr.ends_with('=') {
+            (type_expr[..type_expr.len() - 1].to_string(), true)
+        } else {
+            (type_expr, false)
+        };
+        let base_type = self.jsdoc_type_from_expression(&effective_type_expr)?;
+        // Check if parameter is optional via bracket syntax [name] or [name=default]
+        let is_optional_name = Self::is_jsdoc_param_optional_by_brackets(jsdoc, param_name);
+        if (is_optional_type || is_optional_name)
+            && self.ctx.strict_null_checks()
+            && base_type != tsz_solver::TypeId::ANY
+            && base_type != tsz_solver::TypeId::UNDEFINED
+        {
+            Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![base_type, tsz_solver::TypeId::UNDEFINED]),
+            )
+        } else {
+            Some(base_type)
+        }
+    }
+
+    /// Check if a JSDoc `@param` uses bracket syntax indicating optionality.
+    ///
+    /// Returns `true` for `@param {Type} [name]` or `@param {Type} [name=default]`.
+    fn is_jsdoc_param_optional_by_brackets(jsdoc: &str, param_name: &str) -> bool {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let effective = Self::skip_backtick_quoted(trimmed);
+            if let Some(rest) = effective.strip_prefix("@param") {
+                let rest = rest.trim();
+                // Standard: @param {type} [name] or @param {type} [name=default]
+                if rest.starts_with('{')
+                    && let Some((_type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest)
+                    {
+                        let name_part = after_type.split_whitespace().next().unwrap_or("");
+                        if name_part.starts_with('[') {
+                            // Extract the bare name from [name] or [name=default]
+                            let inner = name_part.trim_start_matches('[');
+                            let bare = inner.split('=').next().unwrap_or(inner);
+                            let bare = bare.trim_end_matches(']');
+                            if bare == param_name {
+                                return true;
+                            }
+                        }
+                    }
+            }
         }
         false
     }

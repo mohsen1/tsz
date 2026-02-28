@@ -960,11 +960,34 @@ impl<'a> CheckerState<'a> {
                         }
                         return (type_id, Vec::new());
                     }
-                    // Check for JSDoc type
+                    // Check for inline JSDoc @type on the parameter itself
                     if let Some(jsdoc_type) =
                         self.jsdoc_type_annotation_for_node(resolved_value_decl)
                     {
                         return (jsdoc_type, Vec::new());
+                    }
+                    // In JS files, check the parent function's JSDoc for @param {Type} name.
+                    // The @param tag lives on the function declaration, not on the parameter.
+                    if self.is_js_file() {
+                        let pname = self.parameter_name_for_error(param.name);
+                        // Walk up the parent chain to find the enclosing function node
+                        // AST structure: Parameter -> SyntaxList -> FunctionDeclaration
+                        let mut current = resolved_value_decl;
+                        for _ in 0..4 {
+                            if let Some(ext) = self.ctx.arena.get_extended(current)
+                                && ext.parent.is_some()
+                            {
+                                current = ext.parent;
+                                if let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
+                                    && let Some(jsdoc_type) =
+                                        self.resolve_jsdoc_param_type(&func_jsdoc, &pname)
+                                    {
+                                        return (jsdoc_type, Vec::new());
+                                    }
+                            } else {
+                                break;
+                            }
+                        }
                     }
                     // Fall back to inferring from initializer (default value)
                     if param.initializer.is_some() {

@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
     /// Supports a constrained subset needed for conformance tests:
     /// primitives, type parameters, `keyof typeof`, type references,
     /// and fallback symbol resolution.
-    fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
+    pub(crate) fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
         let factory = self.ctx.types.factory();
 
