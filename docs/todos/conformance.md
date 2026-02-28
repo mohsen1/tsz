@@ -1,52 +1,64 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9643/12570 (76.7%) — full suite, error-code level
+**Current score**: ~9639/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
 
 ---
 
-## Session 2026-02-28c — Node area: exports encapsulation + TS2823 import attributes
+## Session 2026-02-28c — Node area: package exports blocking + TS2823 for Node16
 
-### Fixed: Package.json exports field blocks subpath fallback — CLI (resolution.rs)
+### Fixed: Package exports field blocks unlisted subpaths — Resolution (resolution.rs)
 
-**Root cause**: When a package has an `"exports"` field in package.json, the Node.js resolution algorithm requires that ONLY subpaths listed in the exports map are importable. Our resolver (`resolve_package_specifier`) fell through to direct file lookup when the exports map didn't match a subpath, incorrectly resolving modules like `"inner/other"` when the package only exported its root entry point.
+**Root cause**: When a package.json has an `"exports"` field and `resolve_exports_subpath()` returned `None` (subpath not in the exports map), the code fell through to `resolve_package_entry()` which bypassed the exports restriction entirely. This violated Node.js package encapsulation semantics — subpaths not listed in the exports map should not be resolvable.
 
-**Fix**: Added `has_exports` tracking in `resolve_package_specifier()`. When the `exports` field exists and `resolve_package_json_exports` is enabled, we return `None` instead of falling through to `resolve_package_entry()` or `resolve_package_root()`.
+**Fix**:
+1. When exports exists but doesn't match, return `None` immediately (block fallback)
+2. Added support for deprecated trailing-slash directory patterns (`"./": "./"`) which act as prefix matches in the exports map
+3. Updated `apply_exports_subpath` to handle trailing-slash targets
 
-**Files**: `crates/tsz-cli/src/driver/resolution.rs:1440-1492`
-**Tests flipped**: 10 tests across the codebase (+4 in node area specifically)
-**Conformance**: 9627 → 9637
+**Files**: `crates/tsz-cli/src/driver/resolution.rs`
 
-### Fixed: Node16 should not support import attributes — Checker (declaration.rs)
+### Fixed: TS2823 false negative for Node16 module — Checker (declaration.rs)
 
-**Root cause**: `check_import_attributes_module_option()` included `ModuleKind::Node16` in the "supported" list. But tsc's message explicitly says import attributes are only supported for `esnext`, `node18`, `node20`, `nodenext`, `preserve`. Node 16 only had the deprecated `assert` syntax.
+**Root cause**: `check_import_attributes_module_option` listed `ModuleKind::Node16` in the "supported" match arms. Import attributes (`with { type: "json" }`) are only supported starting from `Node18`, not `Node16`. The incorrect inclusion suppressed TS2823 for `node16` targets.
 
-**Fix**: Removed `ModuleKind::Node16` from the `supported` match arm.
+**Fix**: Removed `ModuleKind::Node16` from the supported match arms.
 
-**Files**: `crates/tsz-checker/src/declarations/import/declaration.rs:162-169`
-**Tests flipped**: 3 tests (nodeModulesImportAssertions.ts, nodeModulesImportAttributes.ts, nodeModulesResolveJsonModule.ts)
-**Conformance**: 9637 → 9643
+**File**: `crates/tsz-checker/src/declarations/import/declaration.rs`
 
-### Node area analysis — remaining gaps
+### Tests flipped PASS (+11 total, 0 regressions):
+- `nodeModulesExportsBlocksSpecifierResolution` (exports blocking)
+- `nodeModulesExportsSpecifierGenerationConditions` (exports blocking)
+- `nodeModulesExportsSpecifierGenerationPattern` (exports blocking)
+- `nodeModulesImportAssertions` (TS2823 for Node16)
+- `nodeModulesResolveJsonModule` (TS2823 for Node16)
+- +6 collateral improvements in other areas
 
-After fixes, node area went from 56/94 (59.6%) to 63/94 (67.0%). Remaining 31 failures:
+**Conformance**: 9628 → 9639 (+11)
 
-| Issue | Count | Priority |
-|-------|-------|----------|
-| TS2307 missing (module resolution gaps) | 8 | HIGH — various subpath resolution edge cases |
-| TS2305 missing (no exported member) | 6 | MEDIUM — import mode declaration emit |
-| TS1479 missing (CJS→ESM import check) | 5 | MEDIUM — edge cases in current TS1479 logic |
-| TS2343 missing (tslib helper version) | 4 | LOW — emitter concern |
-| TS2823 extra at fingerprint level | 4 | LOW — emitting on too many lines under node16 |
-| TS2835 "EcmaScript" vs "ECMAScript" | 4 | LOW — message text capitalization |
-| TS5107 extra (deprecation warning) | 2 | LOW — false positive config warning |
-| Other (TS1471, TS1128, TS1434, etc.) | varies | MEDIUM |
+### Remaining node area failures (25 tests)
 
-Key remaining TS2307 gaps:
-- `nodeModulesImportResolutionNoCycle`: `#type` → self-referential `"package"` mapping
-- `nodeModulesPackageImportsRootWildcardNode16`: `#/*` wildcard imports under node16
-- `ConditionalPackageExports`/`PackageExports`: `./package` relative import in `.cts` files
+| Test | Root Cause | Layer |
+|------|-----------|-------|
+| nodeModulesExportsSourceTs | TS2835 "EcmaScript" vs "ECMAScript" capitalization | Message text (LOW) |
+| nodeModulesExportsSpecifierGenerationDirectory | Extra TS2307 — `.js` → `.d.ts` substitution not done for exports-resolved paths | Resolution (MEDIUM) |
+| nodeModulesImportResolutionNoCycle | Missing TS2307 for `#type` — package imports not resolving `#type` subpath | Resolution (MEDIUM) |
+| nodeModulesPackageImportsRootWildcardNode16 | Missing TS2307 for `#/foo.js` — package imports root wildcard | Resolution (MEDIUM) |
+| legacyNodeModulesExportsSpecifierGenerationConditions | Missing TS2742 | Checker (MEDIUM) |
+| nodeModulesExportAssignments | Missing TS1203 | Checker (LOW) |
+| nodeModulesImportHelpersCollisions/2 | Missing TS2343 × 2 | Checker (MEDIUM) |
+| nodeModulesNoDirectoryModule | Missing TS2882 | Resolution (MEDIUM) |
+| nodeModulesConditionalPackageExports | Missing TS1479+TS2307 | Resolution (MEDIUM) |
+| nodeModulesPackageExports | Missing TS1479+TS2307 | Resolution (MEDIUM) |
+
+### Key gap: `.js` → `.d.ts` extension substitution for exports-resolved paths
+
+The `expand_export_path_candidates` function (resolution.rs:1024) has a comment saying tsc does NOT perform `.js` → `.d.ts` substitution for exports/imports entries. This is too broad — when the path comes from a directory pattern or wildcard match (not a literal exports string), tsc DOES perform extension substitution. The distinction is:
+- Explicit exports target `"./index.js"` → NO substitution (TS does not try `index.d.ts`)
+- Pattern-resolved `"./index.js"` from `"./": "./"` mapping `"./index.js"` → YES substitution
+
+Fixing this requires distinguishing the two cases, possibly by adding a flag to `resolve_export_entry`. Estimated LOC: ~20.
 
 ---
 
