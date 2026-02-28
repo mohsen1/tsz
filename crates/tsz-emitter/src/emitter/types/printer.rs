@@ -706,6 +706,16 @@ impl<'a> TypePrinter<'a> {
     fn print_callable(&self, callable_id: tsz_solver::types::CallableShapeId) -> String {
         let callable = self.interner.callable_shape(callable_id);
 
+        // For class constructor types with a visible symbol, use `typeof ClassName` form.
+        // This matches tsc's behavior for declaration emit.
+        if !callable.construct_signatures.is_empty()
+            && let Some(sym_id) = callable.symbol
+            && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
+            && let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+        {
+            return format!("typeof {name}");
+        }
+
         // Collect all signatures (call + construct)
         let mut parts = Vec::new();
 
