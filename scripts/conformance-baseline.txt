@@ -2096,20 +2096,16 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular3.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/computedPropertyName.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/enums.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace_js.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace11.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace12.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace3.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace8.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace9.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportSpecifiers_js.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportSpecifiers.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/generic.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_namespaceImport.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals1.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals3.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importEqualsDeclaration.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importsNotUsedAsValues_error.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/importSpecifiers1.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/namespaceImportTypeQuery.ts
@@ -2793,6 +2789,7 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/union
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
+FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/genericTypeReferenceWithoutTypeArgument.ts
@@ -10128,6 +10125,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclarati
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_moduleSpecifier.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_value.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace_js.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace1.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace10.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace2.ts
@@ -10135,6 +10133,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace5.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace6.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace7.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportSpecifiers_js.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/extendsClause.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/filterNamespace_import.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/grammarErrors.ts
@@ -10144,6 +10143,8 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importClause_na
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType2.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importDefaultNamedType3.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals3.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importEqualsDeclaration.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/importSpecifiers_js.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/mergedWithLocalValue.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/namespaceImportTypeQuery2.ts
@@ -12044,7 +12045,6 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
-PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts

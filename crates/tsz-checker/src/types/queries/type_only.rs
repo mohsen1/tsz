@@ -318,6 +318,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {
+            // Namespace imports (`import * as ns from '...'`) always create a runtime
+            // module namespace object. They are never type-only unless explicitly
+            // `import type * as ns` (handled by is_type_only above).
+            // Namespace imports are distinguished by having import_name = None.
+            if symbol.import_name.is_none() {
+                return false;
+            }
             let export_name = symbol
                 .import_name
                 .as_deref()
@@ -629,19 +636,150 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Check wildcard re-exports (only if no direct export was found)
+        // Check wildcard re-exports (only if no direct export was found).
+        // Two-pass approach: first check if any non-type-only wildcard provides
+        // a value binding for the name (which overrides type-only from other
+        // wildcards), then check type-only wildcards.
         if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
             let source_type_only_flags = target_binder
                 .wildcard_reexports_type_only
                 .get(&target_file_name);
+
+            // Pass 1: Check non-type-only wildcards for value exports.
+            // If a non-type-only `export *` re-exports the name AND the name is
+            // not type-only in the source module, the value binding takes precedence
+            // over any type-only wildcard (even if a `export type *` also has it).
+            // Note: `name_exists_in_module_exports` only checks existence,
+            // `is_export_type_only_in_file` checks the full type-only chain.
             for (i, source_module) in source_modules.iter().enumerate() {
                 let source_is_type_only = source_type_only_flags
                     .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
                     .unwrap_or(false);
                 if source_is_type_only {
+                    continue; // Skip type-only wildcards in pass 1
+                }
+                // Non-type-only wildcard: check if name exists as a value in source.
+                // Use a separate visited set for the existence + type-only check
+                // to avoid polluting the main cycle detection.
+                let mut exists_visited = visited.clone();
+                let exists_in_source = self.name_exists_in_module_exports(
+                    target_file_idx,
+                    source_module,
+                    export_name,
+                    &mut exists_visited,
+                );
+                if exists_in_source {
+                    let mut type_only_visited = visited.clone();
+                    let is_type_only_in_source = self.is_export_type_only_in_file(
+                        target_file_idx,
+                        source_module,
+                        export_name,
+                        &mut type_only_visited,
+                    );
+                    if !is_type_only_in_source {
+                        // Value export found — name is NOT type-only
+                        return false;
+                    }
+                }
+            }
+
+            // In JS files, `export type *` is a syntax error (TS8006), not a
+            // semantic type-only marker. Skip type-only wildcard semantics for JS files.
+            let target_is_js = target_file_name.ends_with(".js")
+                || target_file_name.ends_with(".jsx")
+                || target_file_name.ends_with(".mjs")
+                || target_file_name.ends_with(".cjs");
+
+            // Pass 2: Check type-only wildcards and transitive chains
+            for (i, source_module) in source_modules.iter().enumerate() {
+                let source_is_type_only = source_type_only_flags
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
+                if source_is_type_only {
+                    // In JS files, `export type` is invalid syntax — don't treat as type-only
+                    if target_is_js {
+                        continue;
+                    }
+                    // Type-only wildcard: verify the name actually exists in the source
+                    if self.name_exists_in_module_exports(
+                        target_file_idx,
+                        source_module,
+                        export_name,
+                        visited,
+                    ) {
+                        return true;
+                    }
+                    continue;
+                }
+                // Non-type-only wildcard: check for transitive type-only chains
+                if self.is_export_type_only_in_file(
+                    target_file_idx,
+                    source_module,
+                    export_name,
+                    visited,
+                ) {
                     return true;
                 }
-                if self.is_export_type_only_in_file(
+            }
+        }
+
+        false
+    }
+
+    /// Check if a name exists as an export in a module (regardless of type-only status).
+    ///
+    /// Used to verify that a specific name is actually re-exported through a
+    /// wildcard `export type *` before marking it as type-only.
+    fn name_exists_in_module_exports(
+        &self,
+        source_file_idx: usize,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+        else {
+            return false;
+        };
+
+        let key = (target_file_idx, format!("exists:{export_name}"));
+        if !visited.insert(key) {
+            return false; // cycle
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+
+        // Check direct exports
+        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+            && exports_table.get(export_name).is_some()
+        {
+            return true;
+        }
+
+        // Check named re-exports
+        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+            && file_reexports.get(export_name).is_some()
+        {
+            return true;
+        }
+
+        // Check wildcard re-exports recursively
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            for source_module in source_modules.iter() {
+                if self.name_exists_in_module_exports(
                     target_file_idx,
                     source_module,
                     export_name,
