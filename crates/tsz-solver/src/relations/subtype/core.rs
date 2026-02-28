@@ -788,7 +788,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             || lazy_def_id(self.interner, target).is_some_and(|def_id| {
                 self.resolver
                     .is_boxed_def_id(def_id, IntrinsicKind::Function)
-            });
+            })
+            || self.is_function_interface_structural(target);
         if is_function_target {
             if self.is_callable_type(source) {
                 return SubtypeResult::True;

@@ -291,6 +291,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         match self.interner.lookup(target) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
+                // Object interface has exactly 7 properties (constructor, toString,
+                // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
+                // propertyIsEnumerable). Use tight cap to avoid matching derived
+                // types like Boolean (8 props) or Number (~10 props).
+                if shape.properties.len() > 7 {
+                    return false;
+                }
                 let constructor = self.interner.intern_string("constructor");
                 let has_own = self.interner.intern_string("hasOwnProperty");
                 let is_proto = self.interner.intern_string("isPrototypeOf");
@@ -308,11 +315,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let is_function_object_shape = match self.interner.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                let apply = self.interner.intern_string("apply");
-                let call = self.interner.intern_string("call");
-                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
-                let has_call = shape.properties.iter().any(|prop| prop.name == call);
-                has_apply && has_call
+                // Function interface has ~15 properties (own + inherited Object).
+                // Cap at 20 to avoid false positives on large interfaces.
+                if shape.properties.len() > 20 {
+                    false
+                } else {
+                    let apply = self.interner.intern_string("apply");
+                    let call = self.interner.intern_string("call");
+                    let bind = self.interner.intern_string("bind");
+                    shape.properties.iter().any(|prop| prop.name == apply)
+                        && shape.properties.iter().any(|prop| prop.name == call)
+                        && shape.properties.iter().any(|prop| prop.name == bind)
+                }
             }
             _ => false,
         };
