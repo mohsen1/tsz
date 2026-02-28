@@ -1218,8 +1218,8 @@ impl<'a> DeclarationEmitter<'a> {
                 // Name
                 self.emit_node(param.name);
 
-                // Optional
-                if param.question_token {
+                // Optional — either explicit ? or has initializer (default value)
+                if param.question_token || param.initializer.is_some() {
                     self.write("?");
                 }
 
