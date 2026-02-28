@@ -157,7 +157,9 @@ impl<'a> CheckerState<'a> {
                 let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
                 !matches!(
                     self.resolve_property_access_with_env(resolved_no_flow, property_name),
-                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                    PropertyAccessResult::PropertyNotFound { .. }
+                        | PropertyAccessResult::IsUnknown
+                        | PropertyAccessResult::PossiblyNullOrUndefined { .. }
                 )
             } else {
                 false
