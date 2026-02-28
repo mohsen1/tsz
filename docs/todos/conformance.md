@@ -1,8 +1,27 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9691/12570 (77.1%) — full suite, error-code level
-**Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+**Current score**: ~7139/12570 (56.8%) — full suite, fingerprint-level matching
+**Note**: Scoring now uses fingerprint-level (code+line+column+message) after tsc-cache update. Previous error-code-only score was ~9696/12570 (77.1%).
+
+---
+
+## Session 2026-02-28k — types/tuple: TS4104 readonly-to-mutable array/tuple assignment
+
+### Fixed: TS4104 "The type 'X' is 'readonly' and cannot be assigned to the mutable type 'Y'" — Solver (explain.rs) + Checker (assignability.rs)
+
+**Area**: types/tuple (58.8% → improving). Targeted TS4104 which was missing in 3 tests, never falsely emitted.
+
+**Root cause**: `explain_failure_inner` in the solver's subtype explain path didn't detect readonly type wrappers. When `readonly number[]` was assigned to `number[]`, the explain path fell through to structural mismatch (TS2322) instead of recognizing the readonly-to-mutable assignment pattern (TS4104).
+
+**Fix** (3 files):
+1. **`SubtypeFailureReason::ReadonlyToMutableAssignment`** (diagnostics/core.rs) — New variant with `source_type` and `target_type` TypeIds. Maps to TS4104 diagnostic code.
+2. **`explain_failure_inner`** (relations/subtype/explain.rs) — Added early detection: if source has `readonly_inner_type` and target doesn't, AND target is a concrete array (`array_element_type`) or tuple (`tuple_list_id`), return `ReadonlyToMutableAssignment`. The concrete-target check is critical: TS4104 should NOT fire when target is a type parameter (e.g., `readonly [...T]` → `T` should remain TS2322).
+3. **`render_failure_reason`** (checker/error_reporter/assignability.rs) — Renders the new failure reason into TS4104 diagnostic with formatted type names.
+
+**Tests**: 5 unit tests in `compat_tests.rs` covering readonly→mutable array, same-element-type, tuple, readonly→readonly (no TS4104), and mutable→readonly (assignable).
+
+**Result**: +4 passing conformance tests (readonlyTupleAndArrayElaboration, readonlyArrayAndTupleAssignment variants). No regressions.
 
 ---
 
