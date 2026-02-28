@@ -78,6 +78,15 @@ pub struct DeclarationEmitter<'a> {
     pub(super) comment_emit_idx: usize,
     /// When true, strip all comments from .d.ts output (--removeComments)
     pub(super) remove_comments: bool,
+    /// Tracks whether any non-exported declaration was actually emitted
+    /// (used for deciding whether `export {};` scope fix marker is needed)
+    pub(super) emitted_non_exported_declaration: bool,
+    /// Tracks whether any export statement was emitted that acts as a scope marker
+    /// (`ExportDeclaration` with named/namespace exports, `ExportAssignment`, `NamespaceExportDeclaration`)
+    pub(super) emitted_scope_marker: bool,
+    /// Tracks whether any module indicator was emitted in the output
+    /// (exported declarations, imports, scope markers)
+    pub(super) emitted_module_indicator: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -139,6 +148,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            emitted_non_exported_declaration: false,
+            emitted_scope_marker: false,
+            emitted_module_indicator: false,
         }
     }
 
@@ -182,6 +194,9 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            emitted_non_exported_declaration: false,
+            emitted_scope_marker: false,
+            emitted_module_indicator: false,
         }
     }
 
@@ -485,7 +500,27 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_statement(stmt_idx);
         }
 
-        if self.needs_empty_export_marker(source_file) {
+        // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
+        // Uses emission-time tracking instead of source-file analysis.
+        //
+        // tsc logic: if isExternalModule(node) &&
+        //   (!resultHasExternalModuleIndicator || (needsScopeFixMarker && !resultHasScopeMarker))
+        let is_module = source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                let k = stmt_node.kind;
+                k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || self.stmt_has_export_modifier(stmt_node)
+            })
+        });
+
+        if is_module
+            && (!self.emitted_module_indicator
+                || (self.emitted_non_exported_declaration && !self.emitted_scope_marker))
+        {
             self.write("export {};");
         }
 
@@ -542,6 +577,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.queue_source_mapping(stmt_node);
 
         let kind = stmt_node.kind;
+        let has_export_modifier = self.stmt_has_export_modifier(stmt_node);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -588,8 +624,58 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if self.writer.len() == before_len {
+        let did_emit = self.writer.len() != before_len;
+        if !did_emit {
             self.pending_source_pos = None;
+        } else {
+            // Track whether we emitted a scope marker or a non-exported declaration.
+            // This is used to decide whether `export {};` is needed at the end.
+            let is_scope_marker = kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                || (kind == syntax_kind_ext::EXPORT_DECLARATION && {
+                    // Only pure export declarations count as scope markers,
+                    // not `export class/function/etc` which are declarations with export
+                    self.arena
+                        .get(stmt_idx)
+                        .and_then(|n| self.arena.get_export_decl(n))
+                        .and_then(|ed| self.arena.get(ed.export_clause))
+                        .is_none_or(|clause| {
+                            let ck = clause.kind;
+                            ck != syntax_kind_ext::INTERFACE_DECLARATION
+                                && ck != syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                && ck != syntax_kind_ext::CLASS_DECLARATION
+                                && ck != syntax_kind_ext::FUNCTION_DECLARATION
+                                && ck != syntax_kind_ext::ENUM_DECLARATION
+                                && ck != syntax_kind_ext::VARIABLE_STATEMENT
+                                && ck != syntax_kind_ext::MODULE_DECLARATION
+                        })
+                });
+
+            if is_scope_marker {
+                self.emitted_scope_marker = true;
+                self.emitted_module_indicator = true;
+            } else if has_export_modifier
+                || kind == syntax_kind_ext::EXPORT_DECLARATION
+                || kind == syntax_kind_ext::IMPORT_DECLARATION
+                || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                // Any export/import statement is a module indicator
+                self.emitted_module_indicator = true;
+            }
+
+            if !has_export_modifier && kind != syntax_kind_ext::EXPORT_DECLARATION {
+                // A declaration without export modifier was emitted
+                let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || kind == syntax_kind_ext::CLASS_DECLARATION
+                    || kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || kind == syntax_kind_ext::ENUM_DECLARATION
+                    || kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    || kind == syntax_kind_ext::MODULE_DECLARATION;
+                if is_declaration_kind {
+                    self.emitted_non_exported_declaration = true;
+                }
+            }
         }
     }
 
