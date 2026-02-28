@@ -107,6 +107,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolved_target = self.resolve_lazy_type(expanded);
         }
 
+        // TSC emits TS2322 (generic "not assignable") instead of TS2741/TS2739
+        // when the target type is an intersection. Intersection types combine
+        // constraints from multiple sources, so drilling into individual member
+        // properties is misleading. Return TypeMismatch so the checker emits TS2322.
+        // Check BEFORE evaluate_type, which may merge intersection members into
+        // a single object, losing the intersection information.
+        if crate::visitor::intersection_list_id(self.interner, resolved_target).is_some() {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
         // Evaluate meta-types (Mapped, Conditional, KeyOf, etc.) to structural forms.
         // Application expansion may produce a Mapped type (e.g., Required<Foo> →
         // { [K in keyof Foo]-?: Foo[K] }) which needs further evaluation to a concrete

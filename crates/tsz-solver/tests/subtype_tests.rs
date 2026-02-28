@@ -3,6 +3,7 @@ use crate::QueryCache;
 use crate::TypeInterner;
 use crate::TypeResolver;
 use crate::def::DefId;
+use crate::diagnostics::SubtypeFailureReason;
 use crate::{TypeSubstitution, Visibility, instantiate_type};
 use tsz_binder::SymbolId;
 
@@ -25331,4 +25332,91 @@ fn test_rest_param_any_with_extra_fixed_params() {
     // Should still work with allow_bivariant_rest
     checker.allow_bivariant_rest = true;
     assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_intersection_target_produces_type_mismatch_not_missing_property() {
+    // When the target is an intersection type (T & U), explain_failure should
+    // return TypeMismatch (→ TS2322) instead of MissingProperty (→ TS2741).
+    // TSC always emits TS2322 for intersection targets because intersection
+    // types combine constraints from multiple sources.
+    //
+    // We use type parameters because the interner merges anonymous object
+    // intersections into a single object (losing the intersection information).
+    use crate::types::TypeData;
+    use crate::types::TypeParamInfo;
+
+    let interner = TypeInterner::new();
+
+    // Create constrained type params to make an intersection that won't be merged
+    let a_prop = interner.intern_string("a");
+    let b_prop = interner.intern_string("b");
+
+    let obj_a = interner.object(vec![PropertyInfo::new(a_prop, TypeId::STRING)]);
+    let obj_b = interner.object(vec![PropertyInfo::new(b_prop, TypeId::STRING)]);
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(obj_a),
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(obj_b),
+        default: None,
+        is_const: false,
+    }));
+
+    // Source: { a: string } — satisfies T but not U
+    let source = interner.object(vec![PropertyInfo::new(a_prop, TypeId::STRING)]);
+
+    // Target: T & U (intersection of type parameters — interner keeps this as Intersection)
+    let target = interner.intersection(vec![t_param, u_param]);
+    assert!(
+        crate::is_intersection_type(&interner, target),
+        "Target should be an intersection type"
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Source should NOT be a subtype of the intersection target
+    assert!(!checker.is_subtype_of(source, target));
+
+    // explain_failure should return TypeMismatch, NOT MissingProperty
+    let reason = checker.explain_failure(source, target);
+    assert!(
+        matches!(reason, Some(SubtypeFailureReason::TypeMismatch { .. })),
+        "Expected TypeMismatch for intersection target, got: {reason:?}"
+    );
+}
+
+#[test]
+fn test_plain_object_target_produces_missing_property() {
+    // When the target is a plain object (not an intersection), explain_failure
+    // should still return MissingProperty (→ TS2741) as before.
+    let interner = TypeInterner::new();
+
+    let a_prop = interner.intern_string("a");
+    let b_prop = interner.intern_string("b");
+
+    // Source: { a: string }
+    let source = interner.object(vec![PropertyInfo::new(a_prop, TypeId::STRING)]);
+
+    // Target: { a: string, b: string } (plain object, not intersection)
+    let target = interner.object(vec![
+        PropertyInfo::new(a_prop, TypeId::STRING),
+        PropertyInfo::new(b_prop, TypeId::STRING),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    assert!(!checker.is_subtype_of(source, target));
+
+    // For plain object targets, should produce MissingProperty
+    let reason = checker.explain_failure(source, target);
+    assert!(
+        matches!(reason, Some(SubtypeFailureReason::MissingProperty { .. })),
+        "Expected MissingProperty for plain object target, got: {reason:?}"
+    );
 }

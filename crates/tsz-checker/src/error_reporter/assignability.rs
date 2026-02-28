@@ -427,8 +427,9 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TSC emits TS2322 instead of TS2739/TS2740 when the target type
-                // is an intersection type.
+                // TSC emits TS2322 (not assignable) instead of TS2739/TS2740
+                // when the target type is an intersection type (same rationale as
+                // MissingProperty above).
                 if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
                     let src_str = self.format_type(*source_type);
                     let tgt_str = self.format_type(*target_type);
