@@ -131,39 +131,30 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        // Bidirectional subtype fallback for complex structural equivalences.
-        // The solver's identity check cannot normalize intersection distribution
-        // (e.g., `(A | B) & (C | D)` vs `A & C | A & D | B & C | B & D`), so we
-        // fall back to bidirectional subtype checking which handles this correctly.
+        // Bidirectional subtype fallback for structural equivalences.
+        // The solver's identity check cannot normalize all cases (intersection
+        // distribution, typeof evaluation, generic application results), so we
+        // fall back to bidirectional subtype checking which handles these correctly.
         //
         // Excluded cases:
         // - `any` is never identical to non-`any` for redeclaration (tsc behavior)
-        // - Simple non-union vs union mismatch (e.g., `C` vs `C | D` where D extends C)
+        // - Union vs non-union mismatch (e.g., `C` vs `C | D` where D extends C)
         //   must NOT use this fallback — tsc's isTypeIdenticalTo rejects these
         if prev_type == TypeId::ANY || current_type == TypeId::ANY {
             return false;
         }
-        // Only allow bidirectional subtype when at least one side has complex structure
-        // (intersection, conditional, etc.) that may need evaluation during subtype checking.
-        // A simple object/primitive vs union is never identical per tsc's isTypeIdenticalTo.
-        if self.has_complex_type_structure(prev_type)
-            || self.has_complex_type_structure(current_type)
+        // Guard: when exactly one side is a union and the other is not, tsc's
+        // isTypeIdenticalTo rejects them even if they're bidirectionally subtypes.
+        // e.g., `C` vs `C | D` (where D extends C) fails identity in tsc.
         {
-            return self.is_subtype_of(prev_type, current_type)
-                && self.is_subtype_of(current_type, prev_type);
+            use tsz_solver::type_queries;
+            let prev_is_union = type_queries::is_union_type(self.ctx.types, prev_type);
+            let curr_is_union = type_queries::is_union_type(self.ctx.types, current_type);
+            if prev_is_union != curr_is_union {
+                return false;
+            }
         }
-        false
-    }
-
-    /// Check if a type has complex structure (intersection, conditional, application, etc.)
-    /// that may need evaluation during subtype checking but isn't handled by the solver's
-    /// identity check normalization.
-    fn has_complex_type_structure(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries;
-        type_queries::is_intersection_type(self.ctx.types, type_id)
-            || type_queries::is_conditional_type(self.ctx.types, type_id)
-            || type_queries::is_mapped_type(self.ctx.types, type_id)
-            || type_queries::is_generic_application(self.ctx.types, type_id)
+        self.is_subtype_of(prev_type, current_type) && self.is_subtype_of(current_type, prev_type)
     }
 
     /// Try checking redeclaration compatibility using enum object shape substitution.
