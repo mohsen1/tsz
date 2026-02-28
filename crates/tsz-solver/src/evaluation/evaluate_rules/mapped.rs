@@ -232,6 +232,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        // For homomorphic mapped types, capture the source object's property declaration
+        // order. tsc preserves declaration order in mapped type results (e.g., Required<Foo>
+        // lists properties in the same order as Foo). Our key extraction sorts by Atom ID
+        // which can differ from declaration order. We fix this by re-sorting the output
+        // properties to match the source's declaration order.
+        let source_decl_order: Vec<Atom> = if is_homomorphic {
+            if let Some(source) = source_object {
+                let resolved = self.evaluate(source);
+                let order: Vec<Atom> = match self.interner().lookup(resolved) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        let shape = self.interner().object_shape(shape_id);
+                        shape.properties.iter().map(|p| p.name).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                tracing::trace!(
+                    source_id = source.0,
+                    resolved_id = resolved.0,
+                    decl_order = ?order.iter().map(|a| self.interner().resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                    "evaluate_mapped: source declaration order"
+                );
+                order
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
         // HOMOMORPHIC ARRAY/TUPLE PRESERVATION
         // If source_object is an Array or Tuple, preserve the structure instead of
         // degrading to a plain Object. This preserves Array methods (push, pop, map)
@@ -406,6 +435,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     parent_id: None,
                 });
             }
+        }
+
+        // For homomorphic mapped types, restore source declaration order.
+        // The key extraction and dedup may have reordered properties.
+        if !source_decl_order.is_empty() {
+            let order_map: FxHashMap<Atom, usize> = source_decl_order
+                .iter()
+                .enumerate()
+                .map(|(i, &name)| (name, i))
+                .collect();
+            properties.sort_by_key(|p| order_map.get(&p.name).copied().unwrap_or(usize::MAX));
         }
 
         let string_index = if key_set.has_string {

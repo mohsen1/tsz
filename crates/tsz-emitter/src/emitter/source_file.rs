@@ -121,7 +121,7 @@ impl<'a> Printer<'a> {
         let mut first_erased_stmt_pos: Option<u32> = None;
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
-            let mut prev_end: Option<u32> = None;
+            let mut prev_erased_end: Option<u32> = None;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     let stmt_token_end =
@@ -139,21 +139,29 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        let range_start = if let Some(pe) = prev_end {
+                        // For the erased range start:
+                        // - First erased stmt: use actual token start to preserve
+                        //   file-level comments in leading trivia.
+                        // - Consecutive erased stmts: extend from previous erased end
+                        //   to capture comments between them.
+                        // - Erased stmt after non-erased: use stmt_node.pos to only
+                        //   capture this statement's own leading trivia, not comments
+                        //   belonging to the previous non-erased statement.
+                        let range_start = if let Some(pe) = prev_erased_end {
                             pe
-                        } else {
-                            // For the first erased statement, preserve file-level
-                            // comments by starting the erased range at the statement
-                            // itself. The header comment loop will filter out
-                            // attached comments separately.
+                        } else if first_erased_stmt_pos.is_none() {
                             let actual_start =
                                 self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                             first_erased_stmt_pos = Some(actual_start);
                             actual_start
+                        } else {
+                            stmt_node.pos
                         };
                         erased_ranges.push((range_start, stmt_token_end));
+                        prev_erased_end = Some(stmt_token_end);
+                    } else {
+                        prev_erased_end = None;
                     }
-                    prev_end = Some(stmt_token_end);
                 }
             }
             if !erased_ranges.is_empty() {
@@ -792,7 +800,7 @@ impl<'a> Printer<'a> {
                 // into the next statement's trivia (same pattern as emit_block_body).
                 let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
                 let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
-                self.emit_trailing_comments(token_end);
+                self.emit_trailing_comments_before(token_end, upper_bound);
                 self.write_line();
             }
 
