@@ -41,8 +41,9 @@ pub mod traversal;
 // callers can use a single `type_queries::*` import.
 pub use crate::visitors::visitor_predicates::{
     contains_any_type, is_array_type, is_conditional_type, is_empty_object_type, is_function_type,
-    is_index_access_type, is_intersection_type, is_literal_type, is_mapped_type,
-    is_object_like_type, is_primitive_type, is_template_literal_type, is_tuple_type, is_union_type,
+    is_generic_application, is_index_access_type, is_intersection_type, is_literal_type,
+    is_mapped_type, is_object_like_type, is_primitive_type, is_template_literal_type,
+    is_tuple_type, is_union_type,
 };
 
 // Re-export sub-module items so callers can use `type_queries::*`
