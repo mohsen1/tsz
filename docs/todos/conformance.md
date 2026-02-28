@@ -1,8 +1,35 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9639/12570 (76.7%) — full suite, error-code level
+**Current score**: ~9641/12570 (76.7%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28f — expressions/binaryOperators: TS18050→TS18048 diagnostic fix
+
+### Fixed: Emit TS18048/TS18047 for variables instead of TS18050 in binary ops — Checker (operator_errors.rs)
+
+**Root cause**: When a variable with type `null` or `undefined` was used in a binary operation (e.g., `x < 1` where `x: typeof undefined`), the checker always emitted TS18050 ("The value 'undefined' cannot be used here"). tsc distinguishes between:
+- **TS18050**: Literal `null`/`undefined` keyword used directly (e.g., `undefined < 3`)
+- **TS18048**: Variable with `undefined` type (e.g., `x < 3` where `x: undefined`)
+- **TS18047**: Variable with `null` type
+
+**Fix**: Added `emit_nullish_operand_error()` helper in `operator_errors.rs` that checks `is_literal_null_or_undefined_node()` to determine if the AST node is the literal keyword or a variable reference, then emits the appropriate diagnostic code. Made `is_literal_null_or_undefined_node` `pub(crate)` in `core.rs` for cross-module access.
+
+**Files**:
+- `crates/tsz-checker/src/error_reporter/operator_errors.rs` — main fix
+- `crates/tsz-checker/src/types/queries/core.rs` — visibility change
+- `crates/tsz-checker/tests/value_usage_tests.rs` — 3 new unit tests
+
+### Test impact: +2 net (comparisonOperatorWithOneOperandIsUndefined passes)
+
+### Investigation notes: TS2454 and expressions/binaryOperators area
+
+- TS2454 was already correctly implemented. The strictNullChecks gate is correct — tsc 6.0 changed the DEFAULT to true, but still respects `--strictNullChecks false`. Our `CheckerOptions::default()` already has `strict_null_checks: true`.
+- The `expressions/binaryOperators` area is at 83.1% (54/65) at error-code level after fix.
+- Remaining 11 failures: 6 fingerprint-only (line offsets), 3 comparison operator type issues (TS2365/TS2367 with generic signatures — solver level), 1 `Symbol.hasInstance` (TS2860/TS2861 not implemented), 1 false positive TS2359/TS18019.
+- The `literals.ts` false positive TS18050 is a separate issue — tsc 6.0 doesn't emit TS18050 for `null / null` and `undefined / undefined` even though strictNullChecks defaults to true. May be related to multi-target `@target: ES5, ES2015` handling.
 
 ---
 
