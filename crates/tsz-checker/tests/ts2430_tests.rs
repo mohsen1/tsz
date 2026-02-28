@@ -214,6 +214,78 @@ interface I5 extends T5 {
 }
 
 #[test]
+fn test_multi_base_both_incompatible_emits_two_ts2430() {
+    // When interface extends multiple bases and BOTH are incompatible,
+    // we must emit TS2430 for each incompatible base (not just the first).
+    let source = r#"
+interface Base1 {
+    x: { a: string; }
+}
+interface Base2 {
+    x: { b: string; }
+}
+interface Derived<T> extends Base1, Base2 {
+    x: { a: T; b: T; }
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430_count = diags.iter().filter(|d| d.0 == 2430).count();
+    assert_eq!(
+        ts2430_count, 2,
+        "Should emit TS2430 for BOTH incompatible bases, not just the first. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_multi_base_one_compatible_emits_one_ts2430() {
+    // When only one of multiple bases is incompatible, emit exactly one TS2430.
+    let source = r#"
+interface Base1 {
+    x: { a: string; }
+}
+interface Base2 {
+    x: { b: string; }
+}
+interface Derived extends Base1, Base2 {
+    x: { a: string; b: number; }
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430_msgs: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2430)
+        .map(|d| d.1.clone())
+        .collect();
+    assert_eq!(
+        ts2430_msgs.len(),
+        1,
+        "Should emit exactly one TS2430 (only Base2 is incompatible). Got: {ts2430_msgs:?}"
+    );
+    assert!(
+        ts2430_msgs[0].contains("Base2"),
+        "Error should mention Base2. Got: {:?}",
+        ts2430_msgs[0]
+    );
+}
+
+#[test]
+#[ignore = "array type resolution requires lib.d.ts (Array<T> interface) not available in unit test env"]
+fn test_interface_extends_array_type_alias_incompatible() {
+    // Interface extends array type alias with incompatible length property
+    let source = r#"
+type T3 = number[];
+interface I3 extends T3 {
+    length: string;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when interface extends array type with incompatible 'length'. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
 fn test_interface_extends_class_with_private_emits_at_name() {
     // TS2430 for private member conflict should be reported at the interface name,
     // not at the member that conflicts
