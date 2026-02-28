@@ -266,7 +266,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Detect whether a type is the global `Object` interface from lib.d.ts.
     ///
     /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
-    /// detection (an ObjectShape with `constructor`, `toString`, `valueOf`,
+    /// detection (an `ObjectShape` with `constructor`, `toString`, `valueOf`,
     /// `hasOwnProperty`, and `isPrototypeOf` properties).
     fn is_global_object_interface_target(&self, target: TypeId) -> bool {
         if self

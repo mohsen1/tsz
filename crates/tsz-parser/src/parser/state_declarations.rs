@@ -42,9 +42,15 @@ impl ParserState {
             );
             self.parse_identifier_name()
         } else if self.is_identifier_or_keyword() {
-            // Reserved words are not valid interface names and should surface TS1005 here
-            // to avoid checker-stage and cascading parse noise.
-            if self.is_reserved_word() {
+            // Type keywords (void, null) are accepted as names by the parser.
+            // The checker emits TS2427 for predefined type names used as interface names.
+            // Other reserved words (class, function, return, etc.) still get TS1005.
+            if self.is_reserved_word()
+                && !matches!(
+                    self.current_token,
+                    SyntaxKind::VoidKeyword | SyntaxKind::NullKeyword
+                )
+            {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
                 // Consume the invalid token to avoid cascading errors
