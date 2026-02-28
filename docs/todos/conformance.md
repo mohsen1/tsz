@@ -1,8 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9651/12570 (76.8%) — full suite, error-code level
+**Current score**: ~9652/12570 (76.8%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28j — jsx: JSX children contextual typing for callback parameters
+
+### Fixed: JSX children callback parameters now get contextual types — Checker (jsx_checker.rs, dispatch.rs)
+
+**Root cause**: JSX children expressions (e.g., `<Comp>{(arg) => ...}</Comp>`) were computed via `get_type_of_node(child)` in `dispatch.rs` WITHOUT any contextual type being set. The `children` prop type from the component's props was never extracted or used as contextual type. This caused false TS7006 ("Parameter 'x' implicitly has an 'any' type") for callback children.
+
+**Fix**: Two new methods + dispatch wiring:
+
+1. **`get_jsx_children_contextual_type(opening_element_idx)`** — Resolves the component/intrinsic element's props type and gets the `children` property. Handles both SFC and class component elements, plus intrinsic elements.
+
+2. **`get_jsx_props_type_for_children_contextual(component_type)`** — Permissive variant of `get_jsx_props_type_for_component` that allows union types (needed for discriminated union props like `{children: (arg: string) => void} | {children: (arg: number) => void}`). Still skips generic SFCs.
+
+3. **`dispatch.rs` JSX_ELEMENT handler** — Before iterating children, calls `get_jsx_children_contextual_type()` and sets `ctx.contextual_type` to the result. Restores previous contextual type after processing all children.
+
+**Files**:
+- `crates/tsz-checker/src/checkers/jsx_checker.rs` — `get_jsx_children_contextual_type()`, `get_jsx_props_type_for_children_contextual()`
+- `crates/tsz-checker/src/dispatch.rs` — JSX_ELEMENT handler wiring
+
+### Test impact: +1 confirmed (checkJsxChildrenProperty16), reduced diff on 2-3 others
+- `checkJsxChildrenProperty16.tsx` FAIL→PASS (discriminated union children callback)
+- `checkJsxChildrenProperty3.tsx` diff reduced: x=[TS2339, TS7006] → x=[TS2339] (TS7006 eliminated)
+- `checkJsxChildrenProperty4.tsx` diff reduced: x=[TS2339, TS7006] → x=[TS2339] (TS7006 eliminated)
+
+### Unit tests added: 4 in `jsx_component_attribute_tests.rs`
+- `test_jsx_children_callback_gets_contextual_type`
+- `test_jsx_children_callback_union_props_gets_contextual_type`
+- `test_jsx_children_no_contextual_type_for_generic_sfc`
+- `test_jsx_children_intrinsic_element_no_crash`
+
+### Remaining JSX children gaps:
+1. **Generic SFC children**: `<Comp<T> prop={...}>{(arg) => ...}</Comp>` — requires JSX generic inference to resolve T before extracting children type
+2. **Children prop validation**: `children` is still skipped in missing-required-property check (jsx_checker.rs line ~1306). Need to synthesize children type from element body.
+3. **Multiple children → tuple type**: tsc synthesizes a tuple type for multiple children. We don't yet.
+4. **TS2746**: "expects a single child" diagnostic for when children prop expects one child but multiple are provided
+5. **TS2710**: "children specified twice" diagnostic for when explicit `children` attr and JSX body children coexist
 
 ---
 

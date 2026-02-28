@@ -637,25 +637,42 @@ fn test_ts2322_no_false_positive_nested_conditional() {
 
 #[test]
 fn test_ts2322_accessor_incompatible_getter_setter() {
-    // TS 5.1+ removed the identical-type requirement (TS2380) for getters/setters,
-    // but still checks that the getter return type is ASSIGNABLE to the setter param type.
-    // `string` is not assignable to `number`, so TS2322 is expected.
-    let source = r#"
+    // TS 5.1+: when BOTH getter and setter have explicit type annotations,
+    // unrelated types are allowed (no error).
+    let source_both_explicit = r#"
         class C {
             get x(): string { return "s"; }
             set x(value: number) {}
         }
     "#;
 
-    let diagnostics = get_all_diagnostics(source);
+    let diagnostics = get_all_diagnostics(source_both_explicit);
     let ts2322: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
+    assert!(
+        ts2322.is_empty(),
+        "TS 5.1+ allows unrelated types when both annotated; got: {ts2322:?}"
+    );
 
+    // But when getter has NO explicit return annotation (inferred type),
+    // the inferred type must be compatible with the setter's explicit param type.
+    let source_inferred_getter = r#"
+        class C {
+            get bar() { return 0; }
+            set bar(n: string) {}
+        }
+    "#;
+
+    let diagnostics = get_all_diagnostics(source_inferred_getter);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
     assert!(
         !ts2322.is_empty(),
-        "Getter return type (string) not assignable to setter param (number), should get TS2322"
+        "Inferred getter type (number) conflicts with explicit setter type (string) → TS2322"
     );
 }
 

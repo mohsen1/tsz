@@ -4629,9 +4629,8 @@ fn test_const_modifier_on_class_property_1248() {
 
 #[test]
 fn test_accessor_type_compatibility_2322() {
-    // TS 5.1+ allows divergent accessor types but still checks assignability:
-    // getter return type must be assignable to setter parameter type.
-    // string is NOT assignable to number, so TS2322 IS expected here.
+    // TS 5.1+: when BOTH getter and setter have explicit type annotations,
+    // unrelated types are allowed — no TS2322.
     use crate::parser::ParserState;
     let source = r#"class C {
     public set AnnotatedSetter(a: number) { }
@@ -4658,8 +4657,8 @@ fn test_accessor_type_compatibility_2322() {
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2322),
-        "getter string not assignable to setter number, should get 2322, got codes: {codes:?}",
+        !codes.contains(&2322),
+        "TS 5.1+ allows unrelated types when both annotated, no TS2322; got codes: {codes:?}",
     );
 }
 

@@ -591,6 +591,12 @@ impl<'a> CheckerState<'a> {
                     || tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, t)
             };
 
+            // Helper: null is a valid SFC return type in JSX.
+            // tsc allows `null` as a JSX component return even under strictNullChecks.
+            // However, `undefined` and `void` are NOT valid under strictNullChecks
+            // (see tsxSfcReturnUndefinedStrictNullChecks).
+            let is_valid_null_like_return = |t: TypeId| -> bool { t == TypeId::NULL };
+
             // Try as function component (SFC): check call signature return type
             let mut is_sfc = false;
             if let Some(shape) =
@@ -600,7 +606,8 @@ impl<'a> CheckerState<'a> {
                 is_sfc = true;
                 let return_type = self.evaluate_type_with_env(shape.return_type);
                 // Skip check if return type is unresolved (e.g., cross-file type)
-                if !is_unresolved(return_type) {
+                // or is a valid null-like JSX return (null, undefined, void)
+                if !is_unresolved(return_type) && !is_valid_null_like_return(return_type) {
                     any_checked = true;
                     if let Some(element_type) = jsx_element_type
                         && !self.is_assignable_to(return_type, element_type)
@@ -620,8 +627,8 @@ impl<'a> CheckerState<'a> {
                 let mut any_concrete = false;
                 let any_sig_valid = sigs.iter().any(|sig| {
                     let return_type = self.evaluate_type_with_env(sig.return_type);
-                    if is_unresolved(return_type) {
-                        return true; // Unresolved → assume valid
+                    if is_unresolved(return_type) || is_valid_null_like_return(return_type) {
+                        return true; // Unresolved or null-like → assume valid
                     }
                     any_concrete = true;
                     if let Some(element_type) = jsx_element_type {
