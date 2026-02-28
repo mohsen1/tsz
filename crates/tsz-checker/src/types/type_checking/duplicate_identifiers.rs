@@ -1197,7 +1197,12 @@ impl<'a> CheckerState<'a> {
 
             let mut merged_string_index: Option<TypeId> = None;
             let mut merged_number_index: Option<TypeId> = None;
-            let mut merged_properties: FxHashMap<String, TypeId> = FxHashMap::default();
+            // Track type, whether the member is a method signature, and the
+            // name node index. When the same name appears as both property
+            // and method across merged declarations, tsc emits TS2300
+            // "Duplicate identifier" on both declarations.
+            let mut merged_properties: FxHashMap<String, (TypeId, bool, NodeIndex)> =
+                FxHashMap::default();
 
             for &decl_idx in &declarations_in_scope {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -1210,7 +1215,8 @@ impl<'a> CheckerState<'a> {
                 // Resolve interface-local type parameters before reading member signatures.
                 let (_type_params, updates) = self.push_type_parameters(&iface.type_parameters);
 
-                let mut local_properties: Vec<(String, NodeIndex, TypeId, bool)> = Vec::new();
+                // (name, name_node, type, is_numeric, is_method)
+                let mut local_properties: Vec<(String, NodeIndex, TypeId, bool, bool)> = Vec::new();
                 let mut local_string_index: Option<TypeId> = None;
                 let mut local_number_index: Option<TypeId> = None;
                 let mut local_string_index_node = NodeIndex::NONE;
@@ -1221,7 +1227,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                        || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+                    {
+                        let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
                         let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                             continue;
                         };
@@ -1234,12 +1243,22 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get(sig.name)
                             .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
-                        let property_type = if sig.type_annotation.is_none() {
+                        // For method signatures, skip type resolution — methods may have
+                        // their own type parameters (e.g., foo<W>(): W) that are not in
+                        // scope during interface-level type parameter resolution. We only
+                        // need the method's name and kind for property-vs-method detection.
+                        let property_type = if is_method || sig.type_annotation.is_none() {
                             TypeId::ANY
                         } else {
                             self.get_type_from_type_node(sig.type_annotation)
                         };
-                        local_properties.push((name, sig.name, property_type, is_numeric_name));
+                        local_properties.push((
+                            name,
+                            sig.name,
+                            property_type,
+                            is_numeric_name,
+                            is_method,
+                        ));
                     } else if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
                         let Some(index_sig) = self.ctx.arena.get_index_signature(member_node)
                         else {
@@ -1279,26 +1298,60 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Apply merged declarations checks for property signatures.
-                for (name, name_idx, property_type, is_numeric) in &local_properties {
-                    if let Some(existing_type) = merged_properties.get(name) {
+                // Apply merged declarations checks for property/method signatures.
+                for (name, name_idx, property_type, is_numeric, is_method) in &local_properties {
+                    if let Some(&(existing_type, existing_is_method, existing_name_idx)) =
+                        merged_properties.get(name)
+                    {
+                        // Handle property-vs-method conflicts across merged declarations.
+                        if *is_method != existing_is_method {
+                            if *is_method && !existing_is_method {
+                                // Method after property: TS2300 on both declarations.
+                                // tsc treats a method signature conflicting with an
+                                // existing property signature as a duplicate identifier.
+                                let message = crate::diagnostics::format_message(
+                                    crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
+                                    &[name],
+                                );
+                                self.error_at_node(
+                                    existing_name_idx,
+                                    &message,
+                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                );
+                                self.error_at_node(
+                                    *name_idx,
+                                    &message,
+                                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                                );
+                            }
+                            // Property after method: tsc emits TS2717 comparing against the
+                            // method's full callable type. Skipped for now — requires computing
+                            // the method's function type, which is handled separately.
+                            continue;
+                        }
+
                         if self.type_contains_error(*property_type)
-                            || self.type_contains_error(*existing_type)
+                            || self.type_contains_error(existing_type)
                         {
                             continue;
                         }
 
-                        let compatible_both_ways = self
-                            .is_assignable_to(*existing_type, *property_type)
-                            && self.is_assignable_to(*property_type, *existing_type);
-                        if !compatible_both_ways {
-                            let existing_type_str = self.format_type(*existing_type);
-                            let property_type_str = self.format_type(*property_type);
-                            self.error_at_node_msg(
-                                *name_idx,
-                                diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                &[name, &existing_type_str, &property_type_str],
-                            );
+                        // For same-kind members, check type compatibility (TS2717).
+                        // Method overloads (multiple methods with same name) are valid
+                        // and don't need compatibility checking here.
+                        if !*is_method {
+                            let compatible_both_ways = self
+                                .is_assignable_to(existing_type, *property_type)
+                                && self.is_assignable_to(*property_type, existing_type);
+                            if !compatible_both_ways {
+                                let existing_type_str = self.format_type(existing_type);
+                                let property_type_str = self.format_type(*property_type);
+                                self.error_at_node_msg(
+                                    *name_idx,
+                                    diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                    &[name, &existing_type_str, &property_type_str],
+                                );
+                            }
                         }
                     } else {
                         // Keep first declaration as canonical for subsequent comparisons.
@@ -1339,8 +1392,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                for (name, _name_idx, property_type, _is_numeric) in local_properties {
-                    merged_properties.entry(name).or_insert(property_type);
+                for (name, name_idx, property_type, _is_numeric, is_method) in local_properties {
+                    merged_properties
+                        .entry(name)
+                        .or_insert((property_type, is_method, name_idx));
                 }
 
                 // Check declaration-local index signatures against already-seen
