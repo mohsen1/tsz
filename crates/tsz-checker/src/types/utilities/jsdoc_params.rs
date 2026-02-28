@@ -766,10 +766,14 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_has_type_tag(jsdoc: &str) -> bool {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("@type")
-                && rest.trim().starts_with('{')
-            {
-                return true;
+            if let Some(rest) = trimmed.strip_prefix("@type") {
+                let rest = rest.trim();
+                // Accept both braced `@type {T}` and braceless `@type T` forms.
+                // The braceless form is used in tsc for inline function types like
+                // `@type (arg: string) => string`.
+                if rest.starts_with('{') || (!rest.is_empty() && !rest.starts_with('@')) {
+                    return true;
+                }
             }
         }
         false

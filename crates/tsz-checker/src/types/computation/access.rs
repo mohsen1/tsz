@@ -397,8 +397,12 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
                     // TS18046: 'x' is of type 'unknown'.
-                    self.error_is_of_type_unknown(access.expression);
-                    Some(TypeId::ERROR)
+                    // Without strictNullChecks, unknown is treated like any.
+                    if self.error_is_of_type_unknown(access.expression) {
+                        Some(TypeId::ERROR)
+                    } else {
+                        Some(TypeId::ANY)
+                    }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // TS2576 parity for element access on instance/super with a static member name.
@@ -538,8 +542,12 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::IsUnknown => {
                     use_index_signature_check = false;
                     // TS18046: 'x' is of type 'unknown'.
-                    self.error_is_of_type_unknown(access.expression);
-                    Some(TypeId::ERROR)
+                    // Without strictNullChecks, unknown is treated like any.
+                    if self.error_is_of_type_unknown(access.expression) {
+                        Some(TypeId::ERROR)
+                    } else {
+                        Some(TypeId::ANY)
+                    }
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,
             };

@@ -279,6 +279,36 @@ impl<'a> CheckerState<'a> {
             .and_then(|j| Self::jsdoc_returns_type_name(j))
             .and_then(|name| jsdoc_type_param_types.get(&name).copied());
 
+        // Check if this closure is inside a decorator expression.
+        // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006
+        // because tsc provides contextual types for decorator parameters, which we
+        // don't yet implement. Walking up the parent chain to find a DECORATOR node.
+        let is_in_decorator = is_closure && {
+            let mut current = idx;
+            let mut found = false;
+            // Walk up at most 3 levels: arrow -> paren -> decorator (for `@((t, c) => {})`)
+            for _ in 0..3 {
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    let parent = ext.parent;
+                    if parent.is_none() {
+                        break;
+                    }
+                    if let Some(parent_node) = self.ctx.arena.get(parent) {
+                        if parent_node.kind == syntax_kind_ext::DECORATOR {
+                            found = true;
+                            break;
+                        }
+                        current = parent;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            found
+        };
+
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -449,9 +479,13 @@ impl<'a> CheckerState<'a> {
                 // 2. SET_ACCESSOR nodes — their TS7006 is handled by the caller
                 //    (type_computation.rs for object literals, ambient_signature_checks.rs
                 //    for class members) with proper paired-getter detection.
+                // 3. Closures inside decorator expressions — tsc provides contextual
+                //    types for decorator parameters (which we don't implement yet),
+                //    so we must suppress TS7006 to avoid false positives.
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
                 let skip_implicit_any = is_setter
-                    || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type);
+                    || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type)
+                    || (is_in_decorator && !has_contextual_type);
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter(
                         param,

@@ -708,15 +708,20 @@ impl<'a> CheckerState<'a> {
                     };
 
                     // TS18046: unknown cannot be used with bitwise operators
+                    // Only emit under strictNullChecks; otherwise fall through to normal checks.
                     if left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN {
+                        let mut emitted = false;
                         if left_type == TypeId::UNKNOWN {
-                            self.error_is_of_type_unknown(left_idx);
+                            emitted |= self.error_is_of_type_unknown(left_idx);
                         }
                         if right_type == TypeId::UNKNOWN {
-                            self.error_is_of_type_unknown(right_idx);
+                            emitted |= self.error_is_of_type_unknown(right_idx);
                         }
-                        type_stack.push(TypeId::ERROR);
-                        continue;
+                        if emitted {
+                            type_stack.push(TypeId::ERROR);
+                            continue;
+                        }
+                        // Without strictNullChecks, fall through to normal handling
                     }
 
                     let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
@@ -841,17 +846,22 @@ impl<'a> CheckerState<'a> {
             // TS18046: Emit "'x' is of type 'unknown'" when unknown is used with
             // arithmetic, relational, or bitwise operators. Equality operators (==, !=,
             // ===, !==) are allowed on unknown and do not trigger TS18046.
+            // Only emit under strictNullChecks; otherwise fall through to normal checks.
             let is_non_equality_op = !matches!(op_str, "==" | "!=" | "===" | "!==");
             if is_non_equality_op && (left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN)
             {
+                let mut emitted = false;
                 if left_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(left_idx);
+                    emitted |= self.error_is_of_type_unknown(left_idx);
                 }
                 if right_type == TypeId::UNKNOWN {
-                    self.error_is_of_type_unknown(right_idx);
+                    emitted |= self.error_is_of_type_unknown(right_idx);
                 }
-                type_stack.push(TypeId::ERROR);
-                continue;
+                if emitted {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+                // Without strictNullChecks, fall through to normal handling
             }
 
             // Check for boxed primitive types in arithmetic operations BEFORE evaluating types.

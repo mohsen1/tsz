@@ -841,8 +841,12 @@ impl<'a> CheckerState<'a> {
 
                 PropertyAccessResult::IsUnknown => {
                     // TS18046: 'x' is of type 'unknown'.
-                    self.error_is_of_type_unknown(access.expression);
-                    TypeId::ERROR
+                    // Without strictNullChecks, unknown is treated like any (no error).
+                    if self.error_is_of_type_unknown(access.expression) {
+                        TypeId::ERROR
+                    } else {
+                        TypeId::ANY
+                    }
                 }
             }
         } else {

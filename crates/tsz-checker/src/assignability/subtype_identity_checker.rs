@@ -93,6 +93,56 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve a TypeQuery chain iteratively until a non-TypeQuery type is reached.
+    ///
+    /// Used for TS2403 checking where `typeof x` type annotations may chain
+    /// through multiple symbols (e.g., `typeof e` → `typeof d` → actual type).
+    /// Returns the fully resolved type, or `any` if a cycle is detected.
+    ///
+    /// Unlike `resolve_type_query_type` which only resolves one level,
+    /// this maintains a visited set across iterations to detect cycles like
+    /// `typeof d` → `typeof e` → `typeof d` → ...
+    fn resolve_type_query_chain(&mut self, mut type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::type_checking_utilities::{
+            TypeQueryKind, classify_type_query,
+        };
+
+        // Track visited symbols to detect cycles across iterations.
+        // resolve_type_query_type pushes/pops its typeof_resolution_stack within
+        // each call, so it can't detect cross-iteration cycles on its own.
+        let mut visited = Vec::<u32>::new();
+
+        for _ in 0..8 {
+            let sym_id = match classify_type_query(self.ctx.types, type_id) {
+                TypeQueryKind::TypeQuery(sym_ref) => sym_ref.0,
+                TypeQueryKind::ApplicationWithTypeQuery { base_sym_ref, .. } => base_sym_ref.0,
+                _ => return type_id,
+            };
+
+            // If we've already tried to resolve this symbol, we have a cycle.
+            if visited.contains(&sym_id) {
+                return TypeId::ANY;
+            }
+            visited.push(sym_id);
+
+            let resolved = self.resolve_type_query_type(type_id);
+            if resolved == TypeId::ERROR {
+                // Cycle detected — circular typeof resolves to `any` in tsc
+                return TypeId::ANY;
+            }
+            if resolved == type_id {
+                // No progress — the TypeQuery resolved back to itself.
+                // This indicates a circular typeof chain (e.g., e's cached type
+                // is typeof e, pointing to itself). In tsc, circular typeof
+                // resolves to `any`.
+                return TypeId::ANY;
+            }
+            type_id = resolved;
+        }
+        // Exceeded iteration limit — treat as `any` to avoid false positives
+        TypeId::ANY
+    }
+
     /// Check if variable declaration types are compatible (used for multiple declarations).
     ///
     /// Delegates to the Solver's `CompatChecker` to determine if two types are
@@ -103,6 +153,14 @@ impl<'a> CheckerState<'a> {
         prev_type: TypeId,
         current_type: TypeId,
     ) -> bool {
+        // Resolve TypeQuery (typeof) types before compatibility checking.
+        // Type annotations like `typeof x` may produce unresolved TypeQuery types
+        // that need to be resolved to the actual symbol type for proper comparison.
+        // Resolve iteratively since one resolution may produce another TypeQuery
+        // (e.g., typeof e → typeof d → actual_type).
+        let prev_type = self.resolve_type_query_chain(prev_type);
+        let current_type = self.resolve_type_query_chain(current_type);
+
         // Ensure Ref/Lazy types are resolved before checking compatibility
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
