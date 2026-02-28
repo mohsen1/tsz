@@ -4771,3 +4771,186 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
         "Readonly<T> should be assignable to Partial<T>"
     );
 }
+
+// ===========================================================================
+// Tests for object→tuple explain: TS2741 for missing numeric properties
+// ===========================================================================
+
+#[test]
+fn test_explain_object_to_tuple_missing_property() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Source: object { 0: string, 1: number } (like StrNum interface)
+    // with a number index signature (to qualify as array-like)
+    let prop0 = PropertyInfo::new(interner.intern_string("0"), TypeId::STRING);
+    let prop1 = PropertyInfo::new(interner.intern_string("1"), TypeId::NUMBER);
+    let source = interner.object_with_index(ObjectShape {
+        properties: vec![prop0, prop1],
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
+            readonly: false,
+            param_name: None,
+        }),
+        string_index: None,
+        flags: ObjectFlags::empty(),
+        symbol: None,
+    });
+
+    // Target: tuple [number, number, number] — has required element at index 2
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let reason = checker.explain_failure(source, target);
+    let expected_prop = interner.intern_string("2");
+    assert!(
+        matches!(reason, Some(SubtypeFailureReason::MissingProperty { property_name, .. })
+            if property_name == expected_prop),
+        "Expected MissingProperty for index '2', got: {reason:?}"
+    );
+}
+
+#[test]
+fn test_explain_tuple_element_drills_into_missing_property() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Source tuple: [{}]  (empty object at index 0)
+    let empty_obj = interner.object(vec![]);
+    let source = interner.tuple(vec![TupleElement {
+        type_id: empty_obj,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    // Target tuple: [{a: string}]  (object with required 'a' at index 0)
+    let obj_with_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: obj_with_a,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let reason = checker.explain_failure(source, target);
+    let expected_prop = interner.intern_string("a");
+    assert!(
+        matches!(reason, Some(SubtypeFailureReason::MissingProperty { property_name, .. })
+            if property_name == expected_prop),
+        "Expected MissingProperty for 'a' (drilled into element), got: {reason:?}"
+    );
+}
+
+// ===========================================================================
+// Tests for tuple↔array comparability (TS2352 type assertion checking)
+// ===========================================================================
+
+#[test]
+fn test_tuple_to_array_comparable() {
+    use crate::type_queries::flow::types_are_comparable;
+
+    let interner = TypeInterner::new();
+
+    // [number, string] should be comparable to number[] (because number overlaps)
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let num_array = interner.array(TypeId::NUMBER);
+
+    assert!(
+        types_are_comparable(&interner, tuple, num_array),
+        "[number, string] should be comparable to number[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_array_not_comparable_disjoint_types() {
+    use crate::type_queries::flow::types_are_comparable;
+
+    let interner = TypeInterner::new();
+
+    // [string, string] should NOT be comparable to number[]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let num_array = interner.array(TypeId::NUMBER);
+
+    assert!(
+        !types_are_comparable(&interner, tuple, num_array),
+        "[string, string] should NOT be comparable to number[]"
+    );
+}
+
+#[test]
+fn test_array_to_tuple_comparable() {
+    use crate::type_queries::flow::types_are_comparable;
+
+    let interner = TypeInterner::new();
+
+    // number[] should be comparable to [number, string] (symmetric)
+    let num_array = interner.array(TypeId::NUMBER);
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        types_are_comparable(&interner, num_array, tuple),
+        "number[] should be comparable to [number, string]"
+    );
+}
