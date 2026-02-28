@@ -589,8 +589,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Note: Source intersection check removed - handled by visitor pattern dispatch
-        // at the end of this function. The visitor includes the property merging logic.
+        // Source intersection member check: when source is an intersection, check if
+        // any individual member is a subtype of the target. This implements the
+        // fundamental intersection rule: (A & B) <: T if A <: T or B <: T.
+        //
+        // This MUST run before type-specific target handlers (mapped types, applications,
+        // lazy types) which may return False early, preventing the visitor-based
+        // intersection decomposition from running.
+        //
+        // Example: Readonly<T> & { name: string } <: Readonly<T>
+        //   → member Readonly<T> <: target Readonly<T> → True
+        //
+        // Note: property merging (e.g., { a: string } & { b: number } <: { a: string; b: number })
+        // is still handled by the visitor's visit_intersection (reached when no individual
+        // member matches and no type-specific handler intercepts).
+        if let Some(members) = intersection_list_id(self.interner, source) {
+            let member_list = self.interner.type_list(members);
+            for &member in member_list.iter() {
+                if self.check_subtype(member, target).is_true() {
+                    return SubtypeResult::True;
+                }
+            }
+            // No individual member matches; fall through to type-specific handlers
+        }
 
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);
