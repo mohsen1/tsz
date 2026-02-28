@@ -345,13 +345,22 @@ impl<'a> CheckerState<'a> {
                         if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                             let current_expected =
                                 expected_for_index(effective_index, expanded_count);
+                            let has_rest_param =
+                                expected_for_index(usize::MAX / 2, expanded_count).is_some();
                             // Determine if the target accepts this spread:
-                            // 1. No expected type → unresolved, don't emit error
-                            // 2. Expected type is `any` → accepts all spreads
-                            // 3. Probe at large index returns Some → rest param exists
-                            let target_accepts_spread = current_expected.is_none()
-                                || current_expected.is_some_and(|t| t == TypeId::ANY)
-                                || expected_for_index(usize::MAX / 2, expanded_count).is_some();
+                            // 1. Expected type is `any` → accepts all spreads
+                            // 2. Probe at large index returns Some → rest param exists
+                            let target_accepts_spread = current_expected
+                                .is_some_and(|t| t == TypeId::ANY)
+                                || has_rest_param;
+                            if !target_accepts_spread && current_expected.is_none() {
+                                // No parameter at this position and no rest param:
+                                // the spread exceeds all declared params → TS2556.
+                                // Don't push to arg_types to avoid a cascading
+                                // TS2554 (arg count mismatch) from the solver.
+                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                continue;
+                            }
                             if !target_accepts_spread {
                                 // This is a spread of a non-tuple array type
                                 // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
@@ -382,9 +391,18 @@ impl<'a> CheckerState<'a> {
                         // TS2556 check: A non-tuple spread is only valid at
                         // a rest parameter position.
                         let current_expected = expected_for_index(effective_index, expanded_count);
-                        let target_accepts_spread = current_expected.is_none()
-                            || current_expected.is_some_and(|t| t == TypeId::ANY)
-                            || expected_for_index(usize::MAX / 2, expanded_count).is_some();
+                        let has_rest_param =
+                            expected_for_index(usize::MAX / 2, expanded_count).is_some();
+                        let target_accepts_spread =
+                            current_expected.is_some_and(|t| t == TypeId::ANY) || has_rest_param;
+                        if !target_accepts_spread && current_expected.is_none() {
+                            // No parameter at this position and no rest param:
+                            // the spread exceeds all declared params → TS2556.
+                            // Don't push to arg_types to avoid a cascading
+                            // TS2554 (arg count mismatch) from the solver.
+                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            continue;
+                        }
                         if !target_accepts_spread {
                             self.error_spread_must_be_tuple_or_rest_at(arg_idx);
                             // When TS2556 is emitted, push ANY to suppress a
