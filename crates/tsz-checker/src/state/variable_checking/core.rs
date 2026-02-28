@@ -946,6 +946,13 @@ impl<'a> CheckerState<'a> {
 
             // TS2403 only applies to non-block-scoped variables (var)
             if !is_block_scoped {
+                // Non-exported variables inside namespace bodies are local to that body.
+                // They should not trigger TS2403 against exported variables of the same
+                // name from other (merged) namespace bodies, even if the binder merged
+                // their symbols.
+                let is_non_exported_ns_var =
+                    self.var_decl_namespace_export_status(decl_idx) == Some(false);
+
                 if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
                     // Check if this is a mergeable declaration by looking at the node kind.
                     // Mergeable declarations: namespace/module, enum, class, interface, function.
@@ -966,6 +973,7 @@ impl<'a> CheckerState<'a> {
 
                     if !is_mergeable_declaration
                         && !is_bare_declaration
+                        && !is_non_exported_ns_var
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
@@ -1089,8 +1097,17 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
 
+                                // Skip TS2403 when either declaration is a non-exported
+                                // namespace variable — non-exported members are local to
+                                // their namespace body and don't merge with other bodies.
+                                let is_other_non_exported_ns_var = self
+                                    .var_decl_namespace_export_status(other_decl)
+                                    == Some(false);
+
                                 if !is_other_mergeable
                                     && !is_bare_declaration
+                                    && !is_non_exported_ns_var
+                                    && !is_other_non_exported_ns_var
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {
@@ -1317,6 +1334,42 @@ impl<'a> CheckerState<'a> {
     // assign_binding_pattern_symbol_types, record_destructured_binding_group,
     // get_binding_element_type, rest_binding_array_type, is_only_undefined_or_null)
     // are in `destructuring.rs`.
+
+    /// Check if a variable declaration is inside a namespace body and whether
+    /// it has an `export` modifier. Returns `Some(is_exported)` if inside a
+    /// namespace, `None` otherwise.
+    ///
+    /// Used to prevent false TS2403 errors for non-exported variables in merged
+    /// namespace bodies. In tsc, non-exported members are local to each body.
+    fn var_decl_namespace_export_status(&self, decl_idx: NodeIndex) -> Option<bool> {
+        // Walk up: VariableDeclaration -> VariableDeclarationList -> VariableStatement
+        let ext = self.ctx.arena.get_extended(decl_idx)?;
+        let decl_list_idx = ext.parent;
+        let decl_list_ext = self.ctx.arena.get_extended(decl_list_idx)?;
+        let var_stmt_idx = decl_list_ext.parent;
+        let var_stmt = self.ctx.arena.get(var_stmt_idx)?;
+        if var_stmt.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+
+        // Walk up: VariableStatement -> ModuleBlock -> ModuleDeclaration
+        let var_stmt_ext = self.ctx.arena.get_extended(var_stmt_idx)?;
+        let container = self.ctx.arena.get(var_stmt_ext.parent)?;
+        if container.kind != syntax_kind_ext::MODULE_BLOCK {
+            return None;
+        }
+
+        // Check export modifier on the VariableStatement
+        let has_export = if let Some(var_data) = self.ctx.arena.get_variable(var_stmt) {
+            self.ctx
+                .arena
+                .has_modifier_ref(var_data.modifiers.as_ref(), SyntaxKind::ExportKeyword)
+        } else {
+            false
+        };
+
+        Some(has_export)
+    }
 }
 
 #[cfg(test)]
@@ -1442,5 +1495,173 @@ mod ts2397_tests {
     fn const_undefined_emits_ts2397() {
         let errors = check_and_collect("const undefined = void 0;", 2397);
         assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+    }
+}
+
+#[cfg(test)]
+mod ts2403_false_positive_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn recursive_types_with_typeof_no_false_ts2403() {
+        // From recursiveTypesWithTypeof.ts
+        let source = r#"
+var c: typeof c;
+var c: any;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for circular typeof: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn var_redecl_with_interface_no_false_ts2403() {
+        // From TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts (part3)
+        let source = r#"
+interface Point { x: number; y: number; }
+var o: { x: number; y: number };
+var o: Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for structurally identical types: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn typeof_module_no_false_ts2403() {
+        // From nonInstantiatedModule.ts
+        let source = r#"
+namespace M {
+    export var a = 1;
+}
+var m: typeof M;
+var m = M;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for typeof module: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn optional_tuple_elements_no_false_ts2403() {
+        // From optionalTupleElementsAndUndefined.ts
+        let source = r#"
+var v: [1, 2?];
+var v: [1, (2 | undefined)?];
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for optional tuple elements: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn typeof_var_redecl_no_false_ts2403() {
+        // From typeofANonExportedType.ts
+        let source = r#"
+interface I { foo: string; }
+var i: I;
+var i2: I;
+var r5: typeof i;
+var r5: typeof i2;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for typeof var redecl: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn namespace_merged_var_no_false_ts2403() {
+        // From TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName
+        let source = r#"
+namespace A {
+    export interface Point { x: number; y: number; }
+    export var Origin: Point = { x: 0, y: 0 };
+}
+namespace A {
+    var Origin: string = "0,0";
+}
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for merged namespace vars: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn namespace_merged_var_redecl_no_false_ts2403() {
+        // From TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts (part3 vars)
+        let source = r#"
+namespace A {
+    export interface Point { x: number; y: number; }
+    export var Origin: Point = { x: 0, y: 0 };
+}
+var o: { x: number; y: number };
+var o: A.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for interface/object-literal redecl: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn non_instantiated_module_redecl_no_false_ts2403() {
+        // From nonInstantiatedModule.ts
+        let source = r#"
+namespace M {
+    export var a = 1;
+}
+var a1: number;
+var a1 = M.a;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for module property access: {ts2403:?}"
+        );
     }
 }
