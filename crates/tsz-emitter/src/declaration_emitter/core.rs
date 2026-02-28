@@ -546,13 +546,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        // Emit source mapping URL comment when declaration maps are enabled
-        if let Some(state) = &self.source_map_state {
-            let map_file = format!("{}.map", state.output_name);
-            self.write(&format!("//# sourceMappingURL={map_file}"));
-            self.write_line();
-        }
-
         self.writer.get_output().to_string()
     }
 

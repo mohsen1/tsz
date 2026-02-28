@@ -70,6 +70,7 @@ interface TestCase {
   removeComments: boolean;
   outFile?: string;
   emitDeclarationOnly: boolean;
+  declarationMap: boolean;
 }
 
 interface TestResult {
@@ -146,6 +147,7 @@ function getCacheKey(
   preserveConstEnums: boolean = false,
   removeComments: boolean = false,
   outFile: string = '',
+  declarationMap: boolean = false,
 ): string {
   const tszBin = process.env.TSZ_BIN;
   let engineSalt = '';
@@ -157,7 +159,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${outFile}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${outFile}:${declarationMap}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -435,6 +437,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const preserveConstEnums = directives.preserveconstenums === true;
     const removeComments = directives.removecomments === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
+    const declarationMap = directives.declarationmap === true;
 
     // Fix up outFile baseline parsing: when @outFile is specified, the baseline
     // may contain both JS input files and the bundled output file. The parser
@@ -483,6 +486,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       removeComments,
       outFile,
       emitDeclarationOnly,
+      declarationMap,
     } as TestCase;
   })));
 
@@ -532,6 +536,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.preserveConstEnums,
       testCase.removeComments,
       testCase.outFile ?? '',
+      testCase.declarationMap,
     );
     let tszJs: string;
     let tszDts: string | null = null;
@@ -565,6 +570,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         preserveConstEnums: testCase.preserveConstEnums,
         removeComments: testCase.removeComments,
         outFile: testCase.outFile,
+        declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
