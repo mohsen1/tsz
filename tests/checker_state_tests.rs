@@ -34383,3 +34383,163 @@ fn test_ts1194_no_error_nested_in_declare_namespace() {
         "Should NOT emit TS1194 for nested namespace in ambient context, got: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// Reverse Mapped Type Modifier Preservation Tests
+// =============================================================================
+
+#[test]
+fn test_reverse_mapped_type_preserves_optional_modifier() {
+    // When inferring T from { readonly [P in keyof T]: T[P] }, the optional
+    // modifier should be preserved from the source. This tests the fix in
+    // constrain_reverse_mapped_type that reverses modifier directives.
+    //
+    // declare function clone<T>(obj: { readonly [P in keyof T]: T[P] }): T;
+    // type Foo = { a?: number; readonly b: string; }
+    // declare const foo: Foo;
+    // let y = clone(foo);  // should NOT error (T = { a?: number, b: string })
+    let source = r#"
+        declare function clone<T>(obj: { readonly [P in keyof T]: T[P] }): T;
+        type Foo = { a?: number; readonly b: string; }
+        declare const foo: Foo;
+        let y = clone(foo);
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2345_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "clone(foo) should NOT emit TS2345 — reverse mapped type inference \
+         must preserve optional modifier from source. Got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_reverse_mapped_type_removes_added_readonly() {
+    // When inferring T from { readonly [P in keyof T]: T[P] }, the readonly
+    // modifier (which the mapped type adds) should be removed from T.
+    //
+    // declare function unreadonly<T>(obj: { readonly [P in keyof T]: T[P] }): T;
+    // const x = unreadonly({ readonly a: 1, readonly b: "hello" });
+    // x should have type { a: number, b: string } (without readonly)
+    let source = r#"
+        declare function unreadonly<T>(obj: { readonly [P in keyof T]: T[P] }): T;
+        declare const input: { readonly a: number; readonly b: string; };
+        let result = unreadonly(input);
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2322)
+        .count();
+    assert_eq!(
+        error_count,
+        0,
+        "unreadonly(input) should NOT emit errors — reverse mapped type inference \
+         must remove the readonly modifier that the mapped type adds. Got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_reverse_mapped_type_validate_preserves_optional() {
+    // validate<T>(obj: { [P in keyof T]?: T[P] }): T
+    // The mapped type adds optional (?), so reverse should REMOVE it.
+    // Calling validate with { a: 1 } should infer T = { a: number } (required).
+    let source = r#"
+        declare function validate<T>(obj: { [P in keyof T]?: T[P] }): T;
+        declare const partial: { a?: number; b: string; };
+        let result = validate(partial);
+    "#;
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345 || d.code == 2322)
+        .count();
+    assert_eq!(
+        error_count,
+        0,
+        "validate(partial) should NOT emit errors — reverse mapped type inference \
+         must handle optional modifier correctly. Got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}

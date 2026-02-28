@@ -11,8 +11,9 @@ use crate::operations::{
     AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH, MAX_CONSTRAINT_STEPS,
 };
 use crate::types::{
-    CallSignature, FunctionShape, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
-    TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
+    CallSignature, FunctionShape, MappedModifier, ObjectShape, ObjectShapeId, ParamInfo,
+    PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
+    Visibility,
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1088,7 +1089,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 None => TypeId::UNKNOWN,
             };
 
-            reverse_properties.push(PropertyInfo::new(prop.name, reversed_value));
+            // Reverse the mapped type's modifier directives to reconstruct T's modifiers.
+            // If the mapped type adds a modifier, the reverse removes it (and vice versa).
+            // If the mapped type has no modifier directive (None), it preserves the source's
+            // modifier in the forward direction, so the reverse also preserves it.
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => false,   // undo addition
+                Some(MappedModifier::Remove) => true, // undo removal
+                None => prop.optional,                // preserve source
+            };
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => false,   // undo addition
+                Some(MappedModifier::Remove) => true, // undo removal
+                None => prop.readonly,                // preserve source
+            };
+
+            reverse_properties.push(PropertyInfo {
+                name: prop.name,
+                type_id: reversed_value,
+                write_type: reversed_value,
+                optional,
+                readonly,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            });
         }
 
         // Only commit the reverse inference if at least one property was successfully
