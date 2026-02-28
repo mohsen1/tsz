@@ -351,10 +351,13 @@ impl<'a> CheckerState<'a> {
         let exports_table = self.resolve_effective_module_exports(module_name);
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
-        // can only be referenced via default import when esModuleInterop is off.
-        // Applies to namespace imports (`import * as X`) and named imports (`import { X }`).
-        if !self.ctx.allow_synthetic_default_imports()
-            && (has_namespace_import || has_named_imports)
+        // can only be referenced via default import. Applies to namespace imports
+        // (`import * as X`) and named imports (`import { X }`), regardless of
+        // esModuleInterop / allowSyntheticDefaultImports.
+        // Even with esModuleInterop enabled, namespace/named imports on `export =`
+        // targeting a class/function/interface are invalid — the user must use a
+        // default import (`import X from "mod"`) instead.
+        if (has_namespace_import || has_named_imports)
             && let Some(ref table) = exports_table
             && table.has("export=")
             && self.export_equals_target_is_not_module_or_variable(table)

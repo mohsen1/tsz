@@ -250,10 +250,17 @@ impl<'a> CheckerState<'a> {
         let impl_return_override = self.get_impl_return_type_override(impl_node_idx);
         let mut impl_type =
             lowering.lower_signature_from_declaration(impl_node_idx, impl_return_override);
-        if impl_type == tsz_solver::TypeId::ERROR {
-            // Fall back to get_type_of_node for cases where manual lowering fails
-            impl_type = self.get_type_of_node(impl_node_idx);
-            if impl_type == tsz_solver::TypeId::ERROR {
+        // If lowering produced a function with ERROR return type, prefer get_type_of_node
+        // which resolves type references through the full type environment.
+        // Manual lowering cannot resolve interface/class type references that require
+        // full binder scope resolution (e.g., `Moose` in `function f(): Moose {}`).
+        let lowered_ret = get_function_return_type(self.ctx.types, impl_type);
+        if impl_type == tsz_solver::TypeId::ERROR || lowered_ret == Some(tsz_solver::TypeId::ERROR)
+        {
+            let node_type = self.get_type_of_node(impl_node_idx);
+            if node_type != tsz_solver::TypeId::ERROR {
+                impl_type = node_type;
+            } else if impl_type == tsz_solver::TypeId::ERROR {
                 return;
             }
         }
@@ -304,10 +311,15 @@ impl<'a> CheckerState<'a> {
             let overload_return_override = self.get_overload_return_type_override(decl_idx);
             let mut overload_type =
                 lowering.lower_signature_from_declaration(decl_idx, overload_return_override);
-            if overload_type == tsz_solver::TypeId::ERROR {
-                // Fall back to get_type_of_node for cases where manual lowering fails
-                overload_type = self.get_type_of_node(decl_idx);
-                if overload_type == tsz_solver::TypeId::ERROR {
+            // Same ERROR return fallback for overloads
+            let overload_lowered_ret = get_function_return_type(self.ctx.types, overload_type);
+            if overload_type == tsz_solver::TypeId::ERROR
+                || overload_lowered_ret == Some(tsz_solver::TypeId::ERROR)
+            {
+                let node_type = self.get_type_of_node(decl_idx);
+                if node_type != tsz_solver::TypeId::ERROR {
+                    overload_type = node_type;
+                } else if overload_type == tsz_solver::TypeId::ERROR {
                     continue;
                 }
             }
@@ -326,6 +338,8 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                     diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                 );
+                // TSC only reports the first incompatible overload per function.
+                break;
             }
         }
     }
