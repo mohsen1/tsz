@@ -16,6 +16,12 @@ impl<'a> CheckerState<'a> {
         prop_name: &str,
         type_id: TypeId,
     ) -> Option<String> {
+        // Private named fields (#foo) are a fundamentally different access mechanism;
+        // never suggest public properties as "did you mean?" alternatives.
+        if prop_name.starts_with('#') {
+            return None;
+        }
+
         let evaluated_type = self.evaluate_type_for_assignability(type_id);
         let property_names = self.collect_accessible_type_property_names(evaluated_type);
         if property_names.is_empty() {
