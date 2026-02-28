@@ -48,6 +48,7 @@ fn collect_export_name_from_declaration(
     arena: &NodeArena,
     decl_node: &Node,
     exports: &mut Vec<String>,
+    preserve_const_enums: bool,
 ) {
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -84,8 +85,11 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(decl_node) {
-                if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword) {
+                    return;
+                }
+                if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                    && !preserve_const_enums
                 {
                     return;
                 }
@@ -171,7 +175,12 @@ pub fn collect_export_names_with_options(
                                 }
                             }
                         } else {
-                            collect_export_name_from_declaration(arena, clause_node, &mut exports);
+                            collect_export_name_from_declaration(
+                                arena,
+                                clause_node,
+                                &mut exports,
+                                preserve_const_enums,
+                            );
                         }
                     }
                 }

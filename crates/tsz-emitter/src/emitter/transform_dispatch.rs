@@ -230,10 +230,24 @@ impl<'a> Printer<'a> {
                     "Printer ES5Class start (idx={}, class_node={})",
                     idx.0, class_node.0
                 );
+                // Collect leading comments before the class so the ES5 emitter
+                // can place them after WeakMap storage declarations.
+                let leading_comments = self.collect_leading_comments(node.pos);
+                let leading_comment_text = if !leading_comments.is_empty() {
+                    self.comment_emit_idx += leading_comments.len();
+                    let combined: Vec<String> =
+                        leading_comments.into_iter().map(|(text, _)| text).collect();
+                    Some(combined.join("\n"))
+                } else {
+                    None
+                };
                 // Delegate to existing ClassES5Emitter
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
                 es5_emitter.set_transforms(self.transforms.clone());
+                if let Some(comment) = leading_comment_text {
+                    es5_emitter.set_leading_comment(comment);
+                }
                 if let Some(text) = self.source_text_for_map() {
                     if self.writer.has_source_map() {
                         es5_emitter
