@@ -376,3 +376,78 @@ fn test_resolve_module_specifier_classic_path_mapping_absolute_target_fallback()
         "absolute path mapping fallback should prefer shared module declarations"
     );
 }
+
+#[test]
+fn test_exports_blocks_subpath_resolution() {
+    use std::fs;
+    let dir = tempfile::TempDir::new().expect("temp dir creation should succeed in test");
+    let dir = dir.path();
+    let pkg_dir = dir.join("node_modules/inner");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+
+    // Package has exports map — only root "." is exported
+    fs::write(
+        pkg_dir.join("package.json"),
+        r#"{"name":"inner","type":"module","exports":{".":{"types":"./index.d.ts","default":"./index.js"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        pkg_dir.join("index.d.ts"),
+        "export declare function x(): void;",
+    )
+    .unwrap();
+    // "other.d.ts" exists on disk but is NOT in the exports map
+    fs::write(pkg_dir.join("other.d.ts"), "export interface Thing {}").unwrap();
+    fs::write(
+        dir.join("src/index.ts"),
+        "import { Thing } from 'inner/other';",
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let mut cache = ModuleResolutionCache::default();
+    let known_files: FxHashSet<PathBuf> = FxHashSet::default();
+
+    // Subpath "inner/other" should NOT resolve because exports blocks it
+    let resolved = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner/other",
+        &options,
+        dir,
+        &mut cache,
+        &known_files,
+    );
+    assert!(
+        resolved.is_none(),
+        "exports field should block subpath 'inner/other' even though other.d.ts exists on disk"
+    );
+
+    // Root import "inner" should still resolve
+    let resolved_root = resolve_module_specifier(
+        &dir.join("src/index.ts"),
+        "inner",
+        &options,
+        dir,
+        &mut cache,
+        &known_files,
+    );
+    assert!(
+        resolved_root.is_some(),
+        "root import 'inner' should still resolve via exports"
+    );
+}
