@@ -266,6 +266,18 @@ impl<'a> EnumTransformer<'a> {
                     output.push_str(&member_name);
                     output.push_str("\";\n");
                 }
+                Some(EnumValue::Float(f)) => {
+                    // Float enum: E[E["A"] = 0.5] = "A";
+                    output.push('[');
+                    output.push_str(&name);
+                    output.push_str("[\"");
+                    output.push_str(&member_name);
+                    output.push_str("\"] = ");
+                    output.push_str(&f.to_string());
+                    output.push_str("] = \"");
+                    output.push_str(&member_name);
+                    output.push_str("\";\n");
+                }
                 _ => {
                     // Computed or unknown - emit as expression
                     output.push_str("[\"");

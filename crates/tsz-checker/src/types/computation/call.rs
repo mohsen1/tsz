@@ -563,9 +563,54 @@ impl<'a> CheckerState<'a> {
                     )
                 } else {
                     // No context-sensitive arguments: skip Round 1/2 and use single-pass collection.
+                    // For array literal arguments in generic calls, erase the callee's type
+                    // parameters from contextual types (replacing with constraints or `unknown`).
+                    // This matches tsc's behavior where type params don't leak into inference
+                    // candidates via contextual typing. Without this, `[]` with contextual type
+                    // `T[]` gets type `T[]` instead of `unknown[]`, causing T to appear as an
+                    // inference candidate and produce false TS2345 errors.
+                    // We only erase for array/object literals to avoid breaking literal type
+                    // preservation and other contextual typing behaviors.
+                    let type_param_eraser = {
+                        use tsz_solver::TypeSubstitution;
+                        let mut sub = TypeSubstitution::new();
+                        for tp in &shape.type_params {
+                            sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                        }
+                        sub
+                    };
+                    let arena = self.ctx.arena;
                     self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                        |i, arg_count| {
+                            let param_type =
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)?;
+                            // Only erase type params for EMPTY array literal args `[]`.
+                            // Empty arrays have no elements to provide type information, so
+                            // they inherit their type entirely from contextual typing. When
+                            // the contextual type contains callee type params (e.g., `T[]`),
+                            // the type param leaks into the arg type (`T[]` instead of
+                            // `unknown[]`), causing false TS2345 errors during inference.
+                            // Non-empty arrays like `[o]` or `[1,2,3]` get their element
+                            // types from their contents, so contextual typing is safe.
+                            let is_empty_array_literal = i < args.len()
+                                && arena.get(args[i]).is_some_and(|n| {
+                                    n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        && arena
+                                            .get_literal_expr(n)
+                                            .is_some_and(|lit| lit.elements.nodes.is_empty())
+                                });
+                            if is_empty_array_literal {
+                                use tsz_solver::instantiate_type;
+                                Some(instantiate_type(
+                                    self.ctx.types,
+                                    param_type,
+                                    &type_param_eraser,
+                                ))
+                            } else {
+                                Some(param_type)
+                            }
+                        },
                         check_excess_properties,
                         None, // No skipping needed for single-pass
                     )

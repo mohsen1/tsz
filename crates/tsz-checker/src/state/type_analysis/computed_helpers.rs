@@ -34,6 +34,16 @@ impl<'a> CheckerState<'a> {
         if ctx_type == literal_type {
             return true;
         }
+        // tsc rule: "If the contextual type is a literal type, we consider this
+        // a literal context for ALL literals of the same base type."
+        // e.g., contextual type "A" allows literal "f" because both are string literals.
+        if tsz_solver::type_queries::are_same_base_literal_kind(
+            self.ctx.types,
+            ctx_type,
+            literal_type,
+        ) {
+            return true;
+        }
         if !visited.insert(ctx_type) {
             return false;
         }
