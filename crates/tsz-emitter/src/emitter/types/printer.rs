@@ -254,7 +254,9 @@ impl<'a> TypePrinter<'a> {
     fn print_object_type(&self, shape_id: tsz_solver::types::ObjectShapeId) -> String {
         let shape = self.interner.object_shape(shape_id);
 
-        if shape.properties.is_empty() {
+        let has_index = shape.string_index.is_some() || shape.number_index.is_some();
+
+        if shape.properties.is_empty() && !has_index {
             return "{}".to_string();
         }
 
@@ -276,6 +278,43 @@ impl<'a> TypePrinter<'a> {
             nested.indent_level = Some(indent + 1);
 
             let mut lines = Vec::new();
+
+            // Emit index signatures first
+            if let Some(ref idx) = shape.string_index {
+                let mut line = String::new();
+                line.push_str(&member_indent);
+                if idx.readonly {
+                    line.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                line.push_str(&format!(
+                    "[{}: string]: {};",
+                    param,
+                    nested.print_type(idx.value_type)
+                ));
+                lines.push(line);
+            }
+            if let Some(ref idx) = shape.number_index {
+                let mut line = String::new();
+                line.push_str(&member_indent);
+                if idx.readonly {
+                    line.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                line.push_str(&format!(
+                    "[{}: number]: {};",
+                    param,
+                    nested.print_type(idx.value_type)
+                ));
+                lines.push(line);
+            }
+
             for property in &shape.properties {
                 if should_skip_property(property) {
                     continue;
@@ -318,6 +357,41 @@ impl<'a> TypePrinter<'a> {
         } else {
             // Flat format when no indent context (non-DTS usage)
             let mut members = Vec::new();
+
+            // Emit index signatures first
+            if let Some(ref idx) = shape.string_index {
+                let mut member = String::new();
+                if idx.readonly {
+                    member.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                member.push_str(&format!(
+                    "[{}: string]: {}",
+                    param,
+                    self.print_type(idx.value_type)
+                ));
+                members.push(member);
+            }
+            if let Some(ref idx) = shape.number_index {
+                let mut member = String::new();
+                if idx.readonly {
+                    member.push_str("readonly ");
+                }
+                let param = idx
+                    .param_name
+                    .map(|a| self.resolve_atom(a))
+                    .unwrap_or_else(|| "x".to_string());
+                member.push_str(&format!(
+                    "[{}: number]: {}",
+                    param,
+                    self.print_type(idx.value_type)
+                ));
+                members.push(member);
+            }
+
             for property in &shape.properties {
                 if should_skip_property(property) {
                     continue;
