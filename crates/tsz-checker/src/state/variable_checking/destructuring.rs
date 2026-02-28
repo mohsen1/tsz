@@ -639,7 +639,16 @@ impl<'a> CheckerState<'a> {
 
     /// Create a new object type from `type_id` with the given property names excluded.
     fn omit_properties_from_type(&self, type_id: TypeId, excluded: &[String]) -> TypeId {
-        let Some(shape) = query::object_shape(self.ctx.types, type_id) else {
+        let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
+            // For type parameters, use the constraint's shape so that
+            // `{ a, ...rest } = obj` where `obj: T extends { a, b }` produces
+            // rest without the excluded properties.  Without this, `rest` would
+            // keep all of T's constraint properties and trigger false TS2783.
+            let constraint =
+                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, type_id)?;
+            query::object_shape(self.ctx.types, constraint)
+        });
+        let Some(shape) = shape else {
             return type_id;
         };
 
