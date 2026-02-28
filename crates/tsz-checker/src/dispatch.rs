@@ -1369,9 +1369,25 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // JSX Elements (Rule #36: JSX Intrinsic Lookup)
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_element(node) {
+                    // Extract contextual type for children from the component's
+                    // `children` prop BEFORE processing children, so arrow functions
+                    // and other expressions get contextual parameter typing.
+                    let children_ctx_type = if !jsx.children.nodes.is_empty() {
+                        self.checker
+                            .get_jsx_children_contextual_type(jsx.opening_element)
+                    } else {
+                        None
+                    };
+
+                    let prev_contextual = self.checker.ctx.contextual_type;
+                    if children_ctx_type.is_some() {
+                        self.checker.ctx.contextual_type = children_ctx_type;
+                    }
                     for &child in &jsx.children.nodes {
                         self.checker.get_type_of_node(child);
                     }
+                    self.checker.ctx.contextual_type = prev_contextual;
+
                     // Check closing element for TS7026 (tsc emits for both opening and closing tags)
                     self.checker
                         .check_jsx_closing_element_for_implicit_any(jsx.closing_element);

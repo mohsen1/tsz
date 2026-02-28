@@ -902,6 +902,153 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // JSX Children Contextual Typing
+    // =========================================================================
+
+    /// Extract the contextual type for JSX children from the opening element's
+    /// props type. Used to provide contextual typing for children expressions
+    /// like `<Comp>{(arg) => ...}</Comp>` where `arg` should get its type from
+    /// the `children` prop.
+    ///
+    /// This must be called BEFORE children are type-checked, since
+    /// `get_type_of_node` caches results and won't benefit from contextual
+    /// typing if the children are already computed.
+    pub(crate) fn get_jsx_children_contextual_type(
+        &mut self,
+        opening_element_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(opening_element_idx)?;
+        let jsx_opening = self.ctx.arena.get_jsx_opening(node)?;
+        let tag_name_idx = jsx_opening.tag_name;
+        let tag_name_node = self.ctx.arena.get(tag_name_idx)?;
+
+        // Determine if intrinsic (lowercase) or component (uppercase/property access)
+        let is_intrinsic = if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(tag_name_node)
+                .map(|id| id.escaped_text.as_str())
+                .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_ascii_lowercase()))
+        } else { tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME };
+
+        let props_type = if is_intrinsic {
+            // Intrinsic: look up IntrinsicElements[tag]
+            let ie_type = self.get_intrinsic_elements_type()?;
+            let evaluated_ie = self.evaluate_type_with_env(ie_type);
+            let tag_name = if tag_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                self.ctx
+                    .arena
+                    .get_identifier(tag_name_node)
+                    .map(|id| id.escaped_text.as_str().to_string())
+            } else {
+                // Namespaced tag
+                self.ctx
+                    .arena
+                    .get_jsx_namespaced_name(tag_name_node)
+                    .and_then(|ns| {
+                        let ns_id = self.ctx.arena.get(ns.namespace)?;
+                        let ns_text = self.ctx.arena.get_identifier(ns_id)?.escaped_text.as_str();
+                        let name_id = self.ctx.arena.get(ns.name)?;
+                        let name_text = self
+                            .ctx
+                            .arena
+                            .get_identifier(name_id)?
+                            .escaped_text
+                            .as_str();
+                        Some(format!("{ns_text}:{name_text}"))
+                    })
+            }?;
+            use tsz_solver::operations::property::PropertyAccessResult;
+            match self.resolve_property_access_with_env(evaluated_ie, &tag_name) {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                _ => return None,
+            }
+        } else {
+            // Component: resolve tag name to get component type, extract props
+            let component_type = self.compute_type_of_node(tag_name_idx);
+            let evaluated = self.evaluate_type_with_env(component_type);
+            self.get_jsx_props_type_for_children_contextual(evaluated)?
+        };
+
+        // Get 'children' property from the resolved props type
+        let evaluated_props = self.evaluate_type_with_env(props_type);
+        let resolved_props = self.resolve_type_for_property_access(evaluated_props);
+        use tsz_solver::operations::property::PropertyAccessResult;
+        match self.resolve_property_access_with_env(resolved_props, "children") {
+            PropertyAccessResult::Success { type_id, .. } => {
+                // Don't use ANY or ERROR as contextual type — it provides no information
+                if type_id == TypeId::ANY || type_id == TypeId::ERROR {
+                    None
+                } else {
+                    Some(type_id)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract props type for contextual typing of children.
+    ///
+    /// Like `get_jsx_props_type_for_component` but more permissive:
+    /// - Allows union props types (contextual typing works across union members)
+    /// - Skips generic SFCs (can't resolve type params for contextual typing)
+    fn get_jsx_props_type_for_children_contextual(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        if component_type == TypeId::ANY
+            || component_type == TypeId::ERROR
+            || component_type == TypeId::UNKNOWN
+        {
+            return None;
+        }
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+            return None;
+        }
+
+        // Try SFC: get call signatures → first parameter is props type
+        if let Some(shape) =
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
+            && !shape.is_constructor
+        {
+            if !shape.type_params.is_empty() {
+                return None; // Can't resolve generic type params for contextual typing
+            }
+            let props = shape
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            return Some(self.evaluate_type_with_env(props));
+        }
+
+        // Try Callable (overloaded): pick first non-generic signature
+        if let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+            && !sigs.is_empty()
+        {
+            let non_generic: Vec<_> = sigs.iter().filter(|s| s.type_params.is_empty()).collect();
+            if non_generic.len() != 1 {
+                return None;
+            }
+            let sig = non_generic[0];
+            let props = sig
+                .params
+                .first()
+                .map(|p| p.type_id)
+                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            return Some(self.evaluate_type_with_env(props));
+        }
+
+        // Try class component
+        if let Some(props) = self.get_class_component_props_type(component_type) {
+            return Some(props);
+        }
+
+        None
+    }
+
+    // =========================================================================
     // JSX Attribute Type Checking
     // =========================================================================
 
