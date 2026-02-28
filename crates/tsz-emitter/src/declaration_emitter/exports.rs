@@ -578,6 +578,13 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
+        if self
+            .arena
+            .has_modifier(&alias.modifiers, SyntaxKind::DeclareKeyword)
+            && !self.inside_declare_namespace
+        {
+            self.write("declare ");
+        }
         self.write("type ");
         self.emit_node(alias.name);
 
@@ -1343,9 +1350,10 @@ impl<'a> DeclarationEmitter<'a> {
                         if let Some(clause_node) = self.arena.get(export.export_clause)
                             && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
                             && let Some(named) = self.arena.get_named_imports(clause_node)
-                                && named.elements.nodes.is_empty() {
-                                    return true; // explicit `export {}`
-                                }
+                            && named.elements.nodes.is_empty()
+                        {
+                            return true; // explicit `export {}`
+                        }
                         has_exported = true;
                     }
                 }

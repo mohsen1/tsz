@@ -131,7 +131,16 @@ impl<'a> TypePrinter<'a> {
             return self.print_intersection(type_list_id);
         }
         if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
-            return format!("{}[]", self.print_type(elem_id));
+            let elem_str = self.print_type(elem_id);
+            // Parenthesize complex element types (union, intersection, function, conditional)
+            let needs_parens = visitor::union_list_id(self.interner, elem_id).is_some()
+                || visitor::intersection_list_id(self.interner, elem_id).is_some()
+                || visitor::function_shape_id(self.interner, elem_id).is_some()
+                || visitor::conditional_type_id(self.interner, elem_id).is_some();
+            if needs_parens {
+                return format!("({elem_str})[]");
+            }
+            return format!("{elem_str}[]");
         }
         if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
             return self.print_tuple(tuple_id);
@@ -368,7 +377,7 @@ impl<'a> TypePrinter<'a> {
             let params: Vec<String> = func_shape
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter(tp))
+                .map(|tp| self.print_type_parameter_decl(tp))
                 .collect();
             result.push('<');
             result.push_str(&params.join(", "));
@@ -413,7 +422,13 @@ impl<'a> TypePrinter<'a> {
 
         let mut parts = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
-            parts.push(self.print_type(type_id));
+            let s = self.print_type(type_id);
+            // Parenthesize function/constructor types in union position
+            if visitor::function_shape_id(self.interner, type_id).is_some() {
+                parts.push(format!("({s})"));
+            } else {
+                parts.push(s);
+            }
         }
 
         // Join with " | "
@@ -428,7 +443,13 @@ impl<'a> TypePrinter<'a> {
 
         let mut parts = Vec::with_capacity(types.len());
         for &type_id in types.iter() {
-            parts.push(self.print_type(type_id));
+            let s = self.print_type(type_id);
+            // Parenthesize function/constructor types in intersection position
+            if visitor::function_shape_id(self.interner, type_id).is_some() {
+                parts.push(format!("({s})"));
+            } else {
+                parts.push(s);
+            }
         }
 
         // Join with " & "
@@ -483,7 +504,7 @@ impl<'a> TypePrinter<'a> {
             let params: Vec<String> = func_shape
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter(tp))
+                .map(|tp| self.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -503,16 +524,14 @@ impl<'a> TypePrinter<'a> {
             // Parameter name (optional in function types)
             if let Some(name) = param.name {
                 param_str.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    param_str.push('?');
+                }
                 param_str.push_str(": ");
             }
 
             // Parameter type
             param_str.push_str(&self.print_type(param.type_id));
-
-            // Optional parameter
-            if param.optional {
-                param_str.push('?');
-            }
 
             params.push(param_str);
         }
@@ -576,7 +595,7 @@ impl<'a> TypePrinter<'a> {
             let params: Vec<String> = sig
                 .type_params
                 .iter()
-                .map(|tp| self.print_type_parameter(tp))
+                .map(|tp| self.print_type_parameter_decl(tp))
                 .collect();
             format!("<{}>", params.join(", "))
         } else {
@@ -610,9 +629,33 @@ impl<'a> TypePrinter<'a> {
         )
     }
 
+    /// Print a type parameter as a type reference (just the name).
     fn print_type_parameter(&self, param_info: &tsz_solver::types::TypeParamInfo) -> String {
-        // Type parameter names are Atoms
         self.resolve_atom(param_info.name)
+    }
+
+    /// Print a type parameter declaration with constraint and default.
+    /// Used in `<T extends Foo = Bar>` positions.
+    fn print_type_parameter_decl(&self, param_info: &tsz_solver::types::TypeParamInfo) -> String {
+        let mut result = String::new();
+
+        if param_info.is_const {
+            result.push_str("const ");
+        }
+
+        result.push_str(&self.resolve_atom(param_info.name));
+
+        if let Some(constraint) = param_info.constraint {
+            result.push_str(" extends ");
+            result.push_str(&self.print_type(constraint));
+        }
+
+        if let Some(default) = param_info.default {
+            result.push_str(" = ");
+            result.push_str(&self.print_type(default));
+        }
+
+        result
     }
 
     fn print_lazy_type(&self, def_id: tsz_solver::def::DefId) -> String {

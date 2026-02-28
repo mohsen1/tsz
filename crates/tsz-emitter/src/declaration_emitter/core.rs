@@ -1431,6 +1431,13 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.write("export ");
         }
+        if self
+            .arena
+            .has_modifier(&alias.modifiers, SyntaxKind::DeclareKeyword)
+            && !self.inside_declare_namespace
+        {
+            self.write("declare ");
+        }
         self.write("type ");
 
         // Name
