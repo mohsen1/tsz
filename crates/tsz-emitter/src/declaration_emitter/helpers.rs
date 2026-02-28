@@ -259,49 +259,6 @@ impl<'a> DeclarationEmitter<'a> {
         is_exported
     }
 
-    /// Equivalent to tsc's `needsScopeMarker`: returns true when a statement is
-    /// *not* an import/re-export, *not* an export assignment, and does *not*
-    /// have the `export` modifier. Used for namespace body scope-fix logic.
-    ///
-    /// Only returns true for declaration kinds that appear in `.d.ts` output.
-    pub(crate) fn stmt_needs_scope_marker(
-        &self,
-        stmt_node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        let k = stmt_node.kind;
-
-        // Import / re-export / export assignment -> never needs marker
-        if k == syntax_kind_ext::IMPORT_DECLARATION
-            || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            || k == syntax_kind_ext::EXPORT_DECLARATION
-            || k == syntax_kind_ext::EXPORT_ASSIGNMENT
-            || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-        {
-            return false;
-        }
-
-        // Only consider declaration kinds that survive into .d.ts output
-        let is_declaration_kind = k == syntax_kind_ext::FUNCTION_DECLARATION
-            || k == syntax_kind_ext::CLASS_DECLARATION
-            || k == syntax_kind_ext::INTERFACE_DECLARATION
-            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-            || k == syntax_kind_ext::ENUM_DECLARATION
-            || k == syntax_kind_ext::VARIABLE_STATEMENT
-            || k == syntax_kind_ext::MODULE_DECLARATION;
-
-        if !is_declaration_kind {
-            return false;
-        }
-
-        // Statement with export modifier -> not a scope-marker candidate
-        if self.stmt_has_export_modifier(stmt_node) {
-            return false;
-        }
-
-        // Non-exported declaration that survives to output
-        true
-    }
-
     /// Check if a statement node has the `export` keyword modifier.
     pub(crate) fn stmt_has_export_modifier(
         &self,

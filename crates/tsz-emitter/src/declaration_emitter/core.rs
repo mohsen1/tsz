@@ -648,6 +648,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 && ck != syntax_kind_ext::ENUM_DECLARATION
                                 && ck != syntax_kind_ext::VARIABLE_STATEMENT
                                 && ck != syntax_kind_ext::MODULE_DECLARATION
+                                && ck != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                         })
                 });
 
