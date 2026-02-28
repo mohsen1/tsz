@@ -523,10 +523,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // the cache so subsequent queries with initial_type=entry_type get the
                 // correct converged result, not the stale intermediate.
                 if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache)
-                    && entry_type != current_type {
-                        let entry_key = (loop_flow_id, sym_id, entry_type);
-                        cache.borrow_mut().insert(entry_key, current_type);
-                    }
+                    && entry_type != current_type
+                {
+                    let entry_key = (loop_flow_id, sym_id, entry_type);
+                    cache.borrow_mut().insert(entry_key, current_type);
+                }
                 return current_type;
             }
         }
