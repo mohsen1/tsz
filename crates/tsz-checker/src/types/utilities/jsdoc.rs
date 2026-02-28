@@ -514,6 +514,71 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // Narrow support for Closure Compiler function type syntax:
+                //   @type {function(string, number): void}
+                if let Some(rest) = type_expr.strip_prefix("function(") {
+                    // Find the matching close paren, handling nested parens
+                    let mut depth = 1u32;
+                    let mut close_idx = None;
+                    for (i, ch) in rest.char_indices() {
+                        match ch {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close_idx = Some(i);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(close) = close_idx {
+                        let params_inner = rest[..close].trim();
+                        let after_close = rest[close + 1..].trim();
+                        // Return type follows ':'
+                        let return_type_str = after_close
+                            .strip_prefix(':')
+                            .map(|s| s.trim())
+                            .unwrap_or("void");
+                        let return_type = self
+                            .jsdoc_type_from_expression(return_type_str)
+                            .unwrap_or(TypeId::VOID);
+
+                        use tsz_solver::{FunctionShape, ParamInfo};
+                        let mut params = Vec::new();
+                        let mut ok = true;
+                        if !params_inner.is_empty() {
+                            for p in params_inner.split(',') {
+                                let p = p.trim();
+                                if let Some(p_type) = self.jsdoc_type_from_expression(p) {
+                                    params.push(ParamInfo {
+                                        name: None,
+                                        type_id: p_type,
+                                        optional: false,
+                                        rest: false,
+                                    });
+                                } else {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if ok {
+                            let shape = FunctionShape {
+                                type_params: Vec::new(),
+                                params,
+                                this_type: None,
+                                return_type,
+                                type_predicate: None,
+                                is_constructor: false,
+                                is_method: false,
+                            };
+                            return Some(factory.function(shape));
+                        }
+                    }
+                }
+
                 // Narrow support for conformance-critical pattern:
                 //   @type {keyof typeof <identifier>}
                 if let Some(rest) = type_expr.strip_prefix("keyof") {

@@ -199,6 +199,21 @@ impl<'a> CheckerState<'a> {
                 evaluated_type,
                 self.ctx.compiler_options.no_implicit_any,
             ))
+        } else if self.is_js_file() && is_function_declaration {
+            // For function declarations in JS files with @type {FunctionType},
+            // use the function type as contextual type for parameter typing.
+            if let Some(func_type) = self.jsdoc_type_annotation_for_node(idx) {
+                let evaluated_type = self.evaluate_contextual_type(func_type);
+                contextual_signature_type_params =
+                    self.contextual_type_params_from_expected(evaluated_type);
+                Some(ContextualTypeContext::with_expected_and_options(
+                    self.ctx.types,
+                    evaluated_type,
+                    self.ctx.compiler_options.no_implicit_any,
+                ))
+            } else {
+                None
+            }
         } else {
             None
         };
