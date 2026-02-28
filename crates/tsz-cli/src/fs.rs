@@ -303,20 +303,25 @@ pub(crate) fn is_ts_file(path: &Path) -> bool {
 
 /// Check if a path is a valid module file for module resolution purposes.
 /// This includes TypeScript files AND .json files (which can be imported with resolveJsonModule).
+/// NOTE: This intentionally excludes JS files (.js/.jsx/.mjs/.cjs). For export map
+/// resolution, tsc does not accept raw JS files as valid targets — the package author
+/// must provide declaration files via a `types` condition. JS files are only accepted
+/// as resolution targets in non-export contexts (e.g., `imports` field, `main` field)
+/// via `is_valid_module_or_js_file`.
 pub(crate) fn is_valid_module_file(path: &Path) -> bool {
-    let name = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => name,
-        None => return false,
-    };
+    is_ts_file(path) || is_json_file(path)
+}
 
-    if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-        return true;
-    }
+/// Like `is_valid_module_file` but also accepts JavaScript files.
+/// Used in non-export resolution paths (package.json `imports` field, `main` field,
+/// direct file resolution) where tsc will resolve to JS source files during
+/// import-following for source discovery.
+pub(crate) fn is_valid_module_or_js_file(path: &Path) -> bool {
+    is_ts_file(path) || is_js_file(path) || is_json_file(path)
+}
 
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts") | Some("json")
-    )
+fn is_json_file(path: &Path) -> bool {
+    matches!(path.extension().and_then(|ext| ext.to_str()), Some("json"))
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {

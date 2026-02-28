@@ -225,10 +225,19 @@ impl<'a> CheckerState<'a> {
             }
 
             // Skip special/internal names
-            if name == "default" || name == "__export" || name == "arguments" || name == "React"
-            // JSX factory — always considered used when JSX is enabled
-            {
+            if name == "default" || name == "__export" || name == "arguments" {
                 continue;
+            }
+
+            // Skip React import only in classic JSX mode where React must be in scope.
+            // In react-jsx/react-jsxdev modes, the automatic runtime handles the factory,
+            // so an unused React import should be flagged.
+            if name == "React" {
+                use tsz_common::checker_options::JsxMode;
+                let jsx_mode = self.ctx.compiler_options.jsx_mode;
+                if jsx_mode == JsxMode::React || jsx_mode == JsxMode::Preserve {
+                    continue;
+                }
             }
 
             // Skip type parameters — they are handled separately (not in binder scope)
@@ -807,6 +816,20 @@ impl<'a> CheckerState<'a> {
         let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
             return false;
         };
+        // Check if the current element IS the rest element itself.
+        // Only non-rest elements alongside a rest element should be considered "used".
+        // The rest element itself (e.g., `...bar` in `const {a, ...bar} = foo`) should
+        // still be checked for unused status.
+        // Note: `idx` may be an Identifier node, so we check its parent (BindingElement).
+        if let Some(ext) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+            && let Some(parent_be) = self.ctx.arena.get_binding_element(parent_node)
+            && parent_be.dot_dot_dot_token
+        {
+            return false;
+        }
+
         for &elem_idx in &pattern_data.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;

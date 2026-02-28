@@ -425,12 +425,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-        if prop_name.as_ref() == "call" || prop_name.as_ref() == "apply" {
-            return Some(prop.name);
-        }
-
-        None
+        Some(prop.name)
     }
 
     /// Prefer statement-level anchors for assignment diagnostics so TS2322 spans

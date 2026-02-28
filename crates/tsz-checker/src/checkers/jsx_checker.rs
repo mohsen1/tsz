@@ -698,8 +698,15 @@ impl<'a> CheckerState<'a> {
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
 
+        // Track explicit attribute names → their name node indices for TS2783
+        // (spread overwrite detection). When a spread contains a required property
+        // that was already specified as an explicit attribute, we emit TS2783.
+        let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
+            rustc_hash::FxHashMap::default();
+
         // Check each attribute
-        for &attr_idx in &attrs.properties.nodes {
+        let attr_nodes = &attrs.properties.nodes;
+        for (attr_i, &attr_idx) in attr_nodes.iter().enumerate() {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
             };
@@ -736,6 +743,9 @@ impl<'a> CheckerState<'a> {
                 // Only track valid identifiers for missing-prop checking
                 provided_attrs.push(attr_name.clone());
 
+                // Track for TS2783 spread-overwrite detection
+                named_attr_nodes.insert(attr_name.clone(), attr_data.name);
+
                 // Get expected type from props
                 use tsz_solver::operations::property::PropertyAccessResult;
                 let is_data_or_aria =
@@ -754,7 +764,13 @@ impl<'a> CheckerState<'a> {
                         if is_data_or_aria && from_index_signature {
                             continue;
                         }
-                        type_id
+                        // Strip `undefined` from optional property types for write-position
+                        // checking. When a prop is declared as `text?: string`, the solver's
+                        // `optional_property_type` returns `string | undefined` (the read type).
+                        // But providing a JSX attribute means the property IS present, so the
+                        // target type for assignability should be `string` (the write type).
+                        // This matches TSC's `removeMissingType` behavior for JSX attributes.
+                        tsz_solver::remove_undefined(self.ctx.types, type_id)
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
                         // Excess property: attribute doesn't exist in props type.
@@ -853,6 +869,15 @@ impl<'a> CheckerState<'a> {
                         attr_data.name,
                     );
                 }
+
+                // TS2783: Check if a later spread attribute will overwrite this attribute.
+                // e.g., `<Foo a={1} {...props}>` where `props` contains `a`.
+                self.check_jsx_attr_overwritten_by_spread(
+                    &attr_name,
+                    attr_data.name,
+                    attr_nodes,
+                    attr_i,
+                );
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 // Extract the spread type to track which properties it provides.
                 // This is used for the TS2741 (missing required property) check below.
@@ -872,6 +897,42 @@ impl<'a> CheckerState<'a> {
                     // Mark all required props as provided (any spread covers everything)
                     spread_covers_all = true;
                     continue;
+                }
+
+                // TS2783: Check if any earlier explicit attributes will be
+                // overwritten by required (non-optional) properties from this spread.
+                // Only when strict null checks are enabled (matches tsc behavior).
+                if self.ctx.strict_null_checks() && !named_attr_nodes.is_empty() {
+                    let spread_props = self.collect_object_spread_properties(spread_type);
+                    for sp in &spread_props {
+                        if !sp.optional {
+                            let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                            if let Some(&attr_name_idx) = named_attr_nodes.get(&sp_name) {
+                                use crate::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let message = format_message(
+                                    diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                    &[&sp_name],
+                                );
+                                self.error_at_node(
+                                    attr_name_idx,
+                                    &message,
+                                    diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                );
+                            }
+                        }
+                    }
+                    // After TS2783 check, clear tracking only for required properties
+                    // that the spread provides. Optional properties don't definitely
+                    // overwrite, so the explicit attribute may still be overwritten by
+                    // a later spread with the same property as required.
+                    for sp in &spread_props {
+                        if !sp.optional {
+                            let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                            named_attr_nodes.remove(&sp_name);
+                        }
+                    }
                 }
 
                 // Extract property names from the spread type for TS2741 tracking.
@@ -917,10 +978,13 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        // Look up the expected type for this property in the props type
+                        // Look up the expected type for this property in the props type.
+                        // Strip `undefined` from optional props (write-position check).
                         let expected_type =
                             match self.resolve_property_access_with_env(props_type, &prop_name) {
-                                PropertyAccessResult::Success { type_id, .. } => type_id,
+                                PropertyAccessResult::Success { type_id, .. } => {
+                                    tsz_solver::remove_undefined(self.ctx.types, type_id)
+                                }
                                 _ => continue, // Property not in props, skip
                             };
 
@@ -1001,6 +1065,76 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             );
+        }
+    }
+
+    /// TS2783: Check if a later spread attribute will overwrite the current attribute.
+    ///
+    /// In JSX, `<Foo a={1} {...props}>` — if `props` has a required property `a`,
+    /// the spread overwrites the explicit `a={1}`. TSC warns with TS2783:
+    /// "'a' is specified more than once, so this usage will be overwritten."
+    ///
+    /// Only emitted under `strictNullChecks` (matching tsc behavior) and only for
+    /// non-optional spread properties (optional properties may not overwrite).
+    fn check_jsx_attr_overwritten_by_spread(
+        &mut self,
+        attr_name: &str,
+        attr_name_idx: NodeIndex,
+        attr_nodes: &[NodeIndex],
+        current_idx: usize,
+    ) {
+        if !self.ctx.strict_null_checks() {
+            return;
+        }
+
+        // Look at later siblings for spreads that contain this property
+        for &later_idx in &attr_nodes[current_idx + 1..] {
+            let Some(later_node) = self.ctx.arena.get(later_idx) else {
+                continue;
+            };
+            if later_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(later_node) else {
+                    continue;
+                };
+                let spread_type = self.compute_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+
+                // Skip any/error/unknown — they might cover everything but we
+                // can't tell which specific properties they contain.
+                if spread_type == TypeId::ANY
+                    || spread_type == TypeId::ERROR
+                    || spread_type == TypeId::UNKNOWN
+                {
+                    continue;
+                }
+
+                // Check if the spread type has a non-optional property with this name
+                if let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
+                {
+                    let attr_atom = self.ctx.types.intern_string(attr_name);
+                    let has_required_prop = shape
+                        .properties
+                        .iter()
+                        .any(|p| p.name == attr_atom && !p.optional);
+                    if has_required_prop {
+                        use tsz_common::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let message = format_message(
+                            diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                            &[attr_name],
+                        );
+                        self.error_at_node(
+                            attr_name_idx,
+                            &message,
+                            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                        );
+                        // Only report the first overwrite (tsc does the same)
+                        return;
+                    }
+                }
+            }
         }
     }
 

@@ -108,6 +108,19 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        self.resolve_cross_file_export_from_file(module_specifier, export_name, None)
+    }
+
+    /// Like `resolve_cross_file_export` but resolves the module specifier from
+    /// a specific source file's perspective. This is needed when following
+    /// cross-file re-export chains: symbol C from b.ts has `import_module = "./a"`,
+    /// which is relative to b.ts, not the current file.
+    pub(crate) fn resolve_cross_file_export_from_file(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<tsz_binder::SymbolId> {
         if let Some((sym_id, binder_idx)) =
             self.resolve_ambient_module_export(module_specifier, export_name)
         {
@@ -121,8 +134,16 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        // First, try to resolve the module specifier to a target file index
-        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        // First, try to resolve the module specifier to a target file index.
+        // When source_file_idx is provided, resolve from that file's perspective
+        // (for following re-export chains where specifiers are relative to the
+        // declaring file, not the current file).
+        let target_file_idx = if let Some(from_file) = source_file_idx {
+            self.ctx
+                .resolve_import_target_from_file(from_file, module_specifier)
+        } else {
+            self.ctx.resolve_import_target(module_specifier)
+        }?;
 
         // Get the target file's binder
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
@@ -376,8 +397,57 @@ impl<'a> CheckerState<'a> {
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
             if !combined.is_empty() {
                 record_symbols(&combined);
-                return Some(combined);
             }
+            // Return the table even if empty — the module exists but may have only
+            // type-only exports (e.g., `export type * from '...'`). An empty namespace
+            // object type is correct and will produce TS2339 for value access, instead
+            // of falling through to "module not found" → TypeId::ANY.
+            return Some(combined);
+        }
+
+        None
+    }
+
+    /// Like `resolve_cross_file_namespace_exports` but with a pre-resolved target file index.
+    /// Used when the module specifier was already resolved from a different source file.
+    fn resolve_cross_file_namespace_exports_for_file(
+        &self,
+        target_file_idx: usize,
+    ) -> Option<tsz_binder::SymbolTable> {
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        let record_symbols = |table: &tsz_binder::SymbolTable| {
+            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
+            for (_, &sym_id) in table.iter() {
+                targets.insert(sym_id, target_file_idx);
+            }
+        };
+
+        let direct_exports = target_binder.module_exports.get(&target_file_name);
+
+        if let Some(exports) = direct_exports {
+            let mut combined = exports.clone();
+            self.merge_export_equals_members(target_binder, exports, &mut combined);
+            let mut visited = rustc_hash::FxHashSet::default();
+            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            record_symbols(&combined);
+            return Some(combined);
+        }
+
+        let has_reexports = target_binder
+            .wildcard_reexports
+            .contains_key(&target_file_name)
+            || target_binder.reexports.contains_key(&target_file_name);
+        if has_reexports {
+            let mut combined = tsz_binder::SymbolTable::new();
+            let mut visited = rustc_hash::FxHashSet::default();
+            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            if !combined.is_empty() {
+                record_symbols(&combined);
+            }
+            return Some(combined);
         }
 
         None
@@ -392,6 +462,18 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
+        self.resolve_effective_module_exports_from_file(module_specifier, None)
+    }
+
+    /// Like `resolve_effective_module_exports` but optionally resolves relative paths
+    /// from a specific source file. This is needed for cross-file namespace re-exports
+    /// where the module specifier (e.g., `"./b"`) is relative to the declaring file,
+    /// not the current file being checked.
+    pub(crate) fn resolve_effective_module_exports_from_file(
+        &self,
+        module_specifier: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<tsz_binder::SymbolTable> {
         for candidate in module_specifier_candidates(module_specifier) {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
                 let mut combined = exports.clone();
@@ -400,6 +482,18 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(exports) = self.resolve_cross_file_namespace_exports(&candidate) {
+                return Some(exports);
+            }
+
+            // When resolving from a specific source file (cross-file symbol),
+            // also try resolving the module specifier from that file's perspective
+            if let Some(source_idx) = source_file_idx
+                && let Some(target_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(source_idx, &candidate)
+                && let Some(exports) =
+                    self.resolve_cross_file_namespace_exports_for_file(target_idx)
+            {
                 return Some(exports);
             }
         }
@@ -479,7 +573,22 @@ impl<'a> CheckerState<'a> {
         // Collect from wildcard re-exports (export * from './module')
         if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
             let source_modules = source_modules.clone();
-            for source_module in &source_modules {
+            // Get type-only flags for wildcard re-exports to skip `export type *` members
+            let type_only_flags = target_binder
+                .wildcard_reexports_type_only
+                .get(&target_file_name)
+                .cloned();
+            for (i, source_module) in source_modules.iter().enumerate() {
+                // Skip `export type * from '...'` — these exports should not appear as
+                // value properties on the namespace object. They are only accessible in
+                // type position via symbol-based resolution.
+                let is_type_only = type_only_flags
+                    .as_ref()
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
+                if is_type_only {
+                    continue;
+                }
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
@@ -718,6 +827,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier: &str,
         decl_node: NodeIndex,
+        is_source_file_import: bool,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -837,9 +947,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // allowSyntheticDefaultImports allows default imports without explicit default export
-        // This is implied by esModuleInterop
-        if self.ctx.allow_synthetic_default_imports() {
+        // For non-source-file imports (.d.ts, .js, .json), allowSyntheticDefaultImports
+        // suppresses TS1192 by synthesizing a default from the namespace object.
+        // For .ts source files, TS1192 always fires — the developer controls the module
+        // and should add an explicit `export default`.
+        if !is_source_file_import && self.ctx.allow_synthetic_default_imports() {
             return;
         }
 
@@ -860,22 +972,33 @@ impl<'a> CheckerState<'a> {
             || self.module_has_export_assignment_declaration(module_specifier);
 
         if has_export_equals {
-            let message = format_message(
-                diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
-                &[module_specifier, "allowSyntheticDefaultImports"],
-            );
-            self.error(
-                start,
-                length,
-                message,
-                diagnostic_codes::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
-            );
+            // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
+            // Only emitted for export= modules when allowSyntheticDefaultImports is false.
+            if !self.ctx.allow_synthetic_default_imports() {
+                let message = format_message(
+                    diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+                    &[module_specifier, "allowSyntheticDefaultImports"],
+                );
+                self.error(
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+                );
+            }
             return;
         }
 
+        // TS1192: "Module X has no default export"
+        // tsc formats the module name as the symbol name (without ./ prefix),
+        // wrapped in double quotes, e.g., Module '"server"' has no default export.
+        let display_name = module_specifier
+            .strip_prefix("./")
+            .unwrap_or(module_specifier);
+        let quoted_name = format!("\"{display_name}\"");
         let message = format_message(
             diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
-            &[module_specifier],
+            &[&quoted_name],
         );
         self.error(
             start,

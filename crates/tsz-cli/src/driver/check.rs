@@ -362,6 +362,7 @@ pub(super) fn collect_diagnostics(
     let query_cache = QueryCache::new(&program.type_interner);
 
     // Prime Array<T> base type with global augmentations before any file checks.
+    // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
@@ -536,6 +537,7 @@ pub(super) fn collect_diagnostics(
                     resolved_module_specifiers: &resolved_module_specifiers,
                     resolved_module_errors: &resolved_module_errors,
                     is_external_module_by_file: &is_external_module_by_file,
+                    file_is_esm_map: &file_is_esm_map,
                     no_check,
                     check_js,
                     skip_lib_check,
@@ -722,6 +724,41 @@ pub(super) fn collect_diagnostics(
                         .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
                 }
 
+                // Suppress semantic errors that cascade from structural parse failures.
+                // tsc sets per-node ThisNodeHasError flags and skips semantic checks on
+                // error-recovery subtrees. We approximate this by suppressing semantic
+                // diagnostics that are near a structural parse error (within a distance
+                // window). Only structural parse failures (missing tokens, unexpected
+                // tokens) trigger suppression — grammar checks like trailing commas or
+                // strict mode violations don't cause AST malformation and shouldn't
+                // suppress semantic errors.
+                {
+                    let structural_error_positions: Vec<u32> = file
+                        .parse_diagnostics
+                        .iter()
+                        .filter(|d| is_structural_parse_error(d.code))
+                        .map(|d| d.start)
+                        .collect();
+                    if !structural_error_positions.is_empty() {
+                        const MAX_CASCADE_DISTANCE: u32 = 300;
+                        checker_diagnostics.retain(|diag| {
+                            // Keep parse/grammar errors (1xxx) and JS grammar errors (8xxx)
+                            if diag.code < 2000 || (8000..9000).contains(&diag.code) {
+                                return true;
+                            }
+                            // Suppress if a structural parse error is within the cascade window
+                            !structural_error_positions.iter().any(|&err_pos| {
+                                let dist = if err_pos <= diag.start {
+                                    diag.start - err_pos
+                                } else {
+                                    err_pos - diag.start
+                                };
+                                dist <= MAX_CASCADE_DISTANCE
+                            })
+                        });
+                    }
+                }
+
                 file_diagnostics.extend(checker_diagnostics);
             }
 
@@ -822,6 +859,24 @@ fn propagate_module_export_maps(
 
         if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {
             for source_module in source_modules {
+                if let Some(&source_target_idx) =
+                    resolved_module_paths.get(&(current_target_idx, source_module.clone()))
+                {
+                    worklist.push((source_module, source_target_idx));
+                }
+            }
+        }
+
+        // Also follow named re-exports: `export { X } from './other'`
+        // Extract unique source modules from the re-export map so the
+        // importing file's binder receives transitive exports.
+        if let Some(file_reexports) = program.reexports.get(target_file_name).cloned() {
+            let mut reexport_sources: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            for (source_module, _) in file_reexports.values() {
+                reexport_sources.insert(source_module.clone());
+            }
+            for source_module in reexport_sources {
                 if let Some(&source_target_idx) =
                     resolved_module_paths.get(&(current_target_idx, source_module.clone()))
                 {
@@ -954,6 +1009,12 @@ pub(super) fn check_file_for_parallel<'a>(
         .parse_diagnostics
         .iter()
         .any(|d| is_real_syntax_error(d.code));
+    checker.ctx.real_syntax_error_positions = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| is_real_syntax_error(d.code))
+        .map(|d| d.start)
+        .collect();
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
@@ -980,6 +1041,33 @@ pub(super) fn check_file_for_parallel<'a>(
             // Keep syntax/semantic diagnostics and JS grammar diagnostics (TS8xxx).
             checker_diagnostics
                 .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
+        }
+
+        // Suppress semantic errors that cascade from structural parse failures.
+        // (See multi-file path above for detailed rationale.)
+        {
+            let structural_error_positions: Vec<u32> = file
+                .parse_diagnostics
+                .iter()
+                .filter(|d| is_structural_parse_error(d.code))
+                .map(|d| d.start)
+                .collect();
+            if !structural_error_positions.is_empty() {
+                const MAX_CASCADE_DISTANCE: u32 = 300;
+                checker_diagnostics.retain(|diag| {
+                    if diag.code < 2000 || (8000..9000).contains(&diag.code) {
+                        return true;
+                    }
+                    !structural_error_positions.iter().any(|&err_pos| {
+                        let dist = if err_pos <= diag.start {
+                            diag.start - err_pos
+                        } else {
+                            err_pos - diag.start
+                        };
+                        dist <= MAX_CASCADE_DISTANCE
+                    })
+                });
+            }
         }
 
         file_diagnostics.extend(checker_diagnostics);

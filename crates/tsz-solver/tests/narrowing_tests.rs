@@ -1273,3 +1273,118 @@ fn test_narrow_by_typeof_object_with_index_signature() {
     // typeof "object" should keep the ObjectWithIndex member, not narrow to never
     assert_eq!(narrowed, record_type);
 }
+
+// =============================================================================
+// TypeId::OBJECT (non-primitive `object` type) typeof narrowing tests
+// =============================================================================
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_number_yields_never() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "number"` where `a: object` → never
+    // object is not a number type, so narrowing should produce never
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_object_yields_object() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "object"` where `a: object` → object
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "object");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}
+
+#[test]
+fn test_narrow_object_or_null_by_typeof_negation_object_yields_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof b !== "object"` where `b: object | null` → never
+    // Both `object` (typeof === "object") and `null` (typeof === "object") are excluded
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_or_string_by_typeof_negation_object_yields_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "object"` where `x: object | string` → string
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::STRING]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_object_by_typeof_negation_number_keeps_object() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "number"` where `x: object` → object
+    // object is not a number, so it survives the exclusion
+    let narrowed = ctx.narrow_by_typeof_negation(TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}
+
+// =============================================================================
+// remove_undefined Tests
+// =============================================================================
+
+#[test]
+fn test_remove_undefined_from_union() {
+    let interner = TypeInterner::new();
+    // string | undefined → string
+    let union = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_remove_undefined_from_triple_union() {
+    let interner = TypeInterner::new();
+    // string | number | undefined → string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_preserves_null() {
+    let interner = TypeInterner::new();
+    // string | null | undefined → string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NULL);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_no_undefined_noop() {
+    let interner = TypeInterner::new();
+    // string | number → string | number (unchanged)
+    let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, union);
+}
+
+#[test]
+fn test_remove_undefined_bare_undefined() {
+    let interner = TypeInterner::new();
+    // undefined → never
+    let result = remove_undefined(&interner, TypeId::UNDEFINED);
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
+fn test_remove_undefined_non_union_noop() {
+    let interner = TypeInterner::new();
+    // string → string (unchanged)
+    let result = remove_undefined(&interner, TypeId::STRING);
+    assert_eq!(result, TypeId::STRING);
+}

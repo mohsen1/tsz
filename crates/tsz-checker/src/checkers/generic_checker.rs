@@ -61,10 +61,10 @@ impl<'a> CheckerState<'a> {
                 }
                 query::TypeArgumentExtractionKind::Callable(shape_id) => {
                     let shape = self.ctx.types.callable_shape(shape_id);
-                    let matching = shape
+                    let matching: Vec<_> = shape
                         .call_signatures
                         .iter()
-                        .find(|sig| {
+                        .filter(|sig| {
                             let max = sig.type_params.len();
                             let min = sig
                                 .type_params
@@ -73,9 +73,15 @@ impl<'a> CheckerState<'a> {
                                 .count();
                             got >= min && got <= max
                         })
-                        .map(|sig| sig.type_params.clone());
-                    if let Some(params) = matching {
-                        params
+                        .collect();
+                    // When multiple overloads match the arity, skip eager TS2344 validation.
+                    // TSC only emits TS2344 when NO overload's constraints are satisfied;
+                    // the overload resolution loop handles per-signature constraint checking.
+                    if matching.len() > 1 {
+                        return;
+                    }
+                    if let Some(sig) = matching.first() {
+                        sig.type_params.clone()
                     } else {
                         // Fall back to first signature for diagnostics when no arity match exists.
                         shape
@@ -223,10 +229,10 @@ impl<'a> CheckerState<'a> {
         // For callable types with overloaded construct signatures, prefer
         // a signature whose type parameter arity matches the provided args.
         let type_params = {
-            let matching = shape
+            let matching: Vec<_> = shape
                 .construct_signatures
                 .iter()
-                .find(|sig| {
+                .filter(|sig| {
                     let max = sig.type_params.len();
                     let min = sig
                         .type_params
@@ -235,9 +241,14 @@ impl<'a> CheckerState<'a> {
                         .count();
                     got >= min && got <= max
                 })
-                .map(|sig| sig.type_params.clone());
-            if let Some(params) = matching {
-                params
+                .collect();
+            // When multiple overloads match the arity, skip eager TS2344 validation.
+            // TSC only emits TS2344 when NO overload's constraints are satisfied.
+            if matching.len() > 1 {
+                return;
+            }
+            if let Some(sig) = matching.first() {
+                sig.type_params.clone()
             } else {
                 // Fall back to first signature for diagnostics
                 shape

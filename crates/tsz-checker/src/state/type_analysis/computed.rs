@@ -297,7 +297,9 @@ impl<'a> CheckerState<'a> {
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
                 ),
-                None => return (TypeId::UNKNOWN, Vec::new()),
+                None => {
+                    return (TypeId::UNKNOWN, Vec::new());
+                }
             };
 
         tracing::trace!(
@@ -1019,6 +1021,10 @@ impl<'a> CheckerState<'a> {
                             if self.is_type_only_export_symbol(sym_id) {
                                 continue;
                             }
+                            // Also skip exports reached through `export type *` wildcards
+                            if self.is_export_from_type_only_wildcard(&module_specifier, name) {
+                                continue;
+                            }
                             let mut prop_type = self.get_type_of_symbol(sym_id);
                             prop_type =
                                 self.apply_module_augmentations(&module_specifier, name, prop_type);
@@ -1143,8 +1149,19 @@ impl<'a> CheckerState<'a> {
                         .module_namespace_resolution_set
                         .insert(module_name.to_string());
 
-                    let exports_table = self.resolve_effective_module_exports(module_name);
-
+                    // For cross-file symbols (e.g., `export * as ns from './b'` in
+                    // another file), the module_name is relative to the declaring file,
+                    // not the current file. Use the symbol's declaring file for resolution.
+                    let declaring_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    let exports_table = self.resolve_effective_module_exports_from_file(
+                        module_name,
+                        declaring_file_idx,
+                    );
                     if let Some(exports_table) = exports_table {
                         // Record cross-file symbol targets for all symbols in the table
                         for (name, &sym_id) in exports_table.iter() {
@@ -1168,6 +1185,13 @@ impl<'a> CheckerState<'a> {
                             // position (e.g., `let x: ns.A`), which uses symbol-based
                             // resolution rather than object property lookup.
                             if self.is_type_only_export_symbol(export_sym_id) {
+                                continue;
+                            }
+                            // Also skip exports reached through `export type *` wildcard
+                            // re-export chains. The symbol itself may not have is_type_only
+                            // set (it's normal in the source module), but the re-export path
+                            // makes it type-only in this module's namespace.
+                            if self.is_export_from_type_only_wildcard(module_name, name) {
                                 continue;
                             }
                             let mut prop_type = self.get_type_of_symbol(export_sym_id);
@@ -1326,7 +1350,7 @@ impl<'a> CheckerState<'a> {
                         let has_export_equals = self.module_has_export_equals(module_name);
 
                         if has_export_equals {
-                            self.emit_no_default_export_error(module_name, value_decl);
+                            self.emit_no_default_export_error(module_name, value_decl, false);
                             return (TypeId::ERROR, Vec::new());
                         }
 
@@ -1383,7 +1407,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.module_namespace_resolution_set.remove(module_name);
                         }
                         // TS1192: Module '{0}' has no default export.
-                        self.emit_no_default_export_error(module_name, value_decl);
+                        self.emit_no_default_export_error(module_name, value_decl, false);
                     } else {
                         // TS2305: Module '{0}' has no exported member '{1}'.
                         if export_name != "*" {
@@ -1440,9 +1464,44 @@ impl<'a> CheckerState<'a> {
             let expr_type = self.get_type_of_node(for_data.expression);
             Some(self.for_of_element_type(expr_type))
         } else if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
-            Some(TypeId::STRING)
+            let for_data = self.ctx.arena.get_for_in_of(for_node).cloned()?;
+            let expr_type = self.get_type_of_node(for_data.expression);
+            Some(self.compute_for_in_variable_type(expr_type))
         } else {
             None
+        }
+    }
+
+    /// Compute the type of a for-in loop variable.
+    ///
+    /// tsc behavior (checker.ts `getTypeForVariableLikeDeclaration`):
+    /// ```text
+    /// indexType = keyof(nonNullable(exprType))
+    /// if indexType is TypeParameter | Index → Extract<indexType, string>
+    /// else → string
+    /// ```
+    ///
+    /// When iterating `for (let k in obj)` where `obj: T` (a type parameter),
+    /// `k` gets type `Extract<keyof T, string>` so that `obj[k]` is well-typed.
+    pub(crate) fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
+        // Remove null/undefined from expression type
+        let non_nullable = tsz_solver::remove_nullish(self.ctx.types, expr_type);
+
+        // Compute keyof
+        let keyof_type = self.ctx.types.factory().keyof(non_nullable);
+        let keyof_evaluated = self.evaluate_type_with_env(keyof_type);
+
+        // If the keyof result is a type parameter or index (keyof) type,
+        // return Extract<keyof T, string> = keyof T & string
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, keyof_evaluated)
+            || tsz_solver::type_queries::is_keyof_type(self.ctx.types, keyof_evaluated)
+        {
+            self.ctx
+                .types
+                .factory()
+                .intersection(vec![keyof_evaluated, TypeId::STRING])
+        } else {
+            TypeId::STRING
         }
     }
 }

@@ -518,6 +518,27 @@ fn types_are_comparable_inner(
         return types_are_comparable_inner(db, source_elem, target_elem, depth + 1);
     }
 
+    // Tuple→Array comparability: a tuple is comparable to an array if any tuple element
+    // type is comparable to the array element type. tsc compares the tuple's element union
+    // (number-indexed type) against the array's element type.
+    if let Some(TypeData::Tuple(source_tuple_id)) = db.lookup(source)
+        && let Some(TypeData::Array(target_elem)) = db.lookup(target)
+    {
+        let elements = db.tuple_list(source_tuple_id);
+        return elements
+            .iter()
+            .any(|elem| types_are_comparable_inner(db, elem.type_id, target_elem, depth + 1));
+    }
+    // Array→Tuple comparability: symmetric case.
+    if let Some(TypeData::Array(source_elem)) = db.lookup(source)
+        && let Some(TypeData::Tuple(target_tuple_id)) = db.lookup(target)
+    {
+        let elements = db.tuple_list(target_tuple_id);
+        return elements
+            .iter()
+            .any(|elem| types_are_comparable_inner(db, source_elem, elem.type_id, depth + 1));
+    }
+
     // Callable types are comparable to other callable types — they share the
     // callable structure pattern, so tsc never emits TS2352 between them.
     if let Some(TypeData::Callable(_)) = db.lookup(source)
