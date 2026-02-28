@@ -1138,7 +1138,10 @@ impl ParserState {
                 self.parse_declare_abstract_class(start_pos, declare_modifier)
             }
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-            SyntaxKind::TypeKeyword => self.parse_type_alias_declaration(),
+            SyntaxKind::TypeKeyword => {
+                let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                self.parse_type_alias_declaration_with_modifiers(start_pos, modifiers)
+            }
             SyntaxKind::EnumKeyword => {
                 let modifiers = Some(self.make_node_list(vec![declare_modifier]));
                 self.parse_enum_declaration_with_modifiers(start_pos, modifiers)

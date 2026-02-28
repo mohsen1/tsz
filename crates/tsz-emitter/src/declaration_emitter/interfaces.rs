@@ -174,9 +174,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
-                    // Emit readonly modifier if present
-                    if mapped_type.readonly_token.is_some() {
-                        self.write("readonly ");
+                    // Emit readonly modifier with +/- prefix support
+                    if let Some(rt_node) = self.arena.get(mapped_type.readonly_token) {
+                        if rt_node.kind == SyntaxKind::PlusToken as u16 {
+                            self.write("+readonly ");
+                        } else if rt_node.kind == SyntaxKind::MinusToken as u16 {
+                            self.write("-readonly ");
+                        } else {
+                            self.write("readonly ");
+                        }
                     }
 
                     self.write("[");
@@ -205,9 +211,15 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write("]");
 
-                    // Optionally emit question token (after the bracket)
-                    if mapped_type.question_token.is_some() {
-                        self.write("?");
+                    // Emit question token with +/- prefix support
+                    if let Some(qt_node) = self.arena.get(mapped_type.question_token) {
+                        if qt_node.kind == SyntaxKind::PlusToken as u16 {
+                            self.write("+?");
+                        } else if qt_node.kind == SyntaxKind::MinusToken as u16 {
+                            self.write("-?");
+                        } else {
+                            self.write("?");
+                        }
                     }
 
                     self.write(": ");
@@ -351,9 +363,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
-                    // Emit readonly modifier if present
-                    if mapped_type.readonly_token.is_some() {
-                        self.write("readonly ");
+                    // Emit readonly modifier with +/- prefix support
+                    if let Some(rt_node) = self.arena.get(mapped_type.readonly_token) {
+                        if rt_node.kind == SyntaxKind::PlusToken as u16 {
+                            self.write("+readonly ");
+                        } else if rt_node.kind == SyntaxKind::MinusToken as u16 {
+                            self.write("-readonly ");
+                        } else {
+                            self.write("readonly ");
+                        }
                     }
 
                     self.write("[");
@@ -375,6 +393,17 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     self.write("]");
+
+                    // Emit question token with +/- prefix support
+                    if let Some(qt_node) = self.arena.get(mapped_type.question_token) {
+                        if qt_node.kind == SyntaxKind::PlusToken as u16 {
+                            self.write("+?");
+                        } else if qt_node.kind == SyntaxKind::MinusToken as u16 {
+                            self.write("-?");
+                        } else {
+                            self.write("?");
+                        }
+                    }
 
                     // Emit name type annotation
                     if mapped_type.name_type.is_some() {
