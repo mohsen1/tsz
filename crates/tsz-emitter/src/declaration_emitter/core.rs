@@ -568,9 +568,10 @@ impl<'a> DeclarationEmitter<'a> {
         for comment in &source_file.comments {
             // Only consider comments that appear before the first statement
             if let Some(stmt_pos) = first_stmt_pos
-                && comment.pos >= stmt_pos {
-                    break;
-                }
+                && comment.pos >= stmt_pos
+            {
+                break;
+            }
 
             // Only preserve /*! ... */ copyright comments
             if !comment.is_multi_line {
