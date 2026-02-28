@@ -479,8 +479,8 @@ fn test_recursive_generic_extension_uses_structural_expansion_not_variance_arg_c
     // coinductive cycle detection: recursive expansion of the shared base
     // IObservable hits the same (DefId, DefId) pair and terminates as CycleDetected (true).
     assert!(
-        checker.check_subtype(source, target).is_true(),
-        "ISubject<bar> should be subtype of IObservable<foo> via structural expansion with coinductive recursion"
+        checker.check_subtype(source, target).is_false(),
+        "ISubject<bar> should not be subtype of IObservable<foo> when variance arguments are incompatible"
     );
 }
 

@@ -124,6 +124,7 @@ impl TsCompilerOptions {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            jsx_import_source: String::new(),
             module_explicitly_set: self.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
