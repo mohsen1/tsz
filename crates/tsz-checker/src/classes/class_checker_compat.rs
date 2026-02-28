@@ -870,7 +870,21 @@ impl<'a> CheckerState<'a> {
                                 None
                             });
 
-                            if let Some(base_prop) = base_prop {
+                            // Resolve the base property type: use shallow lookup result if available,
+                            // otherwise fall back to the solver's comprehensive property access
+                            // (handles Array, Tuple, Mapped types, etc.)
+                            let base_prop_type = if let Some(ref bp) = base_prop {
+                                Some(bp.type_id)
+                            } else {
+                                use tsz_solver::operations::property::PropertyAccessResult;
+                                match self.resolve_property_access_with_env(base_type, member_name)
+                                {
+                                    PropertyAccessResult::Success { type_id, .. } => Some(type_id),
+                                    _ => None,
+                                }
+                            };
+
+                            if let Some(base_prop_type_id) = base_prop_type {
                                 // Extract the derived property's raw type from its ObjectShape
                                 // (get_type_of_interface_member returns ObjectShape { name: type },
                                 // but we need the raw property type for comparison with base)
@@ -886,7 +900,7 @@ impl<'a> CheckerState<'a> {
                                 if should_report_member_type_mismatch(
                                     self,
                                     derived_prop_type,
-                                    base_prop.type_id,
+                                    base_prop_type_id,
                                     *derived_member_idx,
                                 ) {
                                     self.error_at_node(
@@ -944,7 +958,9 @@ impl<'a> CheckerState<'a> {
             let substitution =
                 TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
-            for (member_name, member_type, derived_member_idx, derived_kind) in &derived_members {
+            'derived_loop: for (member_name, member_type, derived_member_idx, derived_kind) in
+                &derived_members
+            {
                 let mut found = false;
 
                 for &base_iface_idx in &base_iface_indices {
@@ -1017,9 +1033,9 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
-
-                            self.pop_type_parameters(base_type_param_updates);
-                            return;
+                            // Don't return — continue checking other base types.
+                            // Each incompatible base gets its own TS2430 diagnostic.
+                            break 'derived_loop;
                         }
 
                         break;
