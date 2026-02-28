@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Resolve a TypeQuery chain iteratively until a non-TypeQuery type is reached.
+    /// Resolve a `TypeQuery` chain iteratively until a non-TypeQuery type is reached.
     ///
     /// Used for TS2403 checking where `typeof x` type annotations may chain
     /// through multiple symbols (e.g., `typeof e` → `typeof d` → actual type).
