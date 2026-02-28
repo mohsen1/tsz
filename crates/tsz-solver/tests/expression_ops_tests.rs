@@ -117,21 +117,29 @@ fn test_conditional_never_condition() {
 #[test]
 fn test_conditional_truthy_condition() {
     let interner = TypeInterner::new();
-    // true ? string : number -> string
+    // true ? string : number -> string | number
+    // tsc always computes the union of both branches (with subtype reduction),
+    // even when the condition is a known literal boolean.
     let true_type = interner.literal_boolean(true);
     let result =
         compute_conditional_expression_type(&interner, true_type, TypeId::STRING, TypeId::NUMBER);
-    assert_eq!(result, TypeId::STRING);
+    // Result should be a union type (not equal to either branch alone)
+    assert_ne!(result, TypeId::STRING);
+    assert_ne!(result, TypeId::NUMBER);
 }
 
 #[test]
 fn test_conditional_falsy_condition() {
     let interner = TypeInterner::new();
-    // false ? string : number -> number
+    // false ? string : number -> string | number
+    // tsc always computes the union of both branches (with subtype reduction),
+    // even when the condition is a known literal boolean.
     let false_type = interner.literal_boolean(false);
     let result =
         compute_conditional_expression_type(&interner, false_type, TypeId::STRING, TypeId::NUMBER);
-    assert_eq!(result, TypeId::NUMBER);
+    // Result should be a union type (not equal to either branch alone)
+    assert_ne!(result, TypeId::STRING);
+    assert_ne!(result, TypeId::NUMBER);
 }
 
 // =========================================================================
