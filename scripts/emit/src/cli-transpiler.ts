@@ -114,6 +114,8 @@ function moduleToCliArg(module: number): string {
     7: 'es2022',
     99: 'esnext',
     100: 'node16',
+    101: 'node18',
+    102: 'node20',
     199: 'nodenext',
     200: 'preserve',
   };
@@ -253,6 +255,14 @@ export class CliTranspiler {
       const filePath = path.join(testDir, relName);
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       fs.writeFileSync(filePath, file.content, 'utf-8');
+
+      // Auxiliary files (package.json, tsconfig.json) are written to disk
+      // but not passed as CLI input arguments or expected to produce output.
+      const isAuxiliary = relName.endsWith('package.json') || relName.endsWith('tsconfig.json');
+      if (isAuxiliary) {
+        continue;
+      }
+
       inputFiles.push(filePath);
 
       const extMatch = relName.match(/\.(ts|tsx|mts|cts)$/);

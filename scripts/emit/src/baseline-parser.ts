@@ -82,6 +82,9 @@ export function parseBaseline(content: string): BaselineContent {
   const isInputCodeFile = (name: string): boolean => {
     return /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|d\.ts)$/.test(name);
   };
+  const isAuxiliaryFile = (name: string): boolean => {
+    return name.endsWith('package.json') || name.endsWith('tsconfig.json');
+  };
   const isJsLikeOutput = (name: string): boolean => {
     return /\.(js|jsx|mjs|cjs)$/.test(name);
   };
@@ -158,7 +161,7 @@ export function parseBaseline(content: string): BaselineContent {
       continue;
     }
 
-    if (segIndex < outputStart && isInputCodeFile(name)) {
+    if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
       // Some baselines include zero-length or placeholder source segments.
       // Ignore these to avoid injecting empty generated files into emitter input.
       if (fileContent.length > 0) {
@@ -194,12 +197,12 @@ export function parseBaseline(content: string): BaselineContent {
       continue;
     }
 
-    if (segIndex < outputStart && isInputCodeFile(name)) {
+    if (segIndex < outputStart && (isInputCodeFile(name) || isAuxiliaryFile(name))) {
       if (fileContent.length === 0) {
         continue;
       }
       result.sourceFiles.push({ name, content: fileContent });
-      if (!result.source && !name.endsWith('.d.ts')) {
+      if (!result.source && !name.endsWith('.d.ts') && !isAuxiliaryFile(name)) {
         // Keep the first non-declaration source file as entry-point.
         result.source = fileContent;
         result.sourceFileName = name;
@@ -356,7 +359,7 @@ export function getEmitDiffSummary(expected: string, actual: string): string {
 
   const changes = Diff.diffLines(normExpected, normActual);
   let added = 0, removed = 0;
-  
+
   for (const change of changes) {
     if (change.added) added += change.count ?? 0;
     if (change.removed) removed += change.count ?? 0;
