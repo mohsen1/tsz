@@ -52,16 +52,17 @@ pub enum SubtypeResult {
     /// We've exceeded the recursion depth limit
     ///
     /// This represents expansive recursion that grows indefinitely like
-    /// `type T<X> = T<Box<X>>`. TypeScript rejects these as "excessively deep".
-    ///
-    /// This is treated as `false` for soundness - if we can't prove subtyping within
-    /// reasonable limits, we reject the relationship rather than accepting unsoundly.
+    /// `type T<X> = T<Box<X>>`. Following tsc's semantics, this is treated
+    /// as `true` (Ternary.Maybe) — when the relation checker cannot determine
+    /// the answer within depth limits, it assumes the types are related.
+    /// This matches tsc's `isRelatedTo` overflow behavior and prevents false
+    /// TS2344 errors on recursive/circular generic constraints.
     DepthExceeded,
 }
 
 impl SubtypeResult {
     pub const fn is_true(self) -> bool {
-        matches!(self, Self::True | Self::CycleDetected)
+        matches!(self, Self::True | Self::CycleDetected | Self::DepthExceeded)
     }
 
     pub const fn is_false(self) -> bool {

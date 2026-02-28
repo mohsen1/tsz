@@ -146,10 +146,10 @@ fn test_error_poisoning_union_normalization() {
 fn test_recursion_depth_limit_assignable() {
     // Test that deep recursion doesn't crash and handles depth limit correctly.
     //
-    // With the cycle detection fix (Issue #09):
-    // - When depth limit is hit, we return DepthExceeded (false) for soundness
+    // Following tsc's semantics (Ternary.Maybe on overflow):
+    // - When depth limit is hit, we return DepthExceeded which is treated as true
     // - CycleDetected is used for valid coinductive recursion (true)
-    // - DepthExceeded prevents unsound type acceptance in genuinely incompatible deep types
+    // - Both match tsc's behavior where recursive depth overflow assumes types are related
     //
     // The depth_exceeded flag is set for TS2589 diagnostic emission.
     let interner = TypeInterner::new();
@@ -166,13 +166,12 @@ fn test_recursion_depth_limit_assignable() {
     let deep_string = nest_array(&interner, TypeId::STRING, 120);
     let deep_number = nest_array(&interner, TypeId::NUMBER, 120);
 
-    // When depth limit is exceeded during comparison of incompatible types,
-    // we return DepthExceeded (which evaluates to false) for soundness.
-    // This prevents incorrectly accepting genuinely incompatible deep types.
-    // The depth_exceeded flag allows emitting TS2589 diagnostic.
+    // When depth limit is exceeded, we return DepthExceeded which is treated as
+    // true (matching tsc's Ternary.Maybe semantics). This prevents false TS2344
+    // errors on recursive/circular generic constraints.
     let result = checker.is_assignable(deep_string, deep_number);
-    // Result is false due to DepthExceeded return on depth limit (soundness fix)
-    assert!(!result);
+    // Result is true due to DepthExceeded returning true (tsc parity)
+    assert!(result);
 
     // Same types at same depth should be assignable (identity check short-circuits)
     let deep_string2 = nest_array(&interner, TypeId::STRING, 120);
