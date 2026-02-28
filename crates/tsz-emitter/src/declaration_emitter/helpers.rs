@@ -496,12 +496,12 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
             }
-        } else if k == syntax_kind_ext::MODULE_DECLARATION {
-            if let Some(module) = self.arena.get_module(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
-            }
+        } else if k == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module) = self.arena.get_module(stmt_node)
+        {
+            return self
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
         }
         false
     }
@@ -954,6 +954,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
         let Some(ref text) = self.source_file_text else {
             return;

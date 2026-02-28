@@ -390,8 +390,12 @@ where
                     || info.default.is_some_and(|d| self.check(d))
             }
             TypeData::Application(app_id) => {
+                // Only check args, not base. The base type's own type parameters
+                // are bound by the application arguments and should not count as
+                // "containing type parameters". E.g., `A<number>` is concrete even
+                // though `A`'s definition contains `TypeParameter T`.
                 let app = self.types.type_application(*app_id);
-                self.check(app.base) || app.args.iter().any(|&a| self.check(a))
+                app.args.iter().any(|&a| self.check(a))
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.types.conditional_type(*cond_id);

@@ -643,33 +643,73 @@ impl<'a> CheckerState<'a> {
                 target_return,
                 nested_reason,
             } => {
-                let source_str = self.format_type(*source_return);
-                let target_str = self.format_type(*target_return);
-                let message =
-                    format!("Return type '{source_str}' is not assignable to '{target_str}'.");
-                let mut diag =
-                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
+                if depth == 0 {
+                    // At depth 0, tsc emits the top-level "Type X is not assignable to type Y"
+                    // as the primary diagnostic and uses "Return type..." as elaboration.
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
 
-                if let Some(nested) = nested_reason
-                    && depth < 5
-                {
-                    let nested_diag = self.render_failure_reason(
-                        nested,
-                        *source_return,
-                        *target_return,
-                        idx,
-                        depth + 1,
+                    // Add "Return type..." as elaboration
+                    let ret_source_str = self.format_type(*source_return);
+                    let ret_target_str = self.format_type(*target_return);
+                    let ret_msg = format!(
+                        "Return type '{ret_source_str}' is not assignable to '{ret_target_str}'."
                     );
                     diag.related_information.push(DiagnosticRelatedInformation {
-                        file: nested_diag.file,
-                        start: nested_diag.start,
-                        length: nested_diag.length,
-                        message_text: nested_diag.message_text,
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: ret_msg,
                         category: DiagnosticCategory::Message,
-                        code: nested_diag.code,
+                        code: reason.diagnostic_code(),
                     });
+
+                    diag
+                } else {
+                    let source_str = self.format_type(*source_return);
+                    let target_str = self.format_type(*target_return);
+                    let message =
+                        format!("Return type '{source_str}' is not assignable to '{target_str}'.");
+                    let mut diag = Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        reason.diagnostic_code(),
+                    );
+
+                    if let Some(nested) = nested_reason
+                        && depth < 5
+                    {
+                        let nested_diag = self.render_failure_reason(
+                            nested,
+                            *source_return,
+                            *target_return,
+                            idx,
+                            depth + 1,
+                        );
+                        diag.related_information.push(DiagnosticRelatedInformation {
+                            file: nested_diag.file,
+                            start: nested_diag.start,
+                            length: nested_diag.length,
+                            message_text: nested_diag.message_text,
+                            category: DiagnosticCategory::Message,
+                            code: nested_diag.code,
+                        });
+                    }
+                    diag
                 }
-                diag
             }
 
             SubtypeFailureReason::TooManyParameters { .. } => {
@@ -695,10 +735,26 @@ impl<'a> CheckerState<'a> {
                 source_count,
                 target_count,
             } => {
-                let message = format!(
-                    "Tuple type has {source_count} elements but target requires {target_count}."
-                );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                if depth == 0 {
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                } else {
+                    let message = format!(
+                        "Tuple type has {source_count} elements but target requires {target_count}."
+                    );
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                }
             }
 
             SubtypeFailureReason::TupleElementTypeMismatch {
@@ -706,24 +762,58 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
             } => {
-                let source_str = self.format_type(*source_element);
-                let target_str = self.format_type(*target_element);
-                let message = format!(
-                    "Type of element at index {index} is incompatible: '{source_str}' is not assignable to '{target_str}'."
-                );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                if depth == 0 {
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                } else {
+                    let source_str = self.format_type(*source_element);
+                    let target_str = self.format_type(*target_element);
+                    let message = format!(
+                        "Type of element at index {index} is incompatible: '{source_str}' is not assignable to '{target_str}'."
+                    );
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                }
             }
 
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
             } => {
-                let source_str = self.format_type(*source_element);
-                let target_str = self.format_type(*target_element);
-                let message = format!(
-                    "Array element type '{source_str}' is not assignable to '{target_str}'."
-                );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                if depth == 0 {
+                    // At depth 0, tsc emits "Type X is not assignable to type Y" as
+                    // the primary diagnostic; array-element detail is elaboration only.
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                } else {
+                    let source_str = self.format_type(*source_element);
+                    let target_str = self.format_type(*target_element);
+                    let message = format!(
+                        "Array element type '{source_str}' is not assignable to '{target_str}'."
+                    );
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                }
             }
 
             SubtypeFailureReason::IndexSignatureMismatch {
