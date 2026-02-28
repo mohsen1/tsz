@@ -279,13 +279,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // often fast-fail to avoid structural false-positives.
                         // Allow a fallback only for transparent type aliases and
                         // interfaces; keep classes/other kinds strict here.
-                        if matches!(
+                        if !matches!(
                             is_interface,
-                            Some(kind)
-                                if !matches!(
-                                    kind,
-                                    crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias
-                                )
+                            Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
                         ) {
                             return SubtypeResult::False;
                         }
@@ -341,31 +337,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_expanded = self.try_expand_application(s_app_id);
         let t_expanded = self.try_expand_application(t_app_id);
         let result = match (s_expanded, t_expanded) {
-            (Some(s_struct), Some(t_struct)) => {
-                // If expansion of a mismatched-base application reveals that one side is
-                // actually a direct application of the other's base (e.g. Child<T> -> Base<T>),
-                // retry against the unexpanded application first so coinductive recursion can
-                // stabilize on application pairs before we fully compare object members.
-                if let Some(s_struct_app_id) = application_id(self.interner, s_struct)
-                    && self.interner.type_application(s_struct_app_id).base == t_app.base
-                {
-                    let target = self.interner.application(t_app.base, t_app.args.clone());
-                    let app_result = self.check_subtype(s_struct, target);
-                    if app_result.is_true() {
-                        return app_result;
-                    }
-                }
-                if let Some(t_struct_app_id) = application_id(self.interner, t_struct)
-                    && self.interner.type_application(t_struct_app_id).base == s_app.base
-                {
-                    let source = self.interner.application(s_app.base, s_app.args.clone());
-                    let app_result = self.check_subtype(source, t_struct);
-                    if app_result.is_true() {
-                        return app_result;
-                    }
-                }
-                self.check_subtype(s_struct, t_struct)
-            }
+            (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
             (Some(s_struct), None) => {
                 // Re-intern the target application for comparison
                 let t_app = self.interner.type_application(t_app_id);
