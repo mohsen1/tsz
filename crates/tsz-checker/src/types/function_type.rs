@@ -1241,18 +1241,26 @@ impl<'a> CheckerState<'a> {
             // Use void for TReturn: unannotated generators have no explicit return value,
             // so TReturn is void (matching tsc). This ensures generator.return() is callable
             // without arguments, since void-typed params are effectively optional.
-            let generator_base = if function_is_async {
-                self.resolve_lib_type_by_name("AsyncGenerator")
-                    .unwrap_or(TypeId::ERROR)
+            let gen_name = if function_is_async {
+                "AsyncGenerator"
             } else {
-                self.resolve_lib_type_by_name("Generator")
-                    .unwrap_or(TypeId::ERROR)
+                "Generator"
             };
-            if generator_base != TypeId::ERROR {
-                self.ctx.types.factory().application(
-                    generator_base,
-                    vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN],
-                )
+            // Ensure the lib type is loaded/resolved (side effect: populates file_locals).
+            let _resolved = self.resolve_lib_type_by_name(gen_name);
+            // Use Lazy(DefId) as the Application base instead of the resolved TypeId.
+            // resolve_lib_type_by_name returns a fully expanded structural interface body,
+            // which loses the Generator identity during type relations. Lazy(DefId) preserves
+            // the symbolic reference so evaluate_application can properly instantiate it.
+            let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx.types.factory().lazy(def_id)
+            });
+            if let Some(base) = lazy_base {
+                self.ctx
+                    .types
+                    .factory()
+                    .application(base, vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN])
             } else {
                 TypeId::ANY
             }
