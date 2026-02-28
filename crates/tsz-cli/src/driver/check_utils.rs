@@ -910,6 +910,203 @@ pub(super) fn create_cross_file_lookup_binder(
     binder
 }
 
+/// Build a line-start table: `line_starts[i]` is the byte offset of the first char on line `i`.
+fn build_line_starts(text: &str) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    for (i, b) in text.bytes().enumerate() {
+        if b == b'\n' {
+            starts.push((i + 1) as u32);
+        }
+    }
+    starts
+}
+
+/// Get the 0-based line number for a byte offset.
+fn line_of_offset(line_starts: &[u32], offset: u32) -> u32 {
+    match line_starts.binary_search(&offset) {
+        Ok(exact) => exact as u32,
+        Err(insert) => insert.saturating_sub(1) as u32,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectiveKind {
+    ExpectError,
+    Ignore,
+}
+
+/// Characters that can follow `@ts-expect-error` / `@ts-ignore` in a valid directive.
+fn is_directive_separator(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b':' | b'*' | b'/')
+}
+
+/// Check if a comment text contains `@ts-expect-error` or `@ts-ignore`.
+fn find_directive_in_text(comment: &str) -> Option<(DirectiveKind, usize)> {
+    if let Some(pos) = comment.find("@ts-expect-error") {
+        let after = pos + "@ts-expect-error".len();
+        if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
+            return Some((DirectiveKind::ExpectError, pos));
+        }
+    }
+    if let Some(pos) = comment.find("@ts-ignore") {
+        let after = pos + "@ts-ignore".len();
+        if after >= comment.len() || is_directive_separator(comment.as_bytes()[after]) {
+            return Some((DirectiveKind::Ignore, pos));
+        }
+    }
+    None
+}
+
+/// A `@ts-expect-error` or `@ts-ignore` directive found in a source file comment.
+struct TsDirective {
+    /// True for `@ts-expect-error`, false for `@ts-ignore`.
+    is_expect_error: bool,
+    /// The 0-based line number that this directive suppresses (the line after the comment).
+    suppressed_line: u32,
+    /// Byte offset of the start of the comment containing the directive.
+    comment_start: u32,
+    /// Byte length of the comment containing the directive.
+    comment_length: u32,
+    /// Byte offset of the `@ts-expect-error` text within the comment.
+    directive_text_start: u32,
+}
+
+/// Scan source text for `@ts-expect-error` and `@ts-ignore` directives in comments.
+fn find_ts_directives(text: &str) -> Vec<TsDirective> {
+    let line_starts = build_line_starts(text);
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut directives = Vec::new();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i] == b'/' && i + 1 < len {
+            if bytes[i + 1] == b'/' {
+                // Single-line comment
+                let comment_start = i as u32;
+                let line_end = bytes[i..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map(|offset| i + offset)
+                    .unwrap_or(len);
+                let comment_text = &text[i..line_end];
+                let comment_length = (line_end - i) as u32;
+
+                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
+                    let comment_line = line_of_offset(&line_starts, comment_start);
+                    directives.push(TsDirective {
+                        is_expect_error: kind == DirectiveKind::ExpectError,
+                        suppressed_line: comment_line + 1,
+                        comment_start,
+                        comment_length,
+                        directive_text_start: comment_start + rel_offset as u32,
+                    });
+                }
+                i = line_end;
+                continue;
+            } else if bytes[i + 1] == b'*' {
+                // Multi-line comment
+                let comment_start = i as u32;
+                let close = text[i + 2..]
+                    .find("*/")
+                    .map(|offset| i + 2 + offset + 2)
+                    .unwrap_or(len);
+                let comment_text = &text[i..close];
+                let comment_length = (close - i) as u32;
+
+                if let Some((kind, rel_offset)) = find_directive_in_text(comment_text) {
+                    let close_line = line_of_offset(&line_starts, (close.saturating_sub(1)) as u32);
+                    directives.push(TsDirective {
+                        is_expect_error: kind == DirectiveKind::ExpectError,
+                        suppressed_line: close_line + 1,
+                        comment_start,
+                        comment_length,
+                        directive_text_start: comment_start + rel_offset as u32,
+                    });
+                }
+                i = close;
+                continue;
+            }
+        }
+
+        // Skip string literals to avoid false positives
+        if bytes[i] == b'"' || bytes[i] == b'\'' || bytes[i] == b'`' {
+            let quote = bytes[i];
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    directives
+}
+
+/// Apply `@ts-expect-error` and `@ts-ignore` directive suppression to diagnostics.
+///
+/// 1. Finds all directive comments in the source text
+/// 2. Suppresses diagnostics on the line following each directive
+/// 3. Emits TS2578 for unused `@ts-expect-error` directives
+pub(super) fn apply_ts_directive_suppression(
+    file_name: &str,
+    source_text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let directives = find_ts_directives(source_text);
+    if directives.is_empty() {
+        return;
+    }
+
+    let line_starts = build_line_starts(source_text);
+
+    // Check for @ts-nocheck — suppresses TS2578 for unused directives.
+    let has_ts_nocheck = source_text.to_ascii_lowercase().contains("@ts-nocheck");
+
+    let mut directive_used = vec![false; directives.len()];
+
+    // Suppress diagnostics on directive-targeted lines
+    diagnostics.retain(|diag| {
+        let diag_line = line_of_offset(&line_starts, diag.start);
+        for (idx, directive) in directives.iter().enumerate() {
+            if diag_line == directive.suppressed_line {
+                directive_used[idx] = true;
+                return false;
+            }
+        }
+        true
+    });
+
+    // Emit TS2578 for unused @ts-expect-error directives
+    if !has_ts_nocheck {
+        for (idx, directive) in directives.iter().enumerate() {
+            if directive.is_expect_error && !directive_used[idx] {
+                let directive_line = line_of_offset(&line_starts, directive.directive_text_start);
+                let line_start_offset = line_starts[directive_line as usize];
+                let comment_end = directive.comment_start + directive.comment_length;
+                let length = comment_end.saturating_sub(line_start_offset);
+                diagnostics.push(Diagnostic::error(
+                    file_name.to_string(),
+                    line_start_offset,
+                    length,
+                    "Unused '@ts-expect-error' directive.".to_string(),
+                    2578,
+                ));
+            }
+        }
+    }
+}
+
 /// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
 /// vs a grammar/semantic check emitted during parsing.
 ///
