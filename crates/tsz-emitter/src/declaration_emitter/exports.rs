@@ -99,7 +99,7 @@ impl<'a> DeclarationEmitter<'a> {
         if export.export_clause.is_some() {
             if let Some(clause_node) = self.arena.get(export.export_clause) {
                 if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
-                    self.emit_named_exports(export.export_clause, !export.is_type_only);
+                    self.emit_named_exports(export.export_clause, true);
                 } else if clause_node.kind == SyntaxKind::Identifier as u16
                     || clause_node.kind == SyntaxKind::StringLiteral as u16
                 {
