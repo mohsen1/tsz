@@ -341,12 +341,16 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                // Don't emit TS2741 for primitives or wrapper built-ins
+                // Don't emit TS2741 for primitives, wrapper built-ins,
+                // intersection targets, or private brand properties
                 if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
                     return None;
                 }
                 let tgt_str = self.format_type(*target_type);
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
+                    return None;
+                }
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
                     return None;
                 }
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
@@ -377,6 +381,9 @@ impl<'a> CheckerState<'a> {
                 }
                 let tgt_str = self.format_type(*target_type);
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
+                    return None;
+                }
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
                     return None;
                 }
                 let src_str = self.format_type(*source_type);

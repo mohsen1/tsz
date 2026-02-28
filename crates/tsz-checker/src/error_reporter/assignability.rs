@@ -321,6 +321,26 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // TSC emits TS2322 instead of TS2741 when the target type is an
+                // intersection type. For example: `anb: A & B = a` where `a: A`
+                // → TS2322 "Type 'A' is not assignable to type 'A & B'"
+                // not TS2741 "Property 'b' is missing in type 'A'..."
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // Private brand properties are internal implementation details for
                 // nominal private member checking. They should never appear in
                 // user-facing diagnostics — emit TS2322 instead of TS2741.
@@ -397,6 +417,24 @@ impl<'a> CheckerState<'a> {
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&src_str, &tgt_str_check],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
+                // TSC emits TS2322 instead of TS2739/TS2740 when the target type
+                // is an intersection type.
+                if tsz_solver::type_queries::is_intersection_type(self.ctx.types, *target_type) {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
                     );
                     return Diagnostic::error(
                         file_name,
