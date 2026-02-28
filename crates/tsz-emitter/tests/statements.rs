@@ -918,8 +918,8 @@ fn declare_as_identifier_preserved() {
     );
 }
 
-/// Comment on the line after the last statement but before `}` should stay
-/// inside the block, not be displaced outside it.
+/// Comment on the line after the last statement but before `}` is placed
+/// after the closing brace by tsc, at the outer indentation level.
 #[test]
 fn comment_before_closing_brace_stays_inside_function() {
     let source = "function foo(x: number): void {\n    return;\n    // trailing comment\n}\n";
@@ -933,13 +933,13 @@ fn comment_before_closing_brace_stays_inside_function() {
     let output = printer.finish().code;
 
     assert!(
-        output.contains("    // trailing comment\n}"),
-        "Comment before closing brace should stay inside the function body.\nOutput:\n{output}"
+        output.contains("}\n// trailing comment"),
+        "Comment before closing brace should be placed after the closing brace (tsc behavior).\nOutput:\n{output}"
     );
 }
 
 /// Comment after `return` and before `}` in a complex expression function
-/// should stay inside the block.
+/// is placed after the closing brace by tsc.
 #[test]
 fn comment_before_closing_brace_after_return_expression() {
     let source = "function foo(p: number | null): number | null {\n    return p !== undefined ? p : null;\n    // Still typed as number | null\n}\n";
@@ -953,12 +953,13 @@ fn comment_before_closing_brace_after_return_expression() {
     let output = printer.finish().code;
 
     assert!(
-        output.contains("    // Still typed as number | null\n}"),
-        "Comment before closing brace should stay inside the function.\nOutput:\n{output}"
+        output.contains("}\n// Still typed as number | null"),
+        "Comment before closing brace should be placed after the closing brace (tsc behavior).\nOutput:\n{output}"
     );
 }
 
-/// Multiple comments between the last statement and `}` should all stay inside.
+/// Multiple comments between the last statement and `}` are placed after
+/// the closing brace by tsc.
 #[test]
 fn multiple_comments_before_closing_brace() {
     let source = "function foo(): void {\n    const x = 1;\n    // first comment\n    // second comment\n}\n";
@@ -972,8 +973,8 @@ fn multiple_comments_before_closing_brace() {
     let output = printer.finish().code;
 
     assert!(
-        output.contains("    // first comment\n    // second comment\n}"),
-        "Multiple comments before closing brace should stay inside.\nOutput:\n{output}"
+        output.contains("}\n// first comment\n// second comment"),
+        "Multiple comments before closing brace should be placed after the closing brace (tsc behavior).\nOutput:\n{output}"
     );
 }
 

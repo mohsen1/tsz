@@ -1,8 +1,9 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{
-    array_element_type as get_array_element_type, contains_type_parameters, is_unit_type,
-    tuple_elements as tuple_elements_for_type, union_members as union_members_for_type,
+    array_element_type as get_array_element_type, contains_type_parameters, is_keyof_type,
+    is_type_parameter_like, is_unit_type, tuple_elements as tuple_elements_for_type,
+    union_members as union_members_for_type,
 };
 
 pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
