@@ -1080,12 +1080,59 @@ fn needs_property_name_quoting(name: &str) -> bool {
     if name.chars().all(|ch| ch.is_ascii_digit()) {
         return false;
     }
+    // Reserved keywords need quoting when used as property/method names
+    if is_reserved_keyword(name) {
+        return true;
+    }
     let mut chars = name.chars();
     let first = chars.next().unwrap();
     if !(first == '_' || first == '$' || first.is_alphabetic()) {
         return true;
     }
     !chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
+}
+
+/// Returns true if the name is a JS/TS reserved keyword that needs quoting in property position.
+fn is_reserved_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+    )
 }
 
 #[cfg(test)]
