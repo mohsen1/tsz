@@ -1,8 +1,70 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9536/12570 (75.9%) — full suite, error-code level
+**Current score**: ~9582/12570 (76.2%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
+
+---
+
+## Session 2026-02-28b — TooManyParameters TS2554→TS2322 fix + contextualTypes analysis
+
+### Fixed: TooManyParameters assignability emits TS2322 not TS2554 — Checker + Solver
+
+**Root cause**: When a function with more required parameters was assigned to a function type with fewer (e.g., `a = (x: number) => 1` where `a: () => number`), the solver's `SubtypeFailureReason::TooManyParameters` mapped to `codes::ARG_COUNT_MISMATCH` (TS2554). The checker's assignability reporter used this code directly, producing "Expected 0 arguments, but got 1" instead of "Type '(x: number) => number' is not assignable to type '() => number'" (TS2322).
+
+**Fix**:
+1. Checker (`assignability.rs`): `TooManyParameters` arm now emits TS2322 with standard "Type X is not assignable to type Y" message
+2. Solver (`diagnostics/core.rs`): `TooManyParameters::diagnostic_code()` changed from `ARG_COUNT_MISMATCH` to `TYPE_NOT_ASSIGNABLE`
+
+**Files**: `crates/tsz-checker/src/error_reporter/assignability.rs`, `crates/tsz-solver/src/diagnostics/core.rs`
+
+**Tests improved**: `assignmentCompatWithCallSignaturesWithOptionalParameters.ts`, `genericCallWithFunctionTypedArguments5.ts` (code-level match)
+
+**Conformance**: 9581 → 9582 (+1)
+
+### Investigated: types/contextualTypes area (57.89%, 11/19 passing)
+
+8 failing tests analyzed. Root causes:
+
+| Test | Root Cause | Layer |
+|------|-----------|-------|
+| contextuallyTypeAsyncFunctionReturnType | TS2554: resolve() in Promise with any T; TS2739: Awaited<> expands array structurally | Solver (overload resolution, Awaited evaluation) |
+| contextuallyTypedByDiscriminableUnion2 | Discriminated union narrowing through intersected unions fails | Solver (discriminated type matching) |
+| contextuallyTypedOptionalProperty | Missing TS18048: contextual typing for match() doesn't flow through optional properties | Checker (contextual type propagation) |
+| contextuallyTypedStringLiteralsInJsxAttributes01 | Literal type widened to string in JSX attribute context | Checker (contextual typing) |
+| contextuallyTypedStringLiteralsInJsxAttributes02 | Missing TS2769 overload resolution | Solver (overload resolution) |
+| contextuallyTypeCommaOperator02 | Fingerprint only: drill-down vs top-level message | Message text (LOW) |
+| contextuallyTypeLogicalAnd02 | Fingerprint only | Message text (LOW) |
+| contextuallyTypedBindingInitializerNegative | Fingerprint only | Message text (LOW) |
+| partiallyAnnotatedFunctionInferenceWithTypeParameter | Extra TS2551: property name suggestion on wrong type | Solver (generic inference) |
+
+### Investigated: TS2403 false positives (20 extra, 18 missing)
+
+**Extra TS2403 root causes**:
+- Namespace/module merging: non-exported vars being visible across namespace blocks (binder scope resolution)
+- `spreadUnion.ts`: `{ ...union }` produces `{}` instead of union distribution (solver spread handling — `extract_properties` returns empty vec for Union types)
+- `optionalTupleElementsAndUndefined.ts`: mapped types over tuples not properly evaluating (solver mapped type evaluation)
+
+**Missing TS2403 root causes**:
+- `duplicateLocalVariable4.ts`: enum value vs typeof enum type identity (checker type identity check)
+- `noExcessiveStackDepthError.ts`: recursive mapped types with `any` vs type parameter (solver type identity)
+
+### Investigated: TS7006 false positives (70 extra, 18 one-extra-only)
+
+18 tests would pass by fixing TS7006 false positives. All are contextual typing failures:
+- Generic inference not flowing contextual types to callback parameters
+- Object binding pattern contextual typing not reaching nested arrow functions
+- Self-referential generic constraints losing contextual type
+
+These all require solver-level contextual type inference improvements.
+
+### Spread union distribution gap (solver)
+
+`crates/tsz-solver/src/objects/literal.rs:117-145`: `extract_properties` handles Object, Callable, Intersection but returns `Vec::new()` for Union types. Proper fix requires distributing the spread over union members:
+- `{ ...union }` → `spread(A) | spread(B)` for union `A | B`
+- Requires checker-level change to detect union spreads and create union of spread results
+- Estimated LOC: ~50 in checker, ~20 in solver
+- Would fix: `spreadUnion.ts` + potentially 2-3 other tests
 
 ---
 

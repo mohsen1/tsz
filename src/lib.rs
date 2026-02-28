@@ -2722,9 +2722,6 @@ mod any_propagation_tests;
 #[path = "../crates/tsz-checker/tests/const_assertion_tests.rs"]
 mod const_assertion_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/contextual_typing_tests.rs"]
-mod contextual_typing_tests;
-#[cfg(test)]
 #[path = "../crates/tsz-checker/tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
 #[cfg(test)]

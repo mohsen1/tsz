@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
                             is_method: shape.is_method,
                         }
                     };
-                    let substitution = {
+                    let mut substitution = {
                         let env = self.ctx.type_env.borrow();
                         call_checker::compute_contextual_types_with_context(
                             self.ctx.types,
@@ -464,6 +464,62 @@ impl<'a> CheckerState<'a> {
                         substitution_is_empty = substitution.is_empty(),
                         "Round 1 inference: substitution computed"
                     );
+
+                    // === Pre-inference from annotated callback parameters ===
+                    // When a callback is context-sensitive (has unannotated params) AND has
+                    // some annotated params, use those annotations to enrich the substitution
+                    // BEFORE computing Round 2 contextual types. This matches tsc's behavior
+                    // where annotated callback params contribute to inference even when the
+                    // callback as a whole is context-sensitive.
+                    //
+                    // Example: test<T extends C>((t1: D, t2) => { t2.test2 })
+                    //   - Round 1 skips the callback (it's sensitive)
+                    //   - But t1: D tells us T = D
+                    //   - Without this, T resolves to constraint C, causing false TS2551
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if i < sensitive_args.len()
+                            && sensitive_args[i]
+                            && let Some(shape_param_type) = shape.params.get(i).map(|p| p.type_id)
+                            && let Some(shape_fn) = tsz_solver::type_queries::get_function_shape(
+                                self.ctx.types,
+                                shape_param_type,
+                            )
+                            && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                            && let Some(func) = self.ctx.arena.get_function(arg_node)
+                        {
+                            for (j, &param_idx) in func.parameters.nodes.iter().enumerate() {
+                                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                    && param.type_annotation.is_some()
+                                    && let Some(shape_fn_param) = shape_fn.params.get(j)
+                                    && let Some(tp_info) =
+                                        tsz_solver::type_queries::get_type_parameter_info(
+                                            self.ctx.types,
+                                            shape_fn_param.type_id,
+                                        )
+                                {
+                                    let is_callee_tp =
+                                        shape.type_params.iter().any(|tp| tp.name == tp_info.name);
+                                    // Only override the substitution if it was
+                                    // defaulted to the constraint (not inferred
+                                    // from concrete arguments).
+                                    let existing = substitution.get(tp_info.name);
+                                    let is_defaulted =
+                                        existing.is_none() || existing == tp_info.constraint;
+                                    if is_callee_tp && is_defaulted {
+                                        let ann_type =
+                                            self.get_type_from_type_node(param.type_annotation);
+                                        substitution.insert(tp_info.name, ann_type);
+                                        trace!(
+                                            param_index = j,
+                                            ann_type = ann_type.0,
+                                            "Pre-inference: annotated callback param enriched substitution"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // === Pre-evaluate instantiated parameter types ===
                     // After instantiation with Round 1 substitution, parameter types may

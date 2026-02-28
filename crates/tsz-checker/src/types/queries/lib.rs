@@ -648,6 +648,35 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+
+        // For merged interface+variable symbols (e.g., `export interface Point` +
+        // `export var Point = 1`), `get_type_of_symbol` returns the interface type
+        // because compute_type_of_symbol enters the INTERFACE branch. In namespace
+        // member access (value position), we need the VALUE side type.
+        // This mirrors the `is_merged_interface_value` path in `get_type_of_identifier`.
+        //
+        // Only apply to INTERFACE + VARIABLE merges, NOT CLASS+INTERFACE or
+        // FUNCTION+INTERFACE merges, since get_type_of_symbol already handles
+        // those correctly (CLASS/FUNCTION branches precede INTERFACE).
+        let member_symbol = self
+            .get_cross_file_symbol(resolved_member_id)
+            .or_else(|| self.ctx.binder.get_symbol(resolved_member_id));
+        if let Some(sym) = member_symbol {
+            let flags = sym.flags;
+            let is_merged_interface_variable = (flags & symbol_flags::INTERFACE) != 0
+                && (flags & symbol_flags::VARIABLE) != 0
+                && (flags & symbol_flags::CLASS) == 0
+                && (flags & symbol_flags::FUNCTION) == 0;
+            if is_merged_interface_variable {
+                let value_decl = sym.value_declaration;
+                let value_type =
+                    self.type_of_value_declaration_for_symbol(resolved_member_id, value_decl);
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return Some(value_type);
+                }
+            }
+        }
+
         Some(self.get_type_of_symbol(resolved_member_id))
     }
 
@@ -688,7 +717,25 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
 
-        match classify_namespace_member(self.ctx.types, object_type) {
+        let classification = classify_namespace_member(self.ctx.types, object_type);
+
+        // Handle TypeQuery types (typeof M) by resolving the symbol reference
+        // to its underlying type (Lazy(DefId) for namespaces) and re-classifying.
+        // This fixes property access on variables typed as `typeof Namespace`:
+        //   var m: typeof M; m.Point  → should resolve namespace export "Point"
+        if let NamespaceMemberKind::TypeQuery(sym_ref) = classification {
+            let sym_id = SymbolId(sym_ref.0);
+            let resolved_type = self.get_type_of_symbol(sym_id);
+            if resolved_type != object_type
+                && resolved_type != TypeId::ANY
+                && resolved_type != TypeId::ERROR
+            {
+                return self.resolve_namespace_value_member(resolved_type, property_name);
+            }
+            return None;
+        }
+
+        match classification {
             // Handle Lazy types (direct namespace/module references)
             NamespaceMemberKind::Lazy(def_id) => {
                 let sym_id = self.ctx.def_to_symbol_id(def_id)?;
@@ -895,7 +942,26 @@ impl<'a> CheckerState<'a> {
                 self.enum_member_type_for_name(sym_id, property_name)
             }
 
-            NamespaceMemberKind::Other => None,
+            // TypeQuery is handled by the early return above; unreachable here
+            NamespaceMemberKind::TypeQuery(_) => None,
+
+            NamespaceMemberKind::Other => {
+                // Handle intersection types: when a module/namespace value is an
+                // intersection (e.g., `export = __React` produces an intersection of
+                // the namespace's type-side and value-side), try each member.
+                if let Some(members) =
+                    tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
+                {
+                    for member in members {
+                        if let Some(result) =
+                            self.resolve_namespace_value_member(member, property_name)
+                        {
+                            return Some(result);
+                        }
+                    }
+                }
+                None
+            }
         }
     }
 

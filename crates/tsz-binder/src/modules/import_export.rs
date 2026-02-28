@@ -199,6 +199,11 @@ impl BinderState {
                         // as long as we report the error.
                         sym.import_module = Some(specifier.clone());
                     }
+
+                    // Propagate type-only flag from `import type X = require('...')`
+                    if import.is_type_only {
+                        sym.is_type_only = true;
+                    }
                 }
 
                 // declare_symbol handles adding to current_scope and node_symbols.
