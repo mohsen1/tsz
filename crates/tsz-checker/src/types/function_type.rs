@@ -1238,6 +1238,9 @@ impl<'a> CheckerState<'a> {
             // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
             // However, we must return a Generator-like type to avoid suppressing TS2322
             // when the generator is returned or yielded to a context expecting something else.
+            // Use void for TReturn: unannotated generators have no explicit return value,
+            // so TReturn is void (matching tsc). This ensures generator.return() is callable
+            // without arguments, since void-typed params are effectively optional.
             let generator_base = if function_is_async {
                 self.resolve_lib_type_by_name("AsyncGenerator")
                     .unwrap_or(TypeId::ERROR)
@@ -1248,7 +1251,7 @@ impl<'a> CheckerState<'a> {
             if generator_base != TypeId::ERROR {
                 self.ctx.types.factory().application(
                     generator_base,
-                    vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                    vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN],
                 )
             } else {
                 TypeId::ANY
