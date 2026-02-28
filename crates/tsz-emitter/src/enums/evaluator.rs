@@ -31,6 +31,8 @@ use tsz_scanner::SyntaxKind;
 pub enum EnumValue {
     /// Numeric value (integer)
     Number(i64),
+    /// Floating-point numeric value
+    Float(f64),
     /// String value
     String(String),
     /// Value could not be evaluated at compile time
@@ -42,8 +44,33 @@ impl EnumValue {
     pub fn to_js_literal(&self) -> String {
         match self {
             Self::Number(n) => n.to_string(),
+            Self::Float(f) => {
+                // Format float to match tsc output: 0.5, -1.5, etc.
+                // Remove trailing zeros after decimal but keep at least one decimal digit
+                let s = format!("{f}");
+                s
+            }
             Self::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
             Self::Computed => "0 /* computed */".to_string(),
+        }
+    }
+
+    /// Returns true if this is a negative numeric value (integer or float).
+    /// Used to determine if parentheses are needed (e.g., `(-1).toString()`).
+    pub fn is_negative(&self) -> bool {
+        match self {
+            Self::Number(n) => *n < 0,
+            Self::Float(f) => *f < 0.0,
+            _ => false,
+        }
+    }
+
+    /// Returns the numeric value as f64, if this is a number type.
+    pub const fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Number(n) => Some(*n as f64),
+            Self::Float(f) => Some(*f),
+            _ => None,
         }
     }
 }
@@ -147,13 +174,21 @@ impl<'a> EnumEvaluator<'a> {
             } else {
                 let evaluated = self.evaluate_expression(member_data.initializer);
                 // Update auto-increment tracker if numeric
-                if let EnumValue::Number(n) = &evaluated {
-                    last_numeric_value = Some(*n);
-                    had_non_numeric = false; // Reset - can auto-increment again
-                } else {
-                    // String or computed - can't auto-increment after
-                    last_numeric_value = None;
-                    had_non_numeric = true;
+                match &evaluated {
+                    EnumValue::Number(n) => {
+                        last_numeric_value = Some(*n);
+                        had_non_numeric = false;
+                    }
+                    EnumValue::Float(f) => {
+                        // Float values: auto-increment uses truncated integer
+                        last_numeric_value = Some(*f as i64);
+                        had_non_numeric = false;
+                    }
+                    _ => {
+                        // String or computed - can't auto-increment after
+                        last_numeric_value = None;
+                        had_non_numeric = true;
+                    }
                 }
                 evaluated
             };
@@ -285,9 +320,13 @@ impl<'a> EnumEvaluator<'a> {
             return EnumValue::Number(val);
         }
 
-        // Try parsing as float and truncate
+        // Try parsing as float (e.g., 0.5, 2., -1.5)
         if let Ok(val) = text.parse::<f64>() {
-            return EnumValue::Number(val as i64);
+            // Check if this is actually an integer value (e.g., "2." parses as 2.0)
+            if val.fract() == 0.0 && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
+                return EnumValue::Number(val as i64);
+            }
+            return EnumValue::Float(val);
         }
 
         EnumValue::Computed
@@ -299,6 +338,7 @@ impl<'a> EnumEvaluator<'a> {
         let right_val = self.evaluate_expression(right);
 
         // Both must be numbers for binary operations (except + for strings)
+        // If either operand is a float, promote to float arithmetic
         match (&left_val, &right_val) {
             (EnumValue::Number(l), EnumValue::Number(r)) => {
                 let result = match op {
@@ -334,6 +374,38 @@ impl<'a> EnumEvaluator<'a> {
                 };
                 EnumValue::Number(result)
             }
+            // Float arithmetic: if either side is float, use f64
+            (l_val, r_val)
+                if matches!(l_val, EnumValue::Number(_) | EnumValue::Float(_))
+                    && matches!(r_val, EnumValue::Number(_) | EnumValue::Float(_)) =>
+            {
+                let l = l_val.as_f64().unwrap();
+                let r = r_val.as_f64().unwrap();
+                let result = match op {
+                    k if k == SyntaxKind::PlusToken as u16 => l + r,
+                    k if k == SyntaxKind::MinusToken as u16 => l - r,
+                    k if k == SyntaxKind::AsteriskToken as u16 => l * r,
+                    k if k == SyntaxKind::SlashToken as u16 => {
+                        if r == 0.0 {
+                            return EnumValue::Computed;
+                        }
+                        l / r
+                    }
+                    k if k == SyntaxKind::PercentToken as u16 => {
+                        if r == 0.0 {
+                            return EnumValue::Computed;
+                        }
+                        l % r
+                    }
+                    k if k == SyntaxKind::AsteriskAsteriskToken as u16 => l.powf(r),
+                    _ => return EnumValue::Computed,
+                };
+                if result.fract() == 0.0 && result >= i64::MIN as f64 && result <= i64::MAX as f64 {
+                    EnumValue::Number(result as i64)
+                } else {
+                    EnumValue::Float(result)
+                }
+            }
             // String concatenation
             (EnumValue::String(l), EnumValue::String(r)) if op == SyntaxKind::PlusToken as u16 => {
                 EnumValue::String(format!("{l}{r}"))
@@ -355,6 +427,18 @@ impl<'a> EnumEvaluator<'a> {
                     _ => return EnumValue::Computed,
                 };
                 EnumValue::Number(result)
+            }
+            EnumValue::Float(f) => {
+                let result = match op {
+                    k if k == SyntaxKind::PlusToken as u16 => f,
+                    k if k == SyntaxKind::MinusToken as u16 => -f,
+                    k if k == SyntaxKind::TildeToken as u16 => {
+                        // ~f truncates to integer first
+                        return EnumValue::Number(!(f as i64));
+                    }
+                    _ => return EnumValue::Computed,
+                };
+                EnumValue::Float(result)
             }
             _ => EnumValue::Computed,
         }

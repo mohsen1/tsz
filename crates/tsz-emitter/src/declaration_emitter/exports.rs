@@ -679,6 +679,9 @@ impl<'a> DeclarationEmitter<'a> {
                     s.replace('\\', "\\\\").replace('"', "\\\"")
                 ));
             }
+            EnumValue::Float(f) => {
+                self.write(&f.to_string());
+            }
             EnumValue::Computed => {
                 // For computed values, emit 0 as fallback
                 self.write("0 /* computed */");

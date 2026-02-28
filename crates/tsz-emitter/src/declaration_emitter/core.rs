@@ -512,10 +512,13 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(stripped) = text.strip_prefix("///") {
                 let trimmed = stripped.trim_start();
 
-                // In declaration emit, tsc does NOT copy source `/// <reference>` directives.
-                // It generates needed type/lib references itself during declaration emit.
-                // Only preserve `<amd-module>` and `<amd-dependency>` directives.
-                if trimmed.starts_with("<amd-module") || trimmed.starts_with("<amd-dependency") {
+                // Preserve `<amd-module>` and `<amd-dependency>` directives.
+                // Also preserve `<reference>` directives that have `preserve="true"`.
+                let should_emit = trimmed.starts_with("<amd-module")
+                    || trimmed.starts_with("<amd-dependency")
+                    || (trimmed.starts_with("<reference") && trimmed.contains("preserve=\"true\""));
+
+                if should_emit {
                     // Normalize: ensure space before /> (tsc normalizes this)
                     let normalized = if text.ends_with("/>") && !text.ends_with(" />") {
                         let base = &text[..text.len() - 2];

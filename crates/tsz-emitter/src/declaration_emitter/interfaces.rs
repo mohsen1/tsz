@@ -108,6 +108,10 @@ impl<'a> DeclarationEmitter<'a> {
                     if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
+                    } else if !self.source_is_declaration_file {
+                        // In declaration emit from source, methods without explicit
+                        // return types default to `any` (matching tsc behavior)
+                        self.write(": any");
                     }
                 }
             }
@@ -124,6 +128,8 @@ impl<'a> DeclarationEmitter<'a> {
                     if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
+                    } else if !self.source_is_declaration_file {
+                        self.write(": any");
                     }
                 }
             }
