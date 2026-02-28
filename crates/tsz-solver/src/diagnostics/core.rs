@@ -523,8 +523,8 @@ impl SubtypeFailureReason {
             | Self::LiteralTypeMismatch { .. }
             | Self::ErrorType { .. }
             | Self::RecursionLimitExceeded
-            | Self::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::TooManyParameters { .. } => codes::ARG_COUNT_MISMATCH,
+            | Self::ParameterCountMismatch { .. }
+            | Self::TooManyParameters { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
         }
@@ -679,11 +679,11 @@ impl SubtypeFailureReason {
             )),
 
             Self::TooManyParameters {
-                source_count,
-                target_count,
+                source_count: _,
+                target_count: _,
             } => PendingDiagnostic::error(
-                codes::ARG_COUNT_MISMATCH,
-                vec![(*target_count).into(), (*source_count).into()],
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source.into(), target.into()],
             ),
 
             Self::TupleElementMismatch {
