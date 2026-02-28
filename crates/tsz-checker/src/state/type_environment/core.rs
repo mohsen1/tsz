@@ -80,19 +80,19 @@ impl<'a> CheckerState<'a> {
 
                 // Fix: Create nominal enum member types for each member
                 // This preserves nominal identity so E.A is not assignable to E.B
-                let member_sym_id = self
+                let Some(member_sym_id) = self
                     .ctx
                     .binder
                     .get_node_symbol(member_idx)
                     .or_else(|| self.ctx.binder.get_node_symbol(member.name))
-                    .expect("Enum member must have a symbol");
-                let member_def_id = self
-                    .ctx
-                    .symbol_to_def
-                    .borrow()
-                    .get(&member_sym_id)
-                    .copied()
-                    .expect("Enum member must have a DefId");
+                else {
+                    continue;
+                };
+                let Some(member_def_id) =
+                    self.ctx.symbol_to_def.borrow().get(&member_sym_id).copied()
+                else {
+                    continue;
+                };
                 let literal_type = self.enum_member_type_from_decl(member_idx);
                 let specific_member_type = factory.enum_type(member_def_id, literal_type);
 

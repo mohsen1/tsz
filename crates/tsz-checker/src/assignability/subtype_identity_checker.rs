@@ -179,12 +179,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS2403 enum-object fallback: When one type is an enum type and the other is
-        // a structural object type, TypeScript considers them compatible if the object
-        // type matches the enum's "typeof" shape (its property object form).
-        if let Some(result) = self.try_enum_object_redeclaration_check(prev_type, current_type) {
-            return result;
-        }
+        // NOTE: try_enum_object_redeclaration_check was removed. The TS2403
+        // raw_declared_type now uses initializer_ts2403_type to store enum object
+        // types for bare enum initializers (`var x = E`). The old fallback would
+        // normalize enum types to their object shape, defeating the TS2403 check
+        // by making `typeof E` vs `E` appear compatible.
 
         // Bidirectional subtype fallback for structural equivalences.
         // The solver's identity check cannot normalize all cases (intersection
@@ -210,71 +209,5 @@ impl<'a> CheckerState<'a> {
             }
         }
         self.is_subtype_of(prev_type, current_type) && self.is_subtype_of(current_type, prev_type)
-    }
-
-    /// Try checking redeclaration compatibility using enum object shape substitution.
-    ///
-    /// When one type is a nominal enum type (`TypeData::Enum`) and the other is a
-    /// structural non-enum type, attempts to replace the enum type with its
-    /// "typeof enum" object shape and retries the compatibility check.
-    ///
-    /// This handles: `var e = E1; var e: { readonly A: E1.A; ... }`
-    /// where TSC considers both to be `typeof E1`.
-    ///
-    /// Returns Some(bool) if enum substitution was applicable, None otherwise.
-    fn try_enum_object_redeclaration_check(
-        &mut self,
-        prev_type: TypeId,
-        current_type: TypeId,
-    ) -> Option<bool> {
-        use tsz_binder::symbol_flags;
-        use tsz_solver::visitor::enum_components;
-
-        // Extract the SymbolId for a type if it's an enum TYPE (not a member).
-        // Separated from the closure to allow reborrowing.
-        fn get_enum_type_sym(
-            type_id: TypeId,
-            types: &dyn tsz_solver::TypeDatabase,
-            ctx: &crate::context::CheckerContext<'_>,
-        ) -> Option<tsz_binder::SymbolId> {
-            let (def_id, _) = enum_components(types, type_id)?;
-            let sym_id = ctx.def_to_symbol_id(def_id)?;
-            let symbol = ctx.binder.get_symbol(sym_id)?;
-            // Must be an enum but NOT an enum member (we want the enum type itself)
-            if (symbol.flags & symbol_flags::ENUM) != 0
-                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
-            {
-                Some(sym_id)
-            } else {
-                None
-            }
-        }
-
-        let prev_enum_sym = get_enum_type_sym(prev_type, self.ctx.types, &self.ctx);
-        let current_enum_sym = get_enum_type_sym(current_type, self.ctx.types, &self.ctx);
-
-        // Only proceed if exactly one side is an enum type and the other is NOT.
-        let (enum_sym, non_enum_type) = match (prev_enum_sym, current_enum_sym) {
-            (Some(sym), None) => (sym, current_type),
-            (None, Some(sym)) => (sym, prev_type),
-            _ => return None,
-        };
-
-        // Build the "typeof Enum" object shape using checker's enum_object_type helper.
-        let enum_obj_type = self.enum_object_type(enum_sym)?;
-
-        // Retry the check with the enum's object shape substituted in.
-        let flags = self.ctx.pack_relation_flags();
-        let env = self.ctx.type_env.borrow();
-        let compatible = is_redeclaration_identical_with_resolver(
-            self.ctx.types,
-            &*env,
-            enum_obj_type,
-            non_enum_type,
-            flags,
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
-        );
-        Some(compatible)
     }
 }

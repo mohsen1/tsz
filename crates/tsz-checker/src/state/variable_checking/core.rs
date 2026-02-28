@@ -805,8 +805,17 @@ impl<'a> CheckerState<'a> {
             let raw_declared_type =
                 if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
                     TypeId::ANY
+                } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
+                    // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
+                    // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
+                    // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
+                    // `typeof E` and `E` are not type-identical.
+                    self.initializer_ts2403_type(var_decl.initializer, final_type)
                 } else {
-                    final_type
+                    // When the type annotation is `typeof EnumSymbol`, resolve to the enum
+                    // object type. This matches tsc where `typeof E` is the enum object
+                    // shape, ensuring `var e = E; var e: typeof E;` is compatible.
+                    self.annotation_ts2403_type(var_decl.type_annotation, final_type)
                 };
 
             // Variables without an initializer/annotation can still get a contextual type in some
@@ -1134,9 +1143,9 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let type_to_store = if let Some(prior) = prior_type_found {
-                        self.refine_var_decl_type(prior, final_type)
+                        self.refine_var_decl_type(prior, raw_declared_type)
                     } else {
-                        final_type
+                        raw_declared_type
                     };
                     // Don't store bare declarations (`var x;`) unless a prior type
                     // was found from lib or earlier local declarations — bare vars
@@ -1336,6 +1345,83 @@ impl<'a> CheckerState<'a> {
                 &[var_name, var_name],
             );
         }
+    }
+
+    /// For TS2403 redeclaration checking, compute the "declared type" of an
+    /// initializer expression. When the initializer is a bare enum identifier
+    /// (e.g., `var x = E`), tsc treats the declared type as `typeof E` (the
+    /// enum object type), not the widened enum union `E`. For all other
+    /// initializers, returns `fallback_type` unchanged.
+    fn initializer_ts2403_type(&mut self, init_idx: NodeIndex, fallback_type: TypeId) -> TypeId {
+        let Some(init_node) = self.ctx.arena.get(init_idx) else {
+            return fallback_type;
+        };
+
+        // Only applies to bare identifier initializers (not property access, etc.)
+        if init_node.kind != SyntaxKind::Identifier as u16 {
+            return fallback_type;
+        }
+
+        // Check if the identifier resolves to an enum symbol
+        if let Some(init_sym_id) = self.resolve_identifier_symbol(init_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(init_sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+        {
+            // Return the enum object type ("typeof E") instead of the enum union type
+            if let Some(enum_obj) = self.enum_object_type(init_sym_id) {
+                return enum_obj;
+            }
+        }
+
+        fallback_type
+    }
+
+    /// For TS2403, when the type annotation is `typeof EnumSymbol`, resolve
+    /// to the enum object type. This matches tsc where `typeof E` produces
+    /// the enum object shape `{ readonly A: E.A; ... }`. For all other
+    /// annotations, returns `fallback_type` unchanged.
+    fn annotation_ts2403_type(
+        &mut self,
+        annotation_idx: NodeIndex,
+        fallback_type: TypeId,
+    ) -> TypeId {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(ann_node) = self.ctx.arena.get(annotation_idx) else {
+            return fallback_type;
+        };
+
+        // Check if the annotation is a TypeQuery node (typeof X)
+        if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
+            return fallback_type;
+        }
+
+        let Some(type_query) = self.ctx.arena.get_type_query(ann_node) else {
+            return fallback_type;
+        };
+
+        // The expr_name of the TypeQuery is the identifier being referenced
+        let expr_idx = type_query.expr_name;
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return fallback_type;
+        };
+
+        // Must be a simple identifier (not qualified name)
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return fallback_type;
+        }
+
+        // Check if it resolves to an enum symbol
+        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                    && let Some(enum_obj) = self.enum_object_type(sym_id) {
+                        return enum_obj;
+                    }
+
+        fallback_type
     }
 
     // Destructuring pattern methods (report_empty_array_destructuring_bounds,
@@ -1764,5 +1850,22 @@ var a1 = M.a;
             0,
             "No TS2403 for module property access: {ts2403:?}"
         );
+    }
+
+    #[test]
+    fn enum_var_redecl_emits_ts2403() {
+        // From duplicateLocalVariable4.ts: var x = E; var x = E.a;
+        // First x is `typeof E`, second x is `E` — types differ, should emit TS2403.
+        let source = r#"
+enum E { a }
+var x = E;
+var x = E.a;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2403.len(), 1, "Expected 1 TS2403 for enum var redecl");
     }
 }
