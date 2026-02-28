@@ -1173,3 +1173,153 @@ var obj = {{ y: 10 }};
         "Should not emit TS2322 for just-missing properties (use TS2741), got: {diags:?}"
     );
 }
+
+// =============================================================================
+// Spread with missing required props: TS2741 only, no TS2322
+// =============================================================================
+
+#[test]
+fn test_spread_with_missing_props_no_ts2322() {
+    // When a spread provides some props but not all required ones,
+    // tsc emits only TS2741 (missing property) not TS2322 (type mismatch).
+    // Even if the spread has type-incompatible properties, the TS2741 is primary.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface SourceProps {{
+    property1: string;
+    property2: number;
+}}
+function Source(props: SourceProps) {{
+    return <Target {{...props}} />;
+}}
+interface TargetProps {{
+    property1: string;
+    missingProp: string;
+    property2: boolean;
+}}
+function Target(props: TargetProps) {{
+    return <div>Hello</div>;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // Should have TS2741 for missing 'missingProp'
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Expected TS2741 for missing 'missingProp', got: {diags:?}"
+    );
+    // Should NOT have TS2322 — tsc only reports TS2741 when there are missing required props
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 when TS2741 fires for missing required props, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_spread_compatible_no_errors() {
+    // When a spread provides all required props with correct types, no errors.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    name: string;
+    age: number;
+}}
+function Greet(props: Props) {{
+    return <div>Hello</div>;
+}}
+const p: Props = {{ name: "hi", age: 42 }};
+let x = <Greet {{...p}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should not emit TS2322 for compatible spread, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Should not emit TS2741 for compatible spread, got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// IntrinsicAttributes required property checking
+// =============================================================================
+
+/// JSX namespace preamble with required `key` in `IntrinsicAttributes`.
+/// This is unusual (React makes key optional) but tests like
+/// tsxIntrinsicAttributeErrors.tsx deliberately test this.
+const JSX_PREAMBLE_REQUIRED_KEY: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface IntrinsicAttributes {
+        key: string | number
+    }
+    interface ElementClass {
+        render: any;
+    }
+}
+"#;
+
+#[test]
+fn test_required_intrinsic_attribute_missing_emits_ts2741() {
+    // When IntrinsicAttributes has a required property (key without ?),
+    // tsc emits TS2741 if it's not provided.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE_REQUIRED_KEY}
+interface I {{
+    new(n: string): {{
+        x: number;
+        render(): void;
+    }}
+}}
+declare var E: I;
+<E x={{10}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Expected TS2741 for missing required 'key' from IntrinsicAttributes, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_optional_intrinsic_attribute_no_error() {
+    // Standard React pattern: IntrinsicAttributes has optional key.
+    // No error when key is not provided.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Greet(props: {{ name: string }}) {{
+    return <div>Hello</div>;
+}}
+let x = <Greet name="world" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // JSX_PREAMBLE doesn't define IntrinsicAttributes with required key,
+    // so no TS2741 for missing key
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "Should not emit TS2741 when IntrinsicAttributes has no required props, got: {diags:?}"
+    );
+}

@@ -9,15 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-// =============================================================================
-// JSX Type Checking
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // JSX Opening Element Type
-    // =========================================================================
-
     /// Get the type of a JSX opening element.
     ///
     /// Rule #36 (JSX Intrinsic Lookup): This implements the case-sensitive tag lookup:
@@ -231,6 +223,14 @@ impl<'a> CheckerState<'a> {
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
                 self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
+
+                // Even when we can't extract component props (e.g., no ElementAttributesProperty),
+                // check IntrinsicAttributes for required properties (e.g., required `key`).
+                // tsc checks IntrinsicAttributes independently of component props extraction.
+                self.check_jsx_intrinsic_attributes_only(
+                    jsx_opening.attributes,
+                    jsx_opening.tag_name,
+                );
             }
 
             // The type of a JSX component element expression is always JSX.Element
@@ -313,9 +313,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
     // JSX Namespace Type
-    // =========================================================================
 
     /// Get the global JSX namespace type.
     ///
@@ -340,9 +338,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    // =========================================================================
     // JSX Intrinsic Elements Type
-    // =========================================================================
 
     /// Get the JSX.IntrinsicElements interface type.
     ///
@@ -369,9 +365,29 @@ impl<'a> CheckerState<'a> {
         Some(self.type_reference_symbol_type(intrinsic_elements_sym_id))
     }
 
-    // =========================================================================
+    /// Get the JSX.IntrinsicAttributes type.
+    ///
+    /// This is the interface that all JSX elements must satisfy (e.g., `{ key?: string }`
+    /// in React). When this interface has required properties, tsc checks them against
+    /// provided attributes and emits TS2741 if missing.
+    fn get_intrinsic_attributes_type(&mut self) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let ia_sym_id = exports.get("IntrinsicAttributes")?;
+        let ty = self.type_reference_symbol_type(ia_sym_id);
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
+            return None;
+        }
+        Some(evaluated)
+    }
+
     // JSX Element Type
-    // =========================================================================
 
     /// Get the JSX.Element type for fragments.
     ///
@@ -399,9 +415,7 @@ impl<'a> CheckerState<'a> {
         TypeId::ANY
     }
 
-    // =========================================================================
     // JSX Component Props Extraction
-    // =========================================================================
 
     /// Extract the props type from a JSX component type.
     ///
@@ -932,9 +946,7 @@ impl<'a> CheckerState<'a> {
         Some(String::new()) // Default: empty (instance type is props)
     }
 
-    // =========================================================================
     // JSX Children Contextual Typing
-    // =========================================================================
 
     /// Extract the contextual type for JSX children from the opening element's
     /// props type. Used to provide contextual typing for children expressions
@@ -1081,9 +1093,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    // =========================================================================
     // JSX Attribute Type Checking
-    // =========================================================================
 
     /// Check JSX attributes against an already-evaluated props type.
     ///
@@ -1182,21 +1192,21 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Skip 'key' and 'ref' — these are special JSX attributes that TypeScript
-                // does not type-check against component props. 'key' is extracted by the
-                // compiler (especially in react-jsx mode) and 'ref' is managed by
-                // IntrinsicClassAttributes / React.RefObject, not by component props.
+                // Track all attributes for missing-prop checking (including key/ref).
+                // Even though key/ref are not checked against component props for TYPE
+                // compatibility (they come from IntrinsicAttributes/IntrinsicClassAttributes),
+                // they still need to be tracked as "provided" so the IntrinsicAttributes
+                // missing-required-property check knows they were given.
+                provided_attrs.push(attr_name.clone());
+
+                // Skip type-checking 'key' and 'ref' against component props.
+                // These are special JSX attributes managed by IntrinsicAttributes /
+                // IntrinsicClassAttributes, not by component props directly.
                 // Checking them against the props type produces false positives when the
-                // props type is an unevaluated application (e.g. DetailedHTMLProps<...>)
-                // that would expose them through ClassAttributes/IntrinsicAttributes.
-                // Note: the missing-required-props check already skips 'key' and 'ref'
-                // from the required-property side, so not tracking them here is consistent.
+                // props type is an unevaluated application (e.g. DetailedHTMLProps<...>).
                 if attr_name == "key" || attr_name == "ref" {
                     continue;
                 }
-
-                // Only track valid identifiers for missing-prop checking
-                provided_attrs.push(attr_name.clone());
 
                 // Track for TS2783 spread-overwrite detection
                 named_attr_nodes.insert(attr_name.clone(), attr_data.name);
@@ -1508,6 +1518,22 @@ impl<'a> CheckerState<'a> {
             // tsc anchors TS2741 (missing required property) at the tag name
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
+
+        // Check for missing required properties from JSX.IntrinsicAttributes.
+        // tsc checks provided attributes against IntrinsicAttributes separately from
+        // the component's own props type. When IntrinsicAttributes has required
+        // properties (e.g., `key: string` without `?`), tsc emits TS2741 if they're
+        // not provided.
+        if !has_excess_property_error
+            && !spread_covers_all
+            && let Some(intrinsic_attrs_type) = self.get_intrinsic_attributes_type()
+        {
+            self.check_missing_required_jsx_props(
+                intrinsic_attrs_type,
+                &provided_attrs,
+                tag_name_idx,
+            );
+        }
     }
 
     /// Check that all required properties in the props type are provided as JSX attributes.
@@ -1537,12 +1563,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Skip 'key' and 'ref' — these come from IntrinsicAttributes/
-            // IntrinsicClassAttributes, not from component props directly
-            if prop_name == "key" || prop_name == "ref" {
-                continue;
-            }
-
             if provided_attrs.iter().any(|a| a == &prop_name) {
                 continue;
             }
@@ -1564,6 +1584,55 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             );
         }
+    }
+
+    /// Check `IntrinsicAttributes` required properties when component props couldn't
+    /// be extracted (e.g., no `ElementAttributesProperty` interface).
+    ///
+    /// This runs as a fallback when `get_jsx_props_type_for_component` returns None.
+    /// It collects provided attribute names and checks `IntrinsicAttributes` for any
+    /// required properties that aren't provided.
+    fn check_jsx_intrinsic_attributes_only(
+        &mut self,
+        attributes_idx: NodeIndex,
+        tag_name_idx: NodeIndex,
+    ) {
+        let Some(intrinsic_attrs_type) = self.get_intrinsic_attributes_type() else {
+            return;
+        };
+
+        // Collect provided attribute names
+        let mut provided_attrs: Vec<String> = Vec::new();
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
+                    && let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    provided_attrs.push(ident.escaped_text.as_str().to_string());
+                }
+            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                // Spread of `any` covers all properties
+                if let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) {
+                    let spread_type = self.compute_type_of_node(spread_data.expression);
+                    if spread_type == TypeId::ANY {
+                        return; // any covers everything
+                    }
+                }
+            }
+        }
+
+        self.check_missing_required_jsx_props(intrinsic_attrs_type, &provided_attrs, tag_name_idx);
     }
 
     /// TS2322: Check that spread attribute property types are compatible with props.
@@ -1620,6 +1689,36 @@ impl<'a> CheckerState<'a> {
             );
             return;
         };
+
+        // tsc suppresses TS2322 for per-property type mismatches in spreads when
+        // the spread also has missing required properties from the target. In that case,
+        // TS2741 (missing required property) is emitted instead, and tsc doesn't pile on
+        // with TS2322 for the type mismatches. Check if any required props are missing
+        // from the spread + explicit attributes.
+        if let Some(props_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        {
+            let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
+                .properties
+                .iter()
+                .map(|p| self.ctx.types.resolve_atom(p.name))
+                .collect();
+            for req_prop in &props_shape.properties {
+                if req_prop.optional {
+                    continue;
+                }
+                let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
+                if req_name == "children" || req_name == "key" || req_name == "ref" {
+                    continue;
+                }
+                if !spread_prop_names.contains(&req_name)
+                    && !overridden_names.contains(req_name.as_str())
+                {
+                    // Missing required property → TS2741 will fire, suppress TS2322
+                    return;
+                }
+            }
+        }
 
         // Check if the mismatch is a TYPE mismatch (not just missing properties).
         // tsc only emits TS2322 for spread type mismatches, not for missing properties
@@ -1741,9 +1840,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    // =========================================================================
     // JSX Factory Check
-    // =========================================================================
 
     /// Check that the JSX factory is in scope.
     /// Emits TS2874 if the factory root identifier cannot be found.
@@ -1811,9 +1908,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    // =========================================================================
     // JSX Import Source Check (TS2875)
-    // =========================================================================
 
     /// Check that the JSX import source module can be resolved.
     /// Emits TS2875 if `<jsxImportSource>/jsx-runtime` (or `/jsx-dev-runtime`) is not found.
@@ -1869,9 +1964,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    // =========================================================================
     // JSX Fragment Factory Check
-    // =========================================================================
 
     /// Check that JSX fragments have a valid fragment factory when jsxFactory is set.
     /// Emits TS17016 if jsxFactory is explicitly set but jsxFragmentFactory is not.
