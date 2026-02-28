@@ -872,6 +872,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Advance the comment index past any comments that end before `pos`,
+    /// without emitting them. Used to skip comments that belong to a parent
+    /// context (e.g. comments between `:` and the type's opening paren).
+    pub(crate) fn skip_comments_before(&mut self, pos: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].end <= pos {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     pub(crate) fn skip_comments_in_node(&mut self, pos: u32, end: u32) {
         let ae = self.find_node_code_end(pos, end);
         while self.comment_emit_idx < self.all_comments.len() {
@@ -1632,8 +1645,8 @@ impl<'a> DeclarationEmitter<'a> {
                 // The inferred type is printed directly as a type annotation.
                 // Note: `= value` (initializer form) is only used when the AST
                 // initializer is a direct literal (handled by Path A above).
-                // When the literal type is inferred through generics or function calls,
-                // tsc uses `: type` annotation form instead.
+                // When the literal type is inferred through other expressions,
+                // tsc uses `: type` annotation form even for single literal types.
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
