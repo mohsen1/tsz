@@ -845,10 +845,16 @@ impl<'a> TypePrinter<'a> {
             params.push(param_str);
         }
 
+        // Use incremented indent for the return type so nested objects/callables
+        // are properly indented relative to the signature line.
+        let mut nested = self.clone();
+        if let Some(indent) = nested.indent_level {
+            nested.indent_level = Some(indent + 1);
+        }
         let return_str = if let Some(ref pred) = sig.type_predicate {
-            self.print_type_predicate(pred)
+            nested.print_type_predicate(pred)
         } else {
-            self.print_type(sig.return_type)
+            nested.print_type(sig.return_type)
         };
         format!(
             "{}{}({}): {}",
