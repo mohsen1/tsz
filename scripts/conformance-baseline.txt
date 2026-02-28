@@ -28,7 +28,6 @@ FAIL TypeScript/tests/cases/compiler/arrayToLocaleStringES2020.ts
 FAIL TypeScript/tests/cases/compiler/arrowFunctionsMissingTokens.ts
 FAIL TypeScript/tests/cases/compiler/assertInWrapSomeTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/assertionFunctionWildcardImport1.ts
-FAIL TypeScript/tests/cases/compiler/assertionFunctionWildcardImport2.ts
 FAIL TypeScript/tests/cases/compiler/assigningFromObjectToAnythingElse.ts
 FAIL TypeScript/tests/cases/compiler/assignmentCompat1.ts
 FAIL TypeScript/tests/cases/compiler/assignmentCompatability46.ts
@@ -512,7 +511,6 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -872,7 +870,6 @@ FAIL TypeScript/tests/cases/compiler/mappedTypeNotMistakenlyHomomorphic.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypePartialConstraints.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeRecursiveInference2.ts
-FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstraintInferences.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeUnionConstrainTupleTreatedAsArrayLike.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty.ts
 FAIL TypeScript/tests/cases/compiler/mappedTypeWithCombinedTypeMappers.ts
@@ -3147,6 +3144,7 @@ PASS TypeScript/tests/cases/compiler/asiInES6Classes.ts
 PASS TypeScript/tests/cases/compiler/asiPublicPrivateProtected.ts
 PASS TypeScript/tests/cases/compiler/asiReturn.ts
 PASS TypeScript/tests/cases/compiler/assertionFunctionsCanNarrowByDiscriminant.ts
+PASS TypeScript/tests/cases/compiler/assertionFunctionWildcardImport2.ts
 PASS TypeScript/tests/cases/compiler/assign1.ts
 PASS TypeScript/tests/cases/compiler/assigningFunctionToTupleIssuesError.ts
 PASS TypeScript/tests/cases/compiler/assignLambdaToNominalSubtypeOfFunction.ts
@@ -5266,6 +5264,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6070,6 +6069,7 @@ PASS TypeScript/tests/cases/compiler/mappedTypeOverArrayWithBareAnyRestCanBeUsed
 PASS TypeScript/tests/cases/compiler/mappedTypeParameterConstraint.ts
 PASS TypeScript/tests/cases/compiler/mappedTypePartialNonHomomorphicBaseConstraint.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeTupleConstraintAssignability.ts
+PASS TypeScript/tests/cases/compiler/mappedTypeUnionConstraintInferences.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithAsClauseAndLateBoundProperty2.ts
 PASS TypeScript/tests/cases/compiler/mappedTypeWithNameClauseAppliedToArrayType.ts
 PASS TypeScript/tests/cases/compiler/matchingOfObjectLiteralConstraints.ts
