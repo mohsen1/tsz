@@ -101,6 +101,15 @@ impl<'a> CheckerState<'a> {
         // signatures has the same TypeId as the T registered in TypeEnvironment.
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
+        // Eagerly resolve lib types referenced by Array's method signatures.
+        // When Array<T> is lowered, type references like ConcatArray<T> become
+        // Lazy(DefId). Without registering these types' bodies in TypeEnvironment,
+        // the solver's resolve_lazy falls through to a SymbolId-based fallback
+        // that can produce wrong types due to DefId/SymbolId value collisions.
+        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
+            let _ = self.resolve_lib_type_by_name(array_dep);
+        }
+
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.
         // Unreferenced symbols are still resolved lazily through normal lookup paths.
@@ -283,7 +292,14 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Prime boxed and Array base types before checking files.
+    ///
+    /// Also calls `register_function_def_ids_early()` first, matching the
+    /// file checker's DefId allocation order. Without this, the prime checker
+    /// and file checkers would assign different `DefIds` to lib types like
+    /// `ConcatArray`, causing Lazy(DefId) references in the interned Array body
+    /// to resolve to wrong types.
     pub fn prime_boxed_types(&mut self) {
+        self.register_function_def_ids_early();
         self.register_boxed_types();
     }
 

@@ -441,12 +441,24 @@ impl<'a> CheckerState<'a> {
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Record type parameters for generic interfaces
+                            let file_sym_id =
+                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                            let def_id = get_cached_def_id(file_sym_id);
                             if !params.is_empty() {
                                 // Cache type params for Application expansion
-                                let file_sym_id =
-                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                                let def_id = get_cached_def_id(file_sym_id);
-                                self.ctx.insert_def_type_params(def_id, params);
+                                self.ctx.insert_def_type_params(def_id, params.clone());
+                            }
+
+                            // Register the interface body in TypeEnvironment so that
+                            // resolve_lazy(def_id) can find it. Without this, Lazy(DefId)
+                            // references to lib interfaces (e.g., ConcatArray in Array.concat)
+                            // fall through to a SymbolId-based fallback that produces wrong types.
+                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                if params.is_empty() {
+                                    env.insert_def(def_id, ty);
+                                } else {
+                                    env.insert_def_with_params(def_id, ty, params);
+                                }
                             }
 
                             lib_types.push(ty);

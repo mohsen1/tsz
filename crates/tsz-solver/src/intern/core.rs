@@ -19,7 +19,7 @@ use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    Arc, OnceLock,
+    Arc, OnceLock, RwLock,
     atomic::{AtomicU32, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
@@ -263,9 +263,14 @@ pub struct TypeInterner {
     applications: ConcurrentValueInterner<TypeApplication>,
     /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
     identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
-    /// The global Array base type (e.g., Array<T> from lib.d.ts)
-    array_base_type: OnceLock<TypeId>,
-    /// Type parameters for the Array base type
+    /// The global Array base type (e.g., Array<T> from lib.d.ts).
+    /// Uses `RwLock` instead of `OnceLock` so file checkers can overwrite the
+    /// prime checker's value (which contains stale `DefIds` from a temporary
+    /// `DefinitionStore`).
+    array_base_type: RwLock<Option<TypeId>>,
+    /// Type parameters for the Array base type.
+    /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
+    /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
     array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
     /// Boxed interface types for primitives (e.g., String interface for `string`).
     /// Registered from lib.d.ts during primordial type setup.
@@ -307,7 +312,7 @@ impl TypeInterner {
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
-            array_base_type: OnceLock::new(),
+            array_base_type: RwLock::new(None),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -316,17 +321,19 @@ impl TypeInterner {
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
     ///
-    /// This should be called once during primordial type setup when lib.d.ts is processed.
-    /// Once set, the value cannot be changed (`OnceLock` enforces this).
+    /// The `TypeId` uses `RwLock` so each file checker can overwrite the prime
+    /// checker's value with one containing correct `DefIds` for its own
+    /// `DefinitionStore`. The params use `OnceLock` since they don't contain
+    /// `DefIds` and are stable across checkers.
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
-        let _ = self.array_base_type.set(type_id);
+        *self.array_base_type.write().unwrap() = Some(type_id);
         let _ = self.array_base_type_params.set(params);
     }
 
     /// Get the global Array base type, if it has been set.
     #[inline]
     pub fn get_array_base_type(&self) -> Option<TypeId> {
-        self.array_base_type.get().copied()
+        *self.array_base_type.read().unwrap()
     }
 
     /// Get the type parameters for the global Array base type, if it has been set.
