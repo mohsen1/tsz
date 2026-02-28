@@ -654,9 +654,7 @@ impl<'a> CheckerState<'a> {
                 let type_str = self.format_type(object_type);
                 self.error_at_node(
                     access.name_or_argument,
-                    &format!(
-                        "Property '{index}' does not exist on type '{type_str}'.",
-                    ),
+                    &format!("Property '{index}' does not exist on type '{type_str}'.",),
                     crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                 );
             }
