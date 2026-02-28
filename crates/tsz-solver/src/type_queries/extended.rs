@@ -624,6 +624,9 @@ pub enum NamespaceMemberKind {
     Callable(crate::types::CallableShapeId),
     // TSZ-4: Added Enum variant to handle enum member property access (E.A)
     Enum(DefId),
+    /// `TypeQuery` (`typeof M`) — the checker should resolve the `SymbolRef` to
+    /// the underlying symbol type and re-classify.
+    TypeQuery(crate::types::SymbolRef),
     Other,
 }
 
@@ -635,6 +638,7 @@ pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> Name
         Some(TypeData::ModuleNamespace(sym_ref)) => NamespaceMemberKind::ModuleNamespace(sym_ref),
         // TSZ-4: Handle TypeData::Enum for enum member property access (E.A)
         Some(TypeData::Enum(def_id, _)) => NamespaceMemberKind::Enum(def_id),
+        Some(TypeData::TypeQuery(sym_ref)) => NamespaceMemberKind::TypeQuery(sym_ref),
         _ => NamespaceMemberKind::Other,
     }
 }

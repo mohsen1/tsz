@@ -289,6 +289,40 @@ impl<'a> CheckerState<'a> {
                 false
             }
 
+            // TypeQuery (typeof M): resolve to the underlying symbol type and re-check
+            NamespaceMemberKind::TypeQuery(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                if symbol.flags & symbol_flags::MODULE == 0 {
+                    return false;
+                }
+                let member_id = symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(property_name))
+                    });
+                let Some(member_id) = member_id else {
+                    return false;
+                };
+                let Some(member_symbol) = self.ctx.binder.get_symbol(member_id) else {
+                    return false;
+                };
+                if self.symbol_member_is_type_only(member_id, Some(property_name)) {
+                    return true;
+                }
+                let has_value =
+                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+                has_type && !has_value
+            }
+
             NamespaceMemberKind::Other => false,
         }
     }
@@ -482,6 +516,14 @@ impl<'a> CheckerState<'a> {
                 (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
             }
             NamespaceMemberKind::Enum(_) => true,
+            NamespaceMemberKind::TypeQuery(sym_ref) => {
+                // TypeQuery (typeof M): check if the underlying symbol is a namespace
+                let sym_id = SymbolId(sym_ref.0);
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+            }
             NamespaceMemberKind::Callable(_) | NamespaceMemberKind::Other => false,
         }
     }
