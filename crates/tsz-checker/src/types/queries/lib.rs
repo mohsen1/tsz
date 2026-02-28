@@ -895,7 +895,23 @@ impl<'a> CheckerState<'a> {
                 self.enum_member_type_for_name(sym_id, property_name)
             }
 
-            NamespaceMemberKind::Other => None,
+            NamespaceMemberKind::Other => {
+                // Handle intersection types: when a module/namespace value is an
+                // intersection (e.g., `export = __React` produces an intersection of
+                // the namespace's type-side and value-side), try each member.
+                if let Some(members) =
+                    tsz_solver::type_queries::get_intersection_members(self.ctx.types, object_type)
+                {
+                    for member in members {
+                        if let Some(result) =
+                            self.resolve_namespace_value_member(member, property_name)
+                        {
+                            return Some(result);
+                        }
+                    }
+                }
+                None
+            }
         }
     }
 

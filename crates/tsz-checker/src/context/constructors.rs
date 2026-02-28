@@ -479,6 +479,12 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a new `CheckerContext` with a persistent cache.
     /// This allows reusing type checking results from previous queries.
+    ///
+    /// NOTE: `cache.node_types` is intentionally dropped here. Node indices are
+    /// per-arena (each file has its own `NodeArena` starting from 0), so carrying
+    /// node type entries across files would cause index collisions — e.g., node 12
+    /// in `react.d.ts` would shadow node 12 in the user's file, corrupting type
+    /// resolution for heritage clauses and property access expressions.
     pub fn with_cache(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -506,7 +512,9 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
-            node_types: cache.node_types,
+            // node_types is per-arena (keyed by raw node index u32), so it must NOT
+            // be carried across files — indices from file A collide with file B.
+            node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
@@ -653,7 +661,9 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
             lib_type_resolution_cache: FxHashMap::default(),
-            node_types: cache.node_types,
+            // node_types is per-arena (keyed by raw node index u32), so it must NOT
+            // be carried across files — indices from file A collide with file B.
+            node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
