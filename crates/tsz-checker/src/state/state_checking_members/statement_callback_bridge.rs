@@ -747,22 +747,56 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // TS1212: Check type alias name for strict mode reserved words
                 self.check_strict_mode_reserved_name_at(type_alias.name, type_alias_idx);
 
-                // TS2457: Type alias name cannot be 'undefined'
+                // TS2457: Type alias name cannot be reserved names
                 if let Some(name_node) = self.ctx.arena.get(type_alias.name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text == "undefined"
+                    && matches!(ident.escaped_text.as_str(), "undefined" | "void")
                 {
                     use crate::diagnostics::diagnostic_codes;
+                    let msg = format!("Type alias name cannot be '{}'.", ident.escaped_text);
                     self.error_at_node(
                         type_alias.name,
-                        "Type alias name cannot be 'undefined'.",
+                        &msg,
                         diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE,
                     );
                 }
+                // TS2795: Check for `intrinsic` keyword in type alias body.
+                // In TSC, `intrinsic` is parsed as a keyword (not a type reference) when it
+                // appears as the direct body of a type alias. Only the 4 built-in string
+                // mapping types (Uppercase, Lowercase, Capitalize, Uncapitalize) may use it.
+                // For non-built-in aliases, emit TS2795 and skip name resolution (which would
+                // otherwise emit TS2304 since `intrinsic` isn't a real type name).
+                let body_is_intrinsic_keyword =
+                    self.is_bare_intrinsic_type_ref(type_alias.type_node);
+                if body_is_intrinsic_keyword {
+                    // Check if the alias name is one of the 4 built-in string intrinsics
+                    let alias_name = self
+                        .ctx
+                        .arena
+                        .get(type_alias.name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str());
+                    let is_builtin = matches!(
+                        alias_name,
+                        Some("Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize")
+                    );
+                    if !is_builtin {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            type_alias.type_node,
+                            "The 'intrinsic' keyword can only be used to declare compiler provided intrinsic types.",
+                            diagnostic_codes::THE_INTRINSIC_KEYWORD_CAN_ONLY_BE_USED_TO_DECLARE_COMPILER_PROVIDED_INTRINSIC_TY,
+                        );
+                    }
+                }
+
                 let (_params, updates) = self.push_type_parameters(&type_alias.type_parameters);
                 // Check for unused type parameters (TS6133)
                 self.check_unused_type_params(&type_alias.type_parameters, type_alias_idx);
-                self.check_type_for_missing_names(type_alias.type_node);
+                // Skip name resolution on `intrinsic` body to avoid false TS2304
+                if !body_is_intrinsic_keyword {
+                    self.check_type_for_missing_names(type_alias.type_node);
+                }
                 self.check_type_for_parameter_properties(type_alias.type_node);
                 self.pop_type_parameters(updates);
             }

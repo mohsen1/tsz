@@ -1340,4 +1340,59 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// Check if a node is a bare `intrinsic` type reference (no type args, no qualification,
+    /// not inside parentheses).
+    ///
+    /// Returns true when `node_idx` points to a `TYPE_REFERENCE` whose `type_name` is a simple
+    /// `IDENTIFIER` with text `"intrinsic"` and no type arguments.
+    ///
+    /// TSC treats `intrinsic` as a keyword only when it appears directly as the type alias body
+    /// (e.g., `type Uppercase<S extends string> = intrinsic`). When parenthesized like
+    /// `type TE1 = (intrinsic)`, TSC treats it as a regular identifier reference (TS2304).
+    /// Since our parser doesn't create a `PARENTHESIZED_TYPE` wrapper node, we detect
+    /// parenthesization by checking if the character before the type reference in the source
+    /// is `(`.
+    pub(crate) fn is_bare_intrinsic_type_ref(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        // Must have no type arguments
+        if type_ref.type_arguments.is_some() {
+            return false;
+        }
+        // type_name must be a simple IDENTIFIER (not QUALIFIED_NAME)
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if ident.escaped_text != "intrinsic" {
+            return false;
+        }
+        // Check that it's not parenthesized: look at the source text before the
+        // type reference's position. If the nearest non-whitespace character is `(`,
+        // the reference is parenthesized and should NOT be treated as the keyword.
+        if let Some(sf) = self.ctx.arena.source_files.first() {
+            let pos = node.pos as usize;
+            if pos > 0 {
+                let before = &sf.text[..pos];
+                let last_non_ws = before
+                    .bytes()
+                    .rev()
+                    .find(|&b| b != b' ' && b != b'\t' && b != b'\n' && b != b'\r');
+                if last_non_ws == Some(b'(') {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }

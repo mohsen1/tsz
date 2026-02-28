@@ -1,77 +1,60 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9652/12570 (76.8%) — full suite, error-code level
+**Current score**: ~9651/12570 (76.8%) — full suite, error-code level
 **Fingerprint score**: ~7139/12570 (56.8%) — with message/location matching
 
 ---
 
-## Session 2026-02-28j — jsx: JSX children contextual typing for callback parameters
+## Session 2026-02-28i — jsdoc: JSDoc @type on class properties + function declaration parameter typing
 
-### Fixed: JSX children callback parameters now get contextual types — Checker (jsx_checker.rs, dispatch.rs)
+### Fixed: JSDoc @type annotations on class properties checked against initializers — Checker (class_type/core.rs, ambient_signature_checks.rs)
 
-**Root cause**: JSX children expressions (e.g., `<Comp>{(arg) => ...}</Comp>`) were computed via `get_type_of_node(child)` in `dispatch.rs` WITHOUT any contextual type being set. The `children` prop type from the component's props was never extracted or used as contextual type. This caused false TS7006 ("Parameter 'x' implicitly has an 'any' type") for callback children.
+**Root cause**: When a JS class property had `/** @type {boolean} */ foo = 3`, the type computation in `build_instance_type_from_members` only checked for TS type annotations (`prop.type_annotation`). If absent, it fell through to initializer inference, completely ignoring JSDoc @type. Similarly, the assignability check in `check_property_declaration` only ran when `prop.type_annotation.is_some()`.
 
-**Fix**: Two new methods + dispatch wiring:
+**Fix**: Two changes:
+1. **`build_instance_type_from_members` (class_type/core.rs)** — Added `else if` branch after TS annotation check to call `jsdoc_type_annotation_for_node(member_idx)`. If a JSDoc @type exists, it's used as the declared type instead of falling back to initializer inference.
+2. **`check_property_declaration` (ambient_signature_checks.rs)** — Added new branch for JSDoc @type with initializer: sets contextual type, re-checks initializer, runs assignability check. Error reported on `prop.name` (not initializer) to match TSC's fingerprint.
 
-1. **`get_jsx_children_contextual_type(opening_element_idx)`** — Resolves the component/intrinsic element's props type and gets the `children` property. Handles both SFC and class component elements, plus intrinsic elements.
+### Fixed: Closure Compiler function() syntax parsing in JSDoc @type — Checker (jsdoc.rs)
 
-2. **`get_jsx_props_type_for_children_contextual(component_type)`** — Permissive variant of `get_jsx_props_type_for_component` that allows union types (needed for discriminated union props like `{children: (arg: string) => void} | {children: (arg: number) => void}`). Still skips generic SFCs.
+**Root cause**: `jsdoc_type_from_expression` couldn't parse `function(string): void` — the Closure Compiler function type syntax used in many JS codebases. Only arrow function types `(s: string) => void` were handled.
 
-3. **`dispatch.rs` JSX_ELEMENT handler** — Before iterating children, calls `get_jsx_children_contextual_type()` and sets `ctx.contextual_type` to the result. Restores previous contextual type after processing all children.
+**Fix**: Added balanced-parenthesis parser in `jsdoc_type_from_expression` that recognizes `function(params): ReturnType`, splits comma-separated parameter types, resolves each to a TypeId, builds a `FunctionShape`, and interns it as a callable type.
 
-**Files**:
-- `crates/tsz-checker/src/checkers/jsx_checker.rs` — `get_jsx_children_contextual_type()`, `get_jsx_props_type_for_children_contextual()`
-- `crates/tsz-checker/src/dispatch.rs` — JSX_ELEMENT handler wiring
+### Fixed: JSDoc @type function types provide parameter types for function declarations — Checker (function_type.rs, core.rs)
 
-### Test impact: +1 confirmed (checkJsxChildrenProperty16), reduced diff on 2-3 others
-- `checkJsxChildrenProperty16.tsx` FAIL→PASS (discriminated union children callback)
-- `checkJsxChildrenProperty3.tsx` diff reduced: x=[TS2339, TS7006] → x=[TS2339] (TS7006 eliminated)
-- `checkJsxChildrenProperty4.tsx` diff reduced: x=[TS2339, TS7006] → x=[TS2339] (TS7006 eliminated)
+**Root cause**: For `/** @type {(s: string) => void} */ function g(s) { ... }`, the contextual type from @type was never set on function declarations. The `get_type_of_function` path only checked `ctx.contextual_type` (set by variable initializer context) and `@param` tags, but function declarations don't go through variable initialization so `ctx.contextual_type` was `None`.
 
-### Unit tests added: 4 in `jsx_component_attribute_tests.rs`
-- `test_jsx_children_callback_gets_contextual_type`
-- `test_jsx_children_callback_union_props_gets_contextual_type`
-- `test_jsx_children_no_contextual_type_for_generic_sfc`
-- `test_jsx_children_intrinsic_element_no_crash`
-
-### Remaining JSX children gaps:
-1. **Generic SFC children**: `<Comp<T> prop={...}>{(arg) => ...}</Comp>` — requires JSX generic inference to resolve T before extracting children type
-2. **Children prop validation**: `children` is still skipped in missing-required-property check (jsx_checker.rs line ~1306). Need to synthesize children type from element body.
-3. **Multiple children → tuple type**: tsc synthesizes a tuple type for multiple children. We don't yet.
-4. **TS2746**: "expects a single child" diagnostic for when children prop expects one child but multiple are provided
-5. **TS2710**: "children specified twice" diagnostic for when explicit `children` attr and JSX body children coexist
-
----
-
-## Session 2026-02-28i — types/mapped: preserve literal types during generic call inference
-
-### Fixed: Array literal element types widened to primitives during generic call inference — Checker (call.rs, helpers.rs)
-
-**Root cause**: When an array literal like `['foo', 'bar']` was passed as an argument to a generic function (e.g., `getProps<T, K extends keyof T>(obj: T, list: K[])`), the array's element types were widened by `compute_best_common_type` (which calls `widen_literals`) BEFORE the solver saw them. This meant `K` was inferred as `string` instead of `"foo" | "bar"`. tsc preserves literal types during generic inference and only widens at assignment sites.
-
-**Fix**: Two-part change:
-1. **`call.rs`**: Set `preserve_literal_types = true` before collecting argument types for generic calls, restoring it afterward. This tells the array literal type computation to skip widening.
-2. **`helpers.rs`**: In `get_type_of_array_literal`, when `preserve_literal_types` is true, compute the union of element types directly instead of going through BCT's `widen_literals`. This preserves `"foo" | "bar"` instead of widening to `string`.
+**Fix**: Two changes:
+1. **`get_type_of_function` (function_type.rs)** — For JS file function declarations, if no contextual type is set, looks up JSDoc @type annotation and uses it as `ContextualTypeContext` for parameter type extraction.
+2. **`cache_parameter_types` (core.rs)** — Added fallback: when no `@param` tag is found for a parameter, walks up to parent function declaration's JSDoc @type, creates a `ContextualTypeContext`, and extracts the parameter type. This prevents the early `ANY` caching from overriding the later contextual type.
 
 **Files**:
-- `crates/tsz-checker/src/types/computation/call.rs` — set preserve_literal_types for generic calls
-- `crates/tsz-checker/src/types/computation/helpers.rs` — skip BCT widening when preserving literals
+- `crates/tsz-checker/src/types/class_type/core.rs` — JSDoc @type in build_instance_type_from_members
+- `crates/tsz-checker/src/state/state_checking_members/ambient_signature_checks.rs` — JSDoc @type initializer assignability
+- `crates/tsz-checker/src/types/utilities/jsdoc.rs` — Closure Compiler function() syntax parsing
+- `crates/tsz-checker/src/types/function_type.rs` — JSDoc @type contextual typing for function decls
+- `crates/tsz-checker/src/types/utilities/core.rs` — JSDoc @type in cache_parameter_types
 
-### Test impact: +1 net (9650→9651)
+### Test impact: +4 net from our fix (9644→9648 before rebase, 9651 after rebase with other sessions)
+- `jsdocPrivateName1` — now PASS (TS2322 on `#foo = 3` with `@type {boolean}`)
+- `jsdocTypeTagParameterType` — now PASS (function() syntax + function decl @type param typing)
+- `genericCallInferenceConditionalType1` — bonus PASS (improved contextual typing)
+- `intersectionTypeInference3` — bonus PASS (improved contextual typing)
 
-### Unit test added: `test_generic_call_preserves_array_literal_types` in `generic_tests.rs`
+### Unit tests added: 4 new tests in `jsdoc_type_tag_tests.rs`
+- `test_jsdoc_type_on_class_field_initializer_mismatch` — TS2322 for number→boolean
+- `test_jsdoc_type_on_class_field_compatible_initializer` — no error for string→string
+- `test_jsdoc_function_closure_syntax_contextual_typing` — function(string): void syntax
+- `test_jsdoc_type_on_function_declaration_provides_param_types` — (s: string) => void on fn decl
 
-### Remaining gaps in isomorphicMappedTypeInference (4 false positives):
-1. **Lines 33, 108 (TS7053)**: `result[k] = unbox(obj[k])` in `unboxify<T extends object>` — string indexing the type parameter `T` via `for (let k in obj)`. The `for-in` key type is `string` and we reject `T[string]` when `T extends object`. tsc allows this because `for-in` keys are implicitly valid keys of the iterated object.
-2. **Lines 90-91 (TS2322)**: `makeRecord<T, K extends string>(obj: { [P in K]: T })` — T is correctly inferred as the union of property values, but the mapped type `{ [P in K]: T }` after instantiation is not properly evaluated to its object form during the final argument check. The mapped type stays in `Mapped(...)` form and the subtype checker can't compare it with the concrete argument object. **Root cause**: `evaluate_type_with_env` either fails to evaluate the instantiated mapped type or the result is not cached/used properly in the assignability path.
-
-### Remaining gaps in types/mapped area (11 failing):
-1. **mappedTypeConstraints2** (5 missing TS2322): Indexed access on mapped types with key remapping (`as` clauses) — solver doesn't recognize that remapped keys lose their original type relationship. **SOLVER level**.
-2. **mappedTypeErrors/mappedTypeErrors2** (missing TS2536, TS2313, TS2322): Indexed access validation on mapped types with generic type parameters — solver-level gap in `Type 'K' cannot be used to index type 'T1<K>'` detection.
-3. **recursiveMappedTypes** (missing TS2313, TS2456, TS2502, TS2589, TS2615): Recursive/circular mapped type detection — solver needs to detect infinite recursion in mapped type evaluation and emit appropriate errors.
-4. **mappedTypeProperties** (TS5107 + parser errors): Deprecated compiler option warnings + parser-level issues.
-5. **mappedTypeAsClauses, mappedTypeInferenceErrors, mappedTypeWithAny, mappedTypes6**: Fingerprint-level only (error codes match, but line/message mismatches).
+### Remaining gaps in jsdoc area (~96 failing):
+1. **@type on variables** (TS2322): `Array`, `Object`, `Promise` without type params
+2. **@satisfies** (TS7006): contextual typing not implemented
+3. **@typedef/@callback**: complex type definition tags not fully supported
+4. **TS2304/TS2339**: missing type name resolution and property access
+5. **TS1005/TS1003**: JSDoc parsing edge cases
 
 ---
 
