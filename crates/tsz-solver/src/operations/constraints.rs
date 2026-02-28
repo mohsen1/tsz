@@ -1538,7 +1538,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Erase a signature's own type parameters by substituting defaults (or constraints, or unknown).
-    /// Returns a new CallSignature with no type_params and all types instantiated.
+    /// Returns a new `CallSignature` with no `type_params` and all types instantiated.
     /// This is used when the source signature is generic but the target is not --
     /// tsc instantiates the source's type params with their defaults before inferring.
     fn erase_signature_type_params(&self, sig: &CallSignature) -> CallSignature {
