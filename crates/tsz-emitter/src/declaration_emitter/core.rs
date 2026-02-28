@@ -1922,8 +1922,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(decl_list) = self.arena.get_variable(decl_list_node)
             {
                 // Determine let/const/var
+                // `using` and `await using` declarations emit as `const` in .d.ts
                 let flags = decl_list_node.flags as u32;
-                let keyword = if flags & tsz_parser::parser::node_flags::CONST != 0 {
+                // USING(4) and AWAIT_USING(6) both have the USING bit set
+                let keyword = if flags
+                    & (tsz_parser::parser::node_flags::USING
+                        | tsz_parser::parser::node_flags::CONST)
+                    != 0
+                {
                     "const"
                 } else if flags & tsz_parser::parser::node_flags::LET != 0 {
                     "let"
