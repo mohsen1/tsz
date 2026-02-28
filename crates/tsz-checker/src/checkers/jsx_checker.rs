@@ -186,7 +186,6 @@ impl<'a> CheckerState<'a> {
             // Even when IntrinsicElements is missing, evaluate attribute expressions
             // to trigger definite-assignment checks (TS2454) and other diagnostics.
             // tsc evaluates these expressions regardless of JSX infrastructure availability.
-<<<<<<< Updated upstream
             if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
                 && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
             {
@@ -207,9 +206,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-=======
-            self.evaluate_jsx_attribute_expressions(jsx_opening.attributes);
->>>>>>> Stashed changes
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -314,38 +310,6 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
                 &["IntrinsicElements"],
             );
-        }
-    }
-
-    /// Evaluate JSX attribute expressions to trigger side-effect diagnostics
-    /// (e.g., TS2454 definite assignment) without checking against a props type.
-    ///
-    /// Called when JSX infrastructure (IntrinsicElements) is missing but we still
-    /// need to check the expressions used in attributes and spreads.
-    fn evaluate_jsx_attribute_expressions(&mut self, attributes_idx: NodeIndex) {
-        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
-            return;
-        };
-        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
-            return;
-        };
-        for &attr_idx in &attrs.properties.nodes {
-            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
-                continue;
-            };
-            if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
-                    continue;
-                };
-                self.compute_type_of_node(spread_data.expression);
-            } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
-                    continue;
-                };
-                if let Some(init) = attr_data.initializer {
-                    self.compute_type_of_node(init);
-                }
-            }
         }
     }
 
