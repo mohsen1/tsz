@@ -662,6 +662,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        // Save position before JSDoc comments so we can undo them if the
+        // declaration turns out to be invisible (non-exported in namespace, etc.)
+        let before_jsdoc_len = self.writer.len();
+        let saved_comment_idx = self.comment_emit_idx;
         self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
@@ -713,6 +717,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         let did_emit = self.writer.len() != before_len;
         if !did_emit {
+            // The handler didn't emit anything (e.g., non-exported declaration in namespace).
+            // Undo the speculatively emitted JSDoc comments and skip all comments in this
+            // statement's range so they don't leak to the next declaration.
+            self.writer.truncate(before_jsdoc_len);
+            self.comment_emit_idx = saved_comment_idx;
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             self.pending_source_pos = None;
         } else {
             // Track whether we emitted a scope marker or a non-exported declaration.
