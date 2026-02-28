@@ -877,6 +877,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
+        if self.remove_comments {
+            return;
+        }
         let Some(ref text) = self.source_file_text else {
             return;
         };
@@ -956,6 +959,9 @@ impl<'a> DeclarationEmitter<'a> {
 
     #[allow(dead_code)]
     pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
         let Some(ref text) = self.source_file_text else {
             return;
         };

@@ -1152,6 +1152,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
+                } else if param.dot_dot_dot_token {
+                    // Rest parameters without explicit type → any[]
+                    self.write(": any[]");
                 }
             }
         }
