@@ -334,10 +334,16 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Mapped type
+            // Mapped type - tsc emits multi-line:
+            //   {
+            //       [P in keyof T]: Type;
+            //   }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
-                    self.write("{ ");
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
 
                     // Emit readonly modifier if present (inside the braces)
                     if mapped_type.readonly_token.is_some() {
@@ -380,7 +386,11 @@ impl<'a> DeclarationEmitter<'a> {
                     // Emit type annotation
                     self.emit_type(mapped_type.type_node);
 
-                    self.write("; }");
+                    self.write(";");
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write_indent();
+                    self.write("}");
                 }
             }
 
@@ -444,6 +454,34 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
+            // Optional type (T? in tuple elements)
+            k if k == syntax_kind_ext::OPTIONAL_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    self.emit_type(wrapped.type_node);
+                    self.write("?");
+                }
+            }
+            // Rest type (...T in tuple elements)
+            k if k == syntax_kind_ext::REST_TYPE => {
+                if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    self.write("...");
+                    self.emit_type(wrapped.type_node);
+                }
+            }
+            // Named tuple member (name: T, name?: T, ...name: T)
+            k if k == syntax_kind_ext::NAMED_TUPLE_MEMBER => {
+                if let Some(member) = self.arena.get_named_tuple_member(type_node) {
+                    if member.dot_dot_dot_token {
+                        self.write("...");
+                    }
+                    self.emit_node(member.name);
+                    if member.question_token {
+                        self.write("?");
+                    }
+                    self.write(": ");
+                    self.emit_type(member.type_node);
+                }
+            }
             _ => {
                 // Fallback: emit as node
                 self.emit_node(type_idx);
