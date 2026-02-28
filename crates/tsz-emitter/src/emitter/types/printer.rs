@@ -481,9 +481,13 @@ impl<'a> TypePrinter<'a> {
         }
         result.push(')');
 
-        // Return type
+        // Return type (with type predicate if present)
         result.push_str(": ");
-        result.push_str(&self.print_type(func_shape.return_type));
+        if let Some(ref pred) = func_shape.type_predicate {
+            result.push_str(&self.print_type_predicate(pred));
+        } else {
+            result.push_str(&self.print_type(func_shape.return_type));
+        }
 
         Some(result)
     }
@@ -610,14 +614,18 @@ impl<'a> TypePrinter<'a> {
             params.push(param_str);
         }
 
-        // Return type
-        let return_type = self.print_type(func_shape.return_type);
+        // Return type (with type predicate if present)
+        let return_str = if let Some(ref pred) = func_shape.type_predicate {
+            self.print_type_predicate(pred)
+        } else {
+            self.print_type(func_shape.return_type)
+        };
 
         format!(
             "{}({}) => {}",
             type_params_str,
             params.join(", "),
-            return_type
+            return_str
         )
     }
 
@@ -643,10 +651,11 @@ impl<'a> TypePrinter<'a> {
 
             // Try to emit as method syntax if the property is a method
             if prop.is_method
-                && let Some(method_str) = self.print_property_as_method(prop) {
-                    parts.push(method_str);
-                    continue;
-                }
+                && let Some(method_str) = self.print_property_as_method(prop)
+            {
+                parts.push(method_str);
+                continue;
+            }
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
@@ -740,14 +749,37 @@ impl<'a> TypePrinter<'a> {
             params.push(param_str);
         }
 
-        let return_type = self.print_type(sig.return_type);
+        let return_str = if let Some(ref pred) = sig.type_predicate {
+            self.print_type_predicate(pred)
+        } else {
+            self.print_type(sig.return_type)
+        };
         format!(
             "{}{}({}): {}",
             prefix,
             type_params_str,
             params.join(", "),
-            return_type
+            return_str
         )
+    }
+
+    /// Print a type predicate (e.g., `x is string`, `asserts x is string`, `this is Foo`)
+    fn print_type_predicate(&self, pred: &tsz_solver::types::TypePredicate) -> String {
+        let mut result = String::new();
+        if pred.asserts {
+            result.push_str("asserts ");
+        }
+        match &pred.target {
+            tsz_solver::types::TypePredicateTarget::This => result.push_str("this"),
+            tsz_solver::types::TypePredicateTarget::Identifier(atom) => {
+                result.push_str(&self.resolve_atom(*atom));
+            }
+        }
+        if let Some(type_id) = pred.type_id {
+            result.push_str(" is ");
+            result.push_str(&self.print_type(type_id));
+        }
+        result
     }
 
     /// Print a type parameter as a type reference (just the name).
