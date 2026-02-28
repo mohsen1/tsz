@@ -1,6 +1,8 @@
 use tsz_solver::TypeId;
 
-pub(crate) use super::common::{callable_shape_for_type, has_construct_signatures, union_members};
+pub(crate) use super::common::{
+    callable_shape_for_type, has_construct_signatures, is_symbol_or_unique_symbol, union_members,
+};
 pub(crate) use tsz_solver::type_queries::ConstructorCheckKind;
 
 pub(crate) fn classify_for_constructor_check(

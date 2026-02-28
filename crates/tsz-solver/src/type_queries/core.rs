@@ -245,6 +245,17 @@ define_intrinsic_check!(is_bigint_type, BIGINT, Bigint);
 define_intrinsic_check!(is_boolean_type, BOOLEAN, Boolean);
 define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 
+/// Check if a type is `symbol` or a `unique symbol`.
+pub fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::SYMBOL {
+        return true;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::UniqueSymbol(_)) | Some(TypeData::Intrinsic(crate::IntrinsicKind::Symbol))
+    )
+}
+
 // =============================================================================
 // Composite Type Queries
 // =============================================================================
