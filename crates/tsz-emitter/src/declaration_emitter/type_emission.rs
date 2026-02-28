@@ -15,6 +15,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Skip any non-JSDoc comments that precede this type node.
+        // This prevents comments between `:` and the type (e.g.
+        // `var x: /** comment */ (a: number) => void`) from leaking
+        // into parameter positions.
+        self.skip_comments_before(type_node.pos);
+
         match type_node.kind {
             // Keyword types
             k if k == SyntaxKind::NumberKeyword as u16 => self.write("number"),
