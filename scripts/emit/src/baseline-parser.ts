@@ -122,6 +122,7 @@ export function parseBaseline(content: string): BaselineContent {
       break;
     }
     if (isJsLikeOutput(name)) {
+      const nameBase = toJsOutputBase(name);
       const isTsOutput = seenTsSources.some(src => {
         const base = src.replace(/\.(ts|tsx|mts|cts)$/, '');
         return (
@@ -131,7 +132,12 @@ export function parseBaseline(content: string): BaselineContent {
           name === `${base}.cjs`
         );
       });
-      if (isTsOutput) {
+      // Also check if a JS/JSX source file shares the same basename
+      // (e.g., foo.jsx as input → foo.js as output in @allowJs tests)
+      const isJsSourceOutput = !isTsOutput && [...seenNames].some(seen => {
+        return isJsLikeOutput(seen) && toJsOutputBase(seen) === nameBase && seen !== name;
+      });
+      if (isTsOutput || isJsSourceOutput) {
         outputStart = Math.min(outputStart, i);
         break;
       }
