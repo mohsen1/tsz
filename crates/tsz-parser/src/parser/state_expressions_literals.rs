@@ -1682,8 +1682,19 @@ impl ParserState {
                 || self.is_token(SyntaxKind::CommaToken))
         {
             if self.is_token(SyntaxKind::CloseBraceToken) || self.is_token(SyntaxKind::CommaToken) {
+                // TS1003: Identifier expected (after `*` with no name before `}` or `,`)
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
                 return NodeIndex::NONE;
             }
+
+            // TS1003: Identifier expected (generator method without name)
+            self.parse_error_at_current_token(
+                tsz_common::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
+                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
 
             let type_parameters = self
                 .is_token(SyntaxKind::LessThanToken)
