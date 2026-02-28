@@ -31,5 +31,5 @@ pub(crate) fn should_report_variable_use_before_assignment(
 ) -> bool {
     state.should_check_definite_assignment(sym_id, idx)
         && !state.skip_definite_assignment_for_type(declared_type)
-        && !state.is_definitely_assigned_at(idx)
+        && !state.is_definitely_assigned_at_with_symbol(idx, Some(sym_id))
 }

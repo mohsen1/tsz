@@ -41,6 +41,8 @@ impl<'a> CheckerState<'a> {
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
         let mut has_spread = false;
+        let mut has_union_spread = false;
+        let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
@@ -1068,93 +1070,176 @@ impl<'a> CheckerState<'a> {
                     ) {
                         self.report_spread_not_object_type(elem_idx);
                     }
-                    let spread_props = self.collect_object_spread_properties(spread_type);
+                    // Check if the spread type is a union — if so, distribute
+                    // the spread over each union member: { ...A|B } → { ...A } | { ...B }
+                    let union_members_opt = tsz_solver::type_queries::get_union_members(
+                        self.ctx.types,
+                        resolved_spread,
+                    );
 
-                    // TS2783: Check if any earlier named properties will be
-                    // overwritten by required properties from this spread.
-                    // Only when strict null checks are enabled.
-                    if self.ctx.strict_null_checks() {
-                        for sp in &spread_props {
-                            if !sp.optional
-                                && let Some((prop_node, prop_name)) =
-                                    named_property_nodes.get(&sp.name)
-                            {
-                                let message = format_message(
+                    // Guard against exponential blowup: if the cross-product
+                    // of branches would exceed a limit, skip distribution.
+                    let branch_count = if union_spread_branches.is_empty() {
+                        1
+                    } else {
+                        union_spread_branches.len()
+                    };
+                    let union_members_opt = union_members_opt.filter(|members| {
+                        // Only distribute when all members are object-like (not
+                        // false/null/undefined). Spreading primitives just
+                        // contributes {} which isn't useful to distribute.
+                        let all_object_like = members
+                            .iter()
+                            .all(|m| self.ctx.types.collect_object_spread_properties(*m).len() > 0);
+                        all_object_like && branch_count.saturating_mul(members.len()) <= 16
+                    });
+
+                    if let Some(members) = union_members_opt {
+                        // Union spread distribution: fork current property set
+                        // into N branches, one per union member.
+                        has_union_spread = true;
+                        let mut new_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
+
+                        for member in &members {
+                            let member_props = self.collect_object_spread_properties(*member);
+                            if union_spread_branches.is_empty() {
+                                // First union spread: fork from the main properties
+                                let mut branch = properties.clone();
+                                for prop in member_props {
+                                    branch.insert(prop.name, prop);
+                                }
+                                new_branches.push(branch);
+                            } else {
+                                // Subsequent union spread: cross-product with existing branches
+                                for existing in &union_spread_branches {
+                                    let mut branch = existing.clone();
+                                    for prop in &member_props {
+                                        branch.insert(prop.name, prop.clone());
+                                    }
+                                    new_branches.push(branch);
+                                }
+                            }
+                        }
+                        union_spread_branches = new_branches;
+                        // Clear main properties so post-union properties
+                        // don't include pre-union ones when applied at the end
+                        properties.clear();
+                    } else {
+                        let spread_props = self.collect_object_spread_properties(spread_type);
+
+                        // TS2783: Check if any earlier named properties will be
+                        // overwritten by required properties from this spread.
+                        // Only when strict null checks are enabled.
+                        if self.ctx.strict_null_checks() {
+                            for sp in &spread_props {
+                                if !sp.optional
+                                    && let Some((prop_node, prop_name)) =
+                                        named_property_nodes.get(&sp.name)
+                                {
+                                    let message = format_message(
                                         diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                         &[prop_name],
                                     );
-                                self.error_at_node(
+                                    self.error_at_node(
                                         *prop_node,
                                         &message,
                                         diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                     );
+                                }
                             }
                         }
-                    }
 
-                    // After TS2783 check, clear the named-property tracking
-                    // for properties that the spread overwrites (so only the
-                    // first occurrence can trigger the diagnostic, not later
-                    // spreads which are spread-vs-spread and exempt).
-                    for prop in &spread_props {
-                        named_property_nodes.remove(&prop.name);
-                    }
+                        // After TS2783 check, clear the named-property tracking
+                        // for properties that the spread overwrites (so only the
+                        // first occurrence can trigger the diagnostic, not later
+                        // spreads which are spread-vs-spread and exempt).
+                        for prop in &spread_props {
+                            named_property_nodes.remove(&prop.name);
+                        }
 
-                    for prop in spread_props {
-                        properties.insert(prop.name, prop);
+                        for prop in &spread_props {
+                            properties.insert(prop.name, prop.clone());
+                        }
+
+                        // Also apply non-union spread to any existing union branches
+                        for branch in &mut union_spread_branches {
+                            for prop in &spread_props {
+                                branch.insert(prop.name, prop.clone());
+                            }
+                        }
                     }
                 }
             }
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
-        let properties: Vec<PropertyInfo> = properties.into_values().collect();
-        // Object literals with spreads are not fresh (no excess property checking)
+        // Union spread distribution: if we encountered union spreads, produce a
+        // union of object types (one per combination of union members).
+        let object_type = if has_union_spread && !union_spread_branches.is_empty() {
+            // Apply any non-spread properties that were added after the union
+            // spread(s) to each branch. Properties in `properties` override
+            // branch properties (later properties win in object literals).
+            let post_spread_props: Vec<PropertyInfo> = properties.into_values().collect();
 
-        let object_type = if string_index_types.is_empty() && number_index_types.is_empty() {
-            if has_spread {
-                self.ctx.types.factory().object(properties)
-            } else {
-                self.ctx.types.factory().object_fresh(properties)
+            let mut union_members: Vec<TypeId> = Vec::new();
+            for mut branch in union_spread_branches {
+                for prop in &post_spread_props {
+                    branch.insert(prop.name, prop.clone());
+                }
+                let branch_props: Vec<PropertyInfo> = branch.into_values().collect();
+                let obj = self.ctx.types.factory().object(branch_props);
+                union_members.push(obj);
             }
+            self.ctx.types.factory().union(union_members)
         } else {
-            use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
+            let properties: Vec<PropertyInfo> = properties.into_values().collect();
+            // Object literals with spreads are not fresh (no excess property checking)
 
-            let string_index = if !string_index_types.is_empty() {
-                Some(IndexSignature {
-                    key_type: TypeId::STRING,
-                    value_type: self.ctx.types.factory().union(string_index_types),
-                    readonly: false,
-                    param_name: None,
+            if string_index_types.is_empty() && number_index_types.is_empty() {
+                if has_spread {
+                    self.ctx.types.factory().object(properties)
+                } else {
+                    self.ctx.types.factory().object_fresh(properties)
+                }
+            } else {
+                use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
+
+                let string_index = if !string_index_types.is_empty() {
+                    Some(IndexSignature {
+                        key_type: TypeId::STRING,
+                        value_type: self.ctx.types.factory().union(string_index_types),
+                        readonly: false,
+                        param_name: None,
+                    })
+                } else {
+                    None
+                };
+
+                let number_index = if !number_index_types.is_empty() {
+                    Some(IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type: self.ctx.types.factory().union(number_index_types),
+                        readonly: false,
+                        param_name: None,
+                    })
+                } else {
+                    None
+                };
+
+                let flags = if has_spread {
+                    ObjectFlags::empty()
+                } else {
+                    ObjectFlags::FRESH_LITERAL
+                };
+
+                self.ctx.types.factory().object_with_index(ObjectShape {
+                    flags,
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: None,
                 })
-            } else {
-                None
-            };
-
-            let number_index = if !number_index_types.is_empty() {
-                Some(IndexSignature {
-                    key_type: TypeId::NUMBER,
-                    value_type: self.ctx.types.factory().union(number_index_types),
-                    readonly: false,
-                    param_name: None,
-                })
-            } else {
-                None
-            };
-
-            let flags = if has_spread {
-                ObjectFlags::empty()
-            } else {
-                ObjectFlags::FRESH_LITERAL
-            };
-
-            self.ctx.types.factory().object_with_index(ObjectShape {
-                flags,
-                properties,
-                string_index,
-                number_index,
-                symbol: None,
-            })
+            }
         };
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.

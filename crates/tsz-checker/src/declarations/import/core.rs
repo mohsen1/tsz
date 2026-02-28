@@ -1073,7 +1073,6 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 self.get_type_of_node(export_data.expression);
                             }
-                            self.get_type_of_node(export_data.expression);
                         }
                     }
                 }
