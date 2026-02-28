@@ -74,6 +74,7 @@ impl<'a> CheckerState<'a> {
         // We emit the error here but do NOT return early — the identifier may still resolve.
         if crate::state_checking::is_strict_mode_reserved_name(name)
             && self.is_strict_mode_for_node(idx)
+            && self.ctx.checking_computed_property_name.is_none()
         {
             self.emit_strict_mode_reserved_word_error(idx, name, true);
         }
