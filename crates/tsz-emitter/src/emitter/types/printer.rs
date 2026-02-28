@@ -310,6 +310,11 @@ impl<'a> TypePrinter<'a> {
                     continue;
                 }
 
+                // Readonly modifier
+                if property.readonly {
+                    member.push_str("readonly ");
+                }
+
                 // Property name
                 member.push_str(&self.resolve_atom(property.name));
 
@@ -524,9 +529,11 @@ impl<'a> TypePrinter<'a> {
 
         // Add properties
         for prop in &callable.properties {
+            let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
             parts.push(format!(
-                "{}{}: {}",
+                "{}{}{}: {}",
+                readonly,
                 self.resolve_atom(prop.name),
                 optional,
                 self.print_type(prop.type_id)
