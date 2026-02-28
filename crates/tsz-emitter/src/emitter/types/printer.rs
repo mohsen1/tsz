@@ -132,11 +132,13 @@ impl<'a> TypePrinter<'a> {
         }
         if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
             let elem_str = self.print_type(elem_id);
-            // Parenthesize complex element types (union, intersection, function, conditional)
+            // Parenthesize complex element types (union, intersection, function, conditional, keyof, readonly)
             let needs_parens = visitor::union_list_id(self.interner, elem_id).is_some()
                 || visitor::intersection_list_id(self.interner, elem_id).is_some()
                 || visitor::function_shape_id(self.interner, elem_id).is_some()
-                || visitor::conditional_type_id(self.interner, elem_id).is_some();
+                || visitor::conditional_type_id(self.interner, elem_id).is_some()
+                || visitor::keyof_inner_type(self.interner, elem_id).is_some()
+                || visitor::readonly_inner_type(self.interner, elem_id).is_some();
             if needs_parens {
                 return format!("({elem_str})[]");
             }

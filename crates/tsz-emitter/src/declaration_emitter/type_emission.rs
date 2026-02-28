@@ -90,6 +90,7 @@ impl<'a> DeclarationEmitter<'a> {
                             || n.kind == syntax_kind_ext::UNION_TYPE
                             || n.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                            || n.kind == syntax_kind_ext::TYPE_OPERATOR
                     });
                     if needs_parens {
                         self.write("(");
