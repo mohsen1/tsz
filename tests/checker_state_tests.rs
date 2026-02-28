@@ -15149,13 +15149,12 @@ if (typeof obj[key] === "string") {
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
-    let expected = checker
-        .ctx
-        .types
-        .union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // After the typeof guard, obj[key] is narrowed to string — tsc also
+    // narrows element access expressions even when the key is not a literal type.
     assert_eq!(
-        expr_type, expected,
-        "Expected computed element access to remain un-narrowed, got: {expr_type:?}"
+        expr_type,
+        TypeId::STRING,
+        "Expected computed element access to be narrowed to string, got: {expr_type:?}"
     );
 }
 
