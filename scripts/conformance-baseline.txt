@@ -500,7 +500,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1279,6 +1278,7 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties4.ts
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts
+FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts
 FAIL TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
@@ -5189,6 +5189,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
