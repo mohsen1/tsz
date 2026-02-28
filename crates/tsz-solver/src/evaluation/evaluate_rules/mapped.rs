@@ -219,7 +219,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This avoids repeated O(N) collect_properties calls inside the loop.
         let mut source_prop_map = FxHashMap::default();
         if let Some(source) = source_object {
-            match collect_properties(source, self.interner(), self.resolver()) {
+            // Evaluate the source to resolve Application types (e.g., Partial<X> is
+            // Application(Partial, [X]) which evaluates to { prop?: ... }). Without
+            // this, collect_properties can't extract properties from unevaluated
+            // Applications, causing optional/readonly modifiers to be lost.
+            let resolved_source = self.evaluate(source);
+            match collect_properties(resolved_source, self.interner(), self.resolver()) {
                 PropertyCollectionResult::Properties { properties, .. } => {
                     for prop in properties {
                         source_prop_map
@@ -704,7 +709,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract mapped keys from a type (for mapped type iteration).
-    fn extract_mapped_keys(&self, type_id: TypeId) -> Option<MappedKeys> {
+    fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {
@@ -756,6 +761,38 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(keys)
                     }
                     PropertyCollectionResult::NonObject => {
+                        // The operand might be an unevaluated Application or other
+                        // deferred type (e.g., `PartialProperties<T, K>` as a type alias
+                        // Application). Evaluate it first, then retry collect_properties.
+                        let evaluated = self.evaluate(operand);
+                        if evaluated != operand {
+                            let retry_result =
+                                collect_properties(evaluated, self.interner(), self.resolver());
+                            match retry_result {
+                                PropertyCollectionResult::Properties {
+                                    properties,
+                                    string_index,
+                                    number_index,
+                                } => {
+                                    for prop in properties {
+                                        keys.string_literals.push(prop.name);
+                                    }
+                                    keys.has_string = string_index.is_some();
+                                    keys.has_number = number_index.is_some();
+                                    tracing::trace!(
+                                        string_literals = ?keys.string_literals,
+                                        "extract_mapped_keys: extracted keys from evaluated KeyOf operand"
+                                    );
+                                    return Some(keys);
+                                }
+                                PropertyCollectionResult::Any => {
+                                    keys.has_string = true;
+                                    keys.has_number = true;
+                                    return Some(keys);
+                                }
+                                PropertyCollectionResult::NonObject => {}
+                            }
+                        }
                         tracing::trace!("extract_mapped_keys: KeyOf operand is not an object");
                         None
                     }
