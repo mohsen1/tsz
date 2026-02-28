@@ -1162,6 +1162,11 @@ impl<'a> DeclarationEmitter<'a> {
                 if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
+                } else if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name])
+                {
+                    // Inferred type from type cache
+                    self.write(": ");
+                    self.write(&self.print_type_id(type_id));
                 } else if param.dot_dot_dot_token {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");

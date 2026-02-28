@@ -324,6 +324,11 @@ impl<'a> TypePrinter<'a> {
                     continue;
                 }
 
+                // Readonly modifier
+                if property.readonly {
+                    member.push_str("readonly ");
+                }
+
                 // Property name
                 member.push_str(&self.resolve_atom(property.name));
 
@@ -542,9 +547,11 @@ impl<'a> TypePrinter<'a> {
             if name == "prototype" || name.starts_with("__private_brand_") {
                 continue;
             }
+            let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
             parts.push(format!(
-                "{}{}: {}",
+                "{}{}{}: {}",
+                readonly,
                 name,
                 optional,
                 self.print_type(prop.type_id)

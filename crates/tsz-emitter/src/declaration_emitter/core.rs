@@ -413,6 +413,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.reset_writer();
         self.indent_level = 0;
+        self.emitted_non_exported_declaration = false;
+        self.emitted_scope_marker = false;
+        self.emitted_module_indicator = false;
 
         // Prepare import metadata for elision BEFORE running UsageAnalyzer
         // This builds the SymbolId -> ModuleSpecifier map from existing imports
@@ -491,10 +494,15 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_triple_slash_directives(source_file);
 
         // Emit required imports first (before other declarations)
+        let before_imports = self.writer.len();
         self.emit_required_imports();
 
         // Emit auto-generated imports for foreign symbols
         self.emit_auto_imports();
+        if self.writer.len() > before_imports {
+            // Auto-generated imports count as external module indicators
+            self.emitted_module_indicator = true;
+        }
 
         for &stmt_idx in &source_file.statements.nodes {
             self.emit_statement(stmt_idx);
@@ -522,6 +530,7 @@ impl<'a> DeclarationEmitter<'a> {
                 || (self.emitted_non_exported_declaration && !self.emitted_scope_marker))
         {
             self.write("export {};");
+            self.write_line();
         }
 
         self.writer.get_output().to_string()
@@ -726,10 +735,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
         if !self.inside_declare_namespace {
-            if is_exported {
-                self.write("export ");
-            }
             self.write("declare ");
         }
         self.write("function ");
@@ -961,9 +970,8 @@ impl<'a> DeclarationEmitter<'a> {
         if prop.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(prop.type_annotation);
-        } else if !is_private && (is_abstract || prop.initializer.is_some()) {
-            // For abstract properties OR properties with initializers (non-private), use inferred type
-            // Private properties never get inferred types (prevents type leak)
+        } else if !is_private {
+            // Try inferred type from type cache for any non-private property
             if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // For readonly properties with literal types, use `= value` form
                 // (same as const declarations in tsc)
@@ -1415,10 +1423,10 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
         if !self.inside_declare_namespace {
-            if is_exported {
-                self.write("export ");
-            }
             self.write("declare ");
         }
         if is_const {
@@ -1853,10 +1861,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // Emit all regular declarations together on one line
                 if !regular_decls.is_empty() {
                     self.write_indent();
+                    if is_exported {
+                        self.write("export ");
+                    }
                     if !self.inside_declare_namespace {
-                        if is_exported {
-                            self.write("export ");
-                        }
                         self.write("declare ");
                     }
                     self.write(keyword);
@@ -1939,10 +1947,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         for ident_idx in bindings {
             self.write_indent();
+            if is_exported {
+                self.write("export ");
+            }
             if !self.inside_declare_namespace {
-                if is_exported {
-                    self.write("export ");
-                }
                 self.write("declare ");
             }
             self.write(keyword);
