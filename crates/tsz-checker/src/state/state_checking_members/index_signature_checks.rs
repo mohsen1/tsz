@@ -630,15 +630,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_symbol_or_unique_symbol(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::SYMBOL {
-            return true;
-        }
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(tsz_solver::TypeData::UniqueSymbol(_))
-                | Some(tsz_solver::TypeData::Intrinsic(
-                    tsz_solver::IntrinsicKind::Symbol
-                ))
-        )
+        use crate::query_boundaries::type_checking as query;
+        query::is_symbol_or_unique_symbol(self.ctx.types, type_id)
     }
 }
