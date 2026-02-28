@@ -1003,13 +1003,13 @@ impl<'a> CheckerState<'a> {
             }
             // Binding element in destructured function parameter with type annotation.
             // Walk up: Identifier -> BindingElement -> BindingPattern -> Parameter
-            if resolved_value_decl.is_some() {
-                if let Some(t) = self.resolve_binding_element_from_annotated_param(
+            if resolved_value_decl.is_some()
+                && let Some(t) = self.resolve_binding_element_from_annotated_param(
                     resolved_value_decl,
                     &escaped_name,
-                ) {
-                    return (t, Vec::new());
-                }
+                )
+            {
+                return (t, Vec::new());
             }
             // Variable without type annotation or initializer gets implicit 'any'
             // This prevents cascading TS2571 errors
@@ -1552,7 +1552,7 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve the type of a binding element inside a destructured function parameter
     /// that has a type annotation. Walks up the AST:
-    ///   Identifier -> BindingElement -> [SyntaxList ->] BindingPattern -> Parameter
+    ///   `Identifier` -> `BindingElement` -> \[`SyntaxList` ->\] `BindingPattern` -> `Parameter`
     /// and extracts the property type from the parameter's annotation.
     fn resolve_binding_element_from_annotated_param(
         &mut self,
@@ -1622,19 +1622,19 @@ impl<'a> CheckerState<'a> {
 
             // Look up property in object shape
             use crate::query_boundaries::common::object_shape_for_type;
-            if let Some(shape) = object_shape_for_type(self.ctx.types, ann_type) {
-                if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
-                    let mut t = prop.type_id;
-                    // Optional property adds undefined under strict null checks
-                    if prop.optional && self.ctx.strict_null_checks() {
-                        t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
-                    }
-                    // Default value strips undefined
-                    if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
-                        t = tsz_solver::remove_undefined(self.ctx.types, t);
-                    }
-                    return Some(t);
+            if let Some(shape) = object_shape_for_type(self.ctx.types, ann_type)
+                && let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom)
+            {
+                let mut t = prop.type_id;
+                // Optional property adds undefined under strict null checks
+                if prop.optional && self.ctx.strict_null_checks() {
+                    t = self.ctx.types.factory().union(vec![t, TypeId::UNDEFINED]);
                 }
+                // Default value strips undefined
+                if be_data.initializer.is_some() && self.ctx.strict_null_checks() {
+                    t = tsz_solver::remove_undefined(self.ctx.types, t);
+                }
+                return Some(t);
             }
         }
         // Array binding patterns are rare for function params; skip for now

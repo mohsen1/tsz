@@ -190,18 +190,16 @@ impl<'a> CheckerState<'a> {
             {
                 for &attr_idx in &attrs.properties.nodes {
                     if let Some(attr_node) = self.ctx.arena.get(attr_idx) {
-                        if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                            if let Some(spread_data) =
+                        if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE
+                            && let Some(spread_data) =
                                 self.ctx.arena.get_jsx_spread_attribute(attr_node)
-                            {
-                                self.compute_type_of_node(spread_data.expression);
-                            }
-                        } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                            if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
-                                && !attr_data.initializer.is_none()
-                            {
-                                self.compute_type_of_node(attr_data.initializer);
-                            }
+                        {
+                            self.compute_type_of_node(spread_data.expression);
+                        } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                            && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
+                            && !attr_data.initializer.is_none()
+                        {
+                            self.compute_type_of_node(attr_data.initializer);
                         }
                     }
                 }
