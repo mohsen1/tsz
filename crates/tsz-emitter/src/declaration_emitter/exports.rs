@@ -400,7 +400,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if !self.inside_declare_namespace {
+        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
         self.write("interface ");
@@ -445,6 +445,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
+        } else if self.ambient_module_has_scope_marker {
+            self.write("export ");
         }
         if is_abstract {
             self.write("abstract ");
@@ -520,6 +522,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
+        } else if self.ambient_module_has_scope_marker {
+            self.write("export ");
         }
         self.write("function ");
         self.emit_node(func.name);
@@ -571,7 +575,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         self.write_indent();
-        if !self.inside_declare_namespace {
+        if !self.inside_declare_namespace || self.ambient_module_has_scope_marker {
             self.write("export ");
         }
         self.write("type ");
@@ -604,6 +608,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         if !self.inside_declare_namespace {
             self.write("export declare ");
+        } else if self.ambient_module_has_scope_marker {
+            self.write("export ");
         }
         if is_const {
             self.write("const ");
@@ -739,6 +745,8 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_indent();
                     if !self.inside_declare_namespace {
                         self.write("export declare ");
+                    } else if self.ambient_module_has_scope_marker {
+                        self.write("export ");
                     }
                     self.write(keyword);
                     self.write(" ");
@@ -946,6 +954,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("export ");
             }
             self.write("declare ");
+        } else if is_exported && self.ambient_module_has_scope_marker {
+            self.write("export ");
         }
 
         // Determine keyword: "module" for string literals, "namespace" for identifiers
@@ -1018,6 +1028,15 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emitted_non_exported_declaration = false;
                 self.emitted_scope_marker = false;
 
+                // In ambient string-named modules, pre-scan to check if the
+                // body has a mix of exported and non-exported members.
+                // When it does, tsc preserves `export` keywords; otherwise
+                // it strips them.
+                let prev_ambient_scope_marker = self.ambient_module_has_scope_marker;
+                if is_ambient_ns && use_module_keyword {
+                    self.ambient_module_has_scope_marker = self.module_body_has_scope_marker(stmts);
+                }
+
                 for &stmt_idx in &stmts.nodes {
                     self.emit_statement(stmt_idx);
                 }
@@ -1044,6 +1063,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Restore tracking flags
                 self.emitted_non_exported_declaration = prev_emitted_non_exported;
                 self.emitted_scope_marker = prev_emitted_scope_marker;
+                self.ambient_module_has_scope_marker = prev_ambient_scope_marker;
             }
 
             self.public_api_scope_depth = prev_public_api_scope_depth;
@@ -1299,6 +1319,62 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Pre-scan a module body to determine if it has a "scope marker" —
+    /// either an explicit `export {}` statement or a mix of exported and
+    /// non-exported members. When true, `export` keywords should be preserved
+    /// on individual members inside the ambient module.
+    pub(crate) fn module_body_has_scope_marker(
+        &self,
+        stmts: &tsz_parser::parser::NodeList,
+    ) -> bool {
+        let mut has_exported = false;
+        let mut has_non_exported = false;
+
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    // `export {}` or `export { ... }` — scope marker
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        // Check if it's `export {}` (empty named exports)
+                        if let Some(clause_node) = self.arena.get(export.export_clause)
+                            && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                            && let Some(named) = self.arena.get_named_imports(clause_node)
+                                && named.elements.nodes.is_empty() {
+                                    return true; // explicit `export {}`
+                                }
+                        has_exported = true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    has_exported = true;
+                }
+                _ => {
+                    if self.stmt_has_export_modifier(stmt_node) {
+                        has_exported = true;
+                    } else {
+                        // Skip ImportDeclaration and ImportEqualsDeclaration
+                        // as they don't count as non-exported members
+                        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
+                            && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        {
+                            has_non_exported = true;
+                        }
+                    }
+                }
+            }
+
+            if has_exported && has_non_exported {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn emit_member_modifiers(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -1327,7 +1403,10 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),
-                        k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
+                        k if k == SyntaxKind::AsyncKeyword as u16 => {
+                            // tsc strips `async` in .d.ts — the return type already
+                            // encodes Promise<T>, so the modifier is redundant.
+                        }
                         k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
                         _ => {}
                     }
