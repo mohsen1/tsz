@@ -580,39 +580,41 @@ impl<'a> CheckerState<'a> {
 
         // Check direct exports in target binder
         if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
-            && let Some(sym_id) = exports_table.get(export_name) {
-                // Use the main binder (which has the full merged symbol arena)
-                // rather than the cross-file lookup binder (which has empty symbols).
-                if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-                    if sym.is_type_only {
+            && let Some(sym_id) = exports_table.get(export_name)
+        {
+            // Use the main binder (which has the full merged symbol arena)
+            // rather than the cross-file lookup binder (which has empty symbols).
+            if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                if sym.is_type_only {
+                    return true;
+                }
+                // Follow import alias chains transitively, but only if the
+                // symbol doesn't have a concrete runtime value binding.
+                // A merged symbol like `import { A }` + `const A = 0` (VARIABLE)
+                // provides a real value and overrides type-only from the import.
+                // But `namespace A {}` (VALUE_MODULE) alone doesn't override.
+                let concrete_value = symbol_flags::VARIABLE
+                    | symbol_flags::FUNCTION
+                    | symbol_flags::CLASS
+                    | symbol_flags::ENUM;
+                if sym.flags & symbol_flags::ALIAS != 0
+                    && sym.flags & concrete_value == 0
+                    && let Some(ref import_module) = sym.import_module
+                {
+                    let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                    if self.is_export_type_only_in_file(
+                        target_file_idx,
+                        import_module,
+                        import_name,
+                        visited,
+                    ) {
                         return true;
                     }
-                    // Follow import alias chains transitively, but only if the
-                    // symbol doesn't have a concrete runtime value binding.
-                    // A merged symbol like `import { A }` + `const A = 0` (VARIABLE)
-                    // provides a real value and overrides type-only from the import.
-                    // But `namespace A {}` (VALUE_MODULE) alone doesn't override.
-                    let concrete_value = symbol_flags::VARIABLE
-                        | symbol_flags::FUNCTION
-                        | symbol_flags::CLASS
-                        | symbol_flags::ENUM;
-                    if sym.flags & symbol_flags::ALIAS != 0 && sym.flags & concrete_value == 0
-                        && let Some(ref import_module) = sym.import_module {
-                            let import_name =
-                                sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
-                            if self.is_export_type_only_in_file(
-                                target_file_idx,
-                                import_module,
-                                import_name,
-                                visited,
-                            ) {
-                                return true;
-                            }
-                        }
-                    // Direct export exists and is not type-only — don't check wildcard re-exports.
-                    return false;
                 }
+                // Direct export exists and is not type-only — don't check wildcard re-exports.
+                return false;
             }
+        }
 
         // Check named re-exports
         if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
