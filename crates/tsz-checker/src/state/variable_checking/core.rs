@@ -929,6 +929,10 @@ impl<'a> CheckerState<'a> {
             // Note: This applies specifically to 'var' merging where types must match.
             // let/const duplicates are caught earlier by the binder (TS2451).
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
+            // Bare declarations (`var x;` with no annotation/initializer) don't establish a
+            // type constraint and never trigger TS2403 in tsc.
+            let is_bare_declaration =
+                var_decl.type_annotation.is_none() && var_decl.initializer.is_none();
             let is_block_scoped = if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
                 && let Some(parent) = self.ctx.arena.get(ext.parent)
                 && parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
@@ -961,6 +965,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                     if !is_mergeable_declaration
+                        && !is_bare_declaration
                         && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                     {
                         if let Some(ref name) = var_name {
@@ -1025,8 +1030,10 @@ impl<'a> CheckerState<'a> {
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
 
-                                        // Check compatibility
-                                        if !self.are_var_decl_types_compatible(lib_type, final_type)
+                                        // Check compatibility (skip for bare declarations)
+                                        if !is_bare_declaration
+                                            && !self
+                                                .are_var_decl_types_compatible(lib_type, final_type)
                                             && let Some(ref name) = var_name
                                         {
                                             self.error_subsequent_variable_declaration(
@@ -1083,6 +1090,7 @@ impl<'a> CheckerState<'a> {
                                 }
 
                                 if !is_other_mergeable
+                                    && !is_bare_declaration
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {
@@ -1105,7 +1113,12 @@ impl<'a> CheckerState<'a> {
                     } else {
                         final_type
                     };
-                    self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                    // Don't store bare declarations (`var x;`) unless a prior type
+                    // was found from lib or earlier local declarations — bare vars
+                    // don't establish a type constraint for TS2403.
+                    if !is_bare_declaration || prior_type_found.is_some() {
+                        self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                    }
                 }
             }
         } else {

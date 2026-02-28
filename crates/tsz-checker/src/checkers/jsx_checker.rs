@@ -25,6 +25,7 @@ impl<'a> CheckerState<'a> {
     /// - Uppercase tags (e.g., `<MyComponent>`) resolve as variable expressions
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
         self.check_jsx_factory_in_scope(idx);
+        self.check_jsx_import_source(idx);
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ANY;
@@ -1657,6 +1658,64 @@ impl<'a> CheckerState<'a> {
             error_node,
             diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
             &[root_ident],
+        );
+    }
+
+    // =========================================================================
+    // JSX Import Source Check (TS2875)
+    // =========================================================================
+
+    /// Check that the JSX import source module can be resolved.
+    /// Emits TS2875 if `<jsxImportSource>/jsx-runtime` (or `/jsx-dev-runtime`) is not found.
+    ///
+    /// tsc 6.0 behavior:
+    /// - Only `react-jsx` and `react-jsxdev` modes require the import source.
+    /// - When `jsxImportSource` is not explicitly set, defaults to `"react"`.
+    /// - The diagnostic fires once per file at the first JSX element.
+    fn check_jsx_import_source(&mut self, node_idx: NodeIndex) {
+        use tsz_common::checker_options::JsxMode;
+
+        // Only react-jsx/react-jsxdev modes need the import source
+        let runtime_suffix = match self.ctx.compiler_options.jsx_mode {
+            JsxMode::ReactJsx => "jsx-runtime",
+            JsxMode::ReactJsxDev => "jsx-dev-runtime",
+            _ => return,
+        };
+
+        // Already checked for this file — emit at most once
+        if self.ctx.jsx_import_source_checked {
+            return;
+        }
+        self.ctx.jsx_import_source_checked = true;
+
+        // Only check when the driver has populated module resolution data
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // Determine the import source (default to "react" if not set)
+        let source = if self.ctx.compiler_options.jsx_import_source.is_empty() {
+            "react"
+        } else {
+            &self.ctx.compiler_options.jsx_import_source
+        };
+
+        let runtime_path = format!("{source}/{runtime_suffix}");
+
+        // Check if the module resolves
+        if self.module_exists_cross_file(&runtime_path) {
+            return;
+        }
+        if self.is_ambient_module_match(&runtime_path) {
+            return;
+        }
+
+        // Emit TS2875 at the JSX opening element node
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            node_idx,
+            diagnostic_codes::THIS_JSX_TAG_REQUIRES_THE_MODULE_PATH_TO_EXIST_BUT_NONE_COULD_BE_FOUND_MAKE_SURE,
+            &[&runtime_path],
         );
     }
 
