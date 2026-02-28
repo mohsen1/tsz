@@ -486,11 +486,22 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(" extends ");
 
-                    // extends_type needs parens only for conditional types
-                    // (function types in extends position are unambiguous)
+                    // extends_type needs parens for conditional types.
+                    // Function types also need parens when their return type is
+                    // a conditional (the inner `extends` would be mis-parsed as
+                    // the outer conditional's extends clause). The parser doesn't
+                    // create PARENTHESIZED_TYPE nodes, so we must add parens here.
                     let extends_needs_parens =
                         if let Some(node) = self.arena.get(conditional.extends_type) {
-                            node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                            if node.kind == syntax_kind_ext::CONDITIONAL_TYPE {
+                                true
+                            } else if node.kind == syntax_kind_ext::FUNCTION_TYPE {
+                                // Only parenthesize function types whose return type
+                                // is itself a conditional (contains `extends`)
+                                self.function_type_has_conditional_return(node)
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         };
@@ -645,5 +656,18 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Check if a function type has a conditional type as its return type.
+    fn function_type_has_conditional_return(
+        &self,
+        func_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let Some(func) = self.arena.get_function_type(func_node) else {
+            return false;
+        };
+        self.arena
+            .get(func.type_annotation)
+            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_TYPE)
     }
 }
