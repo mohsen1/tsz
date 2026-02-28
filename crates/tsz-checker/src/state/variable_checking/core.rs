@@ -1379,7 +1379,7 @@ impl<'a> CheckerState<'a> {
         Some(has_export)
     }
 
-    /// Check if a TypeQuery type transitively leads back to the target symbol
+    /// Check if a `TypeQuery` type transitively leads back to the target symbol
     /// through a chain of typeof references in variable declarations.
     ///
     /// Handles `var d: typeof e; var e: typeof d;` where the direct AST check

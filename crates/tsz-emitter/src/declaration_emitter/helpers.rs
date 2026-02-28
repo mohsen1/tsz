@@ -864,7 +864,7 @@ impl<'a> DeclarationEmitter<'a> {
                 break;
             }
             let ct = &text[comment.pos as usize..comment.end as usize];
-            if ct.starts_with("/*") {
+            if ct.starts_with("/**") {
                 self.write(ct);
                 self.write(" ");
             }
