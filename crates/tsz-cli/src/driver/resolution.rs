@@ -154,7 +154,7 @@ pub(crate) fn resolve_type_reference_from_node_modules(
 /// - `.ts`/`.tsx`/`.js`/`.jsx` files → depends on nearest `package.json`:
 ///   - `"type": "module"` → "import"
 ///   - otherwise → "require"
-fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> String {
+pub(super) fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> String {
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
