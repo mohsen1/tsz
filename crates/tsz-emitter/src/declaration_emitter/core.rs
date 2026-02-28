@@ -971,7 +971,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(prop.type_annotation);
         } else if !is_private {
-            // Try inferred type from type cache for any non-private property
+            // For non-private properties without explicit type, infer it.
+            // Abstract properties, properties with initializers, and properties from
+            // non-declaration source files all need type inference.
             if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // For readonly properties with literal types, use `= value` form
                 // (same as const declarations in tsc)
@@ -987,7 +989,9 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
                 }
-            } else if let Some(type_text) = self.infer_fallback_type_text(prop.initializer) {
+            } else if prop.initializer.is_some()
+                && let Some(type_text) = self.infer_fallback_type_text(prop.initializer)
+            {
                 self.write(": ");
                 self.write(&type_text);
             }
@@ -1101,11 +1105,19 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&self.print_type_id(return_type_id));
-            } else if method_body.is_some() && self.body_returns_void(method_body) {
-                self.write(": void");
+            } else if method_body.is_some() {
+                if self.body_returns_void(method_body) {
+                    self.write(": void");
+                } else if !self.source_is_declaration_file {
+                    self.write(": any");
+                }
             }
-        } else if !is_private && method_body.is_some() && self.body_returns_void(method_body) {
-            self.write(": void");
+        } else if !is_private && method_body.is_some() {
+            if self.body_returns_void(method_body) {
+                self.write(": void");
+            } else if !self.source_is_declaration_file {
+                self.write(": any");
+            }
         }
 
         self.write(";");
@@ -1325,12 +1337,15 @@ impl<'a> DeclarationEmitter<'a> {
         if is_getter && !is_private && accessor.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
-        } else if is_getter
-            && !is_private
-            && let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name])
-        {
-            self.write(": ");
-            self.write(&self.print_type_id(type_id));
+        } else if is_getter && !is_private {
+            if let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name]) {
+                self.write(": ");
+                self.write(&self.print_type_id(type_id));
+            } else if !self.source_is_declaration_file {
+                // In non-declaration source files, getters without explicit return type
+                // need an inferred type; default to `any` if solver didn't provide one
+                self.write(": any");
+            }
         }
 
         self.write(";");
