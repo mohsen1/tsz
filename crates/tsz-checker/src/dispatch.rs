@@ -930,10 +930,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // fails (TS2356), the lvalue check (TS2357) is skipped.
                     let operand_type = self.checker.get_type_of_node(unary.operand);
 
-                    // TS18046: postfix ++/-- on unknown is not allowed.
+                    // TS18046: postfix ++/-- on unknown is not allowed (strictNullChecks only).
                     // tsc emits TS18046 instead of TS2356 for unknown operands.
-                    if operand_type == TypeId::UNKNOWN {
-                        self.checker.error_is_of_type_unknown(unary.operand);
+                    if operand_type == TypeId::UNKNOWN
+                        && self.checker.error_is_of_type_unknown(unary.operand)
+                    {
                         return TypeId::NUMBER;
                     }
 
