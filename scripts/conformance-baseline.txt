@@ -508,7 +508,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -617,7 +617,6 @@ FAIL TypeScript/tests/cases/compiler/indexedAccessPrivateMemberOfGenericConstrai
 FAIL TypeScript/tests/cases/compiler/indexedAccessRelation.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithFreshObjectLiteral.ts
 FAIL TypeScript/tests/cases/compiler/indexedAccessWithVariableElement.ts
-FAIL TypeScript/tests/cases/compiler/indexerAssignability.ts
 FAIL TypeScript/tests/cases/compiler/indexerConstraints.ts
 FAIL TypeScript/tests/cases/compiler/indexerConstraints2.ts
 FAIL TypeScript/tests/cases/compiler/indexerReturningTypeParameter1.ts
@@ -1122,7 +1121,6 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
-FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/primaryExpressionMods.ts
 FAIL TypeScript/tests/cases/compiler/primitiveConstraints2.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
@@ -1236,7 +1234,6 @@ FAIL TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypeNotCircular.
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening1.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedTypeLimitedConstraint.ts
-FAIL TypeScript/tests/cases/compiler/reverseMappedTypeRecursiveInference.ts
 FAIL TypeScript/tests/cases/compiler/reverseMappedUnionInference.ts
 FAIL TypeScript/tests/cases/compiler/scopeCheckStaticInitializer.ts
 FAIL TypeScript/tests/cases/compiler/selfNameAndImportsEmitInclusion.ts
@@ -1266,7 +1263,6 @@ FAIL TypeScript/tests/cases/compiler/spellingSuggestionModule.ts
 FAIL TypeScript/tests/cases/compiler/spliceTuples.ts
 FAIL TypeScript/tests/cases/compiler/spreadExpressionContextualType.ts
 FAIL TypeScript/tests/cases/compiler/spreadInvalidArgumentType.ts
-FAIL TypeScript/tests/cases/compiler/spreadOfObjectLiteralAssignableToIndexSignature.ts
 FAIL TypeScript/tests/cases/compiler/spreadOfParamsFromGeneratorMakesRequiredParams.ts
 FAIL TypeScript/tests/cases/compiler/spreadsAndContextualTupleTypes.ts
 FAIL TypeScript/tests/cases/compiler/spreadTypeRemovesReadonly.ts
@@ -2639,7 +2635,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssig
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndForIn.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
@@ -2718,6 +2713,8 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/predefinedTypes/ob
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/unionTypeLiterals.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
+FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
+FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeReferences/genericTypeReferenceWithoutTypeArgument.ts
@@ -5241,7 +5238,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5515,6 +5512,7 @@ PASS TypeScript/tests/cases/compiler/indexer2A.ts
 PASS TypeScript/tests/cases/compiler/indexer3.ts
 PASS TypeScript/tests/cases/compiler/indexerA.ts
 PASS TypeScript/tests/cases/compiler/indexerAsOptional.ts
+PASS TypeScript/tests/cases/compiler/indexerAssignability.ts
 PASS TypeScript/tests/cases/compiler/indexerSignatureWithRestParam.ts
 PASS TypeScript/tests/cases/compiler/indexingTypesWithNever.ts
 PASS TypeScript/tests/cases/compiler/indexIntoArraySubclass.ts
@@ -6735,6 +6733,7 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
+PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primitiveConstraints1.ts
@@ -7045,6 +7044,7 @@ PASS TypeScript/tests/cases/compiler/reverseMappedTypeDeepDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeInferenceSameSource1.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypeInferenceWidening2.ts
 PASS TypeScript/tests/cases/compiler/reverseMappedTypePrimitiveConstraintProperty.ts
+PASS TypeScript/tests/cases/compiler/reverseMappedTypeRecursiveInference.ts
 PASS TypeScript/tests/cases/compiler/satisfiesEmit.ts
 PASS TypeScript/tests/cases/compiler/scopeCheckClassProperty.ts
 PASS TypeScript/tests/cases/compiler/scopeCheckExtendedClassInsidePublicMethod2.ts
@@ -7216,6 +7216,7 @@ PASS TypeScript/tests/cases/compiler/spreadIntersectionJsx.tsx
 PASS TypeScript/tests/cases/compiler/spreadObjectNoCircular1.ts
 PASS TypeScript/tests/cases/compiler/spreadObjectPermutations.ts
 PASS TypeScript/tests/cases/compiler/spreadObjectWithIndexDoesNotAddUndefinedToLocalIndex.ts
+PASS TypeScript/tests/cases/compiler/spreadOfObjectLiteralAssignableToIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/spreadParameterTupleType.ts
 PASS TypeScript/tests/cases/compiler/spreadTupleAccessedByTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/spuriousCircularityOnTypeImport.ts
@@ -11851,6 +11852,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembe
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/operatorsAndIntersectionTypes.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
 PASS TypeScript/tests/cases/conformance/types/keyof/keyofIntersection.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes2.ts
@@ -12041,8 +12043,6 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
-PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
-PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts
