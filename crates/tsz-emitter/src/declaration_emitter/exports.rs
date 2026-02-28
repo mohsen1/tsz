@@ -990,8 +990,22 @@ impl<'a> DeclarationEmitter<'a> {
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
             let prev_public_api_scope_depth = self.public_api_scope_depth;
-            if is_exported {
+            let prev_inside_non_ambient_namespace = self.inside_non_ambient_namespace;
+            // In declare/ambient namespaces, all members are implicitly public,
+            // so disable the API filter (increment depth).
+            // In non-declare namespaces, members must have `export` to be public.
+            // A namespace is ambient if it has `declare`, or if the source
+            // is a .d.ts file, or if it's nested inside an ambient namespace
+            // (but NOT if it's nested inside a non-ambient namespace).
+            let is_ambient_ns = self
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                || self.source_is_declaration_file
+                || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
+            if is_ambient_ns {
                 self.public_api_scope_depth += 1;
+            } else {
+                self.inside_non_ambient_namespace = true;
             }
 
             if let Some(body_node) = self.arena.get(current_body)
@@ -1015,8 +1029,8 @@ impl<'a> DeclarationEmitter<'a> {
                 let is_ambient_module = self
                     .arena
                     .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-                    || prev_inside_declare_namespace
-                    || self.source_is_declaration_file;
+                    || self.source_is_declaration_file
+                    || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
 
                 if !is_ambient_module
                     && self.emitted_non_exported_declaration
@@ -1033,6 +1047,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             self.public_api_scope_depth = prev_public_api_scope_depth;
+            self.inside_non_ambient_namespace = prev_inside_non_ambient_namespace;
             self.inside_declare_namespace = prev_inside_declare_namespace;
             self.decrease_indent();
             self.write_indent();
