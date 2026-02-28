@@ -16,6 +16,7 @@ use crate::visitor::{
     literal_value, mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info,
     union_list_id,
 };
+use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -904,6 +905,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && resolved_app_id == app_id
         {
             return None;
+        }
+
+        // Homomorphic identity mapped type passthrough: if the body is
+        // `{ [K in keyof T]: T[K] }` and the argument for T is a primitive/any type,
+        // return the arg directly. This mirrors evaluate_application().
+        // Only applies for identity templates (T[K]), not arbitrary ones like Data.
+        if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(resolved_body) {
+            let mapped = self.interner.mapped_type(mapped_id);
+            if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
+                && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
+                && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
+                && idx < app.args.len()
+                // Verify template is T[K] (identity indexed access)
+                && let Some(TypeData::IndexAccess(obj, key)) = self.interner.lookup(mapped.template)
+                && obj == source
+                && matches!(self.interner.lookup(key), Some(TypeData::TypeParameter(kp)) if kp.name == mapped.type_param.name)
+            {
+                let arg = app.args[idx];
+                if is_primitive_type(self.interner, arg) {
+                    return Some(arg);
+                }
+            }
         }
 
         // Create substitution and instantiate
