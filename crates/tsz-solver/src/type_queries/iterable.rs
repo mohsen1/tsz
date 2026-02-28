@@ -146,6 +146,8 @@ pub enum ForOfElementKind {
     Tuple(Vec<crate::types::TupleElement>),
     /// Union type - compute element type for each member
     Union(Vec<TypeId>),
+    /// Intersection type - compute element type for each member and intersect
+    Intersection(Vec<TypeId>),
     /// Readonly wrapper - unwrap and compute
     Readonly(TypeId),
     /// String type - iteration yields string
@@ -169,6 +171,10 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
         TypeData::Union(members_id) => {
             let members = db.type_list(members_id);
             ForOfElementKind::Union(members.to_vec())
+        }
+        TypeData::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            ForOfElementKind::Intersection(members.to_vec())
         }
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             ForOfElementKind::Readonly(inner)
