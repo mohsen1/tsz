@@ -108,6 +108,19 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
+        self.resolve_cross_file_export_from_file(module_specifier, export_name, None)
+    }
+
+    /// Like `resolve_cross_file_export` but resolves the module specifier from
+    /// a specific source file's perspective. This is needed when following
+    /// cross-file re-export chains: symbol C from b.ts has `import_module = "./a"`,
+    /// which is relative to b.ts, not the current file.
+    pub(crate) fn resolve_cross_file_export_from_file(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<tsz_binder::SymbolId> {
         if let Some((sym_id, binder_idx)) =
             self.resolve_ambient_module_export(module_specifier, export_name)
         {
@@ -121,8 +134,16 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
-        // First, try to resolve the module specifier to a target file index
-        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        // First, try to resolve the module specifier to a target file index.
+        // When source_file_idx is provided, resolve from that file's perspective
+        // (for following re-export chains where specifiers are relative to the
+        // declaring file, not the current file).
+        let target_file_idx = if let Some(from_file) = source_file_idx {
+            self.ctx
+                .resolve_import_target_from_file(from_file, module_specifier)
+        } else {
+            self.ctx.resolve_import_target(module_specifier)
+        }?;
 
         // Get the target file's binder
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;

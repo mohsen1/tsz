@@ -858,6 +858,24 @@ fn propagate_module_export_maps(
                 }
             }
         }
+
+        // Also follow named re-exports: `export { X } from './other'`
+        // Extract unique source modules from the re-export map so the
+        // importing file's binder receives transitive exports.
+        if let Some(file_reexports) = program.reexports.get(target_file_name).cloned() {
+            let mut reexport_sources: rustc_hash::FxHashSet<String> =
+                rustc_hash::FxHashSet::default();
+            for (source_module, _) in file_reexports.values() {
+                reexport_sources.insert(source_module.clone());
+            }
+            for source_module in reexport_sources {
+                if let Some(&source_target_idx) =
+                    resolved_module_paths.get(&(current_target_idx, source_module.clone()))
+                {
+                    worklist.push((source_module, source_target_idx));
+                }
+            }
+        }
     }
 }
 

@@ -408,11 +408,7 @@ FAIL TypeScript/tests/cases/compiler/es5-asyncFunctionWithStatements.ts
 FAIL TypeScript/tests/cases/compiler/es5-oldStyleOctalLiteralInEnums.ts
 FAIL TypeScript/tests/cases/compiler/es6ClassTest9.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport1.ts
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportDts.ts
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding.ts
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingDts.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingWithExport.ts
-FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingNoDefaultProperty.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportEqualsExportModuleCommonJsError.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportEqualsExportModuleEs2015Error.ts
 FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportIdentifiersParsing.ts
@@ -531,7 +527,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1133,7 +1128,6 @@ FAIL TypeScript/tests/cases/compiler/overloadingOnConstants2.ts
 FAIL TypeScript/tests/cases/compiler/overloadingStaticFunctionsInFunctions.ts
 FAIL TypeScript/tests/cases/compiler/overloadOnConstantsInvalidOverload1.ts
 FAIL TypeScript/tests/cases/compiler/overloadOnConstInheritance2.ts
-FAIL TypeScript/tests/cases/compiler/overloadsWithConstraints.ts
 FAIL TypeScript/tests/cases/compiler/overloadsWithProvisionalErrors.ts
 FAIL TypeScript/tests/cases/compiler/overshifts.ts
 FAIL TypeScript/tests/cases/compiler/parameterListAsTupleType.ts
@@ -1198,7 +1192,6 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks8.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksIgnored.ts
 FAIL TypeScript/tests/cases/compiler/reachabilityChecksNoCrash1.ts
 FAIL TypeScript/tests/cases/compiler/reactDefaultPropsInferenceSuccess.tsx
-FAIL TypeScript/tests/cases/compiler/reactImportUnusedInNewJSXEmit.tsx
 FAIL TypeScript/tests/cases/compiler/reactNamespaceInvalidInput.tsx
 FAIL TypeScript/tests/cases/compiler/reactReadonlyHOCAssignabilityReal.tsx
 FAIL TypeScript/tests/cases/compiler/reactReduxLikeDeferredInferenceAllowsAssignment.ts
@@ -1518,8 +1511,6 @@ FAIL TypeScript/tests/cases/compiler/unusedInterfaceinNamespace1.ts
 FAIL TypeScript/tests/cases/compiler/unusedInterfaceinNamespace2.ts
 FAIL TypeScript/tests/cases/compiler/unusedInterfaceinNamespace3.ts
 FAIL TypeScript/tests/cases/compiler/unusedInvalidTypeArguments.ts
-FAIL TypeScript/tests/cases/compiler/unusedLocalsAndObjectSpread.ts
-FAIL TypeScript/tests/cases/compiler/unusedLocalsAndObjectSpread2.ts
 FAIL TypeScript/tests/cases/compiler/unusedLocalsAndParameters.ts
 FAIL TypeScript/tests/cases/compiler/unusedLocalsInMethod4.ts
 FAIL TypeScript/tests/cases/compiler/unusedParameterProperty1.ts
@@ -2550,10 +2541,7 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/Paramet
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList2.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList5.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ParameterLists/parserErrorRecovery_ParameterList6.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction1.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction2.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction1.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction2.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserFuzz1.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserMissingLambdaOpenBrace1.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserStatementIsNotAMemberVariableDeclaration1.ts
@@ -2756,7 +2744,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
@@ -4935,16 +4922,20 @@ PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingDts.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport1InEs5.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport1WithExport.ts
+PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportDts.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportDts1.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportInEs5.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImportWithExport.ts
+PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding1.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding1InEs5.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBinding1WithExport.ts
+PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingDts.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingDts1.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamespaceBindingInEs5.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingInEs5.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingMergeErrors.ts
+PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingNoDefaultProperty.ts
 PASS TypeScript/tests/cases/compiler/es6ImportDefaultBindingWithExport.ts
 PASS TypeScript/tests/cases/compiler/es6ImportEqualsDeclaration.ts
 PASS TypeScript/tests/cases/compiler/es6ImportEqualsDeclaration2.ts
@@ -5348,6 +5339,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6722,6 +6714,7 @@ PASS TypeScript/tests/cases/compiler/overloadsAndTypeArgumentArity.ts
 PASS TypeScript/tests/cases/compiler/overloadsAndTypeArgumentArityErrors.ts
 PASS TypeScript/tests/cases/compiler/overloadsInDifferentContainersDisagreeOnAmbient.ts
 PASS TypeScript/tests/cases/compiler/overloadsWithComputedNames.ts
+PASS TypeScript/tests/cases/compiler/overloadsWithConstraints.ts
 PASS TypeScript/tests/cases/compiler/overloadsWithinClasses.ts
 PASS TypeScript/tests/cases/compiler/overloadWithCallbacksWithDifferingOptionalityOnArgs.ts
 PASS TypeScript/tests/cases/compiler/overrideBaseIntersectionMethod.ts
@@ -6959,6 +6952,7 @@ PASS TypeScript/tests/cases/compiler/reachabilityChecks9.ts
 PASS TypeScript/tests/cases/compiler/reachabilityCheckWithEmptyDefault.ts
 PASS TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 PASS TypeScript/tests/cases/compiler/reactImportDropped.ts
+PASS TypeScript/tests/cases/compiler/reactImportUnusedInNewJSXEmit.tsx
 PASS TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNext.tsx
 PASS TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNextEsm.tsx
 PASS TypeScript/tests/cases/compiler/reactNamespaceImportPresevation.tsx
@@ -7815,6 +7809,8 @@ PASS TypeScript/tests/cases/compiler/unusedImports9.ts
 PASS TypeScript/tests/cases/compiler/unusedInterfaceinNamespace4.ts
 PASS TypeScript/tests/cases/compiler/unusedInterfaceinNamespace5.ts
 PASS TypeScript/tests/cases/compiler/unusedLocalProperty.ts
+PASS TypeScript/tests/cases/compiler/unusedLocalsAndObjectSpread.ts
+PASS TypeScript/tests/cases/compiler/unusedLocalsAndObjectSpread2.ts
 PASS TypeScript/tests/cases/compiler/unusedLocalsAndParametersDeferred.ts
 PASS TypeScript/tests/cases/compiler/unusedLocalsAndParametersOverloadSignatures.ts
 PASS TypeScript/tests/cases/compiler/unusedLocalsAndParametersTypeAliases.ts
@@ -10943,7 +10939,10 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/Paramet
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserCommaInTypeMemberList1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserCommaInTypeMemberList2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEmptyParenthesizedExpression1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserEqualsGreaterThanAfterFunction1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantAccessibilityModifierInModule1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction1.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantEqualsGreaterThanAfterFunction2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserErrantSemicolonInClass1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnPropertySignature1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/parserModifierOnPropertySignature2.ts
@@ -11857,6 +11856,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
