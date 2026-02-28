@@ -1208,6 +1208,9 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
+                // Inline JSDoc comment before parameter (e.g. /** comment */ a: string)
+                self.emit_inline_parameter_comment(param_node.pos);
+
                 // Modifiers (public, private, etc for constructor parameters)
                 self.emit_member_modifiers(&param.modifiers);
 
@@ -1290,6 +1293,9 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_type_parameter(param_node)
             {
+                // Inline JSDoc comment before type parameter
+                self.emit_inline_parameter_comment(param_node.pos);
+
                 // Emit variance/const modifiers (in, out, const)
                 if let Some(ref mods) = param.modifiers {
                     for &mod_idx in &mods.nodes {
