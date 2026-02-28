@@ -201,7 +201,6 @@ impl<'a> UsageAnalyzer<'a> {
             }
             // Export declarations - check if clause contains a declaration to analyze
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                // Check if export_clause contains a declaration we need to analyze
                 if let Some(export_node) = self.arena.get(stmt_idx)
                     && let Some(export) = self.arena.get_export_decl(export_node)
                     && export.export_clause.is_some()
@@ -229,9 +228,18 @@ impl<'a> UsageAnalyzer<'a> {
                         k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                             self.analyze_import_equals_declaration(export.export_clause);
                         }
+                        // Named exports: export { x, y as z }
+                        // Mark each specifier's local name as used
+                        k if k == syntax_kind_ext::NAMED_EXPORTS => {
+                            self.analyze_named_exports(export.export_clause);
+                        }
                         _ => {}
                     }
                 }
+            }
+            // Export assignment: export default expr
+            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                self.analyze_export_assignment(stmt_idx);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.analyze_module_declaration(stmt_idx);
@@ -275,6 +283,59 @@ impl<'a> UsageAnalyzer<'a> {
             self.in_value_pos = true;
             self.analyze_entity_name(import.module_specifier);
             self.in_value_pos = old;
+        }
+    }
+
+    /// Analyze named exports: `export { x, y as z }`.
+    /// Marks each specifier's local binding as used so non-exported declarations
+    /// referenced by the export clause survive into .d.ts output.
+    fn analyze_named_exports(&mut self, clause_idx: NodeIndex) {
+        let Some(clause_node) = self.arena.get(clause_idx) else {
+            return;
+        };
+        let Some(named) = self.arena.get_named_imports(clause_node) else {
+            return;
+        };
+        for &spec_idx in &named.elements.nodes {
+            let Some(spec_node) = self.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            // The local name is `property_name` if it exists, otherwise `name`
+            let local_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            // Mark the local symbol as used (both type and value, since
+            // we don't know which side of the export is being consumed)
+            let old = self.in_value_pos;
+            self.in_value_pos = true;
+            self.analyze_entity_name(local_name_idx);
+            self.in_value_pos = old;
+            // Also mark as type usage
+            self.analyze_entity_name(local_name_idx);
+        }
+    }
+
+    /// Analyze export assignment: `export default expr`.
+    fn analyze_export_assignment(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(export_assign) = self.arena.get_export_assignment(stmt_node) else {
+            return;
+        };
+        // Mark the expression as used (could be a type or value reference)
+        if export_assign.expression.is_some() {
+            let old = self.in_value_pos;
+            self.in_value_pos = true;
+            self.analyze_entity_name(export_assign.expression);
+            self.in_value_pos = old;
+            // Also type usage
+            self.analyze_entity_name(export_assign.expression);
         }
     }
 
@@ -920,27 +981,34 @@ impl<'a> UsageAnalyzer<'a> {
                         "[DEBUG] analyze_entity_name: no symbol found for name_idx={:?}",
                         name_idx
                     );
-                    // Fallback: Try to find the symbol in import_name_map
-                    // Get the identifier text and look it up
+                    // Fallback: Try to find the symbol via import_name_map or file_locals
                     if let Some(ident) = self.arena.get_identifier(name_node) {
                         debug!(
-                            "[DEBUG] analyze_entity_name: looking up '{}' in import_name_map",
+                            "[DEBUG] analyze_entity_name: looking up '{}' in import_name_map/file_locals",
                             ident.escaped_text
                         );
+                        let kind = if self.in_value_pos {
+                            UsageKind::VALUE
+                        } else {
+                            UsageKind::TYPE
+                        };
                         if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
                             debug!(
                                 "[DEBUG] analyze_entity_name: found sym_id={:?} from import_name_map",
                                 sym_id
                             );
-                            let kind = if self.in_value_pos {
-                                UsageKind::VALUE
-                            } else {
-                                UsageKind::TYPE
-                            };
+                            self.mark_symbol_used(sym_id, kind);
+                        } else if let Some(sym_id) =
+                            self.binder.file_locals.get(&ident.escaped_text)
+                        {
+                            debug!(
+                                "[DEBUG] analyze_entity_name: found sym_id={:?} from file_locals",
+                                sym_id
+                            );
                             self.mark_symbol_used(sym_id, kind);
                         } else {
                             debug!(
-                                "[DEBUG] analyze_entity_name: '{}' not found in import_name_map",
+                                "[DEBUG] analyze_entity_name: '{}' not found",
                                 ident.escaped_text
                             );
                         }
