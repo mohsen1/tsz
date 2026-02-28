@@ -774,7 +774,7 @@ impl<'a> CheckerState<'a> {
                     return_type
                 }
             }
-            CallResult::NonVoidFunctionCalledWithNew => {
+            CallResult::NonVoidFunctionCalledWithNew | CallResult::VoidFunctionCalledWithNew => {
                 self.error_non_void_function_called_with_new_at(callee_expr);
                 TypeId::ANY
             }
