@@ -1058,13 +1058,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emitted_non_exported_declaration = false;
                 self.emitted_scope_marker = false;
 
-                // In ambient string-named modules, pre-scan to check if the
-                // body has a mix of exported and non-exported members.
-                // When it does, tsc preserves `export` keywords; otherwise
-                // it strips them.
+                // Pre-scan to check if the body has a mix of exported and
+                // non-exported members. When it does, tsc preserves `export`
+                // keywords on individual members; otherwise it strips them.
+                // Applies to both ambient string-named modules and non-ambient namespaces.
                 let prev_ambient_scope_marker = self.ambient_module_has_scope_marker;
-                if is_ambient_ns && use_module_keyword {
-                    self.ambient_module_has_scope_marker = self.module_body_has_scope_marker(stmts);
+                if !is_ambient_ns || use_module_keyword {
+                    self.ambient_module_has_scope_marker =
+                        self.module_body_has_scope_marker(stmts, !is_ambient_ns);
                 }
 
                 for &stmt_idx in &stmts.nodes {
@@ -1353,9 +1354,15 @@ impl<'a> DeclarationEmitter<'a> {
     /// either an explicit `export {}` statement or a mix of exported and
     /// non-exported members. When true, `export` keywords should be preserved
     /// on individual members inside the ambient module.
+    ///
+    /// When `non_ambient` is true (non-ambient namespaces), only namespace
+    /// declarations count as visible non-exported members. Other non-exported
+    /// declarations (classes, interfaces, variables, etc.) are not emitted
+    /// in the .d.ts output and should not trigger the scope marker.
     pub(crate) fn module_body_has_scope_marker(
         &self,
         stmts: &tsz_parser::parser::NodeList,
+        non_ambient: bool,
     ) -> bool {
         let mut has_exported = false;
         let mut has_non_exported = false;
@@ -1389,9 +1396,19 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         // Skip ImportDeclaration and ImportEqualsDeclaration
                         // as they don't count as non-exported members
-                        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION
-                            && stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                            || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                         {
+                            continue;
+                        }
+                        // In non-ambient namespaces, only namespace declarations
+                        // are visible when non-exported (other declarations like
+                        // classes, interfaces, variables are hidden in .d.ts).
+                        if non_ambient {
+                            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                                has_non_exported = true;
+                            }
+                        } else {
                             has_non_exported = true;
                         }
                     }
