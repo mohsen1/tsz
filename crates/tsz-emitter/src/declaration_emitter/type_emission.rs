@@ -430,60 +430,53 @@ impl<'a> DeclarationEmitter<'a> {
             // Conditional type (T extends U ? X : Y)
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
                 if let Some(conditional) = self.arena.get_conditional_type(type_node) {
-                    // Helper function to check if a type needs parentheses
-                    let needs_parens = |type_idx: NodeIndex| -> bool {
-                        if let Some(node) = self.arena.get(type_idx) {
-                            // Types with lower or equal precedence need parentheses
+                    // check_type needs parens for conditional/function/union/intersection
+                    let check_needs_parens =
+                        if let Some(node) = self.arena.get(conditional.check_type) {
                             node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                                 || node.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || node.kind == syntax_kind_ext::UNION_TYPE
                                 || node.kind == syntax_kind_ext::INTERSECTION_TYPE
                         } else {
                             false
-                        }
-                    };
+                        };
 
-                    // Emit check_type (with parens if needed)
-                    if needs_parens(conditional.check_type) {
+                    if check_needs_parens {
                         self.write("(");
                     }
                     self.emit_type(conditional.check_type);
-                    if needs_parens(conditional.check_type) {
+                    if check_needs_parens {
                         self.write(")");
                     }
 
                     self.write(" extends ");
 
-                    // Emit extends_type (with parens if needed)
-                    if needs_parens(conditional.extends_type) {
+                    // extends_type needs parens only for conditional types
+                    // (function types in extends position are unambiguous)
+                    let extends_needs_parens =
+                        if let Some(node) = self.arena.get(conditional.extends_type) {
+                            node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                        } else {
+                            false
+                        };
+
+                    if extends_needs_parens {
                         self.write("(");
                     }
                     self.emit_type(conditional.extends_type);
-                    if needs_parens(conditional.extends_type) {
+                    if extends_needs_parens {
                         self.write(")");
                     }
 
                     self.write(" ? ");
 
-                    // Emit true_type (with parens if needed)
-                    if needs_parens(conditional.true_type) {
-                        self.write("(");
-                    }
+                    // true_type and false_type don't need parens —
+                    // conditional types are right-associative in the false branch
                     self.emit_type(conditional.true_type);
-                    if needs_parens(conditional.true_type) {
-                        self.write(")");
-                    }
 
                     self.write(" : ");
 
-                    // Emit false_type (with parens if needed)
-                    if needs_parens(conditional.false_type) {
-                        self.write("(");
-                    }
                     self.emit_type(conditional.false_type);
-                    if needs_parens(conditional.false_type) {
-                        self.write(")");
-                    }
                 }
             }
 
