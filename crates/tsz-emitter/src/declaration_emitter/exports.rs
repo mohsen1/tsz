@@ -1163,6 +1163,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if param.dot_dot_dot_token {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
+                } else if !self.source_is_declaration_file {
+                    // Non-rest parameters without explicit type → any
+                    self.write(": any");
                 }
             }
         }
