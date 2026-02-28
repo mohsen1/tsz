@@ -263,6 +263,16 @@ impl<'a> TypePrinter<'a> {
                 let mut line = String::new();
                 line.push_str(&member_indent);
 
+                // Try to emit as method syntax if the property is a method
+                if property.is_method
+                    && let Some(method_str) = nested.print_property_as_method(property)
+                {
+                    line.push_str(&method_str);
+                    line.push(';');
+                    lines.push(line);
+                    continue;
+                }
+
                 // Readonly marker
                 if property.readonly {
                     line.push_str("readonly ");
@@ -291,6 +301,15 @@ impl<'a> TypePrinter<'a> {
             for property in &shape.properties {
                 let mut member = String::new();
 
+                // Try to emit as method syntax if the property is a method
+                if property.is_method
+                    && let Some(method_str) = self.print_property_as_method(property)
+                {
+                    member.push_str(&method_str);
+                    members.push(member);
+                    continue;
+                }
+
                 // Property name
                 member.push_str(&self.resolve_atom(property.name));
 
@@ -308,6 +327,63 @@ impl<'a> TypePrinter<'a> {
 
             format!("{{ {} }}", members.join("; "))
         }
+    }
+
+    /// Print a property as method syntax: `name(params): ret` instead of `name: (params) => ret`.
+    /// Returns `None` if the property's type is not a function shape.
+    fn print_property_as_method(
+        &self,
+        property: &tsz_solver::types::PropertyInfo,
+    ) -> Option<String> {
+        // Check if the property type is a simple function type
+        let func_id = visitor::function_shape_id(self.interner, property.type_id)?;
+        let func_shape = self.interner.function_shape(func_id);
+
+        let mut result = String::new();
+
+        // Property name
+        result.push_str(&self.resolve_atom(property.name));
+
+        // Type parameters
+        if !func_shape.type_params.is_empty() {
+            let params: Vec<String> = func_shape
+                .type_params
+                .iter()
+                .map(|tp| self.print_type_parameter(tp))
+                .collect();
+            result.push('<');
+            result.push_str(&params.join(", "));
+            result.push('>');
+        }
+
+        // Parameters
+        result.push('(');
+        let mut first = true;
+        for param in &func_shape.params {
+            if !first {
+                result.push_str(", ");
+            }
+            first = false;
+
+            if param.rest {
+                result.push_str("...");
+            }
+            if let Some(name) = param.name {
+                result.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    result.push('?');
+                }
+                result.push_str(": ");
+            }
+            result.push_str(&self.print_type(param.type_id));
+        }
+        result.push(')');
+
+        // Return type
+        result.push_str(": ");
+        result.push_str(&self.print_type(func_shape.return_type));
+
+        Some(result)
     }
 
     fn print_union(&self, type_list_id: tsz_solver::types::TypeListId) -> String {
