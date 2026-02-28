@@ -1,7 +1,35 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9700/12570 (77.2%) — full suite, error-code level
+**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-02-28l — jsx: TS2322 for spread attribute type mismatches
+
+### Fixed: JSX spread attribute assignability check (TS2322) — Checker (jsx_checker.rs)
+
+**Area**: jsx (59.5%, 79 failures out of 195 tests)
+
+**Root cause**: `check_jsx_attributes_against_props()` in jsx_checker.rs never checked spread attribute types against the props type. When a single spread was the only attribute (e.g., `<test1 {...{x: 42}} />` where x should be string), no TS2322 was emitted. The code had an explicit comment: "Full whole-spread assignability checking (TS2322) is deferred."
+
+**Fix**: Added `check_assignable_or_report_at(spread_type, props_type, ...)` in the spread attribute handling branch, with guards:
+- Only fires when the spread is the sole attribute (`attr_nodes.len() == 1`)
+- Skips when spread type has a string index signature (tsc doesn't check those)
+- Error anchored at tag name (matching tsc behavior)
+
+**Also fixed**: Extracted `contains_type_param_named()` to solver (was arch guard violation — checker matching `TypeData::TypeParameter`). Removed debug `eprintln!` in generic_checker.
+
+**Impact**: Error codes now match for tsxAttributeResolution3, tsxAttributeResolution5, tsxAttributeResolution6, etc. However, fingerprint-level mismatches remain because we print expanded constraint types instead of type parameter names (e.g., `{ x: number }` instead of `T`).
+
+**Tests**: 3 unit tests (spread mismatch, compatible spread, index-signature spread)
+
+### Remaining JSX gaps (high-impact analysis):
+1. **Type parameter names in diagnostics**: When `T extends {x: number}` is not assignable, tsc prints "Type 'T' is not assignable" but we print "Type '{ x: number }' is not assignable". This affects MANY fingerprint-level failures across JSX and other areas. Fix would be in the solver's explain/formatting path.
+2. **Multi-attribute spread assignability**: When JSX has explicit attrs + spreads combined, tsc checks the merged result. We only check single-spread-only cases. Need merged attributes type construction.
+3. **Generic component inference** (tsxGenericAttributesType7/8): Unconstrained type params spread into components with IntrinsicAttributes intersection — needs generic inference improvements.
+4. **Discriminated union props** (tsxSpreadAttributesResolution6): `TextProps = {editable: false} | {editable: true, onEdit: ...}` — need discriminated union assignability for JSX attributes.
+5. **TS2741 extra formatting**: Some TS2741 messages show `{ y }` instead of `{ y: number }` — type formatting issue.
 
 ---
 
