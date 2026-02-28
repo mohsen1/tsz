@@ -97,6 +97,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node) {
                     self.emit_node(sig.name);
+                    if sig.question_token {
+                        self.write("?");
+                    }
                     if let Some(ref type_params) = sig.type_parameters {
                         self.emit_type_parameters(type_params);
                     }
@@ -146,6 +149,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
                 if let Some(sig) = self.arena.get_index_signature(member_node) {
+                    // Emit readonly modifier if present
+                    if let Some(ref mods) = sig.modifiers {
+                        for &mod_idx in &mods.nodes {
+                            if let Some(mod_node) = self.arena.get(mod_idx)
+                                && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                            {
+                                self.write("readonly ");
+                            }
+                        }
+                    }
                     self.write("[");
                     self.emit_parameters(&sig.parameters);
                     self.write("]");
@@ -262,6 +275,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node) {
                     self.emit_node(sig.name);
+                    if sig.question_token {
+                        self.write("?");
+                    }
                     if let Some(ref type_params) = sig.type_parameters {
                         self.emit_type_parameters(type_params);
                     }
