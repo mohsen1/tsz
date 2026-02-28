@@ -45,6 +45,20 @@ impl<'a> CheckerState<'a> {
         // TS1042: async modifier cannot be used on class declarations
         self.check_async_modifier_on_declaration(&class.modifiers);
 
+        // Evaluate class-level decorator expressions to trigger definite-assignment
+        // checks (TS2454) and other diagnostics. tsc evaluates decorator expressions
+        // even if the class has other errors.
+        if let Some(ref modifiers) = class.modifiers {
+            for &mod_idx in &modifiers.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == syntax_kind_ext::DECORATOR
+                    && let Some(decorator) = self.ctx.arena.get_decorator(mod_node)
+                {
+                    self.compute_type_of_node(decorator.expression);
+                }
+            }
+        }
+
         // CRITICAL: Check for circular inheritance using InheritanceGraph
         // This prevents stack overflow from infinite recursion in get_class_instance_type
         // Must be done BEFORE any type checking to catch cycles early

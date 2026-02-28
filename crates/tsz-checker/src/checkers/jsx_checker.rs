@@ -182,6 +182,30 @@ impl<'a> CheckerState<'a> {
                     &["IntrinsicElements"],
                 );
             }
+            // Even when IntrinsicElements is missing, evaluate attribute expressions
+            // to trigger definite-assignment checks (TS2454) and other diagnostics.
+            // tsc evaluates these expressions regardless of JSX infrastructure availability.
+            if let Some(attrs_node) = self.ctx.arena.get(jsx_opening.attributes)
+                && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
+            {
+                for &attr_idx in &attrs.properties.nodes {
+                    if let Some(attr_node) = self.ctx.arena.get(attr_idx) {
+                        if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                            if let Some(spread_data) =
+                                self.ctx.arena.get_jsx_spread_attribute(attr_node)
+                            {
+                                self.compute_type_of_node(spread_data.expression);
+                            }
+                        } else if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                            if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
+                                && !attr_data.initializer.is_none()
+                            {
+                                self.compute_type_of_node(attr_data.initializer);
+                            }
+                        }
+                    }
+                }
+            }
             TypeId::ANY
         } else {
             // Component: resolve as variable expression

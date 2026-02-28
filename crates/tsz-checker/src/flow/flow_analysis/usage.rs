@@ -265,6 +265,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip definite assignment check for identifiers in type-query position
+        // (e.g., `typeof x` in `let b: typeof x`). typeof in type position is a
+        // compile-time type query that doesn't read the variable's value at runtime,
+        // so TS2454 should not fire even if the variable has no initializer.
+        if self.is_in_type_query_position(idx) {
+            return false;
+        }
+
         // Skip definite assignment check if this identifier is a for-in/for-of
         // initializer — it's an assignment target, not a usage.
         // e.g., `let x: number; for (x of items) { ... }` — the `x` in `for (x of ...)`
@@ -472,6 +480,38 @@ impl<'a> CheckerState<'a> {
 
         // Only check definite assignment when we can anchor to a container scope.
         found_container_scope
+    }
+
+    /// Check if an identifier is inside a `typeof` type query (type position).
+    /// e.g., `let b: typeof a;` — the `a` is in type-query position.
+    /// This is a compile-time type query, not a runtime value read.
+    fn is_in_type_query_position(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..20 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                return false;
+            };
+            let parent = info.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            // Stop walking if we hit a statement or declaration boundary
+            if parent_node.is_function_like()
+                || parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                || parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                return false;
+            }
+            current = parent;
+        }
+        false
     }
 
     fn is_source_file_global_var_decl(&self, decl_id: NodeIndex) -> bool {
@@ -766,6 +806,17 @@ impl<'a> CheckerState<'a> {
                 Some(flow) => flow,
                 None => {
                     tracing::debug!("No flow info for {idx:?} or its ancestors");
+                    // When no flow node exists for this usage or its ancestors
+                    // (e.g., identifiers inside JSX attributes, decorator expressions,
+                    // computed property names), check whether the variable's declaration
+                    // has an initializer. If it lacks an initializer, the variable is
+                    // not definitely assigned — returning true here would incorrectly
+                    // suppress TS2454.
+                    if let Some(sym_id) = known_sym {
+                        if !self.declaration_has_initializer(sym_id) {
+                            return false;
+                        }
+                    }
                     return true;
                 }
             }
@@ -861,6 +912,57 @@ impl<'a> CheckerState<'a> {
             return is_compound_assign && bin.left == ident_idx;
         }
 
+        false
+    }
+
+    /// Check if a symbol's value declaration has an initializer.
+    /// Used as a fallback when no flow node is found for a usage.
+    fn declaration_has_initializer(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_id = symbol.value_declaration;
+        if decl_id.is_none() {
+            return false;
+        }
+        let Some(decl_node) = self.ctx.arena.get(decl_id) else {
+            return false;
+        };
+        // Walk from identifier to variable declaration if needed
+        let mut decl_node = decl_node;
+        let mut decl_id_check = decl_id;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if let Some(info) = self.ctx.arena.node_info(decl_id)
+                && let Some(parent) = self.ctx.arena.get(info.parent)
+            {
+                decl_node = parent;
+                decl_id_check = info.parent;
+            }
+        }
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            if let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) {
+                return var_data.initializer.is_some();
+            }
+        }
+        if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+            return true; // binding elements always have a source
+        }
+        // For-in/for-of loop variables
+        if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id_check) {
+            let decl_list_idx = decl_list_info.parent;
+            if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
+                && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                && let Some(for_info) = self.ctx.arena.node_info(decl_list_idx)
+            {
+                let for_idx = for_info.parent;
+                if let Some(for_node) = self.ctx.arena.get(for_idx)
+                    && (for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                {
+                    return true;
+                }
+            }
+        }
         false
     }
 
