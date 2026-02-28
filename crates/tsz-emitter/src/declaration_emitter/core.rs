@@ -772,6 +772,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        // Skip members with computed property names that are not emittable in .d.ts
+        // (e.g., ["" + ""], [Symbol()], [variable] — only literals and well-known symbols survive)
+        if self.member_has_non_emittable_computed_name(member_idx) {
+            return;
+        }
+
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.emit_property_declaration(member_idx);
@@ -1408,6 +1414,81 @@ impl<'a> DeclarationEmitter<'a> {
             return k == SyntaxKind::NumericLiteral as u16 || k == SyntaxKind::BigIntLiteral as u16;
         }
         false
+    }
+
+    /// Check whether a computed property name expression is suitable for `.d.ts` emission.
+    ///
+    /// In tsc, only these computed property names survive into declaration output:
+    /// 1. String literals: `["hello"]`
+    /// 2. Numeric literals: `[42]`
+    /// 3. Well-known symbol accesses: `[Symbol.iterator]`, `[Symbol.hasInstance]`, etc.
+    pub(super) fn should_emit_computed_property(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return true;
+        };
+
+        // Not a computed property name — always emit
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return true;
+        }
+
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+
+        let Some(expr_node) = self.arena.get(computed.expression) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            // String literal: ["hello"]
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            // Numeric literal: [42]
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            // Property access: check for Symbol.xxx (well-known symbol)
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(expr_node) {
+                    if let Some(lhs_node) = self.arena.get(access.expression)
+                        && lhs_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(ident) = self.arena.get_identifier(lhs_node)
+                        && ident.escaped_text == "Symbol"
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the name `NodeIndex` of a class or interface member, if it has one.
+    fn get_member_name_idx(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return Some(prop.name);
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return Some(method.name);
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return Some(accessor.name);
+        }
+        if let Some(sig) = self.arena.get_signature(member_node) {
+            return Some(sig.name);
+        }
+        None
+    }
+
+    /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.
+    /// Returns `true` if the member should be skipped.
+    pub(super) fn member_has_non_emittable_computed_name(&self, member_idx: NodeIndex) -> bool {
+        if let Some(name_idx) = self.get_member_name_idx(member_idx) {
+            !self.should_emit_computed_property(name_idx)
+        } else {
+            false
+        }
     }
 
     /// Check if a class has any member with a `#private` identifier name.
