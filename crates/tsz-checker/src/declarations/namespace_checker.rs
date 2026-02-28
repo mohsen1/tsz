@@ -50,6 +50,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Skip type-only exports (interfaces, type aliases) — they don't conflict
+            // with value properties. Only value exports collide with existing value props.
+            let member_flags = self
+                .ctx
+                .binder
+                .get_symbol(*member_id)
+                .map_or(0, |s| s.flags);
+            if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
+                continue;
+            }
+
             let type_id = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
 
