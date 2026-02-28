@@ -12,8 +12,8 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::{
-    TypeVisitor, array_element_type, keyof_inner_type, literal_number, literal_string,
-    tuple_list_id, union_list_id,
+    TypeVisitor, array_element_type, intersection_list_id, keyof_inner_type, literal_number,
+    literal_string, tuple_list_id, union_list_id,
 };
 use crate::{ApparentMemberKind, TypeDatabase};
 
@@ -113,6 +113,19 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                 | TypeData::TemplateLiteral(_) // Templates might resolve to generic strings
                 | TypeData::Intersection(_)
         )
+    }
+
+    /// Check if the index type is an intersection that contains the mapped type's constraint.
+    ///
+    /// This handles cases like `string & keyof T` indexing into `{ [P in keyof T]: V }`,
+    /// where the intersection is a subset of the constraint `keyof T`.
+    fn intersection_contains_mapped_constraint(&self, constraint: TypeId) -> bool {
+        let interner = self.evaluator.interner();
+        let Some(list_id) = intersection_list_id(interner, self.index_type) else {
+            return false;
+        };
+        let members = interner.type_list(list_id);
+        members.contains(&constraint)
     }
 
     fn evaluate_type_param(&mut self, param: &TypeParamInfo) -> Option<TypeId> {
@@ -379,7 +392,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // This handles for-in loops: `for (let k in obj) { result[k] = ... }`
             // where `k: string` and `result: { [K in keyof T]: V }`.
             || (matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
-                && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some());
+                && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some())
+            // Intersection index containing the constraint: when index is
+            // `string & keyof T` and constraint is `keyof T`, the intersection
+            // is a subset of the constraint. This handles for-in loops where the
+            // key type is refined to `string & keyof T`.
+            || self.intersection_contains_mapped_constraint(mapped.constraint);
 
         if can_substitute {
             let mut subst = TypeSubstitution::new();

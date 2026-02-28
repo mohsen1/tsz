@@ -10,7 +10,7 @@ use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{PropertyInfo, TupleElement, TypeData};
+use crate::types::{MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo};
 
 // =============================================================================
 // Basic Index Access Tests
@@ -468,5 +468,54 @@ fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
     assert!(
         result != TypeId::NONE,
         "Indirect cyclic lazy index access should terminate without stack overflow"
+    );
+}
+
+// =============================================================================
+// Mapped Type Indexing Tests
+// =============================================================================
+
+/// When an index type is an intersection like `string & keyof T`, the
+/// `visit_mapped` fast path should recognize that the intersection contains
+/// the mapped type's constraint and allow substitution.
+#[test]
+fn test_index_access_mapped_with_intersection_index() {
+    let interner = TypeInterner::new();
+
+    // Create { x: string, y: number }
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
+    ]);
+
+    let keyof_source = interner.keyof(source);
+
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    // { [K in keyof source]: boolean }
+    let mapped = interner.mapped(MappedType {
+        type_param: type_param_info,
+        constraint: keyof_source,
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    // Index with `string & keyof source` (intersection, as happens in for-in loops)
+    let intersection_index = interner.intersection(vec![TypeId::STRING, keyof_source]);
+    let index_access = interner.index_access(mapped, intersection_index);
+
+    // Should evaluate successfully (not remain as deferred IndexAccess)
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "mapped[string & keyof T] should resolve to the template type"
     );
 }
