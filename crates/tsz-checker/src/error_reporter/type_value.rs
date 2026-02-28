@@ -244,65 +244,67 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
+            // Only applies to alias symbols explicitly marked type-only
+            // Check this FIRST — if the local symbol is marked type-only from
+            // `import type`, that takes precedence over export-side type-only.
+            if (symbol.flags & symbol_flags::ALIAS) != 0 && symbol.is_type_only {
+                // Walk up from the symbol's declaration to determine if it came from
+                // an import or export statement.
+                for &decl in &symbol.declarations {
+                    if decl.is_none() {
+                        continue;
+                    }
+                    let mut current = decl;
+                    let mut guard = 0;
+
+                    // Get the arena for this declaration if it's from a different file
+                    let arena = self
+                        .ctx
+                        .binder
+                        .symbol_arenas
+                        .get(&alias_sym_id)
+                        .map(|arc| &**arc)
+                        .unwrap_or(self.ctx.arena);
+
+                    while guard < 16 {
+                        guard += 1;
+                        let Some(node) = arena.get(current) else {
+                            break;
+                        };
+                        if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                            return Some(TypeOnlyKind::Import);
+                        }
+                        if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            return Some(TypeOnlyKind::Export);
+                        }
+                        let Some(ext) = arena.get_extended(current) else {
+                            break;
+                        };
+                        if ext.parent.is_none() {
+                            break;
+                        }
+                        current = ext.parent;
+                    }
+                }
+            }
+
             // If this alias resolves through an import chain that came from a type-only
-            // re-export (`export type * from ...` or `export { ... } from ...` with type-only),
-            // classify it as a type-only export usage (TS1362).
+            // re-export or import, classify accordingly.
             if let Some(module_specifier) = symbol.import_module.as_deref() {
                 let export_name = symbol
                     .import_name
                     .as_deref()
                     .unwrap_or(&symbol.escaped_name);
-                if self
-                    .ctx
-                    .binder
-                    .resolve_import_with_reexports_type_only(module_specifier, export_name)
-                    .is_some_and(|(_, is_type_only)| is_type_only)
-                {
+                if self.is_export_type_only_across_binders(module_specifier, export_name) {
+                    // Determine whether the type-only came from `import type` or `export type`
+                    // in the target module. Resolve the export symbol and walk its declarations.
+                    if let Some(kind) =
+                        self.classify_cross_file_type_only_kind(module_specifier, export_name)
+                    {
+                        return Some(kind);
+                    }
+                    // Default to Export if we can't determine the kind
                     return Some(TypeOnlyKind::Export);
-                }
-            }
-
-            // Only applies to alias symbols explicitly marked type-only
-            if (symbol.flags & symbol_flags::ALIAS) == 0 || !symbol.is_type_only {
-                continue;
-            }
-
-            // Walk up from the symbol's declaration to determine if it came from
-            // an import or export statement.
-            for &decl in &symbol.declarations {
-                if decl.is_none() {
-                    continue;
-                }
-                let mut current = decl;
-                let mut guard = 0;
-
-                // Get the arena for this declaration if it's from a different file
-                let arena = self
-                    .ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&alias_sym_id)
-                    .map(|arc| &**arc)
-                    .unwrap_or(self.ctx.arena);
-
-                while guard < 16 {
-                    guard += 1;
-                    let Some(node) = arena.get(current) else {
-                        break;
-                    };
-                    if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                        return Some(TypeOnlyKind::Import);
-                    }
-                    if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                        return Some(TypeOnlyKind::Export);
-                    }
-                    let Some(ext) = arena.get_extended(current) else {
-                        break;
-                    };
-                    if ext.parent.is_none() {
-                        break;
-                    }
-                    current = ext.parent;
                 }
             }
         }
@@ -317,6 +319,66 @@ impl<'a> CheckerState<'a> {
             && target_symbol.is_type_only
         {
             return Some(TypeOnlyKind::Export);
+        }
+
+        None
+    }
+
+    /// Determine whether a cross-file type-only export came from `import type`
+    /// (TS1361) or `export type` (TS1362) by resolving the target module and
+    /// walking the export symbol's declarations.
+    fn classify_cross_file_type_only_kind(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<TypeOnlyKind> {
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        let exports_table = target_binder.module_exports.get(&target_file_name)?;
+        let sym_id = exports_table.get(export_name)?;
+        let sym = self.ctx.binder.get_symbol(sym_id)?;
+
+        if !sym.is_type_only {
+            return None;
+        }
+
+        // Walk the symbol's declarations to find the import/export that made it type-only
+        let decl_arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arc| &**arc)
+            .unwrap_or(target_arena);
+
+        for &decl in &sym.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            let mut current = decl;
+            let mut guard = 0;
+            while guard < 16 {
+                guard += 1;
+                let Some(node) = decl_arena.get(current) else {
+                    break;
+                };
+                if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    return Some(TypeOnlyKind::Import);
+                }
+                if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    return Some(TypeOnlyKind::Export);
+                }
+                let Some(ext) = decl_arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
         }
 
         None
