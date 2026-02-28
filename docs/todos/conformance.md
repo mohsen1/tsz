@@ -6,6 +6,52 @@
 
 ---
 
+## Session 2026-02-28d — Interface member merging: property-vs-method TS2300
+
+### Area: classes/constructorDeclarations (59.0%, 23/39 passing)
+
+Investigated the area and found the most impactful cross-cutting gap was TS2300 "Duplicate identifier" (missing in 21 tests globally, 11 would-pass-if-added).
+
+### Fixed: Property-vs-method conflict detection in merged interfaces — Checker
+
+**Root cause**: `check_merged_interface_declaration_diagnostics` only handled `PropertySignature` members. When merged interfaces had the same member name as both a `PropertySignature` (e.g., `foo: () => string`) and a `MethodSignature` (e.g., `foo(): number`), the method signature was completely ignored. tsc emits TS2300 on both declarations in this case.
+
+**Fix**: Extended `check_merged_interface_declaration_diagnostics` to:
+1. Track both PropertySignature and MethodSignature members with a `(TypeId, bool, NodeIndex)` tuple in `merged_properties` (type, is_method, name_node)
+2. When a method follows a property with the same name, emit TS2300 on both declarations
+3. Skip type resolution for method signatures (avoid false TS2304 from method-local type params like `foo<W>(): W`)
+4. Skip TS2717 type compatibility for method overloads (multiple methods with same name are valid)
+
+**File**: `crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs:1197-1395`
+
+**Unit tests added**:
+- `test_ts2300_interface_property_vs_method_conflict` — property-vs-method emits TS2300
+- `test_no_ts2300_for_method_overloads_in_merged_interfaces` — method overloads are allowed
+- `test_no_ts2304_for_method_type_params_in_merged_interface` — method type params don't leak
+
+**Conformance**: 9627 → 9639 (+12, error-code level, 76.7%)
+
+**Note**: The directly targeted tests (duplicateIdentifierRelatedSpans3/5) are multi-file tests that still fail at error-code level because our cross-file interface merging doesn't yet detect property-vs-method conflicts across binders. The +12 improvement comes from:
+- Reduced false positive diagnostics from method return type resolution
+- Better property-vs-method detection in single-file interfaces
+
+### Remaining TS2300 gaps (for future sessions)
+
+| Pattern | Tests | Difficulty |
+|---------|-------|-----------|
+| Cross-file interface property-vs-method | duplicateIdentifierRelatedSpans3/5 + 9 more | Medium (need cross-binder member kind tracking) |
+| Duplicate export specifiers (`export {Foo, Foo}`) | exportInterfaceClassAndValueWithDuplicatesInImportList | Low (checker export checking) |
+| Constructor parameter property vs class property | constructorParameterProperties2 | Medium (checker constructor checking) |
+| Type alias conflicting with interface+namespace | noSymbolForMergeCrash | Medium (binder merge semantics) |
+| Cross-file declaration conflicts (VNode) | checkerInitializationCrash | Hard (cross-file type resolution) |
+| Unique symbol computed property names | uniqueSymbolsPropertyNames | Medium (unique symbol identity) |
+
+### TS2717 gap (property-after-method)
+
+When a property follows a method with the same name in merged interfaces, tsc emits TS2717 "Subsequent property declarations must have the same type" comparing the property's type against the method's full callable type. We currently skip this case — it requires computing the method's function type, which needs access to the method's full signature including parameters (not just the return type annotation). This affects `methodSignatureHandledDeclarationKindForSymbol.ts` (already was failing, no regression).
+
+---
+
 ## Session 2026-02-28c — Node area: package exports blocking + TS2823 for Node16
 
 ### Fixed: Package exports field blocks unlisted subpaths — Resolution (resolution.rs)
