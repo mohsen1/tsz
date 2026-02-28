@@ -372,8 +372,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, key_literal);
 
             // Substitute into the template
-            let mut property_type =
-                self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
+            let mut property_type = self.evaluate(instantiated_template);
 
             // Check if evaluation hit depth limit
             if property_type == TypeId::ERROR && self.is_depth_exceeded() {

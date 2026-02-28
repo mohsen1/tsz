@@ -1527,6 +1527,13 @@ impl<'a> CheckerState<'a> {
     ///
     /// When iterating `for (let k in obj)` where `obj: T` (a type parameter),
     /// `k` gets type `Extract<keyof T, string>` so that `obj[k]` is well-typed.
+    ///
+    /// When the expression type contains type parameters (e.g., `Boxified<T>`),
+    /// `keyof` evaluation may eagerly resolve through constraints (e.g.,
+    /// `keyof T` where `T extends object` → `string | number | symbol`),
+    /// losing the type parameter connection. In this case, preserve the
+    /// abstract `keyof ExprType & string` form so element access on the
+    /// type parameter remains valid (deferred `IndexAccess`, no false TS7053).
     pub(crate) fn compute_for_in_variable_type(&mut self, expr_type: TypeId) -> TypeId {
         // Remove null/undefined from expression type
         let non_nullable = tsz_solver::remove_nullish(self.ctx.types, expr_type);
@@ -1544,6 +1551,16 @@ impl<'a> CheckerState<'a> {
                 .types
                 .factory()
                 .intersection(vec![keyof_evaluated, TypeId::STRING])
+        } else if self.contains_type_parameters_cached(non_nullable) {
+            // Expression type involves type parameters but keyof evaluated to a
+            // concrete type (e.g., keyof Boxified<T> → string | number | symbol
+            // via T's constraint). Use the UNEVALUATED keyof to preserve the
+            // generic connection. This ensures for-in variables can index the
+            // original type parameter without false TS7053.
+            self.ctx
+                .types
+                .factory()
+                .intersection(vec![keyof_type, TypeId::STRING])
         } else {
             TypeId::STRING
         }

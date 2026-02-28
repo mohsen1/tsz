@@ -609,6 +609,18 @@ impl<'a> CheckerState<'a> {
                         .factory()
                         .index_access(pre_resolution_object_type, index_type);
                 }
+                // Case 3: Type param resolved to a concrete constraint (e.g.,
+                // T extends object → object). The index is generic (e.g.,
+                // keyof Boxified<T> & string from a for-in). Produce deferred
+                // IndexAccess(T, index) to preserve the generic relationship
+                // and prevent false TS7053 on the constraint type.
+                if pre_resolution_object_type != object_type_for_access {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
             }
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
@@ -743,13 +755,30 @@ impl<'a> CheckerState<'a> {
     /// concrete property key and must remain deferred in an `IndexAccess` type.
     ///
     /// Generic index types include: keyof T, type parameters, indexed access types,
-    /// and conditional types.
+    /// conditional types, and intersections containing any of the above
+    /// (e.g., `keyof Boxified<T> & string` from for-in variable typing).
     fn is_generic_index_type(&self, index_type: TypeId) -> bool {
         use tsz_solver::visitor;
         visitor::is_type_parameter(self.ctx.types, index_type)
             || visitor::keyof_inner_type(self.ctx.types, index_type).is_some()
             || visitor::is_index_access_type(self.ctx.types, index_type)
             || visitor::is_conditional_type(self.ctx.types, index_type)
+            || self.intersection_has_generic_index(index_type)
+    }
+
+    /// Check if an intersection type contains a generic index member.
+    ///
+    /// For-in variables over generic types get type `keyof ExprType & string`,
+    /// which is an intersection. This helper recursively checks whether any
+    /// member of the intersection is a generic index type.
+    fn intersection_has_generic_index(&self, type_id: TypeId) -> bool {
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_intersection_members(self.ctx.types, type_id)
+        {
+            members.iter().any(|&m| self.is_generic_index_type(m))
+        } else {
+            false
+        }
     }
 
     /// Check if an index type is known to be a valid key for a given type parameter.
