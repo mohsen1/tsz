@@ -402,3 +402,67 @@ fn test_empty_object_to_index_signature() {
     // Empty object satisfies any index signature (no properties to violate it)
     assert!(is_subtype_of(&interner, source, target));
 }
+
+// =============================================================================
+// classify_element_indexable: Union Preservation Tests
+// =============================================================================
+
+/// Verify that `classify_element_indexable` returns Union for union types,
+/// even when one union member is structurally a subtype of another.
+///
+/// Regression test: `evaluate_type`'s union simplification was collapsing
+/// `{ a: number } | { [s: string]: number }` into just the `ObjectWithIndex`
+/// member, because the first member is a structural subtype. This broke
+/// TS7053 detection which needs per-constituent indexability information.
+#[test]
+fn test_classify_element_indexable_preserves_union_members() {
+    use crate::type_queries::{ElementIndexableKind, classify_element_indexable};
+
+    let interner = TypeInterner::new();
+
+    // Member 1: plain object { a: number } — no index signature
+    let member1 = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    // Member 2: object with string index { [s: string]: number }
+    let member2 = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    // Create union: member1 | member2
+    // Note: member1 is a structural subtype of member2 (every property is covered
+    // by the string index signature). evaluate_type would collapse this union.
+    let union_type = interner.union(vec![member1, member2]);
+
+    // classify_element_indexable must preserve the Union variant so that
+    // is_element_indexable can check each constituent independently.
+    let kind = classify_element_indexable(&interner, union_type);
+    match kind {
+        ElementIndexableKind::Union(members) => {
+            assert_eq!(members.len(), 2, "union should have 2 members");
+        }
+        other => {
+            panic!(
+                "expected ElementIndexableKind::Union, got {other:?}. \
+                 Union was incorrectly collapsed by type evaluation."
+            );
+        }
+    }
+}
