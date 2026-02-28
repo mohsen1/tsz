@@ -429,11 +429,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return self.check_subtype(s_number_idx.value_type, t_string_idx.value_type);
                 }
 
-                // All source properties must be compatible with target's string index.
-                // Implicit Index Signature Rule: Source must have at least one property
-                // to satisfy the index signature requirement implicitly.
+                // An empty source vacuously satisfies the string index constraint.
+                // tsc: `{} -> { [s: string]: T }` is assignable.
                 if source.properties.is_empty() {
-                    return SubtypeResult::False;
+                    return SubtypeResult::True;
                 }
 
                 for prop in &source.properties {
@@ -504,6 +503,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
+                // A truly empty source (no properties at all) vacuously satisfies
+                // the numeric index signature. tsc: `{} -> { [n: number]: T }`.
+                if source.properties.is_empty() {
+                    return SubtypeResult::True;
+                }
+
                 // Check any numeric-keyed source properties against the target's
                 // number index type. If a numeric property has an incompatible type,
                 // the assignment fails.
