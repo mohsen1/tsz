@@ -531,3 +531,46 @@ var [...rest, x] = [1, 2, 3];
         "Expected TS2462 for array rest that is not last, got {ts2462_count}"
     );
 }
+
+#[test]
+fn test_object_rest_with_type_parameter_constraint_no_false_ts2783() {
+    // When a generic function destructures `{ a, ...rest } = obj` where `obj: T extends { a, b }`,
+    // the rest type should omit `a` using the constraint's shape.
+    // Previously, `omit_properties_from_type` returned T unchanged because
+    // `object_shape(TypeParameter)` is None, causing false TS2783.
+    let source = r#"
+function f<T extends { a: string, b: string }>(obj: T) {
+    const { a, ...rest } = obj;
+    return rest;
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert_eq!(
+        ts2783_count,
+        0,
+        "Expected no TS2783 for object rest with type parameter constraint, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_object_rest_with_concrete_type_still_works() {
+    // Sanity check: object rest with concrete types should continue working.
+    let source = r#"
+interface Obj { a: string; b: number; c: boolean }
+function f(obj: Obj) {
+    const { a, ...rest } = obj;
+    const x: { b: number; c: boolean } = rest;
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322 for object rest with concrete type, got {ts2322_count}"
+    );
+}

@@ -399,7 +399,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
-            if is_type_alias || (has_type && !has_value && !has_alias) {
+            // When a symbol has both TYPE_ALIAS and VALUE flags (e.g.,
+            // `type FAILURE = "FAILURE"; const FAILURE = "FAILURE";`),
+            // the merged binder symbol has both flags. In value/expression
+            // context, the VALUE side must take precedence — skip the
+            // type-only branch so normal value resolution runs below.
+            if (is_type_alias && !has_value) || (has_type && !has_value && !has_alias) {
                 trace!(
                     name = name,
                     sym_id = ?sym_id,
