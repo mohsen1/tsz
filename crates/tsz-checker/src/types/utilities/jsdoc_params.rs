@@ -391,10 +391,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the type expression (e.g., "Object.<string, boolean>") for the given
     /// parameter name, or None if no matching `@param` tag is found.
-    pub(crate) fn extract_jsdoc_param_type_string(
-        jsdoc: &str,
-        param_name: &str,
-    ) -> Option<String> {
+    pub(crate) fn extract_jsdoc_param_type_string(jsdoc: &str, param_name: &str) -> Option<String> {
         // JSDoc @param may span multiple lines. Collect all text after each @param
         // and process them. We also need to handle nested braces in types like
         // @param {{ x: T, y: T}} obj
@@ -433,9 +430,10 @@ impl<'a> CheckerState<'a> {
         }
         // Process the last @param if any
         if in_param
-            && let Some(type_expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name) {
-                return Some(type_expr.to_string());
-            }
+            && let Some(type_expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+        {
+            return Some(type_expr.to_string());
+        }
         None
     }
 
@@ -493,18 +491,18 @@ impl<'a> CheckerState<'a> {
                 // Standard: @param {type} [name] or @param {type} [name=default]
                 if rest.starts_with('{')
                     && let Some((_type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest)
-                    {
-                        let name_part = after_type.split_whitespace().next().unwrap_or("");
-                        if name_part.starts_with('[') {
-                            // Extract the bare name from [name] or [name=default]
-                            let inner = name_part.trim_start_matches('[');
-                            let bare = inner.split('=').next().unwrap_or(inner);
-                            let bare = bare.trim_end_matches(']');
-                            if bare == param_name {
-                                return true;
-                            }
+                {
+                    let name_part = after_type.split_whitespace().next().unwrap_or("");
+                    if name_part.starts_with('[') {
+                        // Extract the bare name from [name] or [name=default]
+                        let inner = name_part.trim_start_matches('[');
+                        let bare = inner.split('=').next().unwrap_or(inner);
+                        let bare = bare.trim_end_matches(']');
+                        if bare == param_name {
+                            return true;
                         }
                     }
+                }
             }
         }
         false

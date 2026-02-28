@@ -94,10 +94,10 @@ impl<'a> CheckerState<'a> {
                             current = ext.parent;
                             if let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
                                 && let Some(t) = self.resolve_jsdoc_param_type(&func_jsdoc, &pname)
-                                {
-                                    found = Some(t);
-                                    break;
-                                }
+                            {
+                                found = Some(t);
+                                break;
+                            }
                         } else {
                             break;
                         }
