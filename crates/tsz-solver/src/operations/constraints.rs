@@ -188,9 +188,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (_, Some(TypeData::Mapped(mapped_id))) => {
                 let mapped = self.interner.mapped_type(mapped_id);
-                if let Some(TypeData::Object(source_shape)) = self.interner.lookup(source) {
+                let source_shape_id = match self.interner.lookup(source) {
+                    Some(TypeData::Object(id) | TypeData::ObjectWithIndex(id)) => Some(id),
+                    _ => None,
+                };
+                if let Some(source_shape) = source_shape_id {
                     let source_obj = self.interner.object_shape(source_shape);
-                    if !source_obj.properties.is_empty() {
+                    let has_properties = !source_obj.properties.is_empty();
+                    let has_index_sigs =
+                        source_obj.string_index.is_some() || source_obj.number_index.is_some();
+                    if has_properties || has_index_sigs {
                         // Check for reverse mapped type inference pattern:
                         // constraint contains `keyof T` where T is an inference placeholder.
                         // This handles homomorphic mapped types like Boxified<T> =
@@ -217,37 +224,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // Reverse inference failed (template too complex),
                         // fall through to simple/evaluate paths
 
-                        // Simple mapped type inference for { [P in K]: T }
-                        // Infer constraint (K) from property name literals
-                        let name_literals: Vec<TypeId> = source_obj
-                            .properties
-                            .iter()
-                            .map(|p| self.interner.literal_string_atom(p.name))
-                            .collect();
-                        let names_union = if name_literals.len() == 1 {
-                            name_literals[0]
-                        } else {
-                            self.interner.union(name_literals)
-                        };
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            names_union,
-                            mapped.constraint,
-                            priority,
-                        );
-
-                        // Infer template (T) from property value types
-                        for prop in &source_obj.properties {
+                        if has_properties {
+                            // Simple mapped type inference for { [P in K]: T }
+                            // Infer constraint (K) from property name literals
+                            let name_literals: Vec<TypeId> = source_obj
+                                .properties
+                                .iter()
+                                .map(|p| self.interner.literal_string_atom(p.name))
+                                .collect();
+                            let names_union = if name_literals.len() == 1 {
+                                name_literals[0]
+                            } else {
+                                self.interner.union(name_literals)
+                            };
                             self.constrain_types(
                                 ctx,
                                 var_map,
-                                prop.type_id,
-                                mapped.template,
+                                names_union,
+                                mapped.constraint,
                                 priority,
                             );
+
+                            // Infer template (T) from property value types
+                            for prop in &source_obj.properties {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    prop.type_id,
+                                    mapped.template,
+                                    priority,
+                                );
+                            }
+                            return;
                         }
-                        return;
                     }
                 }
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
@@ -1116,15 +1125,66 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             });
         }
 
-        // Only commit the reverse inference if at least one property was successfully
-        // reversed. If ALL properties failed, abort and let the fallback paths handle it.
+        // Also reverse index signatures. For dictionary-like sources
+        // (e.g., { [x: string]: Box<number>|Box<string>|Box<boolean> }),
+        // reverse through the template to build the inferred T's index signature.
+        let mut reverse_string_index = None;
+        let mut reverse_number_index = None;
+
+        if let Some(ref sig) = source_obj.string_index
+            && let Some(reversed_value) =
+                self.reverse_infer_through_template(sig.value_type, template, target_placeholder)
+        {
+            any_reversed = true;
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => false,
+                Some(MappedModifier::Remove) => true,
+                None => sig.readonly,
+            };
+            reverse_string_index = Some(crate::types::IndexSignature {
+                key_type: sig.key_type,
+                value_type: reversed_value,
+                readonly,
+                param_name: sig.param_name,
+            });
+        }
+        if let Some(ref sig) = source_obj.number_index
+            && let Some(reversed_value) =
+                self.reverse_infer_through_template(sig.value_type, template, target_placeholder)
+        {
+            any_reversed = true;
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => false,
+                Some(MappedModifier::Remove) => true,
+                None => sig.readonly,
+            };
+            reverse_number_index = Some(crate::types::IndexSignature {
+                key_type: sig.key_type,
+                value_type: reversed_value,
+                readonly,
+                param_name: sig.param_name,
+            });
+        }
+
+        // Only commit the reverse inference if at least one property or index sig was
+        // successfully reversed. If ALL failed, abort and let the fallback paths handle it.
         if !any_reversed {
             return false;
         }
 
         // Build the reverse mapped object and constrain it against the placeholder T
         // using HomomorphicMappedType priority (lower than direct NakedTypeVariable inference).
-        let reverse_object = self.interner.object(reverse_properties);
+        let reverse_object = if reverse_string_index.is_some() || reverse_number_index.is_some() {
+            self.interner.object_with_index(ObjectShape {
+                flags: crate::types::ObjectFlags::empty(),
+                properties: reverse_properties,
+                string_index: reverse_string_index,
+                number_index: reverse_number_index,
+                symbol: None,
+            })
+        } else {
+            self.interner.object(reverse_properties)
+        };
         self.constrain_types(
             ctx,
             var_map,
@@ -1177,6 +1237,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             }
+
+            // Case 2b: source is a Union of Applications with the same base as template.
+            // Distribute the reverse inference over union members and combine results.
+            // E.g., Box<number> | Box<string> | Box<boolean> against Box<T[P]>
+            // → reverse each member → number | string | boolean
+            if let Some(TypeData::Union(members_id)) = self.interner.lookup(source_value) {
+                let members = self.interner.type_list(members_id).to_vec();
+                let mut reversed_parts = Vec::new();
+                let mut all_reversed = true;
+                for member in &members {
+                    if let Some(rev) =
+                        self.reverse_infer_through_template(*member, template, target_placeholder)
+                    {
+                        reversed_parts.push(rev);
+                    } else {
+                        all_reversed = false;
+                        break;
+                    }
+                }
+                if all_reversed && !reversed_parts.is_empty() {
+                    return Some(if reversed_parts.len() == 1 {
+                        reversed_parts[0]
+                    } else {
+                        self.interner.union(reversed_parts)
+                    });
+                }
+            }
+
             // Template is an Application but source doesn't match — can't reverse
             return None;
         }
