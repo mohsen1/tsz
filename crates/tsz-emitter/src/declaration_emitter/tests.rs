@@ -126,9 +126,9 @@ type T = { x: number };
 }
 
 #[test]
-fn test_type_export_module_does_not_need_empty_export_marker() {
-    // When the .d.ts already has an explicit type export, `export {};` is not
-    // needed — the export itself preserves module semantics.
+fn test_type_export_module_still_needs_empty_export_marker() {
+    // tsc emits `export {};` even when there are type exports (interfaces,
+    // type aliases) because type exports are erased at runtime.
     let source = r#"
 type T = { x: number };
 export interface I {
@@ -146,8 +146,8 @@ export interface I {
         "Expected exported interface: {output}"
     );
     assert!(
-        !output.contains("export {};"),
-        "Did not expect empty export marker when explicit type export exists: {output}"
+        output.contains("export {};"),
+        "Expected empty export marker even with type exports: {output}"
     );
 }
 
