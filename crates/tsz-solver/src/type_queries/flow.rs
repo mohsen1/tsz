@@ -539,12 +539,36 @@ fn types_are_comparable_inner(
             .any(|elem| types_are_comparable_inner(db, source_elem, elem.type_id, depth + 1));
     }
 
-    // Callable types are comparable to other callable types — they share the
-    // callable structure pattern, so tsc never emits TS2352 between them.
-    if let Some(TypeData::Callable(_)) = db.lookup(source)
-        && let Some(TypeData::Callable(_)) = db.lookup(target)
+    // Callable types: check if their signatures are comparable.
+    // Two callable types are comparable if they share comparable call/construct
+    // signatures (parameter types and return type all comparable), OR if they
+    // share common properties with comparable types.
+    if let Some(TypeData::Callable(source_id)) = db.lookup(source)
+        && let Some(TypeData::Callable(target_id)) = db.lookup(target)
     {
-        return true;
+        let source_shape = db.callable_shape(source_id);
+        let target_shape = db.callable_shape(target_id);
+
+        // Check if call signatures are comparable
+        if let (Some(s_sig), Some(t_sig)) = (
+            source_shape.call_signatures.first(),
+            target_shape.call_signatures.first(),
+        ) && signatures_are_comparable(db, s_sig, t_sig, depth)
+        {
+            return true;
+        }
+
+        // Check construct signatures
+        if let (Some(s_sig), Some(t_sig)) = (
+            source_shape.construct_signatures.first(),
+            target_shape.construct_signatures.first(),
+        ) && signatures_are_comparable(db, s_sig, t_sig, depth)
+        {
+            return true;
+        }
+
+        // Fall through to property overlap check
+        return types_have_common_properties(db, source, target, depth);
     }
 
     // Check primitive ↔ literal comparability
@@ -557,6 +581,28 @@ fn types_are_comparable_inner(
 
     // Check object property overlap
     types_have_common_properties(db, source, target, depth)
+}
+
+/// Check if two call signatures are comparable: all overlapping parameter pairs
+/// and the return types must be comparable.
+fn signatures_are_comparable(
+    db: &dyn TypeDatabase,
+    source: &crate::types::CallSignature,
+    target: &crate::types::CallSignature,
+    depth: u32,
+) -> bool {
+    let min_params = source.params.len().min(target.params.len());
+    for i in 0..min_params {
+        if !types_are_comparable_inner(
+            db,
+            source.params[i].type_id,
+            target.params[i].type_id,
+            depth + 1,
+        ) {
+            return false;
+        }
+    }
+    types_are_comparable_inner(db, source.return_type, target.return_type, depth + 1)
 }
 
 /// Check if a base primitive type is comparable to a literal or other form of that primitive.

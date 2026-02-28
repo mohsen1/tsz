@@ -1455,14 +1455,13 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::NumericLiteral as u16 => true,
             // Property access: check for Symbol.xxx (well-known symbol)
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                if let Some(access) = self.arena.get_access_expr(expr_node) {
-                    if let Some(lhs_node) = self.arena.get(access.expression)
-                        && lhs_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(ident) = self.arena.get_identifier(lhs_node)
-                        && ident.escaped_text == "Symbol"
-                    {
-                        return true;
-                    }
+                if let Some(access) = self.arena.get_access_expr(expr_node)
+                    && let Some(lhs_node) = self.arena.get(access.expression)
+                    && lhs_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.arena.get_identifier(lhs_node)
+                    && ident.escaped_text == "Symbol"
+                {
+                    return true;
                 }
                 false
             }
