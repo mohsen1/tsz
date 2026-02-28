@@ -141,6 +141,12 @@ pub struct TypeCache {
     /// Set of import specifier nodes that should be elided from JavaScript output.
     /// These are imports that reference type-only declarations (interfaces, type aliases).
     pub type_only_nodes: FxHashSet<NodeIndex>,
+
+    /// Maps namespace `TypeIds` to their module display name.
+    /// Used to display namespace types as `typeof import("module")` in diagnostics.
+    /// Persists across file checks because `NS_CONSTRUCT` may run for one file
+    /// while TS2339 is emitted from another.
+    pub namespace_module_names: FxHashMap<TypeId, String>,
 }
 
 /// Info about a symbol that came from destructuring a union type.
@@ -285,6 +291,12 @@ pub struct CheckerContext<'a> {
 
     /// Recursion guard for application symbol resolution traversal.
     pub application_symbols_resolution_set: FxHashSet<TypeId>,
+
+    /// Maps namespace `TypeIds` to their module display name.
+    /// Used to display namespace types as `typeof import("module")` instead of
+    /// the literal object type shape (e.g., `'{}'`), matching TSC's behavior.
+    /// Populated by `NS_CONSTRUCT` in `compute_type_of_symbol`.
+    pub namespace_module_names: FxHashMap<TypeId, String>,
 
     /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
