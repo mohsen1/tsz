@@ -640,6 +640,14 @@ impl<'a> TypePrinter<'a> {
             if name == "prototype" || name.starts_with("__private_brand_") {
                 continue;
             }
+
+            // Try to emit as method syntax if the property is a method
+            if prop.is_method
+                && let Some(method_str) = self.print_property_as_method(prop) {
+                    parts.push(method_str);
+                    continue;
+                }
+
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
             parts.push(format!(
@@ -651,11 +659,50 @@ impl<'a> TypePrinter<'a> {
             ));
         }
 
+        // Add index signatures
+        if let Some(ref idx) = callable.string_index {
+            let readonly = if idx.readonly { "readonly " } else { "" };
+            let param = idx
+                .param_name
+                .map(|a| self.resolve_atom(a))
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "{}[{}: string]: {}",
+                readonly,
+                param,
+                self.print_type(idx.value_type)
+            ));
+        }
+        if let Some(ref idx) = callable.number_index {
+            let readonly = if idx.readonly { "readonly " } else { "" };
+            let param = idx
+                .param_name
+                .map(|a| self.resolve_atom(a))
+                .unwrap_or_else(|| "x".to_string());
+            parts.push(format!(
+                "{}[{}: number]: {}",
+                readonly,
+                param,
+                self.print_type(idx.value_type)
+            ));
+        }
+
         if parts.is_empty() {
             return "{}".to_string();
         }
 
-        format!("{{ {} }}", parts.join("; "))
+        // Multi-line format when indent context is set
+        if let Some(indent) = self.indent_level {
+            let member_indent = "    ".repeat((indent + 1) as usize);
+            let closing_indent = "    ".repeat(indent as usize);
+            let lines: Vec<String> = parts
+                .iter()
+                .map(|p| format!("{member_indent}{p};"))
+                .collect();
+            format!("{{\n{}\n{}}}", lines.join("\n"), closing_indent)
+        } else {
+            format!("{{ {} }}", parts.join("; "))
+        }
     }
 
     fn print_call_signature(
