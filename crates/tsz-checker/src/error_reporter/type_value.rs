@@ -271,7 +271,9 @@ impl<'a> CheckerState<'a> {
                         let Some(node) = arena.get(current) else {
                             break;
                         };
-                        if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                        if node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                            || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        {
                             return Some(TypeOnlyKind::Import);
                         }
                         if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
