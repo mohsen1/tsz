@@ -111,6 +111,17 @@ impl<'a> CheckerState<'a> {
             // Set contextual type for function-like defaults so parameter types
             // are inferred from the expected element type (e.g., `{ f: id = arg => arg }: T`).
             if element_data.initializer.is_some() {
+                // A default value guarantees the binding won't be undefined at runtime,
+                // so strip `undefined` from the element type. This matches tsc behavior:
+                // `{ name = "default" }: { name?: string }` gives `name` type `string`.
+                if self.ctx.strict_null_checks()
+                    && element_type != TypeId::ANY
+                    && element_type != TypeId::UNKNOWN
+                    && element_type != TypeId::ERROR
+                {
+                    element_type = tsz_solver::remove_undefined(self.ctx.types, element_type);
+                }
+
                 let prev_context = self.ctx.contextual_type;
                 if element_type != TypeId::ANY
                     && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
