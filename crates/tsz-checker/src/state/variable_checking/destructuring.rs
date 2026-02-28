@@ -318,7 +318,7 @@ impl<'a> CheckerState<'a> {
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut elem_types = Vec::new();
                 let factory = self.ctx.types.factory();
-                for member in members {
+                for &member in &members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
                     if element_data.dot_dot_dot_token {
                         let elem_type = if let Some(elem) =
@@ -344,9 +344,31 @@ impl<'a> CheckerState<'a> {
                         elem_types.push(e.type_id);
                     }
                 }
-                return if elem_types.is_empty() {
-                    TypeId::ANY
-                } else if elem_types.len() == 1 {
+                if elem_types.is_empty() && !element_data.dot_dot_dot_token {
+                    // All members are tuples that are out of bounds for this index.
+                    // Emit TS2339 "Property 'N' does not exist on type 'X'".
+                    let all_tuples_oob = members.iter().all(|&m| {
+                        let m = query::unwrap_readonly_deep(self.ctx.types, m);
+                        if let Some(elems) = query::tuple_elements(self.ctx.types, m) {
+                            let has_rest = elems.iter().any(|e| e.rest);
+                            !has_rest && element_index >= elems.len()
+                        } else {
+                            false
+                        }
+                    });
+                    if all_tuples_oob {
+                        let type_str = self.format_type(parent_type);
+                        self.error_at_node(
+                            element_data.name,
+                            &format!(
+                                "Property '{element_index}' does not exist on type '{type_str}'.",
+                            ),
+                            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
+                    return TypeId::ANY;
+                }
+                return if elem_types.len() == 1 {
                     elem_types[0]
                 } else {
                     factory.union(elem_types)

@@ -574,16 +574,6 @@ impl<'a> CheckerState<'a> {
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
         let rhs = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, right_type);
-        let Some(tuple_elements) =
-            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
-        else {
-            return;
-        };
-
-        let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
-        if has_rest_tail {
-            return;
-        }
 
         let Some(left_node) = self.ctx.arena.get(left_idx) else {
             return;
@@ -592,32 +582,87 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
-            if index < tuple_elements.len() || element_idx.is_none() {
-                continue;
-            }
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+        // Single tuple case
+        if let Some(tuple_elements) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
+        {
+            let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+            if has_rest_tail {
                 return;
             }
 
-            let tuple_type_str = self.format_type(rhs);
-            self.error_at_node(
-                element_idx,
-                &format!(
-                    "Tuple type '{}' of length '{}' has no element at index '{}'.",
-                    tuple_type_str,
-                    tuple_elements.len(),
-                    index
-                ),
-                diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
-            );
+            for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
+                if index < tuple_elements.len() || element_idx.is_none() {
+                    continue;
+                }
+                let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+                if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                    return;
+                }
+
+                let tuple_type_str = self.format_type(rhs);
+                self.error_at_node(
+                    element_idx,
+                    &format!(
+                        "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                        tuple_type_str,
+                        tuple_elements.len(),
+                        index
+                    ),
+                    diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                );
+                return;
+            }
             return;
+        }
+
+        // Union of tuples case: check if ALL members are out of bounds
+        if let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, rhs)
+        {
+            for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
+                if element_idx.is_none() {
+                    continue;
+                }
+                let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                    continue;
+                };
+                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION
+                    || element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                {
+                    continue;
+                }
+
+                let all_out_of_bounds = !members.is_empty()
+                    && members.iter().all(|&m| {
+                        let m = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, m);
+                        if let Some(elems) =
+                            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, m)
+                        {
+                            let has_rest = elems.iter().any(|e| e.rest);
+                            !has_rest && index >= elems.len()
+                        } else {
+                            false
+                        }
+                    });
+
+                if all_out_of_bounds {
+                    let type_str = self.format_type(right_type);
+                    self.error_at_node(
+                        element_idx,
+                        &format!(
+                            "Property '{index}' does not exist on type '{type_str}'.",
+                        ),
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                    return;
+                }
+            }
         }
     }
 

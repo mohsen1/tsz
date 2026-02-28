@@ -465,27 +465,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && index_value.fract() == 0.0
                 && index_value < 0.0
             {
-                let object_for_tuple_check = {
-                    let unwrapped = crate::query_boundaries::common::unwrap_readonly(
-                        self.ctx.types,
-                        object_type,
-                    );
-                    // Type aliases resolve to Lazy(DefId) from lowering; follow the lazy
-                    // ref so that `type T = [1,2]; T[-1]` correctly detects the tuple.
-                    if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, unwrapped) {
-                        let resolved = self
-                            .ctx
-                            .type_env
-                            .try_borrow()
-                            .ok()
-                            .and_then(|env| env.get_def(def_id))
-                            .or_else(|| self.ctx.definition_store.get_body(def_id))
-                            .unwrap_or(unwrapped);
-                        crate::query_boundaries::common::unwrap_readonly(self.ctx.types, resolved)
-                    } else {
-                        unwrapped
-                    }
-                };
+                let object_for_tuple_check = self.resolve_object_for_tuple_check(object_type);
                 if tsz_solver::type_queries::is_tuple_type(self.ctx.types, object_for_tuple_check) {
                     let message = crate::diagnostics::diagnostic_messages::
                         A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE
@@ -497,6 +477,83 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
                     );
                     return TypeId::ERROR;
+                }
+            }
+
+            // TS2493/TS2339: Check positive out-of-bounds index on tuple/union-of-tuples
+            if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
+                && let Some(index_value) = self
+                    .get_number_value_from_type_node(indexed_access.index_type)
+                    .or_else(|| {
+                        tsz_solver::type_queries::get_number_literal_value(
+                            self.ctx.types,
+                            index_type,
+                        )
+                    })
+                && index_value.is_finite()
+                && index_value.fract() == 0.0
+                && index_value >= 0.0
+            {
+                let index = index_value as usize;
+                let object_for_tuple_check = self.resolve_object_for_tuple_check(object_type);
+                // Single tuple out of bounds → TS2493
+                if let Some(tuple_elements) =
+                    crate::query_boundaries::type_computation::access::tuple_elements(
+                        self.ctx.types,
+                        object_for_tuple_check,
+                    )
+                {
+                    let has_rest = tuple_elements.iter().any(|e| e.rest);
+                    if !has_rest && index >= tuple_elements.len() {
+                        let mut formatter = self.ctx.create_type_formatter();
+                        let tuple_type_str = formatter.format(object_for_tuple_check);
+                        let message = format!(
+                            "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                            tuple_type_str,
+                            tuple_elements.len(),
+                            index,
+                        );
+                        self.ctx.error(
+                            inode.pos,
+                            inode.end - inode.pos,
+                            message,
+                            crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                        );
+                    }
+                }
+                // Union of tuples all out of bounds → TS2339
+                else if let Some(members) = tsz_solver::type_queries::data::get_union_members(
+                    self.ctx.types,
+                    object_for_tuple_check,
+                ) {
+                    let all_out_of_bounds = !members.is_empty()
+                        && members.iter().all(|&m| {
+                            if let Some(elems) =
+                                crate::query_boundaries::type_computation::access::tuple_elements(
+                                    self.ctx.types,
+                                    m,
+                                )
+                            {
+                                let has_rest = elems.iter().any(|e| e.rest);
+                                !has_rest && index >= elems.len()
+                            } else {
+                                false
+                            }
+                        });
+                    if all_out_of_bounds {
+                        let mut formatter = self.ctx.create_type_formatter();
+                        let type_str = formatter.format(object_type);
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            &[&index.to_string(), &type_str],
+                        );
+                        self.ctx.error(
+                            inode.pos,
+                            inode.end - inode.pos,
+                            message,
+                            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
                 }
             }
 
@@ -534,6 +591,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             factory.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
+        }
+    }
+
+    /// Resolve object type for tuple-related checks (unwrap readonly, follow Lazy).
+    fn resolve_object_for_tuple_check(&self, object_type: TypeId) -> TypeId {
+        let unwrapped =
+            crate::query_boundaries::common::unwrap_readonly(self.ctx.types, object_type);
+        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, unwrapped) {
+            let resolved = self
+                .ctx
+                .type_env
+                .try_borrow()
+                .ok()
+                .and_then(|env| env.get_def(def_id))
+                .or_else(|| self.ctx.definition_store.get_body(def_id))
+                .unwrap_or(unwrapped);
+            crate::query_boundaries::common::unwrap_readonly(self.ctx.types, resolved)
+        } else {
+            unwrapped
         }
     }
 
