@@ -327,6 +327,13 @@ impl SourceWriter {
         self.output.len()
     }
 
+    /// Truncate the output buffer to the given byte length.
+    /// Used to undo speculatively written content (e.g., JSDoc comments for
+    /// declarations that turn out to be invisible in .d.ts output).
+    pub fn truncate(&mut self, len: usize) {
+        self.output.truncate(len);
+    }
+
     /// Get the output buffer capacity in bytes.
     pub const fn capacity(&self) -> usize {
         self.output.capacity()
