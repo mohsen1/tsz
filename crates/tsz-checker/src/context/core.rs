@@ -76,6 +76,8 @@ impl TypeCache {
         self.class_constructor_type_cache
             .extend(other.class_constructor_type_cache);
         self.type_only_nodes.extend(other.type_only_nodes);
+        self.namespace_module_names
+            .extend(other.namespace_module_names);
 
         // Merge symbol dependencies sets
         for (sym, deps) in other.symbol_dependencies {
@@ -212,6 +214,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: self.class_instance_type_cache,
             class_constructor_type_cache: self.class_constructor_type_cache,
             type_only_nodes: self.type_only_nodes,
+            namespace_module_names: self.namespace_module_names,
         }
     }
 
@@ -422,6 +425,7 @@ mod tests {
             class_instance_type_cache: FxHashMap::default(),
             class_constructor_type_cache: FxHashMap::default(),
             type_only_nodes: FxHashSet::default(),
+            namespace_module_names: FxHashMap::default(),
         }
     }
 
