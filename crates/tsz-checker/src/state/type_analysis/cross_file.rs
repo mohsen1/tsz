@@ -345,6 +345,14 @@ impl<'a> CheckerState<'a> {
                 child_env.merge_defs_into(&mut parent_env);
             }
 
+            // Merge child's namespace module name mappings to parent.
+            // NS_CONSTRUCT stores `typeof import("module")` display names when building
+            // namespace types. The child may compute these during cross-file resolution,
+            // but the parent needs them for TS2339 error messages.
+            self.ctx
+                .namespace_module_names
+                .extend(checker.ctx.namespace_module_names.drain());
+
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
             return Some((result, Vec::new()));
@@ -434,21 +442,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if the SymbolId maps to the expected name in the current binder.
-        // If it does, this is a local symbol and no cross-file tracking needed.
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.escaped_name.as_str() == expected_name
-        {
+        // Try resolve_import_target first (most reliable). This avoids SymbolId
+        // collision issues: after lib_symbols_merged, different files' binders share
+        // the same base_offset, so binder.get_symbol(sym_id) can return the WRONG
+        // symbol from the current file that happens to share the same index offset.
+        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
+            if target_file_idx != self.ctx.current_file_idx {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_file_idx);
+            }
             return;
         }
 
-        // The SymbolId doesn't match in the current binder — it's cross-file.
-        // Try resolve_import_target first (most reliable).
-        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
-            self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(sym_id, target_file_idx);
+        // resolve_import_target didn't work (the module specifier may be relative
+        // to a different file). Fall back to the binder locality check.
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.escaped_name.as_str() == expected_name
+        {
             return;
         }
 
