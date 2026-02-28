@@ -873,7 +873,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker.is_subtype_of(members[i], members[j])
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
+                        // For intersections: member[j] <: member[i] means member[i] is
+                        // a candidate for removal. But if member[i] contributes properties
+                        // that member[j] doesn't have, it must be kept — removing it would
+                        // lose those property declarations from the intersection type.
+                        // This matters for optional properties: {a: string} <: {b?: number}
+                        // but {a: string} & {b?: number} must preserve both properties.
                         checker.is_subtype_of(members[j], members[i])
+                            && !self.has_unique_properties(members[i], members[j])
                     }
                 };
                 if is_subtype {
@@ -886,6 +893,50 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 i += 1;
             }
+        }
+    }
+
+    /// Check if `candidate` has any property names that `subsuming` doesn't have.
+    /// Used to prevent incorrect intersection simplification: even if A <: B,
+    /// B should not be removed from A & B if B declares properties missing from A.
+    fn has_unique_properties(&self, candidate: TypeId, subsuming: TypeId) -> bool {
+        // Collect property names from both types
+        let mut candidate_names = FxHashSet::default();
+        let mut subsuming_names = FxHashSet::default();
+        Self::collect_property_names(self.interner, candidate, &mut candidate_names);
+        Self::collect_property_names(self.interner, subsuming, &mut subsuming_names);
+
+        // If candidate has no properties, it can't contribute unique ones
+        if candidate_names.is_empty() {
+            return false;
+        }
+
+        // Check if candidate has any property name not in subsuming
+        candidate_names
+            .iter()
+            .any(|name| !subsuming_names.contains(name))
+    }
+
+    /// Collect property name atoms from an object type into the provided set.
+    fn collect_property_names(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+        names: &mut FxHashSet<u32>,
+    ) {
+        match db.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                for prop in &shape.properties {
+                    names.insert(prop.name.0);
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let sub_members = db.type_list(list_id);
+                for &sub in sub_members.iter() {
+                    Self::collect_property_names(db, sub, names);
+                }
+            }
+            _ => {}
         }
     }
 

@@ -1088,8 +1088,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         *self.constraint_recursion_depth.borrow_mut() = 0;
         *self.constraint_step_count.borrow_mut() = 0;
 
-        // Reusable visited set for type_contains_placeholder checks (avoids per-iteration alloc)
-        let mut placeholder_visited = FxHashSet::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
 
@@ -1119,18 +1117,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
 
-            // Add type parameter constraint as upper bound (if concrete)
-            if let Some(constraint) = tp.constraint {
-                let inst_constraint = instantiate_type(self.interner, constraint, &substitution);
-                placeholder_visited.clear();
-                if !self.type_contains_placeholder(
-                    inst_constraint,
-                    &var_map,
-                    &mut placeholder_visited,
-                ) {
-                    infer_ctx.add_upper_bound(var, inst_constraint);
-                }
-            }
+            // NOTE: We intentionally do NOT add the type parameter constraint as an
+            // upper bound here. The constraint is already part of the TypeParameter
+            // declaration and is used as a fallback in Pass 2 (when no inference
+            // candidates or upper bounds exist). Adding it as an upper bound during
+            // inference initialization would pollute the contextual substitution:
+            // when the return type context provides a specific type (e.g.,
+            // `(a: number) => void`), creating an intersection with the constraint
+            // (e.g., `(...args: any[]) => any`) produces a merged Callable whose
+            // conflicting parameter types cause `get_parameter_type` to return None,
+            // triggering false TS7006 errors.
         }
 
         // 2. Instantiate parameters with placeholders
