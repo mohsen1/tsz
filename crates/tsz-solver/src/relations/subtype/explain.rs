@@ -402,6 +402,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
+        // Object-with-index source vs Tuple target: check for missing numeric properties.
+        // When an array-like object type (e.g., interface StrNum extends Array { 0: string; ... })
+        // is assigned to a tuple type (e.g., [number, number, number]), detect missing
+        // required numeric index properties and produce TS2741 instead of generic TS2322.
+        // Only applies to types with index signatures (array-like); plain object types without
+        // index signatures fall through to the generic TypeMismatch path, matching tsc behavior.
+        if let Some(t_tuple_id) = tuple_list_id(self.interner, resolved_target)
+            && let Some(s_sid) = object_with_index_shape_id(self.interner, resolved_source)
+        {
+            let t_elems = self.interner.tuple_list(t_tuple_id);
+            let s_shape = self.interner.object_shape(s_sid);
+            let mut missing_props: Vec<tsz_common::interner::Atom> = Vec::new();
+            for (i, t_elem) in t_elems.iter().enumerate() {
+                if t_elem.is_required() {
+                    let prop_name = self.interner.intern_string(&i.to_string());
+                    let has_prop = s_shape.properties.iter().any(|p| p.name == prop_name);
+                    if !has_prop {
+                        missing_props.push(prop_name);
+                    }
+                }
+            }
+            if missing_props.len() > 1 {
+                return Some(SubtypeFailureReason::MissingProperties {
+                    property_names: missing_props,
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            if missing_props.len() == 1 {
+                return Some(SubtypeFailureReason::MissingProperty {
+                    property_name: missing_props[0],
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+
         if let (Some(s_elems), Some(t_elems)) = (
             tuple_list_id(self.interner, source),
             tuple_list_id(self.interner, target),
@@ -1181,6 +1218,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 if !self.check_subtype(s_elem.type_id, t_elem.type_id).is_true() {
+                    // Drill into the nested failure: if the element mismatch is due to a
+                    // missing property (e.g., {} vs {a: string}), return MissingProperty
+                    // to produce TS2741 instead of generic TS2322. This matches tsc behavior
+                    // for tuple literals where elements have missing properties.
+                    if let Some(nested) = self.explain_failure(s_elem.type_id, t_elem.type_id)
+                        && matches!(
+                            nested,
+                            SubtypeFailureReason::MissingProperty { .. }
+                                | SubtypeFailureReason::MissingProperties { .. }
+                        )
+                    {
+                        return Some(nested);
+                    }
                     return Some(SubtypeFailureReason::TupleElementTypeMismatch {
                         index: i,
                         source_element: s_elem.type_id,
