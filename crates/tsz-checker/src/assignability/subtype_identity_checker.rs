@@ -155,14 +155,15 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a type has complex structure (intersection, conditional, etc.) that
-    /// may need evaluation during subtype checking but isn't handled by the solver's
+    /// Check if a type has complex structure (intersection, conditional, application, etc.)
+    /// that may need evaluation during subtype checking but isn't handled by the solver's
     /// identity check normalization.
     fn has_complex_type_structure(&self, type_id: TypeId) -> bool {
         use tsz_solver::type_queries;
         type_queries::is_intersection_type(self.ctx.types, type_id)
             || type_queries::is_conditional_type(self.ctx.types, type_id)
             || type_queries::is_mapped_type(self.ctx.types, type_id)
+            || type_queries::is_generic_application(self.ctx.types, type_id)
     }
 
     /// Try checking redeclaration compatibility using enum object shape substitution.
