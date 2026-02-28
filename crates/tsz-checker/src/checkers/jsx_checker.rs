@@ -929,7 +929,9 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(tag_name_node)
                 .map(|id| id.escaped_text.as_str())
                 .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_ascii_lowercase()))
-        } else { tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME };
+        } else {
+            tag_name_node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME
+        };
 
         let props_type = if is_intrinsic {
             // Intrinsic: look up IntrinsicElements[tag]
