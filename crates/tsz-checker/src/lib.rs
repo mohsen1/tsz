@@ -237,6 +237,9 @@ mod class_index_signature_compat_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "../tests/contextual_typing_tests.rs"]
+mod contextual_typing_tests;
+#[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]

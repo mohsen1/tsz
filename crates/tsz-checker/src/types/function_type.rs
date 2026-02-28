@@ -908,8 +908,17 @@ impl<'a> CheckerState<'a> {
                 // Promise<T> | StateMachine<T>, unwrap each Promise member to get
                 // T | StateMachine<T> as the effective body return type.
                 self.unwrap_async_return_type_for_body(return_type)
-            } else {
+            } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
+            {
                 return_type
+            } else {
+                // When the return type was purely inferred from the body (no
+                // annotation, no contextual type, no JSDoc @returns), push ANY
+                // so that check_return_statement skips the assignability check.
+                // Checking a return expression against its own inferred type is
+                // circular and can produce false positives when contextual typing
+                // widens inner types differently than non-contextual inference.
+                TypeId::ANY
             };
 
             self.push_return_type(body_return_type);
