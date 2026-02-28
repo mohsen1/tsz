@@ -451,7 +451,6 @@ FAIL TypeScript/tests/cases/compiler/exportDefaultInterface.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceAndTwoFunctions.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceClassAndFunctionOverloads.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultInterfaceClassAndValue.ts
-FAIL TypeScript/tests/cases/compiler/exportDefaultProperty2.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultStripsFreshness.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultTypeAndClass.ts
 FAIL TypeScript/tests/cases/compiler/exportDefaultTypeAndFunctionOverloads.ts
@@ -459,7 +458,6 @@ FAIL TypeScript/tests/cases/compiler/exportDefaultTypeClassAndValue.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsClassRedeclarationError.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsDefaultProperty.ts
 FAIL TypeScript/tests/cases/compiler/exportEqualsOfModule.ts
-FAIL TypeScript/tests/cases/compiler/exportEqualsProperty2.ts
 FAIL TypeScript/tests/cases/compiler/exportInterfaceClassAndValueWithDuplicatesInImportList.ts
 FAIL TypeScript/tests/cases/compiler/exportSpecifierReferencingOuterDeclaration4.ts
 FAIL TypeScript/tests/cases/compiler/expressionTypeNodeShouldError.ts
@@ -512,6 +510,7 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -4963,6 +4962,7 @@ PASS TypeScript/tests/cases/compiler/exportDefaultMissingName.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultParenthesize.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultParenthesizeES6.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultProperty.ts
+PASS TypeScript/tests/cases/compiler/exportDefaultProperty2.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultQualifiedNameNoError.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultVariable.ts
 PASS TypeScript/tests/cases/compiler/exportDefaultWithJSDoc1.ts
@@ -4980,6 +4980,7 @@ PASS TypeScript/tests/cases/compiler/exportEqualsAmd.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsClassNoRedeclarationError.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsCommonJs.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsProperty.ts
+PASS TypeScript/tests/cases/compiler/exportEqualsProperty2.ts
 PASS TypeScript/tests/cases/compiler/exportEqualsUmd.ts
 PASS TypeScript/tests/cases/compiler/exportImport.ts
 PASS TypeScript/tests/cases/compiler/exportImportAndClodule.ts
@@ -5258,7 +5259,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
