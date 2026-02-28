@@ -543,18 +543,16 @@ impl BinderState {
         }
 
         // Check for `module.exports.x` (expression is `module.exports`)
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(inner_access) = arena.get_access_expr(expr_node) {
-                if let Some(inner_expr) = arena.get(inner_access.expression)
-                    && let Some(inner_id) = arena.get_identifier(inner_expr)
-                    && inner_id.escaped_text == "module"
-                    && let Some(inner_name) = arena.get(inner_access.name_or_argument)
-                    && let Some(inner_name_id) = arena.get_identifier(inner_name)
-                    && inner_name_id.escaped_text == "exports"
-                {
-                    return true;
-                }
-            }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(inner_access) = arena.get_access_expr(expr_node)
+            && let Some(inner_expr) = arena.get(inner_access.expression)
+            && let Some(inner_id) = arena.get_identifier(inner_expr)
+            && inner_id.escaped_text == "module"
+            && let Some(inner_name) = arena.get(inner_access.name_or_argument)
+            && let Some(inner_name_id) = arena.get_identifier(inner_name)
+            && inner_name_id.escaped_text == "exports"
+        {
+            return true;
         }
 
         false

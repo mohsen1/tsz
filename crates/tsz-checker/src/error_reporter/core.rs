@@ -469,6 +469,13 @@ impl<'a> CheckerState<'a> {
                 && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
                 && self.is_assignment_operator(binary.operator_token)
             {
+                if saw_assignment_binary {
+                    // Chained assignment: we've already passed through one assignment
+                    // binary. Return the original node so inner assignments anchor at
+                    // their own LHS (e.g. `b` in `a = b = null`) rather than walking
+                    // all the way up to the ExpressionStatement.
+                    return idx;
+                }
                 saw_assignment_binary = true;
             }
 
