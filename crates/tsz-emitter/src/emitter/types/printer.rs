@@ -104,6 +104,30 @@ impl<'a> TypePrinter<'a> {
         false
     }
 
+    /// Resolve a SymbolRef/SymbolId to its qualified name (e.g., "M.c" for `typeof M.c`).
+    fn resolve_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
+        let arena = self.symbol_arena?;
+        let sym = arena.get(sym_id)?;
+        let mut qualified_name = sym.escaped_name.clone();
+        let mut current_parent = sym.parent;
+
+        while current_parent != SymbolId::NONE {
+            if let Some(parent_sym) = arena.get(current_parent) {
+                // Don't prepend for source files and blocks
+                if !parent_sym.escaped_name.starts_with('"')
+                    && !parent_sym.escaped_name.starts_with("__")
+                {
+                    qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                }
+                current_parent = parent_sym.parent;
+            } else {
+                break;
+            }
+        }
+
+        Some(qualified_name)
+    }
+
     /// Resolve an atom to its string representation.
     fn resolve_atom(&self, atom: Atom) -> String {
         self.interner.resolve_atom(atom)
@@ -177,7 +201,10 @@ impl<'a> TypePrinter<'a> {
         if let Some((container, index)) = visitor::index_access_parts(self.interner, type_id) {
             return self.print_index_access(container, index);
         }
-        if visitor::type_query_symbol(self.interner, type_id).is_some() {
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            if let Some(name) = self.resolve_symbol_qualified_name(SymbolId(sym_ref.0)) {
+                return format!("typeof {name}");
+            }
             return "any".to_string();
         }
         if let Some(inner_id) = visitor::keyof_inner_type(self.interner, type_id) {
