@@ -351,6 +351,43 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress TS2304 for `intrinsic` when it is the bare, unparenthesized direct body
+        // of a type alias. TS2795 is emitted separately; TSC never also emits TS2304 in this
+        // position. However, when parenthesized like `type TE1 = (intrinsic)`, TSC treats it
+        // as a regular identifier and DOES emit TS2304.
+        // `idx` is the IDENTIFIER node; parent = TypeReference; grandparent = TypeAliasDeclaration.
+        if name == "intrinsic" {
+            let ext0 = self.ctx.arena.get_extended(idx);
+            // Get the TYPE_REFERENCE parent node (to check source position)
+            let type_ref_parent = ext0.and_then(|e| self.ctx.arena.get(e.parent));
+            let p1_kind = ext0
+                .and_then(|e| self.ctx.arena.get_extended(e.parent))
+                .and_then(|e2| self.ctx.arena.get(e2.parent))
+                .map(|n| n.kind);
+            let is_type_alias_body =
+                p1_kind.is_some_and(|k| k == syntax_kind_ext::TYPE_ALIAS_DECLARATION);
+            if is_type_alias_body {
+                // Check that it's not parenthesized
+                let is_parenthesized = type_ref_parent.is_some_and(|tr_node| {
+                    if let Some(sf) = self.ctx.arena.source_files.first() {
+                        let pos = tr_node.pos as usize;
+                        if pos > 0 {
+                            let before = &sf.text[..pos];
+                            let last_non_ws = before
+                                .bytes()
+                                .rev()
+                                .find(|&b| b != b' ' && b != b'\t' && b != b'\n' && b != b'\r');
+                            return last_non_ws == Some(b'(');
+                        }
+                    }
+                    false
+                });
+                if !is_parenthesized {
+                    return;
+                }
+            }
+        }
+
         // In `import x = <expr>` module reference position, unresolved names should
         // report namespace/module diagnostics (TS2503/TS2307), not TS2304.
         let mut cur = idx;

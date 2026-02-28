@@ -18,6 +18,19 @@ impl<'a> CheckerState<'a> {
         target_sym: SymbolId,
         in_lazy_context: bool,
     ) -> Option<NodeIndex> {
+        self.find_circular_reference_impl(type_idx, target_sym, in_lazy_context, true)
+    }
+
+    /// `follow_aliases`: whether to follow type references to type alias
+    /// bodies. Only one level of alias following is performed to prevent
+    /// false positives from multi-step chains through structural wrapping.
+    fn find_circular_reference_impl(
+        &self,
+        type_idx: NodeIndex,
+        target_sym: SymbolId,
+        in_lazy_context: bool,
+        follow_aliases: bool,
+    ) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(type_idx)?;
 
         // Function types are safe boundaries (recursion always allowed)
@@ -34,6 +47,57 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::MAPPED_TYPE
         );
         let current_lazy = in_lazy_context || is_lazy_boundary;
+
+        // Follow type references to type aliases to detect transitive circularity.
+        // E.g., `var x: T5[]` where `type T5 = typeof x` — the type reference T5
+        // needs to be followed to its body to discover the `typeof x` query.
+        // Only follow one level of alias indirection to avoid false positives
+        // from multi-step chains through structural wrapping (generic applications).
+        if follow_aliases
+            && node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let ref_sym = self
+                .ctx
+                .binder
+                .get_node_symbol(type_ref.type_name)
+                .or_else(|| {
+                    self.ctx
+                        .binder
+                        .resolve_identifier(self.ctx.arena, type_ref.type_name)
+                });
+            if let Some(sym_id) = ref_sym {
+                let is_type_alias = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+                if is_type_alias
+                    && let Some(decls) = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.declarations.clone())
+                {
+                    for &decl_idx in &decls {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && let Some(alias) = self.ctx.arena.get_type_alias(decl_node)
+                            && alias.type_node.is_some()
+                        {
+                            // Don't follow further aliases from within this body
+                            if let Some(found) = self.find_circular_reference_impl(
+                                alias.type_node,
+                                target_sym,
+                                current_lazy,
+                                false,
+                            ) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if node.kind == syntax_kind_ext::TYPE_QUERY {
             if let Some(query) = self.ctx.arena.get_type_query(node) {
@@ -105,10 +169,11 @@ impl<'a> CheckerState<'a> {
                 // Also check type arguments if any (always recursive)
                 if let Some(ref args) = query.type_arguments {
                     for &arg_idx in &args.nodes {
-                        if let Some(found) = self.find_circular_reference_in_type_node(
+                        if let Some(found) = self.find_circular_reference_impl(
                             arg_idx,
                             target_sym,
                             current_lazy,
+                            follow_aliases,
                         ) {
                             return Some(found);
                         }
@@ -125,10 +190,11 @@ impl<'a> CheckerState<'a> {
         ) {
             if let Some(accessor) = self.ctx.arena.get_accessor(node)
                 && accessor.type_annotation.is_some()
-                && let Some(found) = self.find_circular_reference_in_type_node(
+                && let Some(found) = self.find_circular_reference_impl(
                     accessor.type_annotation,
                     target_sym,
                     current_lazy,
+                    follow_aliases,
                 )
             {
                 return Some(found);
@@ -138,10 +204,11 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
         ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
             && prop.type_annotation.is_some()
-            && let Some(found) = self.find_circular_reference_in_type_node(
+            && let Some(found) = self.find_circular_reference_impl(
                 prop.type_annotation,
                 target_sym,
                 current_lazy,
+                follow_aliases,
             )
         {
             return Some(found);
@@ -150,7 +217,7 @@ impl<'a> CheckerState<'a> {
         // Recursive descent
         for child in self.ctx.arena.get_children(type_idx) {
             if let Some(found) =
-                self.find_circular_reference_in_type_node(child, target_sym, current_lazy)
+                self.find_circular_reference_impl(child, target_sym, current_lazy, follow_aliases)
             {
                 return Some(found);
             }

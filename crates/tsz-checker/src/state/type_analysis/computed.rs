@@ -729,7 +729,13 @@ impl<'a> CheckerState<'a> {
                 // Check for invalid circular reference (TS2456)
                 // A type alias circularly references itself if it resolves to itself
                 // without structural wrapping (e.g., `type A = B; type B = A;`)
-                if self.is_direct_circular_reference(sym_id, alias_type, type_alias.type_node) {
+                let is_circular = self.is_direct_circular_reference(
+                    sym_id,
+                    alias_type,
+                    type_alias.type_node,
+                    false,
+                ) || self.ctx.circular_type_aliases.contains(&sym_id);
+                if is_circular {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };

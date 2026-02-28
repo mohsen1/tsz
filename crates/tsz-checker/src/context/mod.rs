@@ -392,6 +392,11 @@ pub struct CheckerContext<'a> {
     pub symbol_resolution_stack: Vec<SymbolId>,
     /// O(1) lookup set for symbol resolution stack.
     pub symbol_resolution_set: FxHashSet<SymbolId>,
+    /// Type aliases that are part of a circular dependency chain (TS2456).
+    /// Populated when `is_direct_circular_reference` detects a cycle — all
+    /// members on the resolution stack between the target and the current
+    /// alias are marked circular.
+    pub circular_type_aliases: FxHashSet<SymbolId>,
     /// Tracks module specifiers whose namespace types are currently being computed.
     /// Prevents infinite recursion when circular module imports eagerly resolve all exports
     /// (e.g. react's `prop-types` ↔ `react` cycle in react16.d.ts).

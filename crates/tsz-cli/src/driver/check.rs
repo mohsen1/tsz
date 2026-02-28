@@ -746,6 +746,13 @@ pub(super) fn collect_diagnostics(
                             if diag.code < 2000 || (8000..9000).contains(&diag.code) {
                                 return true;
                             }
+                            // Some semantic errors are deliberately emitted alongside
+                            // structural parse errors and must not be suppressed.
+                            // TS2457: "Type alias name cannot be 'void'" — TSC emits
+                            // this alongside TS1109 for `type void = ...`.
+                            if diag.code == 2457 {
+                                return true;
+                            }
                             // Suppress if a structural parse error is within the cascade window
                             !structural_error_positions.iter().any(|&err_pos| {
                                 let dist = if err_pos <= diag.start {
@@ -1056,6 +1063,13 @@ pub(super) fn check_file_for_parallel<'a>(
                 const MAX_CASCADE_DISTANCE: u32 = 300;
                 checker_diagnostics.retain(|diag| {
                     if diag.code < 2000 || (8000..9000).contains(&diag.code) {
+                        return true;
+                    }
+                    // Some semantic errors are deliberately emitted alongside
+                    // structural parse errors and must not be suppressed.
+                    // TS2457: "Type alias name cannot be 'void'" — TSC emits
+                    // this alongside TS1109 for `type void = ...`.
+                    if diag.code == 2457 {
                         return true;
                     }
                     !structural_error_positions.iter().any(|&err_pos| {

@@ -138,38 +138,86 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a type alias directly circularly references itself.
+    /// Check if a type alias directly circularly references itself (or
+    /// transitively through other type aliases currently being resolved).
     ///
-    /// Returns true when a type alias resolves to itself without structural wrapping,
-    /// which is invalid: `type A = B; type B = A;`
+    /// Returns true when a type alias resolves to itself or to another alias
+    /// in the current resolution chain, without structural wrapping.
+    /// Invalid examples: `type A = B; type B = A;`, `type T = T | string`
     ///
     /// Returns false for valid recursive types that use structural wrapping:
     /// `type List = { value: number; next: List | null };`
+    ///
+    /// `in_union_or_intersection` is set when we are recursing into union/intersection
+    /// members. Per the TS spec, "a union type directly depends on each of the
+    /// constituent types", so union/intersection members don't need the
+    /// `is_simple_type_reference` check on the parent node.
+    ///
+    /// When a cycle is detected, all type alias symbols on the resolution stack
+    /// between the target and the current alias are marked in `circular_type_aliases`
+    /// so that each member of the cycle can independently emit TS2456.
+    #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn is_direct_circular_reference(
-        &self,
+        &mut self,
         sym_id: SymbolId,
         resolved_type: TypeId,
         type_node: NodeIndex,
+        in_union_or_intersection: bool,
     ) -> bool {
-        // Check if resolved_type is Lazy(DefId) pointing back to sym_id
+        // Check if resolved_type is Lazy(DefId) pointing to a type alias in the
+        // current resolution chain.
         if let Some(def_id) =
             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
+            && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
         {
-            // Map DefId back to SymbolId
-            if let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                && target_sym_id == sym_id
-            {
-                // It's a self-reference - check if it's direct (no structural wrapping)
-                return self.is_simple_type_reference(type_node);
+            // Check if the target is in the resolution set (currently being computed).
+            // This detects both direct self-references (A = A) and transitive cycles
+            // (A = B; B = C; C = A) — in all cases, the target would be in the set.
+            let is_in_resolution_chain = self.ctx.symbol_resolution_set.contains(&target_sym_id);
+
+            // Only flag type alias symbols to avoid false positives for
+            // interfaces/classes which can have valid structural recursion.
+            let is_type_alias = self
+                .ctx
+                .binder
+                .get_symbol(target_sym_id)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+
+            if is_in_resolution_chain && is_type_alias {
+                let is_direct =
+                    in_union_or_intersection || self.is_simple_type_reference(type_node);
+
+                if is_direct {
+                    // Mark all type alias symbols on the resolution stack between
+                    // the cycle target and the current position as circular.
+                    // This ensures every member of the cycle emits TS2456.
+                    let mut found_target = false;
+                    for &stack_sym in &self.ctx.symbol_resolution_stack {
+                        if stack_sym == target_sym_id {
+                            found_target = true;
+                        }
+                        if found_target {
+                            let is_alias = self.ctx.binder.get_symbol(stack_sym).is_some_and(|s| {
+                                s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                            });
+                            if is_alias {
+                                self.ctx.circular_type_aliases.insert(stack_sym);
+                            }
+                        }
+                    }
+                }
+
+                return is_direct;
             }
         }
 
         // Also check union/intersection members for circular references.
+        // Per TS spec: "A union type directly depends on each of the constituent types."
         if let Some(members) =
             tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
         {
             for &member in &members {
-                if self.is_direct_circular_reference(sym_id, member, type_node) {
+                if self.is_direct_circular_reference(sym_id, member, type_node, true) {
                     return true;
                 }
             }
@@ -178,7 +226,7 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_type)
         {
             for &member in &members {
-                if self.is_direct_circular_reference(sym_id, member, type_node) {
+                if self.is_direct_circular_reference(sym_id, member, type_node, true) {
                     return true;
                 }
             }

@@ -870,7 +870,36 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::TypeKeyword);
 
-        let name = self.parse_identifier();
+        // For `type void = ...`, TSC accepts `void` as the identifier name
+        // and emits TS1109 "Expression expected" from the parser (the checker
+        // separately emits TS2457 "Type alias name cannot be 'void'").
+        // We must not fall through to parse_identifier() which would emit TS1359.
+        let name = if self.is_token(SyntaxKind::VoidKeyword) {
+            let id_start = self.token_pos();
+            let id_end = self.token_end();
+            let atom = self.scanner.get_token_atom();
+            let text = self.scanner.get_token_value_ref().to_string();
+            self.next_token(); // consume `void`
+            // Emit TS1109 at the `=` position (matching TSC behavior)
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::EXPRESSION_EXPECTED,
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                id_start,
+                id_end,
+                crate::parser::node::IdentifierData {
+                    atom,
+                    escaped_text: text,
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else {
+            self.parse_identifier()
+        };
 
         // Parse optional type parameters: <T, U extends Foo>
         let type_parameters = self

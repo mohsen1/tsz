@@ -510,6 +510,7 @@ FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2726,7 +2727,6 @@ FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/predefinedTypes/ob
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/unionTypeLiterals.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/invalidTypeOfTarget.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/recursiveTypesWithTypeof.ts
-FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofANonExportedType.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofThis.ts
 FAIL TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeQueryWithReservedWords.ts
@@ -2771,9 +2771,7 @@ FAIL TypeScript/tests/cases/conformance/types/tuple/variadicTuples3.ts
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/classDoesNotDependOnBaseTypes.ts
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/directDependenceBetweenTypeAliases.ts
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/interfaceDoesNotDependOnBaseTypes.ts
-FAIL TypeScript/tests/cases/conformance/types/typeAliases/intrinsicKeyword.ts
 FAIL TypeScript/tests/cases/conformance/types/typeAliases/intrinsicTypes.ts
-FAIL TypeScript/tests/cases/conformance/types/typeAliases/reservedNamesInAliases.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/constraintSatisfactionWithAny.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/constraintSatisfactionWithEmptyObject.ts
 FAIL TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressionErrors.ts
@@ -5252,7 +5250,6 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -12045,6 +12042,7 @@ PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/funct
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/functionLiteralForOverloads2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeLiterals/parenthesizedTypes.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/circularTypeofWithVarOrFunc.ts
+PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofAnExportedType.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClass2.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofClassWithPrivates.ts
 PASS TypeScript/tests/cases/conformance/types/specifyingTypes/typeQueries/typeofModuleWithoutExports.ts
@@ -12145,6 +12143,8 @@ PASS TypeScript/tests/cases/conformance/types/typeAliases/builtinIteratorReturn.
 PASS TypeScript/tests/cases/conformance/types/typeAliases/circularTypeAliasForUnionWithClass.ts
 PASS TypeScript/tests/cases/conformance/types/typeAliases/circularTypeAliasForUnionWithInterface.ts
 PASS TypeScript/tests/cases/conformance/types/typeAliases/genericTypeAliases.ts
+PASS TypeScript/tests/cases/conformance/types/typeAliases/intrinsicKeyword.ts
+PASS TypeScript/tests/cases/conformance/types/typeAliases/reservedNamesInAliases.ts
 PASS TypeScript/tests/cases/conformance/types/typeAliases/typeAliases.ts
 PASS TypeScript/tests/cases/conformance/types/typeAliases/typeAliasesDoNotMerge.ts
 PASS TypeScript/tests/cases/conformance/types/typeAliases/typeAliasesForObjectTypes.ts
