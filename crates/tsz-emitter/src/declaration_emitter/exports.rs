@@ -958,7 +958,27 @@ impl<'a> DeclarationEmitter<'a> {
         });
         self.emit_node(module.name);
 
-        if module.body.is_some() {
+        // Collect dotted namespace name segments: namespace A.B.C { ... }
+        // is represented as a chain of ModuleDeclaration nodes
+        let mut current_body = module.body;
+        loop {
+            if !current_body.is_some() {
+                break;
+            }
+            let Some(body_node) = self.arena.get(current_body) else {
+                break;
+            };
+            if let Some(nested_mod) = self.arena.get_module(body_node) {
+                // Body is another module declaration — emit dotted name
+                self.write(".");
+                self.emit_node(nested_mod.name);
+                current_body = nested_mod.body;
+            } else {
+                break;
+            }
+        }
+
+        if current_body.is_some() {
             self.write(" {");
             self.write_line();
             self.increase_indent();
@@ -971,7 +991,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.public_api_scope_depth += 1;
             }
 
-            if let Some(body_node) = self.arena.get(module.body) {
+            if let Some(body_node) = self.arena.get(current_body) {
                 if let Some(module_block) = self.arena.get_module_block(body_node) {
                     if let Some(ref stmts) = module_block.statements {
                         for &stmt_idx in &stmts.nodes {
@@ -980,11 +1000,7 @@ impl<'a> DeclarationEmitter<'a> {
 
                         // tsc emits `export {};` inside a non-ambient namespace
                         // body when there is a mix of exported and non-exported
-                        // members (the "scope-fix marker").  If the namespace is
-                        // in an ambient context (has `declare` keyword, is inside
-                        // a `declare` parent, or comes from a .d.ts file) the
-                        // marker is suppressed because everything is implicitly
-                        // exported already.
+                        // members (the "scope-fix marker").
                         let is_ambient_module = self
                             .arena
                             .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
@@ -1003,11 +1019,6 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write_line();
                             }
                         }
-                    }
-                } else {
-                    // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
-                    if let Some(_nested_module) = self.arena.get_module(body_node) {
-                        self.emit_module_declaration(module.body);
                     }
                 }
             }
