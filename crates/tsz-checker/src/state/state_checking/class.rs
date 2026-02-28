@@ -319,8 +319,8 @@ impl<'a> CheckerState<'a> {
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);
 
-        // Check that getter return types are assignable to setter param types (TS2322).
-        // tsc 6.0 removed TS2380 (same type requirement) but still checks assignability.
+        // Check getter/setter type compatibility when getter type is inferred (TS2322).
+        // TS 5.1+ allows unrelated types only when both are explicitly annotated.
         self.check_accessor_type_compatibility(&class.members.nodes);
 
         // Check strict property initialization (TS2564)
@@ -465,7 +465,7 @@ impl<'a> CheckerState<'a> {
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);
 
-        // Check that getter return types are assignable to setter param types (TS2322).
+        // Check getter/setter type compatibility when getter type is inferred (TS2322).
         self.check_accessor_type_compatibility(&class.members.nodes);
 
         // Check for property type compatibility with base class (error 2416)

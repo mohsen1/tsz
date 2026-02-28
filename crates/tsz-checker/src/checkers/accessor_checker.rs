@@ -170,27 +170,35 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // Getter/Setter Type Compatibility (TS2322)
+    // Getter/Setter Type Compatibility (TS2322) — inferred types only
     // =========================================================================
 
-    /// Check that getter return types are assignable to setter parameter types.
+    /// Check getter/setter type compatibility when the getter has no explicit
+    /// return type annotation (its type is inferred from the body).
     ///
-    /// tsc 6.0 removed TS2380 (getter/setter must have same type), but still
-    /// checks that the getter's return type is assignable to the setter's
-    /// parameter type.  When it isn't, TS2322 is emitted at the getter name.
+    /// Since TS 5.1, getters and setters may have completely unrelated types
+    /// when **both** have explicit type annotations. However, when a getter's
+    /// return type is *inferred*, it must still be compatible with the setter's
+    /// explicit parameter type annotation.
     ///
-    /// Example:
+    /// Example (error — getter type inferred):
     /// ```typescript
     /// class C {
     ///     get bar() { return 0; }      // TS2322: number not assignable to string
     ///     set bar(n: string) {}
     /// }
     /// ```
+    ///
+    /// Example (no error — both explicitly annotated, TS 5.1):
+    /// ```typescript
+    /// class C {
+    ///     get x(): A<number> { return this.data; }
+    ///     set x(v: A<string>) { this.data = v; }
+    /// }
+    /// ```
     pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
-        // (name_idx, body_idx, type_annotation) for getter;
-        // (param_type_annotation, param_idx) for setter.
-        type GetterInfo = Option<(NodeIndex, NodeIndex, NodeIndex)>;
-        type SetterInfo = Option<(NodeIndex, NodeIndex)>;
+        type GetterInfo = Option<(NodeIndex, NodeIndex, NodeIndex)>; // (name, body, type_ann)
+        type SetterInfo = Option<(NodeIndex, NodeIndex)>; // (param_type_ann, param_idx)
 
         let mut pairs: FxHashMap<String, (GetterInfo, SetterInfo)> = FxHashMap::default();
 
@@ -207,21 +215,17 @@ impl<'a> CheckerState<'a> {
             };
 
             if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                // Store getter: (name_idx, body_idx, type_annotation)
                 pairs.entry(name).or_default().0 =
                     Some((accessor.name, accessor.body, accessor.type_annotation));
-            } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
-                // Store setter: (first param's type_annotation, first param idx)
-                if let Some(&first_param) = accessor.parameters.nodes.first()
-                    && let Some(param_node) = self.ctx.arena.get(first_param)
-                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                {
-                    pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
-                }
+            } else if node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(&first_param) = accessor.parameters.nodes.first()
+                && let Some(param_node) = self.ctx.arena.get(first_param)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
             }
         }
 
-        // Check compatibility for each pair
         for (_name, (getter, setter)) in pairs {
             let Some((getter_name, getter_body, getter_type_ann)) = getter else {
                 continue;
@@ -230,35 +234,27 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Only check when the setter has an explicit type annotation.
-            // When the setter has no annotation, its type is inferred from
-            // the getter, so they're always compatible.
+            // When the setter has no annotation, its type is inferred from the getter.
             if setter_type_ann == NodeIndex::NONE {
                 continue;
             }
-            // Skip abstract accessors — they have no body, so there's no
-            // return statement to anchor the diagnostic to.  tsc doesn't
-            // emit TS2322 for abstract getter/setter type mismatches.
+            // TS 5.1: when the getter ALSO has an explicit return type annotation,
+            // unrelated types are allowed — skip the check.
+            if getter_type_ann != NodeIndex::NONE {
+                continue;
+            }
+            // Skip abstract accessors — no body to anchor the diagnostic.
             if getter_body == NodeIndex::NONE {
                 continue;
             }
 
-            // Get getter return type: prefer explicit annotation, else infer from body
-            let getter_return_type = if getter_type_ann != NodeIndex::NONE {
-                self.get_type_from_type_node(getter_type_ann)
-            } else {
-                self.infer_getter_return_type(getter_body)
-            };
-
-            // Get setter parameter type from its annotation
+            let getter_return_type = self.infer_getter_return_type(getter_body);
             let setter_param_type = self.get_type_from_type_node(setter_type_ann);
 
-            // Check assignability: getter return type must be assignable to setter param type.
-            // tsc emits TS2322 at the first return statement in the getter body.
             if getter_return_type != setter_param_type
                 && getter_return_type != tsz_solver::TypeId::ANY
                 && setter_param_type != tsz_solver::TypeId::ANY
             {
-                // Find the first return statement in the getter body for diagnostic location
                 let diag_idx = self
                     .find_first_return_in_block(getter_body)
                     .unwrap_or(getter_name);
