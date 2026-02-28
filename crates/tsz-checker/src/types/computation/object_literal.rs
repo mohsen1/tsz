@@ -922,6 +922,7 @@ impl<'a> CheckerState<'a> {
                             // Setter arriving after getter
                             (existing.type_id, accessor_type)
                         };
+                        // Both getter and setter exist → not readonly
                         properties.insert(
                             name_atom,
                             PropertyInfo {
@@ -936,6 +937,8 @@ impl<'a> CheckerState<'a> {
                             },
                         );
                     } else {
+                        // Single accessor so far: getter-only is readonly
+                        let readonly = is_getter;
                         properties.insert(
                             name_atom,
                             PropertyInfo {
@@ -943,7 +946,7 @@ impl<'a> CheckerState<'a> {
                                 type_id: accessor_type,
                                 write_type: accessor_type,
                                 optional: false,
-                                readonly: false,
+                                readonly,
                                 is_method: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
