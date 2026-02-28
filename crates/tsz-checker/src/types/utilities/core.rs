@@ -87,6 +87,7 @@ impl<'a> CheckerState<'a> {
                     let pname = self.parameter_name_for_error(param.name);
                     let mut current = param_idx;
                     let mut found = None;
+                    // First try @param {Type} name annotations
                     for _ in 0..4 {
                         if let Some(ext) = self.ctx.arena.get_extended(current)
                             && ext.parent.is_some()
@@ -100,6 +101,37 @@ impl<'a> CheckerState<'a> {
                             }
                         } else {
                             break;
+                        }
+                    }
+                    // If no @param type, check for @type {FunctionType} on the parent
+                    // function declaration and extract parameter type by position
+                    if found.is_none() {
+                        let mut current2 = param_idx;
+                        for _ in 0..4 {
+                            if let Some(ext) = self.ctx.arena.get_extended(current2)
+                                && ext.parent.is_some()
+                            {
+                                current2 = ext.parent;
+                                if let Some(parent_node) = self.ctx.arena.get(current2)
+                                    && parent_node.kind
+                                        == tsz_parser::syntax_kind_ext::FUNCTION_DECLARATION
+                                {
+                                    if let Some(func_type) =
+                                        self.jsdoc_type_annotation_for_node(current2)
+                                    {
+                                        use tsz_solver::ContextualTypeContext;
+                                        let evaluated = self.evaluate_contextual_type(func_type);
+                                        let ctx_helper = ContextualTypeContext::with_expected(
+                                            self.ctx.types,
+                                            evaluated,
+                                        );
+                                        found = ctx_helper.get_parameter_type(i);
+                                    }
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
                         }
                     }
                     found

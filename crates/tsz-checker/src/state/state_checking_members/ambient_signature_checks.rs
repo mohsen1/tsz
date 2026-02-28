@@ -214,6 +214,25 @@ impl<'a> CheckerState<'a> {
                     prop.initializer,
                 );
             }
+        } else if prop.initializer.is_some()
+            && let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(member_idx)
+        {
+            // JSDoc @type annotation on a class property in a JS file:
+            // check initializer assignability against the JSDoc-declared type.
+            let prev_context = self.ctx.contextual_type;
+            if jsdoc_type != TypeId::ANY && !self.type_contains_error(jsdoc_type) {
+                self.ctx.contextual_type = Some(jsdoc_type);
+                self.clear_type_cache_recursive(prop.initializer);
+            }
+            let init_type = self.get_type_of_node(prop.initializer);
+            self.ctx.contextual_type = prev_context;
+
+            if jsdoc_type != TypeId::ANY
+                && !self.type_contains_error(jsdoc_type)
+                && self.check_assignable_or_report(init_type, jsdoc_type, prop.name)
+            {
+                self.check_object_literal_excess_properties(init_type, jsdoc_type, prop.name);
+            }
         } else if prop.initializer.is_some() {
             // When a class property has an initializer but no type annotation,
             // and the class has a contextual type (e.g., from a function return type),

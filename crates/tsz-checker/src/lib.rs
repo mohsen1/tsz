@@ -252,6 +252,9 @@ mod generic_inference_manual;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_type_tag_tests.rs"]
+mod jsdoc_type_tag_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
