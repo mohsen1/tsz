@@ -1007,7 +1007,34 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if let Some(jsdoc_type) =
                         self.checker.jsdoc_type_annotation_for_node_direct(idx)
                     {
-                        let _ = self.checker.get_type_of_node(paren.expression);
+                        let expr_type = self.checker.get_type_of_node(paren.expression);
+                        // TS2352: Check if conversion may be a mistake (same as `as` expressions)
+                        self.checker.ensure_relation_input_ready(expr_type);
+                        self.checker.ensure_relation_input_ready(jsdoc_type);
+                        let should_check = !self.checker.type_contains_error(expr_type)
+                            && !self.checker.type_contains_error(jsdoc_type)
+                            && expr_type != TypeId::ANY
+                            && jsdoc_type != TypeId::ANY
+                            && expr_type != TypeId::UNKNOWN
+                            && jsdoc_type != TypeId::UNKNOWN
+                            && expr_type != TypeId::NEVER
+                            && jsdoc_type != TypeId::NEVER
+                            && !generic_query::contains_type_parameters(
+                                self.checker.ctx.types,
+                                expr_type,
+                            )
+                            && !generic_query::contains_type_parameters(
+                                self.checker.ctx.types,
+                                jsdoc_type,
+                            );
+                        if should_check {
+                            let fwd = self.checker.is_assignable_to(expr_type, jsdoc_type);
+                            let rev = self.checker.is_assignable_to(jsdoc_type, expr_type);
+                            if !fwd && !rev {
+                                self.checker
+                                    .error_type_assertion_no_overlap(expr_type, jsdoc_type, idx);
+                            }
+                        }
                         jsdoc_type
                     } else if let Some(satisfies_type) =
                         self.checker.jsdoc_satisfies_annotation_for_node(idx)
@@ -1152,10 +1179,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // disabled).
                                 && !self.checker.node_has_nearby_parse_error(idx);
 
-                            // For asserted types containing type parameters, TSC resolves
-                            // the constraint and checks overlap against it. E.g., for
-                            // `x as T` where `T extends null | undefined`, TSC checks
-                            // overlap of `x` with `null | undefined`.
+                            // For asserted types containing type parameters, resolve
+                            // the constraint and check overlap against it. E.g., for
+                            // `x as T` where `T extends object | null`, TSC checks
+                            // overlap of `x` with `object | null`.
+                            // For unconstrained type parameters (no `extends`), skip —
+                            // T could be anything.
                             let (should_check, effective_asserted) = if should_check {
                                 if generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
@@ -1193,8 +1222,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
                                 // (i.e., the types don't "sufficiently overlap").
-                                // TSC uses isTypeComparableTo which is more relaxed than assignability:
-                                // types are comparable if they share at least one common property.
+                                // TSC uses isTypeComparableTo which is more relaxed than
+                                // assignability: types are comparable if they share at least
+                                // one common property.
                                 // Use effective_asserted (which may be a resolved constraint)
                                 // for the overlap check.
                                 let source_to_target =
