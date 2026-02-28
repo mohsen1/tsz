@@ -15,6 +15,14 @@ pub enum ElementAccessResult {
     NoIndexSignature {
         type_id: TypeId,
     },
+    /// Numeric property does not exist on any member of a union type.
+    /// Used when all tuple members of a union are out of bounds for a literal index.
+    PropertyNotFound {
+        /// The original union type (for diagnostic message)
+        type_id: TypeId,
+        /// The literal index that was accessed
+        index: usize,
+    },
 }
 
 pub struct ElementAccessEvaluator<'a> {
@@ -79,6 +87,38 @@ impl<'a> ElementAccessEvaluator<'a> {
                     type_id: evaluated_object,
                     index,
                     length: tuple_elements.len(),
+                };
+            }
+        }
+
+        // 2b. Check for union-of-tuples out of bounds.
+        // When all tuple members of a union are out of bounds for a literal index,
+        // tsc emits TS2339 "Property 'N' does not exist on type 'X'".
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(evaluated_object)
+            && let Some(index) = literal_index
+        {
+            let members = self.interner.type_list(members_id);
+            let mut all_out_of_bounds = true;
+            let mut has_any_tuple = false;
+            for &member in members.iter() {
+                if let Some(TypeData::Tuple(elems)) = self.interner.lookup(member) {
+                    has_any_tuple = true;
+                    let tuple_elements = self.interner.tuple_list(elems);
+                    let has_rest = tuple_elements.iter().any(|e| e.rest);
+                    if has_rest || index < tuple_elements.len() {
+                        all_out_of_bounds = false;
+                        break;
+                    }
+                } else {
+                    // Non-tuple member — can't determine bounds
+                    all_out_of_bounds = false;
+                    break;
+                }
+            }
+            if has_any_tuple && all_out_of_bounds {
+                return ElementAccessResult::PropertyNotFound {
+                    type_id: evaluated_object,
+                    index,
                 };
             }
         }

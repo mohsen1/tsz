@@ -627,24 +627,37 @@ impl<'a> CheckerState<'a> {
 
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
-            && let Some(tuple_elements) =
+        {
+            if let Some(tuple_elements) =
                 crate::query_boundaries::type_computation::access::tuple_elements(
                     self.ctx.types,
                     object_type_for_access,
                 )
-        {
-            let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
-            if !has_rest_tail && index >= tuple_elements.len() {
-                let tuple_type_str = self.format_type(object_type_for_access);
+            {
+                // Single tuple: emit TS2493
+                let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+                if !has_rest_tail && index >= tuple_elements.len() {
+                    let tuple_type_str = self.format_type(object_type_for_access);
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format!(
+                            "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                            tuple_type_str,
+                            tuple_elements.len(),
+                            index
+                        ),
+                        crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                    );
+                }
+            } else if self.is_union_of_tuples_all_out_of_bounds(object_type_for_access, index) {
+                // Union of tuples where ALL members are out of bounds: emit TS2339
+                let type_str = self.format_type(object_type);
                 self.error_at_node(
                     access.name_or_argument,
                     &format!(
-                        "Tuple type '{}' of length '{}' has no element at index '{}'.",
-                        tuple_type_str,
-                        tuple_elements.len(),
-                        index
+                        "Property '{index}' does not exist on type '{type_str}'.",
                     ),
-                    crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                 );
             }
         }
@@ -749,6 +762,32 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .resolve_element_access_type(object_type, solver_index_type, literal_index)
+    }
+
+    /// Check if a type is a union of tuples where ALL members are out of bounds
+    /// for the given literal index. Used to emit TS2339 instead of TS2493.
+    fn is_union_of_tuples_all_out_of_bounds(&self, object_type: TypeId, index: usize) -> bool {
+        let Some(members) =
+            tsz_solver::type_queries::data::get_union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+        let mut has_any_tuple = false;
+        for member in &members {
+            if let Some(elems) = crate::query_boundaries::type_computation::access::tuple_elements(
+                self.ctx.types,
+                *member,
+            ) {
+                has_any_tuple = true;
+                let has_rest = elems.iter().any(|e| e.rest);
+                if has_rest || index < elems.len() {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        has_any_tuple
     }
 
     /// Check if an index type is "generic" — i.e., it cannot be resolved to a

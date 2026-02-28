@@ -218,6 +218,9 @@ mod ts7041_tests;
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]
+#[path = "../tests/tuple_index_access_tests.rs"]
+mod tuple_index_access_tests;
+#[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]
