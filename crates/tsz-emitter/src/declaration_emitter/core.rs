@@ -789,8 +789,17 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
-                self.write(": ");
-                self.write(&self.print_type_id(return_type_id));
+                // If solver returned `any` but the function body clearly returns void,
+                // prefer void (the solver's `any` is a fallback, not an actual inference)
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func_body.is_some()
+                    && self.body_returns_void(func_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
             } else if func_body.is_some() && self.body_returns_void(func_body) {
                 self.write(": void");
             }
@@ -1124,8 +1133,17 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
             {
-                self.write(": ");
-                self.write(&self.print_type_id(return_type_id));
+                // If solver returned `any` but the method body clearly returns void,
+                // prefer void (the solver's `any` is a fallback, not an actual inference)
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && method_body.is_some()
+                    && self.body_returns_void(method_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
                     self.write(": void");
@@ -1600,9 +1618,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// Returns true only when the left-hand side is a simple identifier (not a chain like a.b.c).
     pub(super) fn is_simple_enum_access(&self, node: &tsz_parser::parser::node::Node) -> bool {
         if let Some(access) = self.arena.get_access_expr(node)
-            && let Some(expr_node) = self.arena.get(access.expression) {
-                return expr_node.kind == SyntaxKind::Identifier as u16;
-            }
+            && let Some(expr_node) = self.arena.get(access.expression)
+        {
+            return expr_node.kind == SyntaxKind::Identifier as u16;
+        }
         false
     }
 

@@ -225,8 +225,17 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
-                self.write(": ");
-                self.write(&self.print_type_id(return_type_id));
+                // If solver returned `any` but the function body clearly returns void,
+                // prefer void (the solver's `any` is a fallback, not an actual inference)
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func_body.is_some()
+                    && self.body_returns_void(func_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
             } else if func_body.is_some() && self.body_returns_void(func_body) {
                 self.write(": void");
             }
@@ -553,8 +562,17 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(func_type_id) = func_type_id
                 && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
             {
-                self.write(": ");
-                self.write(&self.print_type_id(return_type_id));
+                // If solver returned `any` but the function body clearly returns void,
+                // prefer void (the solver's `any` is a fallback, not an actual inference)
+                if return_type_id == tsz_solver::types::TypeId::ANY
+                    && func_body.is_some()
+                    && self.body_returns_void(func_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(return_type_id));
+                }
             } else if func_body.is_some() && self.body_returns_void(func_body) {
                 self.write(": void");
             }
