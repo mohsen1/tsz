@@ -67,6 +67,7 @@ interface TestCase {
   jsxImportSource?: string;
   moduleDetection?: string;
   preserveConstEnums: boolean;
+  removeComments: boolean;
   outFile?: string;
   emitDeclarationOnly: boolean;
 }
@@ -143,6 +144,7 @@ function getCacheKey(
   jsxImportSource: string = '',
   moduleDetection: string = '',
   preserveConstEnums: boolean = false,
+  removeComments: boolean = false,
   outFile: string = '',
 ): string {
   const tszBin = process.env.TSZ_BIN;
@@ -155,7 +157,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${outFile}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${outFile}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -431,6 +433,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
     const preserveConstEnums = directives.preserveconstenums === true;
+    const removeComments = directives.removecomments === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
 
     // Fix up outFile baseline parsing: when @outFile is specified, the baseline
@@ -477,6 +480,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       jsxImportSource,
       moduleDetection,
       preserveConstEnums,
+      removeComments,
       outFile,
       emitDeclarationOnly,
     } as TestCase;
@@ -526,6 +530,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.jsxImportSource ?? '',
       testCase.moduleDetection ?? '',
       testCase.preserveConstEnums,
+      testCase.removeComments,
       testCase.outFile ?? '',
     );
     let tszJs: string;
@@ -558,6 +563,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         jsxImportSource: testCase.jsxImportSource,
         moduleDetection: testCase.moduleDetection,
         preserveConstEnums: testCase.preserveConstEnums,
+        removeComments: testCase.removeComments,
         outFile: testCase.outFile,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
