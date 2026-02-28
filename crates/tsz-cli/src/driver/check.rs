@@ -361,6 +361,7 @@ pub(super) fn collect_diagnostics(
     let query_cache = QueryCache::new(&program.type_interner);
 
     // Prime Array<T> base type with global augmentations before any file checks.
+    // CRITICAL: The prime checker and all file checkers MUST share the same DefinitionStore.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
@@ -535,6 +536,7 @@ pub(super) fn collect_diagnostics(
                     resolved_module_specifiers: &resolved_module_specifiers,
                     resolved_module_errors: &resolved_module_errors,
                     is_external_module_by_file: &is_external_module_by_file,
+                    file_is_esm_map: &file_is_esm_map,
                     no_check,
                     check_js,
                     skip_lib_check,
