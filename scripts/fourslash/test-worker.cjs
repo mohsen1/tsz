@@ -260,7 +260,7 @@ function patchSessionClient(SessionClient, ts) {
     proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
-        const result = _origGetCodeFixesAtPosition.call(
+        let result = _origGetCodeFixesAtPosition.call(
             this,
             fileName,
             start,
@@ -269,9 +269,81 @@ function patchSessionClient(SessionClient, ts) {
             formatOptions,
             preferences,
         );
+        if (!result || result.length === 0) {
+            const nativeResult = withNativeFallback(this, ls =>
+                ls.getCodeFixesAtPosition(fileName, start, end, errorCodes, formatOptions, preferences)
+            );
+            if (nativeResult && nativeResult.length > 0) {
+                result = nativeResult;
+            }
+        }
         if (preferences) this.configure(oldPreferences || {});
         return result;
     };
+
+    if (typeof proto.getApplicableRefactors === "function") {
+        const _origGetApplicableRefactors = proto.getApplicableRefactors;
+        proto.getApplicableRefactors = function(fileName, positionOrRange, preferences, triggerReason, kind, includeInteractiveActions) {
+            let result = _origGetApplicableRefactors.call(
+                this,
+                fileName,
+                positionOrRange,
+                preferences,
+                triggerReason,
+                kind,
+                includeInteractiveActions,
+            );
+            if (!result || result.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getApplicableRefactors(
+                        fileName,
+                        positionOrRange,
+                        preferences,
+                        triggerReason,
+                        kind,
+                        includeInteractiveActions,
+                    )
+                );
+                if (nativeResult && nativeResult.length > 0) {
+                    result = nativeResult;
+                }
+            }
+            return result;
+        };
+    }
+
+    if (typeof proto.getEditsForRefactor === "function") {
+        const _origGetEditsForRefactor = proto.getEditsForRefactor;
+        proto.getEditsForRefactor = function(fileName, formatOptions, positionOrRange, refactorName, actionName, preferences, interactiveRefactorArguments) {
+            let result = _origGetEditsForRefactor.call(
+                this,
+                fileName,
+                formatOptions,
+                positionOrRange,
+                refactorName,
+                actionName,
+                preferences,
+                interactiveRefactorArguments,
+            );
+            if (!result || !Array.isArray(result.edits) || result.edits.length === 0) {
+                const nativeResult = withNativeFallback(this, ls =>
+                    ls.getEditsForRefactor(
+                        fileName,
+                        formatOptions,
+                        positionOrRange,
+                        refactorName,
+                        actionName,
+                        preferences,
+                        interactiveRefactorArguments,
+                    )
+                );
+                if (nativeResult && Array.isArray(nativeResult.edits) && nativeResult.edits.length > 0) {
+                    result = nativeResult;
+                }
+            }
+            return result;
+        };
+    }
 
     // Override getDefinitionAtPosition to pass through metadata fields from
     // the server response (kind, name, containerName, contextSpan, etc.)
@@ -560,6 +632,13 @@ function patchSessionClient(SessionClient, ts) {
 
     // getCombinedCodeFix - route to server protocol
     proto.getCombinedCodeFix = function(scope, fixId, formatOptions, preferences) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getCombinedCodeFix(scope, fixId, formatOptions, preferences)
+        );
+        if (nativeResult && Array.isArray(nativeResult.changes) && nativeResult.changes.length > 0) {
+            return nativeResult;
+        }
+
         const args = {
             scope: { type: "file", args: { file: scope.fileName } },
             fixId,
@@ -599,6 +678,11 @@ function patchSessionClient(SessionClient, ts) {
 
     // organizeImports - route to server protocol
     proto.organizeImports = function(args, formatOptions) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.organizeImports(args, formatOptions)
+        );
+        if (nativeResult && nativeResult.length > 0) return nativeResult;
+
         const request = this.processRequest("organizeImports", {
             scope: { type: "file", args: { file: args.fileName } },
         });
@@ -608,6 +692,11 @@ function patchSessionClient(SessionClient, ts) {
 
     // getEditsForFileRename - route to server protocol
     proto.getEditsForFileRename = function(oldFilePath, newFilePath, formatOptions, preferences) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getEditsForFileRename(oldFilePath, newFilePath, formatOptions, preferences)
+        );
+        if (nativeResult && nativeResult.length > 0) return nativeResult;
+
         const request = this.processRequest("getEditsForFileRename", {
             oldFilePath,
             newFilePath,
@@ -623,9 +712,11 @@ function patchSessionClient(SessionClient, ts) {
     // Return safe stubs so tests that don't strictly need these objects can proceed.
 
     proto.getProgram = function() {
+        const nativeResult = withNativeFallback(this, ls => ls.getProgram());
+        if (nativeResult) return nativeResult;
+
         // Return a minimal Program stub so callers like
         // ts.getPreEmitDiagnostics(languageService.getProgram()) don't crash.
-        // TODO: Implement proper Program when compiler supports it
         if (!this._programStub) {
             this._programStub = {
                 getCompilerOptions: function() { return {}; },
@@ -646,19 +737,23 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.getCurrentProgram = function() {
-        return undefined;
+        return withNativeFallback(this, ls => ls.getProgram());
     };
 
     proto.getAutoImportProvider = function() {
-        return undefined;
+        return withNativeFallback(this, ls => ls.getAutoImportProviderProgram && ls.getAutoImportProviderProgram());
     };
 
-    proto.getSourceFile = function(_fileName) {
-        return undefined;
+    proto.getSourceFile = function(fileName) {
+        const program = this.getProgram();
+        if (!program || typeof program.getSourceFile !== "function") return undefined;
+        return program.getSourceFile(fileName);
     };
 
-    proto.getNonBoundSourceFile = function(_fileName) {
-        return undefined;
+    proto.getNonBoundSourceFile = function(fileName) {
+        const program = this.getProgram();
+        if (!program || typeof program.getSourceFile !== "function") return undefined;
+        return program.getSourceFile(fileName);
     };
 
     proto.cleanupSemanticCache = function() {
