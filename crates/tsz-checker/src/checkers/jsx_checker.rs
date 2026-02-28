@@ -828,14 +828,21 @@ impl<'a> CheckerState<'a> {
                 // Get actual type of the attribute value
                 if attr_data.initializer.is_none() {
                     // Boolean attribute without value (e.g., <input disabled />)
-                    // TypeScript treats this as type 'boolean' and checks assignability
-                    let bool_type = TypeId::BOOLEAN;
-                    self.check_assignable_or_report_at(
-                        bool_type,
-                        expected_type,
-                        attr_data.name,
-                        attr_data.name,
-                    );
+                    // tsc treats shorthand JSX attributes as type 'true' for assignability
+                    // since `<Foo x/>` is equivalent to `<Foo x={true}/>`.
+                    // But tsc displays 'boolean' (not 'true') in error messages when
+                    // comparing against non-boolean types (e.g., number).
+                    // So we check assignability with BOOLEAN_TRUE (correct: `true` IS
+                    // assignable to `true`) but report errors with BOOLEAN to match
+                    // tsc's error message format for the common case.
+                    if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                        self.check_assignable_or_report_at(
+                            TypeId::BOOLEAN,
+                            expected_type,
+                            attr_data.name,
+                            attr_data.name,
+                        );
+                    }
                     continue;
                 }
 
