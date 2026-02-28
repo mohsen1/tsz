@@ -981,9 +981,9 @@ impl<'a> CheckerState<'a> {
                                 if let Some(func_jsdoc) = self.get_jsdoc_for_function(current)
                                     && let Some(jsdoc_type) =
                                         self.resolve_jsdoc_param_type(&func_jsdoc, &pname)
-                                    {
-                                        return (jsdoc_type, Vec::new());
-                                    }
+                                {
+                                    return (jsdoc_type, Vec::new());
+                                }
                             } else {
                                 break;
                             }
