@@ -636,10 +636,10 @@ impl<'a> TypePrinter<'a> {
         let mut parts = Vec::new();
 
         for sig in &callable.call_signatures {
-            parts.push(self.print_call_signature(sig, false));
+            parts.push(self.print_call_signature(sig, false, false));
         }
         for sig in &callable.construct_signatures {
-            parts.push(self.print_call_signature(sig, true));
+            parts.push(self.print_call_signature(sig, true, callable.is_abstract));
         }
 
         // Add properties (filter out internal props tsc strips from .d.ts)
@@ -718,8 +718,15 @@ impl<'a> TypePrinter<'a> {
         &self,
         sig: &tsz_solver::types::CallSignature,
         is_construct: bool,
+        is_abstract: bool,
     ) -> String {
-        let prefix = if is_construct { "new " } else { "" };
+        let prefix = if is_construct && is_abstract {
+            "abstract new "
+        } else if is_construct {
+            "new "
+        } else {
+            ""
+        };
 
         let type_params_str = if !sig.type_params.is_empty() {
             let params: Vec<String> = sig
