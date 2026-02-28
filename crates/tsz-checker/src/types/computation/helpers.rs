@@ -454,11 +454,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use Solver API for Best Common Type computation (Solver-First architecture)
-        let element_type = expression_ops::compute_best_common_type(
-            self.ctx.types,
-            &element_types,
-            Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
-        );
+        // When preserve_literal_types is set (e.g., inside generic call argument collection),
+        // skip BCT's literal widening by computing the union directly. This preserves
+        // literal types like "foo" | "bar" instead of widening to string, enabling
+        // correct type parameter inference (e.g., K inferred as "foo" | "bar" not string).
+        let element_type = if self.ctx.preserve_literal_types {
+            self.ctx.types.union(element_types.clone())
+        } else {
+            expression_ops::compute_best_common_type(
+                self.ctx.types,
+                &element_types,
+                Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
+            )
+        };
 
         factory.array(element_type)
     }

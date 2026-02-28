@@ -531,3 +531,51 @@ class D<U extends T, T extends V, V extends T> { }
             .collect::<Vec<_>>()
     );
 }
+
+/// Test that array literal elements preserve literal types during generic call inference.
+///
+/// When `['foo', 'bar']` is passed to a function like `f<K extends string>(list: K[]): K`,
+/// K should be inferred as `"foo" | "bar"` (not `string`). This requires the array literal
+/// to preserve literal element types instead of widening them via BCT.
+///
+/// Repro from TypeScript's isomorphicMappedTypeInference test (#29765).
+#[test]
+fn test_generic_call_preserves_array_literal_types() {
+    let source = r#"
+function getProps<T, K extends keyof T>(obj: T, list: K[]): Pick<T, K> {
+    return {} as any;
+}
+const myAny: any = {};
+const o2: { foo: any; bar: any } = getProps(myAny, ['foo', 'bar']);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should have NO errors — Pick<any, "foo" | "bar"> = { foo: any; bar: any }
+    let errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no TS2322 errors for Pick<any, 'foo' | 'bar'> assignment, got {}: {:?}",
+        errors.len(),
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
