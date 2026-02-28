@@ -292,6 +292,15 @@ impl<'a> CheckerState<'a> {
                 }
                 factory.union(element_types)
             }
+            ForOfElementKind::Intersection(members) => {
+                // For an intersection of iterables (e.g. X[] & Y[]),
+                // the element type is the intersection of each member's element type.
+                let mut element_types = Vec::with_capacity(members.len());
+                for member in members {
+                    element_types.push(self.for_of_element_type_classified(member, depth + 1));
+                }
+                factory.intersection(element_types)
+            }
             ForOfElementKind::Readonly(inner) => {
                 // Unwrap readonly wrapper and compute element type for inner
                 self.for_of_element_type_classified(inner, depth + 1)
@@ -299,8 +308,8 @@ impl<'a> CheckerState<'a> {
             ForOfElementKind::String => TypeId::STRING,
             ForOfElementKind::Other => {
                 // For custom iterators, Application types (Map, Set), etc.,
-                // try to resolve the element type via the iterator protocol:
-                // type_id[Symbol.iterator]().next().value
+                // use the solver's iterator protocol resolution which properly
+                // handles Application types and type parameter substitution.
                 self.resolve_iterator_element_type(type_id)
             }
         }
@@ -308,9 +317,32 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve the element type of an iterable via the iterator protocol.
     ///
-    /// Follows the chain: type[Symbol.iterator] → call result → .`next()` → .value
+    /// Uses a hybrid approach:
+    /// 1. First tries the solver's `get_iterator_info` which properly handles
+    ///    Application types (IterableIterator<T>, IteratorResult<T>).
+    /// 2. Falls back to checker-level property access chain which handles
+    ///    merged declarations (IArguments) and custom iterator classes.
+    ///
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
+        // Try solver-level iterator resolution first (handles Application types correctly)
+        if let Some(info) =
+            tsz_solver::operations::get_iterator_info(self.ctx.types, type_id, false)
+        {
+            return info.yield_type;
+        }
+
+        // Fall back to checker-level property access chain which handles
+        // merged declarations and custom iterator classes
+        self.resolve_iterator_element_type_via_property_access(type_id)
+    }
+
+    /// Follow the iterator protocol chain via checker property access.
+    ///
+    /// Follows: type[Symbol.iterator] → call → .next() → call → .value
+    /// Falls back to solver's `get_iterator_info` on the iterator type when
+    /// `.value` returns `unknown` (happens with Application types like IteratorResult<T>).
+    fn resolve_iterator_element_type_via_property_access(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::operations::property::PropertyAccessResult;
 
         // Step 1: Get [Symbol.iterator] property
@@ -325,7 +357,6 @@ impl<'a> CheckerState<'a> {
 
         // If the iterator function returns `any` (e.g., `[Symbol.iterator]() { return this; }`
         // where `this` type inference fails), fall back to using the original object type.
-        // This is the common pattern where the object IS the iterator.
         let iterator_type = if iterator_type == TypeId::ANY {
             type_id
         } else {
@@ -344,10 +375,23 @@ impl<'a> CheckerState<'a> {
 
         // Step 5: Get .value from the IteratorResult
         let value_result = self.resolve_property_access_with_env(next_return, "value");
-        match &value_result {
+        let value_type = match &value_result {
             PropertyAccessResult::Success { type_id, .. } => *type_id,
-            _ => TypeId::ANY,
+            _ => return TypeId::ANY,
+        };
+
+        // If .value resolved to `unknown` (happens when IteratorResult is an unresolved
+        // Application type), try the solver's iterator info on the iterator object itself
+        if value_type == TypeId::UNKNOWN {
+            if let Some(info) =
+                tsz_solver::operations::get_iterator_info(self.ctx.types, iterator_type, false)
+            {
+                return info.yield_type;
+            }
+            return TypeId::ANY;
         }
+
+        value_type
     }
 
     /// Get the return type of calling a function type.
