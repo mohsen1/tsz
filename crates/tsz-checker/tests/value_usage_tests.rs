@@ -972,3 +972,136 @@ function f(x: unknown) {
 // unresolved imports) as TypeId::UNKNOWN. Adding TS18046 in those paths causes
 // false positives. Property access TS18046 is safe because it replaces existing
 // TS2339 errors (wrong code → correct code), so no tests flip from pass to fail.
+
+#[test]
+fn test_literal_undefined_in_binary_op_emits_ts18050() {
+    // When the literal `undefined` keyword is used in a binary operation,
+    // tsc emits TS18050 "The value 'undefined' cannot be used here."
+    let source = r"
+var r = undefined + 1;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected TS18050 for literal `undefined` in binary op, got {ts18050_count}"
+    );
+
+    // Should NOT emit TS18048 for literal undefined
+    let ts18048_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .count();
+    assert_eq!(
+        ts18048_count, 0,
+        "Should not emit TS18048 for literal `undefined`; expected TS18050"
+    );
+}
+
+#[test]
+fn test_variable_with_undefined_type_in_binary_op_emits_ts18048() {
+    // When a variable whose type is `undefined` is used in a binary operation,
+    // tsc emits TS18048 "'x' is possibly 'undefined'." (not TS18050).
+    let source = r"
+var x: typeof undefined;
+var r = x < 1;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18048_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .count();
+    assert!(
+        ts18048_count >= 1,
+        "Expected TS18048 for variable with undefined type in binary op, got {ts18048_count}"
+    );
+
+    // Should NOT emit TS18050 for a variable (only for the literal keyword)
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert_eq!(
+        ts18050_count, 0,
+        "Should not emit TS18050 for variable with undefined type; expected TS18048"
+    );
+}
+
+#[test]
+fn test_literal_null_in_binary_op_emits_ts18050() {
+    // When the literal `null` keyword is used in a binary operation,
+    // tsc emits TS18050 "The value 'null' cannot be used here."
+    let source = r"
+var r = null + 1;
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18050_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18050)
+        .count();
+    assert!(
+        ts18050_count >= 1,
+        "Expected TS18050 for literal `null` in binary op, got {ts18050_count}"
+    );
+}
