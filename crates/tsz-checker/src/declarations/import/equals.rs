@@ -6,6 +6,13 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Whether a type-only reference came from `import type` or `export type`.
+#[derive(Debug)]
+enum TypeOnlyKind {
+    ImportType,
+    ExportType,
+}
+
 impl<'a> CheckerState<'a> {
     /// Check for duplicate import alias declarations within a scope.
     ///
@@ -660,7 +667,8 @@ impl<'a> CheckerState<'a> {
 
     /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
-    /// Emits TS2708 "Cannot use namespace as a value" if exporting a type-only member.
+    /// Emits TS1380 "An import alias cannot reference a declaration that was imported using 'import type'."
+    /// Emits TS1379 "An import alias cannot reference a declaration that was exported using 'export type'."
     fn check_namespace_import(&mut self, _stmt_idx: NodeIndex, module_ref: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -678,12 +686,18 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
                 // Try to resolve the identifier as a namespace/module
-                if self.resolve_identifier_symbol(module_ref).is_none() {
+                let resolved = self.resolve_identifier_symbol(module_ref);
+                if resolved.is_none() {
                     self.error_at_node_msg(
                         module_ref,
                         diagnostic_codes::CANNOT_FIND_NAMESPACE,
                         &[name],
                     );
+                    return;
+                }
+                // TS1380/TS1379: Check if the referenced declaration is type-only
+                if let Some(sym_id) = resolved {
+                    self.check_import_alias_type_only_reference(sym_id, module_ref);
                 }
             }
             return;
@@ -711,10 +725,378 @@ impl<'a> CheckerState<'a> {
                 // Use the existing report_type_query_missing_member which handles this correctly
                 self.report_type_query_missing_member(module_ref);
 
-                // Note: TS2708 for namespace-as-value is NOT emitted here for import equals
-                // declarations. `export import X = NS.TypeMember` is valid even when the
-                // member is type-only. TS2708 is emitted at usage sites (property access,
-                // call expressions, extends clauses) when a namespace is used as a value.
+                // TS1380/TS1379: Check if any symbol in the qualified name chain
+                // references a type-only import or export.
+                self.check_qualified_name_type_only(module_ref);
+            }
+        }
+    }
+
+    /// Check if any symbol in a qualified name chain references a type-only declaration.
+    /// Emits TS1380 (imported using 'import type') or TS1379 (exported using 'export type').
+    fn check_qualified_name_type_only(&mut self, module_ref: NodeIndex) {
+        if let Some(type_only_kind) = self.find_type_only_in_chain(module_ref) {
+            self.emit_import_alias_type_only_error(type_only_kind, module_ref);
+        }
+    }
+
+    /// Walk a qualified name or identifier and check if any resolved symbol is type-only.
+    /// Returns the kind of type-only reference found (import type vs export type).
+    /// Unlike `resolve_qualified_symbol` which resolves through all aliases, this checks
+    /// each intermediate symbol for type-only status.
+    fn find_type_only_in_chain(&self, idx: NodeIndex) -> Option<TypeOnlyKind> {
+        self.find_type_only_in_chain_inner(idx, 0)
+    }
+
+    fn find_type_only_in_chain_inner(&self, idx: NodeIndex, depth: usize) -> Option<TypeOnlyKind> {
+        if depth > 20 {
+            return None;
+        }
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let sym_id = self.resolve_identifier_symbol(idx)?;
+            return self.check_symbol_type_only_kind(sym_id);
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            // Check left part recursively
+            if let Some(kind) = self.find_type_only_in_chain_inner(qn.left, depth + 1) {
+                return Some(kind);
+            }
+
+            // Resolve the left symbol to get the namespace, then look up the right member
+            // WITHOUT following alias resolution — check the raw member symbol.
+            let mut visited = Vec::new();
+            let left_sym = self.resolve_qualified_symbol_inner(qn.left, &mut visited, 0)?;
+            let left_sym_resolved = self
+                .resolve_alias_symbol(left_sym, &mut visited)
+                .unwrap_or(left_sym);
+
+            let lib_binders = self.get_lib_binders();
+            let left_symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(left_sym_resolved, &lib_binders)?;
+
+            let right_name = self
+                .ctx
+                .arena
+                .get(qn.right)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.as_str())?;
+
+            // Look up the raw member symbol (before alias resolution)
+            if let Some(exports) = left_symbol.exports.as_ref()
+                && let Some(member_sym) = exports.get(right_name)
+            {
+                // Check the raw member symbol for type-only
+                if let Some(kind) = self.check_symbol_type_only_kind(member_sym) {
+                    return Some(kind);
+                }
+                // Also resolve through alias and check the final target
+                let resolved = self
+                    .resolve_alias_symbol(member_sym, &mut visited)
+                    .unwrap_or(member_sym);
+                if resolved != member_sym
+                    && let Some(kind) = self.check_symbol_type_only_kind(resolved)
+                {
+                    return Some(kind);
+                }
+                // Check all visited aliases in the chain
+                for &alias_id in &visited {
+                    if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
+                        return Some(kind);
+                    }
+                }
+            }
+
+            // Fall back: try cross-file resolution using the ORIGINAL left sym
+            // (before alias resolution) which may have import_module set.
+            let orig_left_symbol = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders);
+            if let Some(orig) = orig_left_symbol
+                && let Some(ref module_specifier) = orig.import_module
+            {
+                let mut reexport_visited = Vec::new();
+                if let Some(resolved) = self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    right_name,
+                    &mut reexport_visited,
+                ) {
+                    // Check visited aliases from resolution chain
+                    for &alias_id in &reexport_visited {
+                        if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
+                            return Some(kind);
+                        }
+                    }
+                    return self.check_symbol_type_only_kind(resolved);
+                }
+            }
+
+            // Ultimate fallback: use resolve_qualified_symbol and check the result
+            // This handles cases where the member is found through complex resolution
+            let mut resolve_visited = Vec::new();
+            if let Some(resolved) =
+                self.resolve_qualified_symbol_inner(idx, &mut resolve_visited, 0)
+            {
+                if let Some(kind) = self.check_symbol_type_only_kind(resolved) {
+                    return Some(kind);
+                }
+                for &alias_id in &resolve_visited {
+                    if let Some(kind) = self.check_symbol_type_only_kind(alias_id) {
+                        return Some(kind);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a symbol is type-only, and if so, determine whether it was
+    /// imported using 'import type' or exported using 'export type'.
+    fn check_symbol_type_only_kind(&self, sym_id: tsz_binder::SymbolId) -> Option<TypeOnlyKind> {
+        self.check_symbol_type_only_kind_inner(sym_id, 0)
+    }
+
+    fn check_symbol_type_only_kind_inner(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        depth: usize,
+    ) -> Option<TypeOnlyKind> {
+        if depth > 10 {
+            return None;
+        }
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+
+        if symbol.is_type_only {
+            // Symbol is directly marked type-only — determine if it was via import or export
+            return if symbol.import_module.is_some() {
+                Some(TypeOnlyKind::ImportType)
+            } else {
+                Some(TypeOnlyKind::ExportType)
+            };
+        }
+
+        // Check alias chain for transitive type-only
+        if self.alias_resolves_to_type_only(sym_id) {
+            return Some(self.determine_type_only_kind_from_alias(sym_id));
+        }
+
+        // For import-equals aliases (`import A = ns.Member`), the binder doesn't set
+        // import_module, so alias_resolves_to_type_only can't trace through.
+        // Check the declaration's RHS for type-only references.
+        // Also follow through export alias → local symbol chains.
+        if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
+            // Collect all symbols to check: the current symbol plus anything it aliases to
+            let mut syms_to_check = vec![sym_id];
+            let mut visited_resolve = Vec::new();
+            if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited_resolve) {
+                syms_to_check.extend(visited_resolve);
+                syms_to_check.push(resolved);
+            }
+            for check_sym_id in syms_to_check {
+                // Use lookup_symbol_with_name to get the correct arena for cross-file
+                // symbols. When c.ts checks `import AA = b.A`, the resolved symbol
+                // lives in b.ts's arena, not c.ts's.
+                let (check_sym, sym_arena) = match self.lookup_symbol_with_name(check_sym_id, None)
+                {
+                    Some(pair) => pair,
+                    None => continue,
+                };
+                // Check directly: is the resolved target type-only?
+                if check_sym.is_type_only {
+                    return if check_sym.import_module.is_some() {
+                        Some(TypeOnlyKind::ImportType)
+                    } else {
+                        Some(TypeOnlyKind::ExportType)
+                    };
+                }
+                // For import-equals declarations, check the RHS leftmost identifier
+                // using a non-recursive helper to avoid stack overflow.
+                // For export specifiers, follow through to the local binding.
+                for &decl_idx in &check_sym.declarations {
+                    if !decl_idx.is_some() {
+                        continue;
+                    }
+                    let Some(decl_node) = sym_arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                        if let Some(import_decl) = sym_arena.get_import_decl(decl_node)
+                            && let Some(kind) = self.check_import_equals_rhs_type_only_cross_file(
+                                import_decl.module_specifier,
+                                sym_arena,
+                            )
+                        {
+                            return Some(kind);
+                        }
+                    } else if decl_node.kind == syntax_kind_ext::EXPORT_SPECIFIER {
+                        // For `export { A }`, the specifier's name/property_name
+                        // identifier references the local binding. Use node_symbols
+                        // (merged across all files) to find it, then recursively
+                        // check the local symbol for type-only status.
+                        if let Some(spec) = sym_arena.get_specifier(decl_node) {
+                            let local_ident = if spec.property_name.is_some() {
+                                spec.property_name
+                            } else {
+                                spec.name
+                            };
+                            if let Some(&local_sym_id) =
+                                self.ctx.binder.node_symbols.get(&local_ident.0)
+                                && local_sym_id != check_sym_id
+                                && let Some(kind) =
+                                    self.check_symbol_type_only_kind_inner(local_sym_id, depth + 1)
+                            {
+                                return Some(kind);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check the RHS of an import-equals for type-only references, using the
+    /// provided arena for AST node access. This handles cross-file cases where
+    /// the import-equals declaration is in a different file than the one being
+    /// checked (e.g., c.ts checks `b.A` where `import A = a.A` is in b.ts).
+    ///
+    /// Uses `binder.node_symbols` (merged across all files) instead of
+    /// `resolve_identifier_symbol` (which only searches the current file's scope).
+    fn check_import_equals_rhs_type_only_cross_file(
+        &self,
+        rhs_idx: NodeIndex,
+        arena: &tsz_parser::parser::node::NodeArena,
+    ) -> Option<TypeOnlyKind> {
+        let node = arena.get(rhs_idx)?;
+        let lib_binders = self.get_lib_binders();
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            // Only use resolve_identifier_symbol for same-file cases.
+            // For cross-file arenas, node indices overlap between files,
+            // so resolve_identifier_symbol would resolve the WRONG identifier.
+            let is_same_arena = std::ptr::eq(arena, self.ctx.arena);
+            if is_same_arena && let Some(sym_id) = self.resolve_identifier_symbol(rhs_idx) {
+                let sym = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                if sym.is_type_only {
+                    return if sym.import_module.is_some() {
+                        Some(TypeOnlyKind::ImportType)
+                    } else {
+                        Some(TypeOnlyKind::ExportType)
+                    };
+                }
+                if self.alias_resolves_to_type_only(sym_id) {
+                    return Some(self.determine_type_only_kind_from_alias(sym_id));
+                }
+                return None;
+            }
+
+            // Cross-file fallback: resolve_identifier_symbol only searches the
+            // current file's scope. For declarations from other files, look up
+            // the identifier by name in the per-file binder's file_locals.
+            let ident = arena.get_identifier(node)?;
+            let name = &ident.escaped_text;
+
+            // Find which file's binder has this identifier as a local
+            if let Some(all_binders) = &self.ctx.all_binders {
+                for file_binder in all_binders.iter() {
+                    if let Some(sym_id) = file_binder.file_locals.get(name)
+                        && let Some(sym) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    {
+                        if sym.is_type_only {
+                            return if sym.import_module.is_some() {
+                                Some(TypeOnlyKind::ImportType)
+                            } else {
+                                Some(TypeOnlyKind::ExportType)
+                            };
+                        }
+                        if self.alias_resolves_to_type_only(sym_id) {
+                            return Some(self.determine_type_only_kind_from_alias(sym_id));
+                        }
+                    }
+                }
+            }
+
+            return None;
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = arena.get_qualified_name(node)?;
+            // Only check the leftmost identifier for type-only
+            return self.check_import_equals_rhs_type_only_cross_file(qn.left, arena);
+        }
+
+        None
+    }
+
+    /// Determine the type-only kind by tracing through alias chains.
+    fn determine_type_only_kind_from_alias(&self, sym_id: tsz_binder::SymbolId) -> TypeOnlyKind {
+        let lib_binders = self.get_lib_binders();
+        let mut visited = Vec::new();
+        if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited) {
+            // Check the alias chain for type-only symbols
+            for &alias_id in &visited {
+                if let Some(alias_sym) =
+                    self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
+                    && alias_sym.is_type_only
+                {
+                    return if alias_sym.import_module.is_some() {
+                        TypeOnlyKind::ImportType
+                    } else {
+                        TypeOnlyKind::ExportType
+                    };
+                }
+            }
+            // Check the final target
+            if let Some(target_sym) = self.ctx.binder.get_symbol_with_libs(target, &lib_binders)
+                && target_sym.is_type_only
+            {
+                return if target_sym.import_module.is_some() {
+                    TypeOnlyKind::ImportType
+                } else {
+                    TypeOnlyKind::ExportType
+                };
+            }
+        }
+        // Default to import type (more common case)
+        TypeOnlyKind::ImportType
+    }
+
+    /// Check a single symbol for type-only status and emit TS1380/TS1379.
+    fn check_import_alias_type_only_reference(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        error_node: NodeIndex,
+    ) {
+        if let Some(kind) = self.check_symbol_type_only_kind(sym_id) {
+            self.emit_import_alias_type_only_error(kind, error_node);
+        }
+    }
+
+    /// Emit the appropriate TS1380 or TS1379 error.
+    fn emit_import_alias_type_only_error(&mut self, kind: TypeOnlyKind, error_node: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        match kind {
+            TypeOnlyKind::ImportType => {
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::AN_IMPORT_ALIAS_CANNOT_REFERENCE_A_DECLARATION_THAT_WAS_IMPORTED_USING_IMPORT_TY,
+                    diagnostic_codes::AN_IMPORT_ALIAS_CANNOT_REFERENCE_A_DECLARATION_THAT_WAS_IMPORTED_USING_IMPORT_TY,
+                );
+            }
+            TypeOnlyKind::ExportType => {
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::AN_IMPORT_ALIAS_CANNOT_REFERENCE_A_DECLARATION_THAT_WAS_EXPORTED_USING_EXPORT_TY,
+                    diagnostic_codes::AN_IMPORT_ALIAS_CANNOT_REFERENCE_A_DECLARATION_THAT_WAS_EXPORTED_USING_EXPORT_TY,
+                );
             }
         }
     }

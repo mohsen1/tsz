@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a single statement for TypeScript-only syntax in JS files.
     fn check_js_grammar_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -430,22 +430,39 @@ impl<'a> CheckerState<'a> {
 
             // Export declarations may wrap other declarations
             syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx)
-                    && export_decl.export_clause.is_some()
-                {
-                    let inner = export_decl.export_clause;
-                    let inner_kind = self.ctx.arena.get(inner).map(|n| n.kind);
-                    // For `export import X = require(...)`, emit TS8002 at the
-                    // outer EXPORT_DECLARATION node so the span starts at `export`
-                    // (matching tsc column offset).
-                    if inner_kind == Some(syntax_kind_ext::IMPORT_EQUALS_DECLARATION) {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
+                    // TS8006: `export type * from '...'` in JS files.
+                    // tsc only emits TS8006 for namespace re-exports with `type` keyword,
+                    // NOT for `export type { A }` (named specifiers with whole-declaration type).
+                    if export_decl.is_type_only && export_decl.module_specifier.is_some() {
+                        let message = format_message(
+                            diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["export type"],
+                        );
                         self.error_at_node(
                             stmt_idx,
-                            diagnostic_messages::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &message,
+                            diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                         );
-                    } else {
-                        self.check_js_grammar_statement(inner);
+                    } else if export_decl.export_clause.is_some() {
+                        let inner = export_decl.export_clause;
+                        let inner_kind = self.ctx.arena.get(inner).map(|n| n.kind);
+                        // For `export import X = require(...)`, emit TS8002 at the
+                        // outer EXPORT_DECLARATION node so the span starts at `export`
+                        // (matching tsc column offset).
+                        if inner_kind == Some(syntax_kind_ext::IMPORT_EQUALS_DECLARATION) {
+                            self.error_at_node(
+                                stmt_idx,
+                                diagnostic_messages::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        } else if inner_kind == Some(syntax_kind_ext::NAMED_EXPORTS) {
+                            // Check per-specifier `export { type foo }` in JS files
+                            self.check_js_grammar_export_specifiers(inner);
+                            self.check_js_grammar_statement(inner);
+                        } else {
+                            self.check_js_grammar_statement(inner);
+                        }
                     }
                 }
             }
@@ -458,6 +475,38 @@ impl<'a> CheckerState<'a> {
             }
 
             _ => {}
+        }
+    }
+
+    /// Check per-specifier `export { type foo }` in JS files.
+    /// Emits TS8006 for each specifier that has `is_type_only: true`.
+    fn check_js_grammar_export_specifiers(&mut self, named_exports_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(named_exports_node) = self.ctx.arena.get(named_exports_idx) else {
+            return;
+        };
+        let Some(named_imports_data) = self.ctx.arena.get_named_imports(named_exports_node) else {
+            return;
+        };
+        for &specifier_idx in &named_imports_data.elements.nodes {
+            let Some(specifier_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+            let Some(specifier_data) = self.ctx.arena.get_specifier(specifier_node) else {
+                continue;
+            };
+            if specifier_data.is_type_only {
+                let message = format_message(
+                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &["export...type"],
+                );
+                self.error_at_node(
+                    specifier_idx,
+                    &message,
+                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
         }
     }
 

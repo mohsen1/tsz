@@ -566,7 +566,14 @@ impl BinderState {
                 "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
                 export_name, module_specifier, sym_id.0
             );
-            return Some((sym_id, is_type_only));
+            // Check if the exported symbol itself was marked type-only
+            // (e.g., `export type { A }` sets is_type_only on the symbol).
+            let sym_is_type_only = if let Some(sym) = self.symbols.get(sym_id) {
+                is_type_only || sym.is_type_only
+            } else {
+                is_type_only
+            };
+            return Some((sym_id, sym_is_type_only));
         }
 
         // Not found in direct exports, check for named re-exports

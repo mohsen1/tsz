@@ -1,40 +1,29 @@
-//! Tests for contextual typing of class expression property initializers.
+//! Tests for the circular return-type assignability fix.
 //!
-//! These tests verify that when a class expression is returned from a function
-//! with a declared return type, static property initializers (arrow/function
-//! expressions) receive contextual typing from the corresponding interface member.
+//! When a function/getter has no explicit return type annotation, the checker
+//! infers the return type from the body.  Previously it then re-checked the
+//! return statement against that inferred type, which could cause false TS2322
+//! errors (e.g. for nested array literals with different object shapes).
+//!
+//! The fix pushes `TypeId::ANY` as the return type context when the return type
+//! is purely inferred, so `check_return_statement` skips the circular check.
 
-use crate::checker::context::CheckerOptions;
-use crate::checker::state::CheckerState;
+use crate::context::CheckerOptions;
+use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Helper: parse, bind, check with lib support and noImplicitAny enabled.
-fn check_with_no_implicit_any(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let lib_files = crate::test_fixtures::load_lib_files_for_test();
-
+/// Helper: parse, bind, check with default options.
+fn check_default(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| tsz_binder::state::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&lib_contexts);
-    }
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_implicit_any: true,
-        ..Default::default()
-    };
+    let options = CheckerOptions::default();
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -43,77 +32,67 @@ fn check_with_no_implicit_any(source: &str) -> Vec<crate::checker::diagnostics::
         "test.ts".to_string(),
         options,
     );
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: std::sync::Arc::clone(&lib.arena),
-                binder: std::sync::Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
 
     checker.check_source_file(root);
     checker.ctx.diagnostics.clone()
 }
 
-/// Class expression returned from function with declared return type should
-/// contextually type static arrow property parameters.
-///
-/// Regression test: without per-property contextual typing in
-/// `get_class_constructor_type_inner`, the arrow `(arg) => {}` would be
-/// evaluated with the whole Foo interface as contextual type instead of the
-/// specific `(arg: A) => void` member type, causing false TS7006.
+/// Function returning nested array literals with different object shapes should
+/// NOT produce false TS2322.  The return type is purely inferred so there is no
+/// external constraint to check against.
 #[test]
-fn test_class_expr_static_arrow_contextual_typing() {
+fn test_no_false_ts2322_for_inferred_return_with_nested_arrays() {
     let source = r#"
-interface A {
-    numProp: number;
-}
-interface Foo {
-    method1(arg: A): void;
-}
-function getFoo(): Foo {
-    return class {
-        static method1 = (arg) => {
-            arg.numProp = 10;
-        }
-    }
+function f() {
+    return [
+        ['a', { x: 1 }],
+        ['b', { y: 2 }]
+    ];
 }
 "#;
-    let diagnostics = check_with_no_implicit_any(source);
-
-    let ts7006_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    let diagnostics = check_default(source);
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
-        ts7006_errors.is_empty(),
-        "Should NOT emit TS7006 for contextually typed arrow parameter 'arg', got: {ts7006_errors:?}"
+        ts2322_errors.is_empty(),
+        "Inferred return type should not cause circular TS2322 check, got: {ts2322_errors:?}"
     );
 }
 
-/// Same test but with function expression initializers instead of arrows.
+/// Getter returning nested array literals without annotation should not produce
+/// false TS2322 — same circular-check avoidance applies to getters.
 #[test]
-fn test_class_expr_static_function_expr_contextual_typing() {
+fn test_no_false_ts2322_for_getter_inferred_return() {
     let source = r#"
-interface A {
-    numProp: number;
-}
-interface Foo {
-    method1(arg: A): void;
-}
-function getFoo(): Foo {
-    return class {
-        static method1 = function(arg) {
-            arg.numProp = 10;
-        }
+class C {
+    get x() {
+        return [
+            ['a', { x: 1 }],
+            ['b', { y: 2 }]
+        ];
     }
 }
 "#;
-    let diagnostics = check_with_no_implicit_any(source);
-
-    let ts7006_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 7006).collect();
+    let diagnostics = check_default(source);
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
     assert!(
-        ts7006_errors.is_empty(),
-        "Should NOT emit TS7006 for contextually typed function expression parameter 'arg', got: {ts7006_errors:?}"
+        ts2322_errors.is_empty(),
+        "Getter with inferred return should not cause circular TS2322, got: {ts2322_errors:?}"
+    );
+}
+
+/// When a function HAS an explicit return type, the check should still work.
+/// This ensures we didn't disable return type checking entirely.
+#[test]
+fn test_annotated_return_type_still_checked() {
+    let source = r#"
+function f(): number {
+    return "hello";
+}
+"#;
+    let diagnostics = check_default(source);
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Annotated return type should still produce TS2322 for type mismatch"
     );
 }

@@ -1209,7 +1209,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.push_return_type(return_type);
+            // When the return type was purely inferred from the body (no annotation),
+            // push ANY so check_return_statement skips the circular assignability check.
+            let effective_return_type = if has_type_annotation {
+                return_type
+            } else {
+                TypeId::ANY
+            };
+            self.push_return_type(effective_return_type);
 
             self.check_statement(accessor.body);
             if is_getter {
