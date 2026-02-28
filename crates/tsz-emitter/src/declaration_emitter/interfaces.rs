@@ -55,6 +55,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Members
         for &member_idx in &iface.members.nodes {
+            if let Some(mn) = self.arena.get(member_idx) {
+                self.emit_leading_jsdoc_comments(mn.pos);
+            }
             self.emit_interface_member(member_idx);
         }
 
@@ -68,6 +71,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(member_node) = self.arena.get(member_idx) else {
             return;
         };
+
+        // Skip members with computed property names that are not emittable in .d.ts
+        if self.member_has_non_emittable_computed_name(member_idx) {
+            return;
+        }
 
         self.write_indent();
 
@@ -230,6 +238,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(member_node) = self.arena.get(member_idx) else {
             return;
         };
+
+        // Skip members with computed property names that are not emittable in .d.ts
+        if self.member_has_non_emittable_computed_name(member_idx) {
+            return;
+        }
 
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {

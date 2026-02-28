@@ -611,6 +611,10 @@ impl<'a> Printer<'a> {
                 }
                 first = false;
 
+                // Emit leading comments before the parameter (e.g., inline JSDoc
+                // comments like `/** comment */ a`). tsc preserves these in JS output.
+                self.emit_comments_before_pos(param_node.pos);
+
                 if param.dot_dot_dot_token {
                     self.write("...");
                 }

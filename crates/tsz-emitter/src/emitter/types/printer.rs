@@ -527,14 +527,12 @@ impl<'a> TypePrinter<'a> {
             None
         };
 
-        // If we have a symbol and it's visible, use the name
+        // If we have a symbol and it's visible or global, use the name
         if let Some(sym_id) = sym_id
-            && self.is_symbol_visible(sym_id)
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
         {
-            // Get the symbol name
-            if let Some(arena) = self.symbol_arena
-                && let Some(symbol) = arena.get(sym_id)
-            {
+            if self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id) {
                 return symbol.escaped_name.clone();
             }
         }
@@ -542,6 +540,20 @@ impl<'a> TypePrinter<'a> {
         // Symbol is not visible or we don't have symbol info.
         // Fallback to `any` when we cannot legally name the referenced type.
         "any".to_string()
+    }
+
+    /// Check if a symbol is a global (ambient) type that's always accessible.
+    /// Global types like Object, Array, Function, etc. have no parent symbol
+    /// (parent == SymbolId::NONE) and are always referenceable in declarations.
+    fn is_global_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+        // A symbol with no parent is in the global scope
+        !symbol.parent.is_some()
     }
 
     fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
