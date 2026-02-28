@@ -577,39 +577,40 @@ impl<'a> CheckerState<'a> {
                 if !is_unresolved(return_type) {
                     any_checked = true;
                     if let Some(element_type) = jsx_element_type
-                        && !self.is_assignable_to(return_type, element_type) {
-                            all_valid = false;
-                        }
+                        && !self.is_assignable_to(return_type, element_type)
+                    {
+                        all_valid = false;
+                    }
                 }
             }
 
             if !is_sfc
                 && let Some(sigs) =
                     tsz_solver::type_queries::get_call_signatures(self.ctx.types, member_type)
-                    && !sigs.is_empty()
-                {
-                    // Check if ALL call signatures have invalid return types
-                    // (if any signature is valid, the component is valid)
-                    let mut any_concrete = false;
-                    let any_sig_valid = sigs.iter().any(|sig| {
-                        let return_type = self.evaluate_type_with_env(sig.return_type);
-                        if is_unresolved(return_type) {
-                            return true; // Unresolved → assume valid
-                        }
-                        any_concrete = true;
-                        if let Some(element_type) = jsx_element_type {
-                            self.is_assignable_to(return_type, element_type)
-                        } else {
-                            true // No JSX.Element to check against
-                        }
-                    });
-                    if any_concrete {
-                        any_checked = true;
+                && !sigs.is_empty()
+            {
+                // Check if ALL call signatures have invalid return types
+                // (if any signature is valid, the component is valid)
+                let mut any_concrete = false;
+                let any_sig_valid = sigs.iter().any(|sig| {
+                    let return_type = self.evaluate_type_with_env(sig.return_type);
+                    if is_unresolved(return_type) {
+                        return true; // Unresolved → assume valid
                     }
-                    if any_concrete && !any_sig_valid {
-                        all_valid = false;
+                    any_concrete = true;
+                    if let Some(element_type) = jsx_element_type {
+                        self.is_assignable_to(return_type, element_type)
+                    } else {
+                        true // No JSX.Element to check against
                     }
+                });
+                if any_concrete {
+                    any_checked = true;
                 }
+                if any_concrete && !any_sig_valid {
+                    all_valid = false;
+                }
+            }
 
             // NOTE: Class component checking (construct signatures vs JSX.ElementClass)
             // is deliberately skipped. Cross-file React.Component class heritage
@@ -885,6 +886,11 @@ impl<'a> CheckerState<'a> {
         props_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
+        // TS2698: Validate spread attribute types BEFORE props type resolution.
+        // This check fires regardless of the props type — it's about whether the
+        // spread source is a valid object type, not about the target props.
+        // Must run before the `props_type == ANY` early return below, since
+        // intrinsic elements with `[key: string]: any` resolve to ANY props.
         // Resolve Lazy(DefId) types to their concrete Object forms.
         // Normal property access calls resolve_type_for_property_access() before checking,
         // but JSX attribute checking skipped this step — interface-referenced props arrived
@@ -892,20 +898,11 @@ impl<'a> CheckerState<'a> {
         // (QueryCache's resolve_lazy returns None), causing silent TypeId::ANY fallback.
         let props_type = self.resolve_type_for_property_access(props_type);
 
-        // Skip if evaluation resulted in any or error
-        if props_type == TypeId::ANY || props_type == TypeId::ERROR {
-            return;
-        }
-
-        // Skip if the props type contains error types. This happens when generic type alias
-        // instantiation fails (e.g. TS2589 "Type instantiation is excessively deep") and the
-        // solver produces an Application node whose base is TypeData::Error. Checking attributes
-        // against such a type produces false-positive TS2322 excess-property errors because
-        // no properties can be found in an error type. tsc never emits TS2322 in this situation
-        // because it successfully evaluates the type.
-        if tsz_solver::contains_error_type(self.ctx.types, props_type) {
-            return;
-        }
+        // When props_type is any/error or contains error types, skip attribute-vs-props
+        // checking but still validate spread types (TS2698) which is independent of props.
+        let skip_prop_checks = props_type == TypeId::ANY
+            || props_type == TypeId::ERROR
+            || tsz_solver::contains_error_type(self.ctx.types, props_type);
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -980,6 +977,11 @@ impl<'a> CheckerState<'a> {
 
                 // Track for TS2783 spread-overwrite detection
                 named_attr_nodes.insert(attr_name.clone(), attr_data.name);
+
+                // Skip prop-type checking when props type is any/error/contains-error
+                if skip_prop_checks {
+                    continue;
+                }
 
                 // Get expected type from props
                 use tsz_solver::operations::property::PropertyAccessResult;
@@ -1099,33 +1101,38 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                // Set contextual type so attribute values preserve narrow literal
-                // types instead of widening. e.g., <Foo bar="A" /> where
-                // bar: "A" | "B" keeps "A" as literal, not widened to string.
-                let prev_contextual_type = self.ctx.contextual_type;
-                self.ctx.contextual_type = Some(expected_type);
-                let actual_type = self.compute_type_of_node(value_node_idx);
-                self.ctx.contextual_type = prev_contextual_type;
-
-                // Check assignability — tsc anchors JSX attribute errors at the
-                // attribute NAME (not the value expression)
-                if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
-                    self.check_assignable_or_report_at(
-                        actual_type,
-                        expected_type,
-                        value_node_idx,
-                        attr_data.name,
-                    );
-                }
-
                 // TS2783: Check if a later spread attribute will overwrite this attribute.
                 // e.g., `<Foo a={1} {...props}>` where `props` contains `a`.
-                self.check_jsx_attr_overwritten_by_spread(
+                // IMPORTANT: Must check overwrite BEFORE assignability. If the attribute
+                // will be overwritten by a later spread, tsc skips the type check
+                // (emitting only TS2783, not TS2322).
+                let overwritten = self.check_jsx_attr_overwritten_by_spread(
                     &attr_name,
                     attr_data.name,
                     attr_nodes,
                     attr_i,
                 );
+
+                if !overwritten {
+                    // Set contextual type so attribute values preserve narrow literal
+                    // types instead of widening. e.g., <Foo bar="A" /> where
+                    // bar: "A" | "B" keeps "A" as literal, not widened to string.
+                    let prev_contextual_type = self.ctx.contextual_type;
+                    self.ctx.contextual_type = Some(expected_type);
+                    let actual_type = self.compute_type_of_node(value_node_idx);
+                    self.ctx.contextual_type = prev_contextual_type;
+
+                    // Check assignability — tsc anchors JSX attribute errors at the
+                    // attribute NAME (not the value expression)
+                    if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
+                        self.check_assignable_or_report_at(
+                            actual_type,
+                            expected_type,
+                            value_node_idx,
+                            attr_data.name,
+                        );
+                    }
+                }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 // Extract the spread type to track which properties it provides.
                 // This is used for the TS2741 (missing required property) check below.
@@ -1133,7 +1140,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let spread_expr_idx = spread_data.expression;
+                // Set contextual type from props so inline object literals in spreads
+                // preserve literal types (e.g., `{...{y: true}}` keeps `y: true`
+                // instead of widening to `y: boolean`). tsc contextually types
+                // spread expressions against the element's props type.
+                let prev_contextual_type = self.ctx.contextual_type;
+                if !skip_prop_checks {
+                    self.ctx.contextual_type = Some(props_type);
+                }
                 let spread_type = self.compute_type_of_node(spread_expr_idx);
+                self.ctx.contextual_type = prev_contextual_type;
                 let spread_type = self.resolve_type_for_property_access(spread_type);
 
                 // When spread type is any/error/unknown, it potentially provides all
@@ -1144,6 +1160,20 @@ impl<'a> CheckerState<'a> {
                 {
                     // Mark all required props as provided (any spread covers everything)
                     spread_covers_all = true;
+                    continue;
+                }
+
+                // TS2698: Validate spread type is object-like.
+                // tsc rejects spreading `null`, `undefined`, `never`, primitives in JSX.
+                // This runs regardless of skip_prop_checks — it's independent of props type.
+                let resolved = self.resolve_lazy_type(spread_type);
+                if resolved == TypeId::NEVER
+                    || !crate::query_boundaries::type_computation::access::is_valid_spread_type(
+                        self.ctx.types,
+                        resolved,
+                    )
+                {
+                    self.report_spread_not_object_type(spread_expr_idx);
                     continue;
                 }
 
@@ -1195,58 +1225,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Check assignability of each spread property against the corresponding
-                // props property. Only check properties that exist in the target props
-                // AND are NOT overridden by explicit attributes after the spread.
-                // Note: We don't check the spread as a whole against props because
-                // explicit attributes can supplement/override spread properties.
-                if let Some(spread_shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
-                {
-                    use tsz_solver::operations::property::PropertyAccessResult;
-                    for prop in &spread_shape.properties {
-                        let prop_name = self.ctx.types.resolve_atom(prop.name);
-
-                        // Skip props that will be overridden by later explicit attributes.
-                        // We check if an explicit attribute with the same name appears in the
-                        // remaining attrs list.
-                        let overridden = attrs.properties.nodes.iter().any(|&later_idx| {
-                            if let Some(later_node) = self.ctx.arena.get(later_idx)
-                                && later_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
-                                && let Some(later_attr) =
-                                    self.ctx.arena.get_jsx_attribute(later_node)
-                                && let Some(name_node) = self.ctx.arena.get(later_attr.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                            {
-                                return ident.escaped_text.as_str() == prop_name;
-                            }
-                            false
-                        });
-                        if overridden {
-                            continue;
-                        }
-
-                        // Look up the expected type for this property in the props type.
-                        // Strip `undefined` from optional props (write-position check).
-                        let expected_type =
-                            match self.resolve_property_access_with_env(props_type, &prop_name) {
-                                PropertyAccessResult::Success { type_id, .. } => {
-                                    tsz_solver::remove_undefined(self.ctx.types, type_id)
-                                }
-                                _ => continue, // Property not in props, skip
-                            };
-
-                        // Check if the spread property's type is assignable to the expected type
-                        if prop.type_id != TypeId::ANY && prop.type_id != TypeId::ERROR {
-                            self.check_assignable_or_report_at(
-                                prop.type_id,
-                                expected_type,
-                                spread_expr_idx,
-                                tag_name_idx,
-                            );
-                        }
-                    }
-                }
+                // NOTE: Per-property spread type checking was removed. tsc checks
+                // spreads as a whole type against the props type (via assignability),
+                // not individual property-by-property. The TS2741 (missing required
+                // property) check below handles the main spread validation case.
+                // Full whole-spread assignability checking (TS2322 for mismatched
+                // spread properties) is deferred until the assignability gate can
+                // produce tsc-matching error messages for spread types.
             }
         }
 
@@ -1254,7 +1239,8 @@ impl<'a> CheckerState<'a> {
         // Skip if:
         // - we already reported excess property errors (tsc doesn't pile on with TS2741)
         // - a spread of type `any` covers all properties
-        if !has_excess_property_error && !spread_covers_all {
+        // - props type is any/error (skip_prop_checks)
+        if !has_excess_property_error && !spread_covers_all && !skip_prop_checks {
             // tsc anchors TS2741 (missing required property) at the tag name
             self.check_missing_required_jsx_props(props_type, &provided_attrs, tag_name_idx);
         }
@@ -1324,17 +1310,15 @@ impl<'a> CheckerState<'a> {
     ///
     /// Only emitted under `strictNullChecks` (matching tsc behavior) and only for
     /// non-optional spread properties (optional properties may not overwrite).
+    /// Returns `true` if the attribute is overwritten by a later spread (and
+    /// optionally emits TS2783 when `strictNullChecks` is enabled).
     fn check_jsx_attr_overwritten_by_spread(
         &mut self,
         attr_name: &str,
         attr_name_idx: NodeIndex,
         attr_nodes: &[NodeIndex],
         current_idx: usize,
-    ) {
-        if !self.ctx.strict_null_checks() {
-            return;
-        }
-
+    ) -> bool {
         // Look at later siblings for spreads that contain this property
         for &later_idx in &attr_nodes[current_idx + 1..] {
             let Some(later_node) = self.ctx.arena.get(later_idx) else {
@@ -1366,24 +1350,28 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .any(|p| p.name == attr_atom && !p.optional);
                     if has_required_prop {
-                        use tsz_common::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
-                        let message = format_message(
-                            diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                            &[attr_name],
-                        );
-                        self.error_at_node(
-                            attr_name_idx,
-                            &message,
-                            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                        );
-                        // Only report the first overwrite (tsc does the same)
-                        return;
+                        // TS2783: only emitted under strictNullChecks (matching tsc)
+                        if self.ctx.strict_null_checks() {
+                            use tsz_common::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let message = format_message(
+                                diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                &[attr_name],
+                            );
+                            self.error_at_node(
+                                attr_name_idx,
+                                &message,
+                                diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                            );
+                        }
+                        // Attribute is overwritten regardless of SNC
+                        return true;
                     }
                 }
             }
         }
+        false
     }
 
     // =========================================================================

@@ -630,8 +630,178 @@ let p = <Poisoned x />;
 }
 
 // =============================================================================
+// TS2698: JSX spread type validation
+// =============================================================================
+
+#[test]
+fn test_ts2698_spread_null_emits_error() {
+    // Spreading `null` in JSX should emit TS2698
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+const a = null;
+const x = <div { ...a } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "Expected TS2698 for spreading null, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2698_spread_undefined_emits_error() {
+    // Spreading `undefined` in JSX should emit TS2698
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+const a = undefined;
+const x = <div { ...a } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "Expected TS2698 for spreading undefined, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2698_spread_never_emits_error() {
+    // Spreading `never` in JSX should emit TS2698
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+const a = {} as never;
+const x = <div { ...a } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "Expected TS2698 for spreading never, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2698_not_emitted_for_object_spread() {
+    // Spreading a valid object in JSX should NOT emit TS2698
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+const a = { x: 1 };
+const x = <div { ...a } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "Should NOT emit TS2698 for object spread, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2698_not_emitted_for_any_spread() {
+    // Spreading `any` in JSX should NOT emit TS2698
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+declare var a: any;
+const x = <div { ...a } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+        ),
+        "Should NOT emit TS2698 for any spread, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2698_works_with_intrinsic_any_props() {
+    // TS2698 should fire even when IntrinsicElements has [key: string]: any
+    // (i.e., when skip_prop_checks would be true). The spread type validation
+    // is independent of the props type.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements { [key: string]: any }
+}
+const b = null;
+const c = undefined;
+const d = <div { ...b } />;
+const e = <div { ...c } />;
+"#;
+    let diags = jsx_diagnostics(source);
+    let ts2698_count = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES)
+        .count();
+    assert!(
+        ts2698_count >= 2,
+        "Expected at least 2 TS2698 errors (for null and undefined spreads), got {ts2698_count}: {diags:?}"
+    );
+}
+
+// =============================================================================
 // TS2783: JSX spread overwrite detection
 // =============================================================================
+
+#[test]
+fn test_spread_overwrite_skips_type_check() {
+    // When a later spread will overwrite an explicit attribute, tsc only
+    // emits TS2783 (overwrite warning) and does NOT emit TS2322 (type mismatch).
+    // This tests the ordering: overwrite detection before type checking.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Props {{
+    x: number;
+}}
+function Foo(props: Props) {{ return <div />; }}
+const p: Props = {{ x: 1 }};
+let t = <Foo x={{"not a number"}} {{...p}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    // TS2783 should be emitted (spread overwrites 'x')
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+        ),
+        "Expected TS2783 for overwritten attribute, got: {diags:?}"
+    );
+    // TS2322 should NOT be emitted (type check skipped because overwritten)
+    let ts2322_for_x = diags.iter().any(|(c, msg)| {
+        *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE && msg.contains("string")
+    });
+    assert!(
+        !ts2322_for_x,
+        "Should NOT emit TS2322 for overwritten attribute, got: {diags:?}"
+    );
+}
 
 #[test]
 fn test_ts2783_jsx_spread_overwrites_explicit_attribute() {
