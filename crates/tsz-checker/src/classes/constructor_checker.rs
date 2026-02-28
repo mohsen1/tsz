@@ -814,17 +814,18 @@ impl<'a> CheckerState<'a> {
 
             if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
-                && let Some(class_data) = self.ctx.arena.get_class(parent_node) {
-                    // Try to resolve the class symbol
-                    let sym_id = self
-                        .ctx
-                        .binder
-                        .get_node_symbol(class_data.name)
-                        .or_else(|| self.ctx.binder.get_node_symbol(parent_idx));
-                    if let Some(sym_id) = sym_id {
-                        result.push(sym_id);
-                    }
+                && let Some(class_data) = self.ctx.arena.get_class(parent_node)
+            {
+                // Try to resolve the class symbol
+                let sym_id = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(class_data.name)
+                    .or_else(|| self.ctx.binder.get_node_symbol(parent_idx));
+                if let Some(sym_id) = sym_id {
+                    result.push(sym_id);
                 }
+            }
 
             current = parent_idx;
         }
