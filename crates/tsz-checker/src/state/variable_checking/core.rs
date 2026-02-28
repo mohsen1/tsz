@@ -1415,11 +1415,12 @@ impl<'a> CheckerState<'a> {
         // Check if it resolves to an enum symbol
         if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
-                    && let Some(enum_obj) = self.enum_object_type(sym_id) {
-                        return enum_obj;
-                    }
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+            && let Some(enum_obj) = self.enum_object_type(sym_id)
+        {
+            return enum_obj;
+        }
 
         fallback_type
     }
