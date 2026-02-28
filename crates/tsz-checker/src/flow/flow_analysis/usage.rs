@@ -813,10 +813,9 @@ impl<'a> CheckerState<'a> {
                     // not definitely assigned — returning true here would incorrectly
                     // suppress TS2454.
                     if let Some(sym_id) = known_sym
-                        && !self.declaration_has_initializer(sym_id)
-                    {
-                        return false;
-                    }
+                        && !self.declaration_has_initializer(sym_id) {
+                            return false;
+                        }
                     return true;
                 }
             }
@@ -933,16 +932,15 @@ impl<'a> CheckerState<'a> {
         let mut decl_id_check = decl_id;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
             && let Some(info) = self.ctx.arena.node_info(decl_id)
-            && let Some(parent) = self.ctx.arena.get(info.parent)
-        {
-            decl_node = parent;
-            decl_id_check = info.parent;
-        }
+                && let Some(parent) = self.ctx.arena.get(info.parent)
+            {
+                decl_node = parent;
+                decl_id_check = info.parent;
+            }
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-            && let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node)
-        {
-            return var_data.initializer.is_some();
-        }
+            && let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) {
+                return var_data.initializer.is_some();
+            }
         if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
             return true; // binding elements always have a source
         }
