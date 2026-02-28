@@ -529,6 +529,11 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_ident) = self.arena.get_identifier(name_node) else {
                 return false;
             };
+            // Check file_locals first (matches UsageAnalyzer's lookup path)
+            if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
+                return used.contains_key(&sym_id);
+            }
+            // Fall back to root scope table
             let Some(root_scope) = binder.scopes.first() else {
                 return false;
             };
