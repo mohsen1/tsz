@@ -765,6 +765,107 @@ const e = <div { ...c } />;
 }
 
 // =============================================================================
+// Intrinsic element return type: JSX.Element
+// =============================================================================
+
+#[test]
+fn test_intrinsic_jsx_element_returns_jsx_element_type() {
+    // JSX intrinsic elements (e.g., <div/>) should have type JSX.Element,
+    // not IntrinsicElements["div"]. A function returning <div/> should be
+    // assignable to () => JSX.Element.
+    let source = r#"
+declare namespace JSX {
+    interface Element { _brand: "element" }
+    interface IntrinsicElements {
+        div: { className?: string };
+        button: { onClick?: () => void };
+    }
+}
+const f = () => <button>test</button>;
+const x: () => JSX.Element = f;
+"#;
+    let diags = jsx_diagnostics(source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Intrinsic JSX element should have type JSX.Element, got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// Generic type parameter props: excess property suppression
+// =============================================================================
+
+#[test]
+fn test_generic_intersection_props_no_excess_errors() {
+    // When component props type is `T & { children?: ... }`, where T is a type
+    // parameter from the enclosing scope, excess property checking should be
+    // suppressed because T may have additional properties at instantiation time.
+    // This was broken because evaluate_type_with_env collapsed
+    // `T & { children?: string }` into `{ children?: string; x: number }`
+    // (T's constraint), losing the type parameter information.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface SFC<P> {{
+    (props: P & {{ children?: string }}): JSX.Element;
+}}
+function test<T extends {{ x: number }}>(Component: SFC<T>) {{
+    return <Component x={{1}} y={{"blah"}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should NOT emit TS2322 for extra props when type has generic intersection, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_simple_type_param_props_no_excess_errors() {
+    // Simple case: props type is just T (type parameter), should suppress
+    // excess property checking.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface SFC<P> {{
+    (props: P): JSX.Element;
+}}
+function test<T extends {{ x: number }}>(Component: SFC<T>) {{
+    return <Component x={{1}} y={{"blah"}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should NOT emit TS2322 for extra props with type parameter, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_concrete_props_still_emit_excess_errors() {
+    // When props type is fully concrete (no type parameters), excess property
+    // checking should still work.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface SFC<P> {{
+    (props: P & {{ children?: string }}): JSX.Element;
+}}
+function test(Component: SFC<{{ x: number }}>) {{
+    return <Component x={{1}} y={{"blah"}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Should emit TS2322 for excess property 'y' on concrete props, got: {diags:?}"
+    );
+}
+
+// =============================================================================
 // TS2783: JSX spread overwrite detection
 // =============================================================================
 

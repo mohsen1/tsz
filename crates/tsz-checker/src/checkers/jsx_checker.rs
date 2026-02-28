@@ -140,11 +140,26 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.attributes,
                     evaluated_props,
                     jsx_opening.tag_name,
+                    false, // intrinsic elements never have raw type params
                 );
 
-                let factory = self.ctx.types.factory();
-                let tag_literal = factory.literal_string(tag);
-                return factory.index_access(intrinsic_elements_type, tag_literal);
+                // tsc types ALL JSX expressions (both intrinsic and component) as
+                // JSX.Element. Returning IntrinsicElements["tag"] causes false TS2322
+                // when the JSX expression is used in a context expecting JSX.Element
+                // (e.g., as a return value or assigned to a variable of type JSX.Element).
+                if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(element_sym_id) = exports.get("Element")
+                    {
+                        return self.type_reference_symbol_type(element_sym_id);
+                    }
+                }
+                return TypeId::ANY;
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
             // tsc emits this unconditionally (regardless of noImplicitAny) when JSX.IntrinsicElements is absent.
@@ -179,11 +194,14 @@ impl<'a> CheckerState<'a> {
             self.check_jsx_component_return_type(evaluated, tag_name_idx);
 
             // Extract props type from the component and check attributes
-            if let Some(props_type) = self.get_jsx_props_type_for_component(evaluated) {
+            if let Some((props_type, raw_has_type_params)) =
+                self.get_jsx_props_type_for_component(evaluated)
+            {
                 self.check_jsx_attributes_against_props(
                     jsx_opening.attributes,
                     props_type,
                     jsx_opening.tag_name,
+                    raw_has_type_params,
                 );
             } else {
                 // TS2604: JSX element type does not have any construct or call signatures.
@@ -367,7 +385,15 @@ impl<'a> CheckerState<'a> {
     /// - **SFC (Stateless Function Component)**: first parameter type of call signature
     /// - **Class component**: construct signature return type → property from
     ///   `JSX.ElementAttributesProperty` (or the full instance type if empty)
-    fn get_jsx_props_type_for_component(&mut self, component_type: TypeId) -> Option<TypeId> {
+    ///
+    /// Returns `(props_type, raw_has_type_params)`:
+    /// - `props_type`: the evaluated props type for attribute type checking
+    /// - `raw_has_type_params`: whether the pre-evaluation props type contained type
+    ///   parameters (used to suppress excess property checking)
+    fn get_jsx_props_type_for_component(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<(TypeId, bool)> {
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
             || component_type == TypeId::UNKNOWN
@@ -389,7 +415,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try SFC first: get call signatures → first parameter is props type
-        if let Some(props) = self.get_sfc_props_type(component_type) {
+        if let Some((props, raw_has_tp)) = self.get_sfc_props_type(component_type) {
             // Don't check if the resolved props type is a type parameter
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
                 return None;
@@ -399,7 +425,7 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::is_union_type(self.ctx.types, props) {
                 return None;
             }
-            return Some(props);
+            return Some((props, raw_has_tp));
         }
 
         // Try class component: get construct signatures → instance type → props
@@ -410,7 +436,7 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::is_union_type(self.ctx.types, props) {
                 return None;
             }
-            return Some(props);
+            return Some((props, false));
         }
 
         None
@@ -720,7 +746,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// SFCs are functions where the first parameter is the props type:
     /// `function Comp(props: { x: number }) { return <div/>; }`
-    fn get_sfc_props_type(&mut self, component_type: TypeId) -> Option<TypeId> {
+    fn get_sfc_props_type(&mut self, component_type: TypeId) -> Option<(TypeId, bool)> {
         // Check Function type (single signature)
         if let Some(shape) =
             tsz_solver::type_queries::get_function_shape(self.ctx.types, component_type)
@@ -735,8 +761,12 @@ impl<'a> CheckerState<'a> {
                 .first()
                 .map(|p| p.type_id)
                 .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            // Check for type parameters BEFORE evaluation, since evaluation may
+            // collapse `T & {children?: ReactNode}` into a concrete object type
+            // that loses the type parameter information.
+            let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
             let evaluated = self.evaluate_type_with_env(props);
-            return Some(evaluated);
+            return Some((evaluated, raw_has_type_params));
         }
 
         // Check Callable type (overloaded signatures)
@@ -757,8 +787,9 @@ impl<'a> CheckerState<'a> {
                 .first()
                 .map(|p| p.type_id)
                 .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
             let evaluated = self.evaluate_type_with_env(props);
-            return Some(evaluated);
+            return Some((evaluated, raw_has_type_params));
         }
 
         None
@@ -885,6 +916,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         props_type: TypeId,
         tag_name_idx: NodeIndex,
+        raw_props_has_type_params: bool,
     ) {
         // TS2698: Validate spread attribute types BEFORE props type resolution.
         // This check fires regardless of the props type — it's about whether the
@@ -922,8 +954,13 @@ impl<'a> CheckerState<'a> {
         // a spread may satisfy the type parameter. We still check *type-mismatch* errors
         // for concrete properties that are found in the intersection. This flag is used
         // in the PropertyNotFound branch below.
-        let props_has_type_params =
-            tsz_solver::contains_type_parameters(self.ctx.types, props_type);
+        //
+        // We check BOTH the evaluated props type AND the raw (pre-evaluation) type.
+        // The raw check is important because evaluation may collapse type parameters:
+        // e.g., `T & { children?: ReactNode }` evaluates to `{ children?: ReactNode; x: number }`
+        // when T has constraint `{ x: number }`, losing the type parameter information.
+        let props_has_type_params = raw_props_has_type_params
+            || tsz_solver::contains_type_parameters(self.ctx.types, props_type);
 
         // Track provided attribute names for missing-required-property check
         let mut provided_attrs: Vec<String> = Vec::new();
