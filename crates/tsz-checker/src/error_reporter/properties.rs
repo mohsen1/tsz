@@ -116,7 +116,18 @@ impl<'a> CheckerState<'a> {
     /// a more specific type (property access, function call, arithmetic, etc.).
     /// Falls back to TS2571 ("Object is of type 'unknown'.") when the expression name
     /// cannot be determined.
-    pub fn error_is_of_type_unknown(&mut self, expr_idx: NodeIndex) {
+    ///
+    /// Returns `true` if the error was emitted, `false` if suppressed (e.g., without
+    /// `--strictNullChecks`). Callers should treat `unknown` as `any` when `false`.
+    pub fn error_is_of_type_unknown(&mut self, expr_idx: NodeIndex) -> bool {
+        // tsc only emits TS18046 under --strictNullChecks (which is part of --strict).
+        // Without it, `unknown` is treated more like `any` for property access, calls,
+        // and operations. This prevents false positives when types resolve to unknown
+        // due to inference/resolution limitations (e.g., generic construct signatures,
+        // multi-file namespace merging, iterator helpers).
+        if !self.ctx.compiler_options.strict_null_checks {
+            return false;
+        }
         let name = self.expression_text(expr_idx);
         if let Some(loc) = self.get_source_location(expr_idx) {
             let (code, message) = if let Some(ref name) = name {
@@ -137,7 +148,9 @@ impl<'a> CheckerState<'a> {
                 message,
                 code,
             ));
+            return true;
         }
+        false
     }
 
     /// Report an excess property error using solver diagnostics with source tracking.
