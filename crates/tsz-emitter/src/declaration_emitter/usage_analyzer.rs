@@ -932,6 +932,13 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
 
+            // Type predicate (x is T)
+            k if k == syntax_kind_ext::TYPE_PREDICATE => {
+                if let Some(predicate) = self.arena.get_type_predicate(type_node) {
+                    self.analyze_type_node(predicate.type_node);
+                }
+            }
+
             // Infer type
             k if k == syntax_kind_ext::INFER_TYPE => {
                 // Infer type doesn't reference external symbols
