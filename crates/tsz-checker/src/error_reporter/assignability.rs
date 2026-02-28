@@ -672,15 +672,23 @@ impl<'a> CheckerState<'a> {
                 diag
             }
 
-            SubtypeFailureReason::TooManyParameters {
-                source_count,
-                target_count,
-            } => {
+            SubtypeFailureReason::TooManyParameters { .. } => {
+                // In assignability context, too-many-parameters is a type mismatch (TS2322),
+                // not an argument count error (TS2554). TS2554 is only for call expressions.
+                // tsc emits: "Type '(x: number) => number' is not assignable to type '() => number'."
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
-                    diagnostic_messages::EXPECTED_ARGUMENTS_BUT_GOT,
-                    &[&target_count.to_string(), &source_count.to_string()],
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
                 );
-                Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
             }
 
             SubtypeFailureReason::TupleElementMismatch {

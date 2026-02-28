@@ -319,9 +319,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses a hybrid approach:
     /// 1. First tries the solver's `get_iterator_info` which properly handles
-    ///    Application types (IterableIterator<T>, IteratorResult<T>).
+    ///    Application types (`IterableIterator`<T>, `IteratorResult`<T>).
     /// 2. Falls back to checker-level property access chain which handles
-    ///    merged declarations (IArguments) and custom iterator classes.
+    ///    merged declarations (`IArguments`) and custom iterator classes.
     ///
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
@@ -339,9 +339,9 @@ impl<'a> CheckerState<'a> {
 
     /// Follow the iterator protocol chain via checker property access.
     ///
-    /// Follows: type[Symbol.iterator] → call → .next() → call → .value
+    /// Follows: type[Symbol.iterator] → call → .`next()` → call → .value
     /// Falls back to solver's `get_iterator_info` on the iterator type when
-    /// `.value` returns `unknown` (happens with Application types like IteratorResult<T>).
+    /// `.value` returns `unknown` (happens with Application types like `IteratorResult`<T>).
     fn resolve_iterator_element_type_via_property_access(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::operations::property::PropertyAccessResult;
 

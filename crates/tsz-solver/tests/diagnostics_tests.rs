@@ -435,3 +435,27 @@ fn test_diagnostic_builder_new_codes() {
     assert_eq!(diag.code, codes::READONLY_PROPERTY);
     assert!(diag.message.contains("x"));
 }
+
+#[test]
+fn test_too_many_parameters_reason_produces_ts2322_not_ts2554() {
+    // When a function has too many required parameters for the target,
+    // the failure reason should produce TS2322 (type not assignable),
+    // not TS2554 (argument count mismatch). TS2554 is only for call sites.
+    let reason = SubtypeFailureReason::TooManyParameters {
+        source_count: 2,
+        target_count: 0,
+    };
+    assert_eq!(
+        reason.diagnostic_code(),
+        codes::TYPE_NOT_ASSIGNABLE,
+        "TooManyParameters should map to TS2322 (TYPE_NOT_ASSIGNABLE), not TS2554"
+    );
+
+    // Verify the to_diagnostic also uses TYPE_NOT_ASSIGNABLE
+    let pending = reason.to_diagnostic(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(
+        pending.code,
+        codes::TYPE_NOT_ASSIGNABLE,
+        "TooManyParameters diagnostic should use TS2322 code"
+    );
+}
