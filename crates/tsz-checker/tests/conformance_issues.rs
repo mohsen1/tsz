@@ -3741,3 +3741,61 @@ interface C<T> {
         "Method type params should not cause TS2304, got {ts2304_count}.\nDiagnostics: {diagnostics:?}"
     );
 }
+
+// ─── TS2427: Interface name cannot be predefined type ───
+
+/// `interface void {}` should emit TS2427, not TS1005.
+/// Previously the parser rejected `void` as a reserved word, preventing
+/// the checker from emitting the correct TS2427 diagnostic.
+#[test]
+fn ts2427_interface_void_name() {
+    let diagnostics = compile_and_get_diagnostics("interface void {}");
+    assert!(
+        has_error(&diagnostics, 2427),
+        "Expected TS2427 for `interface void {{}}`: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1005),
+        "Should not emit TS1005 for `interface void {{}}`: {diagnostics:?}"
+    );
+}
+
+/// `interface null {}` should emit TS2427.
+#[test]
+fn ts2427_interface_null_name() {
+    let diagnostics = compile_and_get_diagnostics("interface null {}");
+    assert!(
+        has_error(&diagnostics, 2427),
+        "Expected TS2427 for `interface null {{}}`: {diagnostics:?}"
+    );
+}
+
+/// `interface string {}` should emit TS2427 for predefined type name.
+#[test]
+fn ts2427_interface_string_name() {
+    let diagnostics = compile_and_get_diagnostics("interface string {}");
+    assert!(
+        has_error(&diagnostics, 2427),
+        "Expected TS2427 for `interface string {{}}`: {diagnostics:?}"
+    );
+}
+
+/// `interface undefined {}` should emit TS2427.
+#[test]
+fn ts2427_interface_undefined_name() {
+    let diagnostics = compile_and_get_diagnostics("interface undefined {}");
+    assert!(
+        has_error(&diagnostics, 2427),
+        "Expected TS2427 for `interface undefined {{}}`: {diagnostics:?}"
+    );
+}
+
+/// Regular interface names should not emit TS2427.
+#[test]
+fn no_ts2427_for_regular_interface_name() {
+    let diagnostics = compile_and_get_diagnostics("interface Foo {}");
+    assert!(
+        !has_error(&diagnostics, 2427),
+        "Should not emit TS2427 for `interface Foo {{}}`: {diagnostics:?}"
+    );
+}
