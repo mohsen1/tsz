@@ -962,12 +962,10 @@ fn test_recursion_depth_limit_provisional_subtyping() {
     let deep_string = nest_array(&interner, TypeId::STRING, 120);
     let deep_number = nest_array(&interner, TypeId::NUMBER, 120);
     // Deep recursion returns DepthExceeded when depth limit is hit.
-    // This is now treated as false for soundness (prevents unsound type acceptance).
-    // The depth_exceeded flag is set for TS2589 diagnostic emission.
-    //
-    // Note: Returning DepthExceeded means "the recursion is too deep, treat as incompatible".
-    // This is the conservative choice for soundness - it prevents incorrectly accepting
-    // genuinely incompatible types that happen to be deeply nested.
+    // Following tsc's semantics, DepthExceeded is treated as true (Ternary.Maybe).
+    // This matches tsc's behavior where recursive depth overflow assumes types are
+    // related, preventing false TS2344 errors on circular generic constraints.
+    // The depth_exceeded flag is still set for TS2589 diagnostic emission.
     let result = checker.check_subtype(deep_string, deep_number);
     assert!(matches!(result, SubtypeResult::DepthExceeded));
     assert!(checker.guard.is_exceeded());

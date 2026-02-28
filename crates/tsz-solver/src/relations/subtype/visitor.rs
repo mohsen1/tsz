@@ -263,7 +263,32 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if resolved != self.source {
             self.checker.check_subtype(resolved, self.target)
         } else {
-            // Resolution failed or returned the same type - fall through
+            // Resolution failed or returned the same type.
+            // Check if this DefId is involved in an ongoing comparison (circular reference).
+            // When a Lazy type can't be resolved because the type is still being defined
+            // (e.g., `interface BB extends AA<AA<BB>>`), and the DefId appears in the
+            // def_guard's visiting set, this indicates a circular constraint that tsc
+            // would accept via its "assume related on cycle" semantics (Ternary.Maybe).
+            let def = DefId(def_id);
+            if self
+                .checker
+                .def_guard
+                .is_visiting_any(|&(s, t)| s == def || t == def)
+            {
+                return SubtypeResult::CycleDetected;
+            }
+
+            // Also check the TypeId-level guard for circular references.
+            // This handles cases where the same Lazy TypeId appears in nested
+            // comparisons without being tracked at the DefId level.
+            if self
+                .checker
+                .guard
+                .is_visiting_any(|&(s, t)| s == self.source || t == self.source)
+            {
+                return SubtypeResult::CycleDetected;
+            }
+
             SubtypeResult::False
         }
     }
