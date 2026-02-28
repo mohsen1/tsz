@@ -88,6 +88,37 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
             }
         }
 
+        // Arrays: recursively widen element type
+        Some(TypeData::Array(element_type)) => {
+            let widened = widen_type(db, element_type);
+            if widened != element_type {
+                db.array(widened)
+            } else {
+                type_id
+            }
+        }
+
+        // Tuples: recursively widen element types
+        Some(TypeData::Tuple(tuple_list_id)) => {
+            let elements = db.tuple_list(tuple_list_id);
+            let mut new_elements = Vec::with_capacity(elements.len());
+            let mut changed = false;
+            for elem in elements.iter() {
+                let widened = widen_type(db, elem.type_id);
+                if widened != elem.type_id {
+                    changed = true;
+                }
+                let mut new_elem = elem.clone();
+                new_elem.type_id = widened;
+                new_elements.push(new_elem);
+            }
+            if changed {
+                db.tuple(new_elements)
+            } else {
+                type_id
+            }
+        }
+
         // All other types are not widened:
         // - Primitives (already widened)
         // - Type parameters (preserve identity)
