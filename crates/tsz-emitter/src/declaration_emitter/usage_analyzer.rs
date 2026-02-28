@@ -976,55 +976,23 @@ impl<'a> UsageAnalyzer<'a> {
 
         match name_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
-                debug!(
-                    "[DEBUG] analyze_entity_name: found Identifier, name_idx={:?}",
-                    name_idx
-                );
                 // Found the leftmost identifier - mark as used
-                if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
-                    debug!("[DEBUG] analyze_entity_name: found sym_id={:?}", sym_id);
-                    let kind = if self.in_value_pos {
-                        UsageKind::VALUE
-                    } else {
-                        UsageKind::TYPE
-                    };
-                    self.mark_symbol_used(sym_id, kind);
+                let kind = if self.in_value_pos {
+                    UsageKind::VALUE
                 } else {
-                    debug!(
-                        "[DEBUG] analyze_entity_name: no symbol found for name_idx={:?}",
-                        name_idx
-                    );
-                    // Fallback: Try to find the symbol via import_name_map or file_locals
-                    if let Some(ident) = self.arena.get_identifier(name_node) {
-                        debug!(
-                            "[DEBUG] analyze_entity_name: looking up '{}' in import_name_map/file_locals",
-                            ident.escaped_text
-                        );
-                        let kind = if self.in_value_pos {
-                            UsageKind::VALUE
-                        } else {
-                            UsageKind::TYPE
-                        };
-                        if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
-                            debug!(
-                                "[DEBUG] analyze_entity_name: found sym_id={:?} from import_name_map",
-                                sym_id
-                            );
-                            self.mark_symbol_used(sym_id, kind);
-                        } else if let Some(sym_id) =
-                            self.binder.file_locals.get(&ident.escaped_text)
-                        {
-                            debug!(
-                                "[DEBUG] analyze_entity_name: found sym_id={:?} from file_locals",
-                                sym_id
-                            );
-                            self.mark_symbol_used(sym_id, kind);
-                        } else {
-                            debug!(
-                                "[DEBUG] analyze_entity_name: '{}' not found",
-                                ident.escaped_text
-                            );
-                        }
+                    UsageKind::TYPE
+                };
+                if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
+                    self.mark_symbol_used(sym_id, kind);
+                }
+                // Also mark the file-local/import symbol by name, since
+                // references and declarations may have different SymbolIds.
+                if let Some(ident) = self.arena.get_identifier(name_node) {
+                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
+                        self.mark_symbol_used(sym_id, kind);
+                    }
+                    if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
+                        self.mark_symbol_used(sym_id, kind);
                     }
                 }
             }
