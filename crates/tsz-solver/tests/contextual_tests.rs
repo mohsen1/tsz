@@ -189,15 +189,19 @@ fn test_contextual_callable_overload_union() {
         ..Default::default()
     });
 
-    // Use no_implicit_any: true to get union behavior for multiple signatures
+    // Use no_implicit_any: true
     let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, true);
 
-    let expected_param0 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    // When multiple call signatures disagree on parameter types, tsc provides
+    // no contextual type (None), which causes TS7006 under noImplicitAny.
+    // This matches tsc behavior: overloaded callables with different param types
+    // do not produce a union contextual type for parameters.
+    assert_eq!(ctx.get_parameter_type(0), None);
+    assert_eq!(ctx.get_parameter_type(1), Some(TypeId::BOOLEAN));
+
+    // Return types and this types are still unioned from all signatures
     let expected_return = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
     let expected_this = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
-
-    assert_eq!(ctx.get_parameter_type(0), Some(expected_param0));
-    assert_eq!(ctx.get_parameter_type(1), Some(TypeId::BOOLEAN));
     assert_eq!(ctx.get_return_type(), Some(expected_return));
     assert_eq!(ctx.get_this_type(), Some(expected_this));
 }
