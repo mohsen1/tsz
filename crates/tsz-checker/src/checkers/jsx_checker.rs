@@ -174,6 +174,10 @@ impl<'a> CheckerState<'a> {
             let component_type = self.compute_type_of_node(tag_name_idx);
             let evaluated = self.evaluate_type_with_env(component_type);
 
+            // TS2786: Check that the component's return/instance type is a valid JSX element.
+            // This fires even for generic components where we skip attribute checking.
+            self.check_jsx_component_return_type(evaluated, tag_name_idx);
+
             // Extract props type from the component and check attributes
             if let Some(props_type) = self.get_jsx_props_type_for_component(evaluated) {
                 self.check_jsx_attributes_against_props(
@@ -478,6 +482,237 @@ impl<'a> CheckerState<'a> {
                 &[&tag_text],
             );
         }
+    }
+
+    /// Check that a JSX component's return/instance type is a valid JSX element (TS2786).
+    ///
+    /// For function components (SFC): the call signature return type must be assignable
+    /// to `JSX.Element`.
+    /// For class components: the construct signature return type (instance type) must be
+    /// assignable to `JSX.ElementClass`.
+    ///
+    /// tsc fires this at the JSX usage site, not the component definition.
+    fn check_jsx_component_return_type(&mut self, component_type: TypeId, tag_name_idx: NodeIndex) {
+        // Skip for types that are inherently allowed in JSX position
+        if component_type == TypeId::ANY
+            || component_type == TypeId::ERROR
+            || component_type == TypeId::UNKNOWN
+            || component_type == TypeId::NEVER
+        {
+            return;
+        }
+        // Skip type parameters — they may resolve to callable types
+        if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, component_type) {
+            return;
+        }
+        // Skip if file has parse errors (avoid cascading diagnostics)
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        // Get JSX.Element and JSX.ElementClass from the JSX namespace
+        let jsx_element_type_raw = self.get_jsx_element_type_for_check();
+        let jsx_element_class_type_raw = self.get_jsx_element_class_type();
+
+        // If we can't resolve any JSX types, skip the check
+        if jsx_element_type_raw.is_none() && jsx_element_class_type_raw.is_none() {
+            return;
+        }
+
+        // Evaluate to concrete types and skip if they resolve to any/error/unknown
+        // (incomplete type resolution, e.g., cross-file React types not fully resolved)
+        let jsx_element_type = jsx_element_type_raw
+            .map(|t| self.evaluate_type_with_env(t))
+            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN);
+        let jsx_element_class_type = jsx_element_class_type_raw
+            .map(|t| self.evaluate_type_with_env(t))
+            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR && t != TypeId::UNKNOWN);
+
+        // If both resolve to non-concrete types, skip
+        if jsx_element_type.is_none() && jsx_element_class_type.is_none() {
+            return;
+        }
+
+        // Expand union types to check each member
+        let types_to_check = if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, component_type)
+        {
+            members
+        } else {
+            vec![component_type]
+        };
+
+        let mut any_checked = false;
+        let mut all_valid = true;
+
+        for &member_type in &types_to_check {
+            // Skip any/error/unknown members in unions
+            if member_type == TypeId::ANY
+                || member_type == TypeId::ERROR
+                || member_type == TypeId::UNKNOWN
+            {
+                continue;
+            }
+
+            // Helper: check if a return type is "unresolved" (shouldn't trigger TS2786).
+            // Includes ANY/ERROR/UNKNOWN and also Application types with unresolved Lazy
+            // bases — these come from cross-file generic types (e.g., React.ReactElement<any>)
+            // that couldn't be fully evaluated during type checking.
+            let is_unresolved = |t: TypeId| -> bool {
+                t == TypeId::ANY
+                    || t == TypeId::ERROR
+                    || t == TypeId::UNKNOWN
+                    || tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, t)
+            };
+
+            // Try as function component (SFC): check call signature return type
+            let mut is_sfc = false;
+            if let Some(shape) =
+                tsz_solver::type_queries::get_function_shape(self.ctx.types, member_type)
+                && !shape.is_constructor
+            {
+                is_sfc = true;
+                let return_type = self.evaluate_type_with_env(shape.return_type);
+                // Skip check if return type is unresolved (e.g., cross-file type)
+                if !is_unresolved(return_type) {
+                    any_checked = true;
+                    if let Some(element_type) = jsx_element_type
+                        && !self.is_assignable_to(return_type, element_type) {
+                            all_valid = false;
+                        }
+                }
+            }
+
+            if !is_sfc
+                && let Some(sigs) =
+                    tsz_solver::type_queries::get_call_signatures(self.ctx.types, member_type)
+                    && !sigs.is_empty()
+                {
+                    // Check if ALL call signatures have invalid return types
+                    // (if any signature is valid, the component is valid)
+                    let mut any_concrete = false;
+                    let any_sig_valid = sigs.iter().any(|sig| {
+                        let return_type = self.evaluate_type_with_env(sig.return_type);
+                        if is_unresolved(return_type) {
+                            return true; // Unresolved → assume valid
+                        }
+                        any_concrete = true;
+                        if let Some(element_type) = jsx_element_type {
+                            self.is_assignable_to(return_type, element_type)
+                        } else {
+                            true // No JSX.Element to check against
+                        }
+                    });
+                    if any_concrete {
+                        any_checked = true;
+                    }
+                    if any_concrete && !any_sig_valid {
+                        all_valid = false;
+                    }
+                }
+
+            // NOTE: Class component checking (construct signatures vs JSX.ElementClass)
+            // is deliberately skipped. Cross-file React.Component class heritage
+            // resolution is incomplete — construct signature return types are often
+            // partially resolved, causing widespread false TS2786 for valid class
+            // components. This can be re-enabled once class heritage resolution
+            // is more robust (see conformance.md Session 2026-02-27b).
+        }
+
+        if any_checked && !all_valid {
+            let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                tag_name_idx,
+                diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
+                &[&tag_text],
+            );
+        }
+    }
+
+    /// Get the text of a JSX tag name for error messages.
+    ///
+    /// Handles simple identifiers (`FunctionComponent`), property access
+    /// expressions (`obj.MemberFunctionComponent`), and keywords (`this`).
+    /// tsc uses the exact source text for property access paths (preserving spaces).
+    fn get_jsx_tag_name_text(&self, tag_name_idx: NodeIndex) -> String {
+        let Some(tag_name_node) = self.ctx.arena.get(tag_name_idx) else {
+            return "unknown".to_string();
+        };
+
+        // Simple identifier
+        if let Some(ident) = self.ctx.arena.get_identifier(tag_name_node) {
+            return ident.escaped_text.as_str().to_owned();
+        }
+
+        // `this` keyword
+        if tag_name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+            return "this".to_string();
+        }
+
+        // Property access expression — reconstruct from the access expression structure
+        // to preserve exact formatting (e.g., `obj. MemberClassComponent` with the space).
+        // We can't use node_text() directly because the parser's PROPERTY_ACCESS_EXPRESSION
+        // node span in JSX tag position may extend into trailing JSX tokens (` />`).
+        if let Some(access) = self.ctx.arena.get_access_expr(tag_name_node) {
+            let expr_text = self.get_jsx_tag_name_text(access.expression);
+            let name_text = self
+                .ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|id| id.escaped_text.as_str().to_owned())
+                .unwrap_or_default();
+
+            // Preserve whitespace between expression end and name start (includes dot + spaces)
+            // get_node_span returns (start, end) — we need end of expression, start of name
+            if let Some((_, expr_end)) = self.get_node_span(access.expression)
+                && let Some((name_start, _)) = self.get_node_span(access.name_or_argument)
+            {
+                let source = self.ctx.arena.source_files.first().map(|f| f.text.as_ref());
+                if let Some(src) = source {
+                    let between =
+                        &src[expr_end as usize..std::cmp::min(name_start as usize, src.len())];
+                    return format!("{expr_text}{between}{name_text}");
+                }
+            }
+
+            return format!("{expr_text}.{name_text}");
+        }
+
+        // Fallback: use raw source text, trimming trailing JSX tokens
+        self.node_text(tag_name_idx)
+            .map(|t| t.trim_end().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    /// Get JSX.Element type for return type checking (without emitting factory diagnostics).
+    ///
+    /// Unlike `get_jsx_element_type()` which also checks factory-in-scope,
+    /// this just resolves the type for assignability checking.
+    fn get_jsx_element_type_for_check(&mut self) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let element_sym_id = exports.get("Element")?;
+        Some(self.type_reference_symbol_type(element_sym_id))
+    }
+
+    /// Get JSX.ElementClass type for class component return type checking.
+    fn get_jsx_element_class_type(&mut self) -> Option<TypeId> {
+        let jsx_sym_id = self.get_jsx_namespace_type()?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
+        let exports = symbol.exports.as_ref()?;
+        let element_class_sym_id = exports.get("ElementClass")?;
+        Some(self.type_reference_symbol_type(element_class_sym_id))
     }
 
     /// Extract props type from a Stateless Function Component (SFC).
