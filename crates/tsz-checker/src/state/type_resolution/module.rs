@@ -806,6 +806,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         module_specifier: &str,
         decl_node: NodeIndex,
+        is_source_file_import: bool,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -925,9 +926,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // allowSyntheticDefaultImports allows default imports without explicit default export
-        // This is implied by esModuleInterop
-        if self.ctx.allow_synthetic_default_imports() {
+        // For non-source-file imports (.d.ts, .js, .json), allowSyntheticDefaultImports
+        // suppresses TS1192 by synthesizing a default from the namespace object.
+        // For .ts source files, TS1192 always fires — the developer controls the module
+        // and should add an explicit `export default`.
+        if !is_source_file_import && self.ctx.allow_synthetic_default_imports() {
             return;
         }
 
@@ -948,22 +951,33 @@ impl<'a> CheckerState<'a> {
             || self.module_has_export_assignment_declaration(module_specifier);
 
         if has_export_equals {
-            let message = format_message(
-                diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
-                &[module_specifier, "allowSyntheticDefaultImports"],
-            );
-            self.error(
-                start,
-                length,
-                message,
-                diagnostic_codes::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
-            );
+            // TS1259: "Module X can only be default-imported using the 'allowSyntheticDefaultImports' flag"
+            // Only emitted for export= modules when allowSyntheticDefaultImports is false.
+            if !self.ctx.allow_synthetic_default_imports() {
+                let message = format_message(
+                    diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+                    &[module_specifier, "allowSyntheticDefaultImports"],
+                );
+                self.error(
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+                );
+            }
             return;
         }
 
+        // TS1192: "Module X has no default export"
+        // tsc formats the module name as the symbol name (without ./ prefix),
+        // wrapped in double quotes, e.g., Module '"server"' has no default export.
+        let display_name = module_specifier
+            .strip_prefix("./")
+            .unwrap_or(module_specifier);
+        let quoted_name = format!("\"{display_name}\"");
         let message = format_message(
             diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
-            &[module_specifier],
+            &[&quoted_name],
         );
         self.error(
             start,

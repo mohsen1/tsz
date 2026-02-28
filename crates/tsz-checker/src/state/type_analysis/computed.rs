@@ -1350,7 +1350,7 @@ impl<'a> CheckerState<'a> {
                         let has_export_equals = self.module_has_export_equals(module_name);
 
                         if has_export_equals {
-                            self.emit_no_default_export_error(module_name, value_decl);
+                            self.emit_no_default_export_error(module_name, value_decl, false);
                             return (TypeId::ERROR, Vec::new());
                         }
 
@@ -1407,7 +1407,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.module_namespace_resolution_set.remove(module_name);
                         }
                         // TS1192: Module '{0}' has no default export.
-                        self.emit_no_default_export_error(module_name, value_decl);
+                        self.emit_no_default_export_error(module_name, value_decl, false);
                     } else {
                         // TS2305: Module '{0}' has no exported member '{1}'.
                         if export_name != "*" {
