@@ -297,6 +297,14 @@ impl<'a> TypePrinter<'a> {
     fn print_object_type(&self, shape_id: tsz_solver::types::ObjectShapeId) -> String {
         let shape = self.interner.object_shape(shape_id);
 
+        // If this object has a nominal symbol (class/interface instance), print the name
+        if let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+        {
+            return symbol.escaped_name.clone();
+        }
+
         let has_index = shape.string_index.is_some() || shape.number_index.is_some();
 
         if shape.properties.is_empty() && !has_index {
