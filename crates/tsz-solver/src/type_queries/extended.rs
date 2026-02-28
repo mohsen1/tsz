@@ -512,6 +512,12 @@ pub enum IndexKeyKind {
     Number,
     StringLiteral,
     NumberLiteral,
+    /// Template literal type like `${number}` — a numeric string type that
+    /// can index both string and number index signatures.
+    NumericStringLike,
+    /// Template literal type like `${string}` or `hello${string}` — a string
+    /// subtype that can index string index signatures.
+    TemplateLiteralString,
     Union(Vec<TypeId>),
     Other,
 }
@@ -524,8 +530,29 @@ pub fn classify_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> IndexKeyKin
         Some(TypeData::Literal(crate::LiteralValue::String(_))) => IndexKeyKind::StringLiteral,
         Some(TypeData::Literal(crate::LiteralValue::Number(_))) => IndexKeyKind::NumberLiteral,
         Some(TypeData::Union(members_id)) => IndexKeyKind::Union(db.type_list(members_id).to_vec()),
+        Some(TypeData::TemplateLiteral(tl_id)) => {
+            // Check if this is a "numeric string-like" template literal.
+            // `${number}` (single Type(number) span, no text) is a numeric string type
+            // that can index arrays and number index signatures.
+            let spans = db.template_list(tl_id);
+            if is_numeric_string_template(&spans) {
+                IndexKeyKind::NumericStringLike
+            } else {
+                IndexKeyKind::TemplateLiteralString
+            }
+        }
         _ => IndexKeyKind::Other,
     }
+}
+
+/// Check if template literal spans represent a numeric string type.
+/// A template literal is "numeric string-like" if it consists solely of
+/// a single `Type(number)` span with no text prefix/suffix, i.e. `${number}`.
+fn is_numeric_string_template(spans: &[crate::TemplateSpan]) -> bool {
+    matches!(
+        spans,
+        [crate::TemplateSpan::Type(ty)] if *ty == TypeId::NUMBER
+    )
 }
 
 // =============================================================================
