@@ -1158,6 +1158,10 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if param.dot_dot_dot_token {
                     // Rest parameters without explicit type → any[]
                     self.write(": any[]");
+                } else if !self.source_is_declaration_file {
+                    // In declaration emit from source, parameters without
+                    // explicit type annotations default to `any` (matching tsc)
+                    self.write(": any");
                 }
             }
         }

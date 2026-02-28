@@ -97,6 +97,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node) {
                     self.emit_node(sig.name);
+                    if sig.question_token {
+                        self.write("?");
+                    }
                     if let Some(ref type_params) = sig.type_parameters {
                         self.emit_type_parameters(type_params);
                     }
@@ -268,6 +271,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node) {
                     self.emit_node(sig.name);
+                    if sig.question_token {
+                        self.write("?");
+                    }
                     if let Some(ref type_params) = sig.type_parameters {
                         self.emit_type_parameters(type_params);
                     }
