@@ -187,7 +187,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_def_id = extract_def_id(self.interner, source);
         let t_def_id = extract_def_id(self.interner, target);
 
-        let def_pair = if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
+        // Skip DefId-level cycle detection when both are Application types with
+        // the SAME base DefId (e.g., Box<number> vs Box<string>). These are
+        // legitimate comparisons that differ only in type arguments — they are
+        // NOT recursive cycles. check_application_to_application_subtype has its
+        // own cycle detection that handles cross-base recursion correctly.
+        // Without this guard, the def_guard entry here conflicts with the one in
+        // check_application_to_application_subtype, causing false CycleDetected
+        // results that collapse unions (e.g., Box<number> | Box<string> | Box<boolean>
+        // incorrectly reduced to Box<number>).
+        let both_same_base_app = if let (Some(s_app_id), Some(t_app_id)) = (
+            application_id(self.interner, source),
+            application_id(self.interner, target),
+        ) {
+            let s_app = self.interner.type_application(s_app_id);
+            let t_app = self.interner.type_application(t_app_id);
+            s_app.base == t_app.base
+        } else {
+            false
+        };
+
+        let def_pair = if both_same_base_app {
+            None
+        } else if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
             Some((s_def, t_def))
         } else {
             None
