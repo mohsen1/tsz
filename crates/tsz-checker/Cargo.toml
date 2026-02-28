@@ -38,5 +38,9 @@ path = "tests/ts2725_tests.rs"
 name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
+[[test]]
+name = "jsx_component_attribute_tests"
+path = "tests/jsx_component_attribute_tests.rs"
+
 [lints]
 workspace = true
