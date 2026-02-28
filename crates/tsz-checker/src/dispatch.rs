@@ -1197,14 +1197,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             asserted_type,
                                         )
                                     {
-                                        // Use constraint if it doesn't itself contain type params
+                                        // Only check if constraint is concrete (not itself generic)
+                                        // and not too broad (unknown/any).
                                         if !generic_query::contains_type_parameters(
                                             self.checker.ctx.types,
                                             constraint,
                                         ) && constraint != TypeId::UNKNOWN
                                             && constraint != TypeId::ANY
                                         {
-                                            (true, constraint)
+                                            // Use the ORIGINAL asserted type (not constraint)
+                                            // for overlap checking. tsc's isTypeComparableTo
+                                            // checks against the type parameter itself, not its
+                                            // constraint. Using the constraint is too permissive
+                                            // and prevents TS2352 from firing when the expression
+                                            // type satisfies the constraint but not the type param.
+                                            (true, asserted_type)
                                         } else {
                                             (false, asserted_type)
                                         }
