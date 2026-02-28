@@ -229,7 +229,9 @@ impl<'a> CheckerState<'a> {
 
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
         // before any TS2304 suppression logic. This fires independently of TS2304.
-        if crate::state_checking::is_strict_mode_reserved_name(name) {
+        if crate::state_checking::is_strict_mode_reserved_name(name)
+            && self.ctx.checking_computed_property_name.is_none()
+        {
             // Detect class context by walking up the AST (enclosing_class may not
             // be set during type resolution or other non-statement-walk phases).
             let in_class = {
