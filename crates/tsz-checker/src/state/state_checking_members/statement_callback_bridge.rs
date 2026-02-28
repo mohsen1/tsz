@@ -392,8 +392,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // Unwrap Promise<T> to T for async function return type checking.
                 // The function body returns T, which gets auto-wrapped in a Promise.
                 self.unwrap_promise_type(return_type).unwrap_or(return_type)
-            } else {
+            } else if has_type_annotation {
                 return_type
+            } else {
+                // When the return type was purely inferred from the body (no
+                // annotation), push ANY so that check_return_statement skips
+                // the circular assignability check.  Checking a return expression
+                // against its own inferred type can produce false positives when
+                // contextual typing widens inner types differently.
+                TypeId::ANY
             };
 
             self.push_return_type(body_return_type);
