@@ -113,6 +113,12 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
+        // When the target type is `never`, don't elaborate into property-level TS2322 errors.
+        // tsc emits a single TS2345 on the whole argument instead.
+        if param_type == TypeId::NEVER {
+            return false;
+        }
+
         let arg_node = match self.ctx.arena.get(arg_idx) {
             Some(node) => node,
             None => return false,
@@ -204,6 +210,11 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
+
+        // When the target type is `never`, don't elaborate into element-level TS2322 errors.
+        if param_type == TypeId::NEVER {
+            return false;
+        }
 
         let arg_node = match self.ctx.arena.get(arg_idx) {
             Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
