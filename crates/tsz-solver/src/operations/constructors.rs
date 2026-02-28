@@ -37,7 +37,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             if ret_type != TypeId::VOID {
                                 CallResult::NonVoidFunctionCalledWithNew
                             } else {
-                                CallResult::Success(TypeId::ANY)
+                                CallResult::VoidFunctionCalledWithNew
                             }
                         }
                         err => err,
@@ -97,7 +97,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if ret_type != TypeId::VOID {
                             return CallResult::NonVoidFunctionCalledWithNew;
                         }
-                        return CallResult::Success(TypeId::ANY);
+                        return CallResult::VoidFunctionCalledWithNew;
                     }
                     err => return err,
                 }

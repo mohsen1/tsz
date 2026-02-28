@@ -89,6 +89,12 @@ pub enum CallResult {
     /// TS2350: Only a void function can be called with the 'new' keyword.
     NonVoidFunctionCalledWithNew,
 
+    /// A void-returning function was called with `new`. The result is `any`.
+    /// Distinct from `Success(ANY)` so the checker can emit TS7009 (noImplicitAny)
+    /// only for functions lacking construct signatures, not for types that
+    /// legitimately return `any` from construct signatures.
+    VoidFunctionCalledWithNew,
+
     /// Type parameter constraint violation (TS2322, not TS2345).
     /// Used when inference from callback return types produces a type that
     /// violates the type parameter's constraint. tsc reports TS2322 on the

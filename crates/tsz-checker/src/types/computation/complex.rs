@@ -628,8 +628,18 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(return_type) => return_type,
-            CallResult::NonVoidFunctionCalledWithNew => {
-                self.error_non_void_function_called_with_new_at(idx);
+            CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
+                // TS7009: 'new' expression whose target lacks a construct signature
+                // implicitly has an 'any' type (only under noImplicitAny).
+                // Suppress in JS files: tsc treats functions that assign to `this`
+                // as JSDoc constructors (isJSConstructor) and doesn't emit TS7009.
+                if self.ctx.no_implicit_any() && !self.ctx.is_js_file() {
+                    self.error_at_node(
+                        idx,
+                        crate::diagnostics::diagnostic_messages::NEW_EXPRESSION_WHOSE_TARGET_LACKS_A_CONSTRUCT_SIGNATURE_IMPLICITLY_HAS_AN_ANY_TY,
+                        crate::diagnostics::diagnostic_codes::NEW_EXPRESSION_WHOSE_TARGET_LACKS_A_CONSTRUCT_SIGNATURE_IMPLICITLY_HAS_AN_ANY_TY,
+                    );
+                }
                 TypeId::ANY
             }
             CallResult::NotCallable { .. } => {

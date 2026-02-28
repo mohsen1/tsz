@@ -286,6 +286,69 @@ impl<'a> CheckerState<'a> {
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .map(|id| id.escaped_text.clone());
 
+        // Resolve the import alias target to determine if it has Value semantics.
+        // This is needed for both TS2440 and TS2437 checks.
+        let mut resolved_flags = 0u32;
+        let mut resolved_decls = Vec::new();
+
+        if let Some(import_decl) = self
+            .ctx
+            .arena
+            .get_import_decl(self.ctx.arena.get(stmt_idx).unwrap())
+        {
+            let target_node = import_decl.module_specifier;
+            let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
+                if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                    self.resolve_identifier_symbol(target_node)
+                } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+                    // For qualified names like A.B.C, we need to resolve the whole chain
+                    self.resolve_qualified_symbol(target_node)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(target_sym_id) = target_sym_id_opt {
+                let mut visited = Vec::new();
+                if let Some(resolved_id) = self.resolve_alias_symbol(target_sym_id, &mut visited)
+                    && let Some(resolved_sym) = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
+                {
+                    resolved_flags = resolved_sym.flags;
+                    resolved_decls = resolved_sym.declarations.clone();
+                }
+            }
+        }
+
+        let mut has_value = (resolved_flags & tsz_binder::symbol_flags::VALUE) != 0;
+        if has_value
+            && (resolved_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+            && (resolved_flags
+                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
+                == 0
+        {
+            let mut any_instantiated = false;
+            for decl_idx in &resolved_decls {
+                if let Some(decl_node) = self.ctx.arena.get(*decl_idx) {
+                    if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        if self.is_namespace_declaration_instantiated(*decl_idx) {
+                            any_instantiated = true;
+                            break;
+                        }
+                    } else {
+                        any_instantiated = true;
+                        break;
+                    }
+                }
+            }
+            has_value = any_instantiated;
+        }
+        let import_has_value = has_value;
+
         // Check for TS2440: Import declaration conflicts with local declaration
         // This error is specific to ImportEqualsDeclaration (not ES6 imports).
         // It occurs when:
@@ -303,73 +366,6 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .find_enclosing_scope(self.ctx.arena, stmt_idx);
-
-            // TS2440: Import declaration conflicts with local declaration.
-            // The binder can merge non-mergeable declarations into the import symbol,
-            // so detect conflicts directly on the import symbol's declarations first.
-
-            let mut resolved_flags = 0u32;
-            let mut resolved_decls = Vec::new();
-
-            if let Some(import_decl) = self
-                .ctx
-                .arena
-                .get_import_decl(self.ctx.arena.get(stmt_idx).unwrap())
-            {
-                let target_node = import_decl.module_specifier;
-                let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
-                    if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                        self.resolve_identifier_symbol(target_node)
-                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
-                        // For qualified names like A.B.C, we need to resolve the whole chain
-                        self.resolve_qualified_symbol(target_node)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                if let Some(target_sym_id) = target_sym_id_opt {
-                    let mut visited = Vec::new();
-                    if let Some(resolved_id) =
-                        self.resolve_alias_symbol(target_sym_id, &mut visited)
-                        && let Some(resolved_sym) = self
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
-                    {
-                        resolved_flags = resolved_sym.flags;
-                        resolved_decls = resolved_sym.declarations.clone();
-                    }
-                }
-            }
-
-            let mut has_value = (resolved_flags & tsz_binder::symbol_flags::VALUE) != 0;
-            if has_value
-                && (resolved_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-                && (resolved_flags
-                    & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
-                    == 0
-            {
-                let mut any_instantiated = false;
-                for decl_idx in &resolved_decls {
-                    if let Some(decl_node) = self.ctx.arena.get(*decl_idx) {
-                        if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
-                        {
-                            if self.is_namespace_declaration_instantiated(*decl_idx) {
-                                any_instantiated = true;
-                                break;
-                            }
-                        } else {
-                            any_instantiated = true;
-                            break;
-                        }
-                    }
-                }
-                has_value = any_instantiated;
-            }
-            let import_has_value = has_value;
 
             // TS2440: Check if the import binding name conflicts with a local declaration.
             // tsc only reports TS2440 when the import target has value semantics
@@ -551,6 +547,42 @@ impl<'a> CheckerState<'a> {
         // Handle namespace imports: import x = Namespace or import x = Namespace.Member
         // These need to emit TS2503 ("Cannot find namespace") if not found
         if require_module_specifier.is_none() {
+            // TS2437: Module is hidden by a local declaration with the same name.
+            // When a local non-namespace declaration shadows a namespace/module,
+            // and that namespace has value semantics (is instantiated), emit TS2437.
+            {
+                let first_ident_idx = self.get_leftmost_identifier_node(module_specifier_idx);
+                if let Some(first_idx) = first_ident_idx
+                    && let Some(first_node) = self.ctx.arena.get(first_idx)
+                    && first_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(first_ident) = self.ctx.arena.get_identifier(first_node)
+                {
+                    let first_name = first_ident.escaped_text.clone();
+                    if let Some(sym_id) = self.resolve_identifier_symbol(first_idx) {
+                        let lib_binders = self.get_lib_binders();
+                        let sym_flags = self
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .map_or(0, |s| s.flags);
+                        // If the resolved symbol is NOT a namespace, it shadows the module.
+                        // Check if there's an actual namespace with this name that has
+                        // value semantics (is instantiated).
+                        if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) == 0 {
+                            let ns_has_value = self
+                                .check_namespace_has_value_in_outer_scope(&first_name, stmt_idx);
+                            if ns_has_value {
+                                self.error_at_node_msg(
+                                    first_idx,
+                                    diagnostic_codes::MODULE_IS_HIDDEN_BY_A_LOCAL_DECLARATION_WITH_THE_SAME_NAME,
+                                    &[&first_name],
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
             self.check_namespace_import(stmt_idx, module_specifier_idx);
             return;
         }
@@ -1102,6 +1134,19 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the leftmost identifier name from a node (handles nested `QualifiedNames`).
+    /// Get the leftmost identifier `NodeIndex` from an identifier or qualified name.
+    fn get_leftmost_identifier_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(idx);
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            return self.get_leftmost_identifier_node(qn.left);
+        }
+        None
+    }
+
     fn get_leftmost_identifier_name(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
@@ -1126,5 +1171,66 @@ impl<'a> CheckerState<'a> {
             return self.resolve_leftmost_qualified_name(qn.left);
         }
         None
+    }
+
+    /// Check if a namespace with the given name exists in an outer scope and has
+    /// value semantics (is instantiated). Used for TS2437 to determine if a local
+    /// non-namespace declaration is truly shadowing an instantiated module.
+    fn check_namespace_has_value_in_outer_scope(&self, name: &str, node: NodeIndex) -> bool {
+        // Walk up from the enclosing scope's parent to find a NAMESPACE symbol
+        let Some(scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, node) else {
+            return false;
+        };
+        // Start from the parent of the current scope (skip the scope where the var is)
+        let Some(current_scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
+            return false;
+        };
+        let mut walk_id = current_scope.parent;
+        let lib_binders = self.get_lib_binders();
+
+        loop {
+            let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) else {
+                break;
+            };
+            if let Some(sym_id) = scope.table.get(name) {
+                let sym_flags = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .map_or(0, |s| s.flags);
+                if (sym_flags & tsz_binder::symbol_flags::NAMESPACE) != 0 {
+                    // Found a namespace — check if it has value (is instantiated)
+                    let has_value = (sym_flags & tsz_binder::symbol_flags::VALUE) != 0;
+                    if has_value
+                        && (sym_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+                        && (sym_flags
+                            & (tsz_binder::symbol_flags::VALUE
+                                & !tsz_binder::symbol_flags::VALUE_MODULE))
+                            == 0
+                    {
+                        // Only VALUE_MODULE — check if any declaration is instantiated
+                        if let Some(sym) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        {
+                            return sym.declarations.iter().any(|&decl_idx| {
+                                self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                                    decl_node.kind
+                                        != tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                                        || self.is_namespace_declaration_instantiated(decl_idx)
+                                })
+                            });
+                        }
+                        return false;
+                    }
+                    return has_value;
+                }
+            }
+            // Move to parent scope
+            if walk_id == scope.parent {
+                break; // At root scope
+            }
+            walk_id = scope.parent;
+        }
+        false
     }
 }
