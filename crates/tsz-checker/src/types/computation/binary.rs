@@ -655,10 +655,10 @@ impl<'a> CheckerState<'a> {
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                // TSC uses the widened (pre-narrowed) types for the message text,
-                // not the narrowed literals used for the overlap check.
-                let left_str = self.format_type(left_type);
-                let right_str = self.format_type(right_type);
+                // TSC uses the narrow/literal types for the TS2367 message text,
+                // e.g., `"foo"` and `"bar"` rather than widened `string` and `string`.
+                let left_str = self.format_type(left_narrow);
+                let right_str = self.format_type(right_narrow);
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                     &[&left_str, &right_str],

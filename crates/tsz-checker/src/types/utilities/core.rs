@@ -990,8 +990,14 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
         match query::classify_index_key(self.ctx.types, index_type) {
-            query::IndexKeyKind::String | query::IndexKeyKind::StringLiteral => Some((true, false)),
+            query::IndexKeyKind::String
+            | query::IndexKeyKind::StringLiteral
+            | query::IndexKeyKind::TemplateLiteralString => Some((true, false)),
             query::IndexKeyKind::Number | query::IndexKeyKind::NumberLiteral => Some((false, true)),
+            // `${number}` is a numeric string type — valid for both string and number
+            // index signatures. Arrays have number index signatures, and objects may
+            // have string index signatures, so this type can index both.
+            query::IndexKeyKind::NumericStringLike => Some((true, true)),
             query::IndexKeyKind::Union(members) => {
                 let mut wants_string = false;
                 let mut wants_number = false;
