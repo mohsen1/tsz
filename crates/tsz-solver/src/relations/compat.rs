@@ -263,6 +263,47 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         )
     }
 
+    /// Detect whether a type is the global `Object` interface from lib.d.ts.
+    ///
+    /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
+    /// detection (an ObjectShape with `constructor`, `toString`, `valueOf`,
+    /// `hasOwnProperty`, and `isPrototypeOf` properties).
+    fn is_global_object_interface_target(&self, target: TypeId) -> bool {
+        if self
+            .subtype
+            .resolver
+            .is_boxed_type_id(target, IntrinsicKind::Object)
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Object)
+                .is_some_and(|boxed| boxed == target)
+        {
+            return true;
+        }
+        if lazy_def_id(self.interner, target).is_some_and(|def_id| {
+            self.subtype
+                .resolver
+                .is_boxed_def_id(def_id, IntrinsicKind::Object)
+        }) {
+            return true;
+        }
+        match self.interner.lookup(target) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                let constructor = self.interner.intern_string("constructor");
+                let has_own = self.interner.intern_string("hasOwnProperty");
+                let is_proto = self.interner.intern_string("isPrototypeOf");
+                let prop_is_enum = self.interner.intern_string("propertyIsEnumerable");
+                shape.properties.iter().any(|p| p.name == constructor)
+                    && shape.properties.iter().any(|p| p.name == has_own)
+                    && shape.properties.iter().any(|p| p.name == is_proto)
+                    && shape.properties.iter().any(|p| p.name == prop_is_enum)
+            }
+            _ => false,
+        }
+    }
+
     fn is_function_target_member(&self, member: TypeId) -> bool {
         let is_function_object_shape = match self.interner.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -771,6 +812,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             if let Some(assignable) = result {
                 return assignable;
             }
+        }
+
+        // Object interface: any non-nullable source is assignable to Object.
+        // The checker pre-evaluates Lazy(DefId) types, so the Object interface
+        // identity is lost. Detect structurally via property names.
+        if self.is_global_object_interface_target(target) && !source.is_nullable() {
+            return true;
+        }
+
+        // Function interface: any callable source is assignable to Function.
+        // Same pre-evaluation identity loss as Object.
+        if self.is_function_target_member(target)
+            && crate::type_queries::is_callable_type(self.interner, source)
+        {
+            return true;
         }
 
         // Default to structural subtype checking
