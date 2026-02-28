@@ -15,6 +15,7 @@
 use crate::types::{IntrinsicKind, ObjectShapeId};
 use crate::{TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashMap;
+use tsz_common::Atom;
 
 // =============================================================================
 // Specialized Type Predicate Visitors
@@ -293,6 +294,22 @@ where
         ),
     };
     checker.check(type_id)
+}
+
+/// Check if a type contains a type parameter with the given name.
+///
+/// This is a convenience wrapper around `contains_type_matching` that avoids
+/// requiring callers to match on `TypeData` internals directly.
+pub fn contains_type_parameter_named(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: Atom,
+) -> bool {
+    contains_type_matching(
+        types,
+        type_id,
+        |td| matches!(td, TypeData::TypeParameter(info) if info.name == name),
+    )
 }
 
 struct ContainsTypeChecker<'a, F>

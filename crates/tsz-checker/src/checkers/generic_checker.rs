@@ -325,20 +325,9 @@ impl<'a> CheckerState<'a> {
                 // causing `getConstraintOfTypeParameter` to return undefined, which
                 // means the constraint check is skipped entirely.
                 {
-                    let param_name = param.name;
                     let db = self.ctx.types.as_type_database();
-                    let is_circular = tsz_solver::contains_type_matching(
-                        db,
-                        constraint,
-                        |td| matches!(td, tsz_solver::TypeData::TypeParameter(info) if info.name == param_name),
-                    );
-                    eprintln!(
-                        "[TS2344 CIRCULAR] param_name={:?} constraint={:?} data={:?} is_circular={}",
-                        self.ctx.types.resolve_atom(param_name),
-                        constraint,
-                        db.lookup(constraint),
-                        is_circular
-                    );
+                    let is_circular =
+                        tsz_solver::contains_type_parameter_named(db, constraint, param.name);
                     if is_circular {
                         continue;
                     }
