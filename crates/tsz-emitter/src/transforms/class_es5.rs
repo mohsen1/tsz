@@ -33,6 +33,7 @@
 
 use crate::context::transform::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
+use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
@@ -59,6 +60,8 @@ pub struct ClassES5Emitter<'a> {
     transformer: ES5ClassTransformer<'a>,
     /// Transform directives for `ASTRef` nodes
     transforms: Option<TransformContext>,
+    /// Leading comment text to place after `WeakMap` decls and before the class IIFE.
+    leading_comment: Option<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -71,6 +74,7 @@ impl<'a> ClassES5Emitter<'a> {
             mappings: Vec::new(),
             transformer: ES5ClassTransformer::new(arena),
             transforms: None,
+            leading_comment: None,
         }
     }
 
@@ -79,6 +83,12 @@ impl<'a> ClassES5Emitter<'a> {
         self.transforms = Some(transforms.clone());
         // Also pass transforms to ES5ClassTransformer for directive-aware conversion
         self.transformer.set_transforms(transforms);
+    }
+
+    /// Set the leading comment text to appear after `WeakMap` storage declarations
+    /// but before the class IIFE.
+    pub fn set_leading_comment(&mut self, comment: String) {
+        self.leading_comment = Some(comment);
     }
 
     /// Set the initial indentation level (to match the parent context)
@@ -128,10 +138,20 @@ impl<'a> ClassES5Emitter<'a> {
             self.transformer.transform_class_to_ir(class_idx)
         };
 
-        let ir = match ir {
+        let mut ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
+
+        // Inject leading comment from the main emitter's comment system.
+        if let Some(comment) = self.leading_comment.take()
+            && let IRNode::ES5ClassIIFE {
+                ref mut leading_comment,
+                ..
+            } = ir
+        {
+            *leading_comment = Some(comment);
+        }
 
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);

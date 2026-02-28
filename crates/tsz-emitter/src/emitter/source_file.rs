@@ -146,8 +146,10 @@ impl<'a> Printer<'a> {
                             // comments by starting the erased range at the statement
                             // itself. The header comment loop will filter out
                             // attached comments separately.
-                            first_erased_stmt_pos = Some(stmt_node.pos);
-                            stmt_node.pos
+                            let actual_start =
+                                self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                            first_erased_stmt_pos = Some(actual_start);
+                            actual_start
                         };
                         erased_ranges.push((range_start, stmt_token_end));
                     }
@@ -356,6 +358,7 @@ impl<'a> Printer<'a> {
                     // after helper storage declarations. Keep their leading comments
                     // in the cursor queue so declarations_class.rs can place them.
                     if first_stmt_is_auto_accessor_class
+                        && first_erased_stmt_pos.is_none()
                         && !is_triple_slash_reference
                         && !is_amd_dependency
                     {
