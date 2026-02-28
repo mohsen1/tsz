@@ -306,43 +306,11 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit comments between the last statement and the closing `}`.
-        // tsc preserves comments like `// trailing note` that appear on lines
-        // after the last statement but before the block's closing brace.
-        // Without this, such comments leak outside the block.
-        if !self.ctx.options.remove_comments
-            && let Some(text) = self.source_text
-        {
-            let bytes = text.as_bytes();
-            let end = (node.end as usize).min(bytes.len());
-            // Scan backwards from node.end to find the closing `}`
-            let mut closing_brace_pos = end;
-            let mut i = end;
-            while i > 0 {
-                i -= 1;
-                if bytes[i] == b'}' {
-                    closing_brace_pos = i;
-                    break;
-                }
-            }
-            // Emit any comments that end before the closing brace position
-            while self.comment_emit_idx < self.all_comments.len() {
-                let c = &self.all_comments[self.comment_emit_idx];
-                if (c.end as usize) <= closing_brace_pos {
-                    let comment_text =
-                        crate::safe_slice::slice(text, c.pos as usize, c.end as usize);
-                    let c_trailing = c.has_trailing_new_line;
-                    let c_pos = c.pos;
-                    self.write_comment_with_reindent(comment_text, Some(c_pos));
-                    if c_trailing {
-                        self.write_line();
-                    }
-                    self.comment_emit_idx += 1;
-                } else {
-                    break;
-                }
-            }
-        }
+        // Note: comments between the last statement and the closing `}` are
+        // intentionally NOT emitted here. tsc places such comments AFTER the
+        // block's closing brace in the output. Leaving them in the comment
+        // queue lets the caller (source-file or block statement loop) emit
+        // them at the correct outer indentation level.
 
         self.decrease_indent();
         // Map closing `}` to its source position for accurate debugger stepping

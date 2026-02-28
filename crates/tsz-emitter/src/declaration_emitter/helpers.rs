@@ -303,14 +303,42 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        // In tsc, only export statements set resultHasScopeMarker.
-        // Import declarations do NOT count as scope markers.
+        // In tsc, only `export { ... }`, `export * from`, `export = `, and
+        // `export default` set resultHasScopeMarker.  Our parser wraps
+        // `export <declaration>` (e.g. `export interface I`) in an
+        // EXPORT_DECLARATION node whose export_clause is the declaration
+        // itself.  Those should NOT count as scope markers because tsc
+        // represents them as declarations with an `export` modifier.
         let has_scope_marker = source_file.statements.nodes.iter().any(|&stmt_idx| {
             self.arena.get(stmt_idx).is_some_and(|stmt_node| {
                 let k = stmt_node.kind;
-                k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                if k == syntax_kind_ext::EXPORT_ASSIGNMENT
                     || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                {
+                    return true;
+                }
+                if k == syntax_kind_ext::EXPORT_DECLARATION {
+                    // Check if the export_clause is a named export or namespace
+                    // export (scope marker) vs a declaration (not scope marker).
+                    if let Some(export_data) = self.arena.get_export_decl(stmt_node)
+                        && let Some(clause_node) = self.arena.get(export_data.export_clause)
+                    {
+                        let ck = clause_node.kind;
+                        // Declaration kinds wrapped in export -> not a scope marker
+                        if ck == syntax_kind_ext::INTERFACE_DECLARATION
+                            || ck == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            || ck == syntax_kind_ext::CLASS_DECLARATION
+                            || ck == syntax_kind_ext::FUNCTION_DECLARATION
+                            || ck == syntax_kind_ext::ENUM_DECLARATION
+                            || ck == syntax_kind_ext::VARIABLE_STATEMENT
+                            || ck == syntax_kind_ext::MODULE_DECLARATION
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                false
             })
         });
 
