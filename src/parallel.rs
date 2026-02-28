@@ -1569,6 +1569,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     updated.value_declaration = old_sym.value_declaration;
                     updated.declarations = old_sym.declarations.clone();
                     updated.is_exported = old_sym.is_exported;
+                    updated.is_umd_export = old_sym.is_umd_export;
                     // Track which file this symbol was declared in for TDZ cross-file detection
                     updated.decl_file_idx = file_idx as u32;
                     updated.exports = old_sym
@@ -1657,10 +1658,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // EXCEPT ALIAS symbols (import declarations) which are file-local by design.
                 // Leaking import aliases to globals causes cross-file contamination where
                 // other files try to resolve the import and get incorrect types.
-                let is_alias = global_symbols
-                    .get(new_sym_id)
-                    .is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
-                if !is_alias {
+                // Exception: UMD namespace exports (`export as namespace Foo`) are ALIAS
+                // symbols that SHOULD be globally visible — they register a name on the
+                // global object.
+                let sym_info = global_symbols.get(new_sym_id);
+                let is_alias =
+                    sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
+                let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
+                if !is_alias || is_umd {
                     globals.set(name.clone(), new_sym_id);
                 }
             } else {

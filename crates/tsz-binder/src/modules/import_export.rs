@@ -515,14 +515,17 @@ impl BinderState {
                     // because the inner declaration node lacks the 'export' modifier
                     self.mark_exported_symbols(arena, export.export_clause);
                 }
-                // Namespace export: export * as ns from 'mod'
+                // Namespace export: export * as ns from 'mod'  OR  UMD: export as namespace Foo
                 else if let Some(name) = Self::get_identifier_name(arena, export.export_clause) {
+                    let is_umd = export.module_specifier.is_none()
+                        && node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION;
+
                     let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
-                    // Set is_type_only and is_exported for namespace exports
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.is_exported = true;
                         sym.is_type_only = export_type_only;
                         sym.declarations.push(export.export_clause);
+                        sym.is_umd_export = is_umd;
 
                         if export.module_specifier.is_some()
                             && let Some(spec_node) = arena.get(export.module_specifier)
@@ -537,12 +540,23 @@ impl BinderState {
                     self.current_scope.set(name.to_string(), sym_id);
                     self.node_symbols.insert(export.export_clause.0, sym_id);
 
-                    // Add to module exports
-                    let current_file = self.debugger.current_file.clone();
-                    self.module_exports
-                        .entry(current_file)
-                        .or_default()
-                        .set(name.to_string(), sym_id);
+                    if is_umd {
+                        // UMD namespace exports register a global name.
+                        // Add to file_locals + root scope so the name is visible cross-file.
+                        self.file_locals.set(name.to_string(), sym_id);
+                        if let Some(root_scope) = self.scopes.first_mut()
+                            && !root_scope.table.has(name)
+                        {
+                            root_scope.table.set(name.to_string(), sym_id);
+                        }
+                    } else {
+                        // Regular namespace re-export — add to module exports
+                        let current_file = self.debugger.current_file.clone();
+                        self.module_exports
+                            .entry(current_file)
+                            .or_default()
+                            .set(name.to_string(), sym_id);
+                    }
                 }
             }
 

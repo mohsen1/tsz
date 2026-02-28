@@ -153,6 +153,10 @@ pub struct Symbol {
     /// Original export name for imports with renamed imports (e.g., 'foo' for `import { foo as bar }`)
     /// If None, the import name matches the `escaped_name`.
     pub import_name: Option<String>,
+    /// Whether this symbol is a UMD namespace export (`export as namespace Foo`).
+    /// UMD exports are ALIAS symbols that should be globally visible across files,
+    /// unlike regular import aliases which are file-local.
+    pub is_umd_export: bool,
 }
 
 impl Symbol {
@@ -173,6 +177,7 @@ impl Symbol {
             decl_file_idx: u32::MAX,
             import_module: None,
             import_name: None,
+            is_umd_export: false,
         }
     }
 
