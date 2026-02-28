@@ -180,11 +180,25 @@ impl<'a> TypePrinter<'a> {
         if visitor::type_query_symbol(self.interner, type_id).is_some() {
             return "any".to_string();
         }
-        if let Some(type_id) = visitor::keyof_inner_type(self.interner, type_id) {
-            return format!("keyof {}", self.print_type(type_id));
+        if let Some(inner_id) = visitor::keyof_inner_type(self.interner, type_id) {
+            let inner_str = self.print_type(inner_id);
+            // Parenthesize union/intersection operand of keyof
+            let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
+                || visitor::intersection_list_id(self.interner, inner_id).is_some();
+            if needs_parens {
+                return format!("keyof ({inner_str})");
+            }
+            return format!("keyof {inner_str}");
         }
-        if let Some(type_id) = visitor::readonly_inner_type(self.interner, type_id) {
-            return format!("readonly {}", self.print_type(type_id));
+        if let Some(inner_id) = visitor::readonly_inner_type(self.interner, type_id) {
+            let inner_str = self.print_type(inner_id);
+            // Parenthesize union/intersection operand of readonly
+            let needs_parens = visitor::union_list_id(self.interner, inner_id).is_some()
+                || visitor::intersection_list_id(self.interner, inner_id).is_some();
+            if needs_parens {
+                return format!("readonly ({inner_str})");
+            }
+            return format!("readonly {inner_str}");
         }
         if visitor::unique_symbol_ref(self.interner, type_id).is_some() {
             return "unique symbol".to_string();
