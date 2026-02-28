@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-02-28T06:59:43Z",
-  "git_sha": "d78ba13ada61b107bb7a59464f8e487737d30342",
+  "timestamp": "2026-02-28T07:10:02Z",
+  "git_sha": "400d96e26050c7bb5894f2fc7c2b885812994d5b",
   "summary": {
     "total_tests": 12570,
-    "passed": 9603,
-    "failed": 2967,
+    "passed": 9606,
+    "failed": 2964,
     "pass_rate": 76.4
   },
   "areas_by_pass_rate": [
@@ -156,13 +156,6 @@
       "pass_rate": 64.18
     },
     {
-      "area": "classes/members",
-      "total": 197,
-      "passed": 127,
-      "failed": 70,
-      "pass_rate": 64.47
-    },
-    {
       "area": "expressions/contextualTyping",
       "total": 17,
       "passed": 11,
@@ -175,6 +168,20 @@
       "passed": 11,
       "failed": 6,
       "pass_rate": 64.71
+    },
+    {
+      "area": "classes/members",
+      "total": 197,
+      "passed": 128,
+      "failed": 69,
+      "pass_rate": 64.97
+    },
+    {
+      "area": "types/specifyingTypes",
+      "total": 29,
+      "passed": 19,
+      "failed": 10,
+      "pass_rate": 65.52
     },
     {
       "area": "salsa",
@@ -224,13 +231,6 @@
       "passed": 11,
       "failed": 5,
       "pass_rate": 68.75
-    },
-    {
-      "area": "types/specifyingTypes",
-      "total": 29,
-      "passed": 20,
-      "failed": 9,
-      "pass_rate": 68.97
     },
     {
       "area": "es6/shorthandPropertyAssignment",
@@ -381,10 +381,10 @@
     },
     {
       "area": "compiler",
-      "total": 6502,
-      "passed": 4970,
-      "failed": 1532,
-      "pass_rate": 76.44
+      "total": 6509,
+      "passed": 4973,
+      "failed": 1536,
+      "pass_rate": 76.4
     },
     {
       "area": "es6/functionDeclarations",
@@ -1271,7 +1271,7 @@
     },
     {
       "code": "TS2741",
-      "count": 10
+      "count": 11
     },
     {
       "code": "TS2344",
@@ -1286,11 +1286,11 @@
       "count": 7
     },
     {
-      "code": "TS2454",
-      "count": 6
+      "code": "TS2403",
+      "count": 7
     },
     {
-      "code": "TS2403",
+      "code": "TS2454",
       "count": 6
     },
     {
@@ -1322,10 +1322,6 @@
       "count": 5
     },
     {
-      "code": "TS2416",
-      "count": 4
-    },
-    {
       "code": "TS2305",
       "count": 4
     },
@@ -1343,6 +1339,10 @@
     },
     {
       "code": "TS2351",
+      "count": 3
+    },
+    {
+      "code": "TS2416",
       "count": 3
     },
     {
@@ -1449,7 +1449,7 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 91
+      "count": 93
     },
     {
       "code": "TS2345",
@@ -1461,7 +1461,7 @@
     },
     {
       "code": "TS7006",
-      "count": 36
+      "count": 38
     },
     {
       "code": "TS2307",
@@ -1512,11 +1512,15 @@
       "count": 5
     },
     {
-      "code": "TS2554",
+      "code": "TS2365",
       "count": 5
     },
     {
-      "code": "TS2365",
+      "code": "TS2741",
+      "count": 5
+    },
+    {
+      "code": "TS2554",
       "count": 5
     },
     {
@@ -1533,10 +1537,6 @@
     },
     {
       "code": "TS2536",
-      "count": 4
-    },
-    {
-      "code": "TS2741",
       "count": 4
     },
     {
@@ -1733,7 +1733,7 @@
   "top_extra_codes": [
     {
       "code": "TS2322",
-      "count": 185
+      "count": 187
     },
     {
       "code": "TS2339",
@@ -1745,7 +1745,7 @@
     },
     {
       "code": "TS7006",
-      "count": 69
+      "count": 71
     },
     {
       "code": "TS5107",
@@ -1772,6 +1772,10 @@
       "count": 21
     },
     {
+      "code": "TS2741",
+      "count": 21
+    },
+    {
       "code": "TS7053",
       "count": 20
     },
@@ -1781,10 +1785,6 @@
     },
     {
       "code": "TS2503",
-      "count": 20
-    },
-    {
-      "code": "TS2741",
       "count": 20
     },
     {
@@ -1804,12 +1804,12 @@
       "count": 17
     },
     {
-      "code": "TS18048",
+      "code": "TS2403",
       "count": 17
     },
     {
-      "code": "TS2403",
-      "count": 16
+      "code": "TS18048",
+      "count": 17
     },
     {
       "code": "TS2454",
@@ -1893,7 +1893,7 @@
     }
   ],
   "categories": {
-    "false_positive": 388,
+    "false_positive": 392,
     "all_missing": 553,
     "wrong_code": 2010,
     "close_to_passing": 1691
