@@ -76,6 +76,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) method_names_with_overloads: FxHashSet<String>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
+    /// When true, strip all comments from .d.ts output (--removeComments)
+    pub(super) remove_comments: bool,
 }
 
 pub(super) struct SourceMapState {
@@ -136,6 +138,7 @@ impl<'a> DeclarationEmitter<'a> {
             method_names_with_overloads: FxHashSet::default(),
             all_comments: Vec::new(),
             comment_emit_idx: 0,
+            remove_comments: false,
         }
     }
 
@@ -178,6 +181,7 @@ impl<'a> DeclarationEmitter<'a> {
             method_names_with_overloads: FxHashSet::default(),
             all_comments: Vec::new(),
             comment_emit_idx: 0,
+            remove_comments: false,
         }
     }
 
@@ -234,6 +238,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// This enables resolving foreign symbols to their source files.
     pub fn set_arena_to_path(&mut self, arena_to_path: FxHashMap<usize, String>) {
         self.arena_to_path = arena_to_path;
+    }
+
+    pub fn set_remove_comments(&mut self, remove: bool) {
+        self.remove_comments = remove;
     }
 
     /// Build a map of imported `SymbolId` -> `ModuleSpecifier` for elision.

@@ -168,12 +168,14 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     );
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
+                    emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
                     // Still set binder even without cache for consistency
                     emitter.set_binder(Some(&binder));
                     emitter.set_arena_to_path(arena_to_path.clone());
+                    emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter
                 };
                 let map_info = if context.options.declaration_map {
