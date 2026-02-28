@@ -131,11 +131,8 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             }
             if resolved == type_id {
-                // No progress — the TypeQuery resolved back to itself.
-                // This indicates a circular typeof chain (e.g., e's cached type
-                // is typeof e, pointing to itself). In tsc, circular typeof
-                // resolves to `any`.
-                return TypeId::ANY;
+                // No progress — return as-is
+                return type_id;
             }
             type_id = resolved;
         }
