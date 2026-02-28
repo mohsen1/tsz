@@ -1743,6 +1743,36 @@ impl<'a> DeclarationEmitter<'a> {
             } else if is_null_or_undefined {
                 self.write(": any");
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
+                // For const declarations, check if the inferred type is a literal type.
+                // tsc emits `= value` (initializer form) for const with literal types,
+                // and widens union-of-literals to the primitive type.
+                if keyword == "const"
+                    && let Some(interner) = self.type_interner {
+                        if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+                            // Single literal type: emit `= value`
+                            self.write(" = ");
+                            self.write(&Self::format_literal_initializer(&lit, interner));
+                            return;
+                        }
+                        if let Some(list_id) = tsz_solver::visitor::union_list_id(interner, type_id)
+                        {
+                            let members = interner.type_list(list_id);
+                            if !members.is_empty()
+                                && members
+                                    .iter()
+                                    .all(|&m| tsz_solver::visitor::is_literal_type(interner, m))
+                            {
+                                // Union of all literals: widen to primitive
+                                let first = members[0];
+                                let widened = tsz_solver::type_queries::widen_literal_to_primitive(
+                                    interner, first,
+                                );
+                                self.write(": ");
+                                self.write(&self.print_type_id(widened));
+                                return;
+                            }
+                        }
+                    }
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
@@ -1753,6 +1783,25 @@ impl<'a> DeclarationEmitter<'a> {
                 // For var/let without type info, and for const with an
                 // initializer but no resolved type, default to `: any`.
                 self.write(": any");
+            }
+        }
+    }
+
+    /// Format a literal value as an initializer string for `const` declarations in .d.ts.
+    ///
+    /// Produces the value form used in `declare const x = "abc"` style declarations.
+    fn format_literal_initializer(
+        lit: &tsz_solver::types::LiteralValue,
+        interner: &tsz_solver::TypeInterner,
+    ) -> String {
+        match lit {
+            tsz_solver::types::LiteralValue::String(atom) => {
+                format!("\"{}\"", interner.resolve_atom(*atom))
+            }
+            tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
+            tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
+            tsz_solver::types::LiteralValue::BigInt(atom) => {
+                format!("{}n", interner.resolve_atom(*atom))
             }
         }
     }
