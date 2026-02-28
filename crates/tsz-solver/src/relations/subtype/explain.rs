@@ -15,7 +15,7 @@ use crate::types::{
 use crate::utils;
 use crate::visitor::{
     array_element_type, callable_shape_id, function_shape_id, intrinsic_kind, literal_value,
-    object_shape_id, object_with_index_shape_id, tuple_list_id, union_list_id,
+    object_shape_id, object_with_index_shape_id, readonly_inner_type, tuple_list_id, union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -105,6 +105,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && let Some(expanded) = self.try_expand_application(app_id)
         {
             resolved_target = self.resolve_lazy_type(expanded);
+        }
+
+        // TSC emits TS4104 when a readonly array/tuple is assigned to a concrete
+        // mutable array/tuple target. This check must happen before structural analysis —
+        // readonly-to-mutable is the primary failure reason and short-circuits further
+        // elaboration. TS4104 is NOT emitted when the target is a type parameter (just T),
+        // only when it's a concrete array/tuple like `number[]`, `[1]`, or `[...T]`.
+        if readonly_inner_type(self.interner, resolved_source).is_some()
+            && readonly_inner_type(self.interner, resolved_target).is_none()
+            && (array_element_type(self.interner, resolved_target).is_some()
+                || tuple_list_id(self.interner, resolved_target).is_some())
+        {
+            return Some(SubtypeFailureReason::ReadonlyToMutableAssignment {
+                source_type: source,
+                target_type: target,
+            });
         }
 
         // TSC emits TS2322 (generic "not assignable") instead of TS2741/TS2739

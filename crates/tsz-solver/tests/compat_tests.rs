@@ -4954,3 +4954,121 @@ fn test_array_to_tuple_comparable() {
         "number[] should be comparable to [number, string]"
     );
 }
+
+#[test]
+fn test_readonly_to_mutable_explain_failure_ts4104() {
+    // readonly number[] → boolean[] should produce ReadonlyToMutableAssignment
+    let interner = TypeInterner::new();
+    let readonly_num_array = interner.readonly_array(TypeId::NUMBER);
+    let bool_array = interner.array(TypeId::BOOLEAN);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        !checker.is_assignable(readonly_num_array, bool_array),
+        "readonly number[] should not be assignable to boolean[]"
+    );
+    let reason = checker.explain_failure(readonly_num_array, bool_array);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected ReadonlyToMutableAssignment, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_to_mutable_array_same_element_type() {
+    // readonly number[] → number[] should produce ReadonlyToMutableAssignment
+    let interner = TypeInterner::new();
+    let readonly_num_array = interner.readonly_array(TypeId::NUMBER);
+    let num_array = interner.array(TypeId::NUMBER);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        !checker.is_assignable(readonly_num_array, num_array),
+        "readonly number[] should not be assignable to number[]"
+    );
+    let reason = checker.explain_failure(readonly_num_array, num_array);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected ReadonlyToMutableAssignment for same element type, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_to_mutable_tuple_explain_failure() {
+    // readonly [number] → [boolean] should produce ReadonlyToMutableAssignment
+    let interner = TypeInterner::new();
+    let readonly_tuple = interner.readonly_tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let mutable_tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::BOOLEAN,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        !checker.is_assignable(readonly_tuple, mutable_tuple),
+        "readonly [number] should not be assignable to [boolean]"
+    );
+    let reason = checker.explain_failure(readonly_tuple, mutable_tuple);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected ReadonlyToMutableAssignment for tuples, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_to_readonly_no_ts4104() {
+    // readonly number[] → readonly boolean[] should NOT produce ReadonlyToMutableAssignment
+    // (both are readonly, so it's a regular type mismatch)
+    let interner = TypeInterner::new();
+    let readonly_num_array = interner.readonly_array(TypeId::NUMBER);
+    let readonly_bool_array = interner.readonly_array(TypeId::BOOLEAN);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        !checker.is_assignable(readonly_num_array, readonly_bool_array),
+        "readonly number[] should not be assignable to readonly boolean[]"
+    );
+    let reason = checker.explain_failure(readonly_num_array, readonly_bool_array);
+    assert!(
+        !matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Should NOT be ReadonlyToMutableAssignment when target is also readonly, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_mutable_to_readonly_no_ts4104() {
+    // number[] → readonly number[] should be assignable (adding readonly is fine)
+    let interner = TypeInterner::new();
+    let num_array = interner.array(TypeId::NUMBER);
+    let readonly_num_array = interner.readonly_array(TypeId::NUMBER);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    assert!(
+        checker.is_assignable(num_array, readonly_num_array),
+        "number[] should be assignable to readonly number[]"
+    );
+}
