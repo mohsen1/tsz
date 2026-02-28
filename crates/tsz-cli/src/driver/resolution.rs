@@ -1445,10 +1445,12 @@ fn resolve_package_specifier(
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
     let package_type = package_type_from_json(package_json);
+    let mut has_exports = false;
     if let Some(package_json) = package_json {
         if options.resolve_package_json_exports
             && let Some(exports) = package_json.exports.as_ref()
         {
+            has_exports = true;
             let subpath_key = match subpath {
                 Some(value) => format!("./{value}"),
                 None => ".".to_string(),
@@ -1473,6 +1475,13 @@ fn resolve_package_specifier(
                 return Some(resolved);
             }
         }
+    }
+
+    // When a package has an "exports" field, it is authoritative: subpaths not
+    // listed in the exports map must not resolve via direct file lookup.
+    // This matches Node.js resolution semantics (encapsulation).
+    if has_exports {
+        return None;
     }
 
     if let Some(subpath) = subpath {
