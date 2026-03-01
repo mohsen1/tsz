@@ -252,9 +252,10 @@ impl<'a> CheckerState<'a> {
         // Without this, resolve_lazy returns Lazy(DefId) which self-references,
         // preventing the type alias from ever resolving to its actual body.
         if flags & symbol_flags::TYPE_ALIAS != 0
-            && let Some(alias_type) = self.compute_type_alias_body(sym_id) {
-                self.ctx.symbol_instance_types.insert(sym_id, alias_type);
-            }
+            && let Some(alias_type) = self.compute_type_alias_body(sym_id)
+        {
+            self.ctx.symbol_instance_types.insert(sym_id, alias_type);
+        }
 
         // Keep namespace symbols as Lazy references so namespace member resolution
         // can differentiate value-vs-type-only members (TS2693/TS2708 paths).
