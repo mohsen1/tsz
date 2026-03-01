@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-01T07:12:03Z",
-  "git_sha": "34276bfb79a51c8c05c6b32fd864bdd6e36217a7",
+  "timestamp": "2026-03-01T07:24:16Z",
+  "git_sha": "6412b02443de38f27a8399fb536d92642ea4c6f1",
   "summary": {
     "total_tests": 12570,
-    "passed": 9745,
-    "failed": 2825,
+    "passed": 9747,
+    "failed": 2823,
     "pass_rate": 77.5
   },
   "areas_by_pass_rate": [
@@ -123,9 +123,9 @@
     {
       "area": "classes/members",
       "total": 198,
-      "passed": 131,
-      "failed": 67,
-      "pass_rate": 66.16
+      "passed": 132,
+      "failed": 66,
+      "pass_rate": 66.67
     },
     {
       "area": "node/allowJs",
@@ -361,9 +361,9 @@
     {
       "area": "compiler",
       "total": 6509,
-      "passed": 5037,
-      "failed": 1472,
-      "pass_rate": 77.39
+      "passed": 5038,
+      "failed": 1471,
+      "pass_rate": 77.4
     },
     {
       "area": "es6/spread",
@@ -1255,7 +1255,7 @@
     },
     {
       "code": "TS2345",
-      "count": 52
+      "count": 51
     },
     {
       "code": "TS7006",
@@ -1283,7 +1283,7 @@
     },
     {
       "code": "TS2344",
-      "count": 5
+      "count": 6
     },
     {
       "code": "TS2349",
@@ -1296,10 +1296,6 @@
     {
       "code": "TS2403",
       "count": 5
-    },
-    {
-      "code": "TS2416",
-      "count": 4
     },
     {
       "code": "TS2305",
@@ -1327,6 +1323,10 @@
     },
     {
       "code": "TS7057",
+      "count": 3
+    },
+    {
+      "code": "TS2416",
       "count": 3
     },
     {
@@ -1453,7 +1453,7 @@
     },
     {
       "code": "TS2345",
-      "count": 60
+      "count": 58
     },
     {
       "code": "TS2339",
@@ -1544,10 +1544,6 @@
       "count": 3
     },
     {
-      "code": "TS2352",
-      "count": 3
-    },
-    {
       "code": "TS7031",
       "count": 3
     },
@@ -1565,6 +1561,10 @@
     },
     {
       "code": "TS2538",
+      "count": 3
+    },
+    {
+      "code": "TS7023",
       "count": 3
     }
   ],
@@ -1741,7 +1741,7 @@
     },
     {
       "code": "TS2345",
-      "count": 112
+      "count": 110
     },
     {
       "code": "TS7006",
@@ -1864,15 +1864,15 @@
       "count": 9
     },
     {
+      "code": "TS2344",
+      "count": 9
+    },
+    {
       "code": "TS2554",
       "count": 9
     },
     {
       "code": "TS2449",
-      "count": 8
-    },
-    {
-      "code": "TS2344",
       "count": 8
     },
     {
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 352,
+    "false_positive": 351,
     "all_missing": 511,
-    "wrong_code": 1954,
-    "close_to_passing": 1651
+    "wrong_code": 1953,
+    "close_to_passing": 1650
   }
 }
