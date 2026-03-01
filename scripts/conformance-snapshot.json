@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-01T03:02:19Z",
-  "git_sha": "c6215067992cfdc51cee154fda68c7a261ba0a47",
+  "timestamp": "2026-03-01T03:37:14Z",
+  "git_sha": "7d2133c7f15f530b3b15b6737b19877d96c79850",
   "summary": {
     "total_tests": 12570,
-    "passed": 9727,
-    "failed": 2843,
+    "passed": 9729,
+    "failed": 2841,
     "pass_rate": 77.4
   },
   "areas_by_pass_rate": [
@@ -14,13 +14,6 @@
       "passed": 20,
       "failed": 14,
       "pass_rate": 58.82
-    },
-    {
-      "area": "jsx",
-      "total": 195,
-      "passed": 116,
-      "failed": 79,
-      "pass_rate": 59.49
     },
     {
       "area": "types/union",
@@ -42,6 +35,13 @@
       "passed": 6,
       "failed": 4,
       "pass_rate": 60.0
+    },
+    {
+      "area": "jsx",
+      "total": 195,
+      "passed": 118,
+      "failed": 77,
+      "pass_rate": 60.51
     },
     {
       "area": "jsdoc",
@@ -324,13 +324,6 @@
       "pass_rate": 73.91
     },
     {
-      "area": "es6/spread",
-      "total": 27,
-      "passed": 20,
-      "failed": 7,
-      "pass_rate": 74.07
-    },
-    {
       "area": "es6/for-ofStatements",
       "total": 59,
       "passed": 44,
@@ -360,8 +353,8 @@
     },
     {
       "area": "compiler",
-      "total": 6509,
-      "passed": 5027,
+      "total": 6508,
+      "passed": 5026,
       "failed": 1482,
       "pass_rate": 77.23
     },
@@ -378,6 +371,13 @@
       "passed": 65,
       "failed": 19,
       "pass_rate": 77.38
+    },
+    {
+      "area": "es6/spread",
+      "total": 27,
+      "passed": 21,
+      "failed": 6,
+      "pass_rate": 77.78
     },
     {
       "area": "enums",
@@ -747,7 +747,7 @@
     },
     {
       "code": "TS2344",
-      "count": 7
+      "count": 6
     },
     {
       "code": "TS2451",
@@ -979,7 +979,7 @@
     },
     {
       "code": "TS2344",
-      "count": 18
+      "count": 17
     },
     {
       "code": "TS18048",
@@ -1010,6 +1010,10 @@
       "count": 13
     },
     {
+      "code": "TS2554",
+      "count": 13
+    },
+    {
       "code": "TS7022",
       "count": 12
     },
@@ -1032,10 +1036,6 @@
     {
       "code": "TS2305",
       "count": 11
-    },
-    {
-      "code": "TS2554",
-      "count": 10
     },
     {
       "code": "TS2591",
@@ -1088,10 +1088,6 @@
       "count": 8
     },
     {
-      "code": "TS2344",
-      "count": 7
-    },
-    {
       "code": "TS2451",
       "count": 7
     },
@@ -1101,6 +1097,10 @@
     },
     {
       "code": "TS2353",
+      "count": 6
+    },
+    {
+      "code": "TS2344",
       "count": 6
     },
     {
@@ -1298,6 +1298,10 @@
       "count": 5
     },
     {
+      "code": "TS2416",
+      "count": 4
+    },
+    {
       "code": "TS2305",
       "count": 4
     },
@@ -1323,10 +1327,6 @@
     },
     {
       "code": "TS7057",
-      "count": 3
-    },
-    {
-      "code": "TS2416",
       "count": 3
     },
     {
@@ -1363,10 +1363,6 @@
     },
     {
       "code": "TS6133",
-      "count": 3
-    },
-    {
-      "code": "TS2555",
       "count": 3
     },
     {
@@ -1443,6 +1439,10 @@
     },
     {
       "code": "TS2875",
+      "count": 2
+    },
+    {
+      "code": "TS2352",
       "count": 2
     }
   ],
@@ -1627,7 +1627,7 @@
     },
     {
       "code": "TS2344",
-      "count": 18
+      "count": 17
     },
     {
       "code": "TS18048",
@@ -1658,6 +1658,10 @@
       "count": 13
     },
     {
+      "code": "TS2554",
+      "count": 13
+    },
+    {
       "code": "TS7022",
       "count": 12
     },
@@ -1680,10 +1684,6 @@
     {
       "code": "TS2305",
       "count": 11
-    },
-    {
-      "code": "TS2554",
-      "count": 10
     },
     {
       "code": "TS2591",
@@ -1828,10 +1828,6 @@
       "count": 12
     },
     {
-      "code": "TS2554",
-      "count": 12
-    },
-    {
       "code": "TS2551",
       "count": 11
     },
@@ -1853,6 +1849,10 @@
     },
     {
       "code": "TS2344",
+      "count": 10
+    },
+    {
+      "code": "TS2554",
       "count": 10
     },
     {
@@ -1895,7 +1895,7 @@
   "categories": {
     "false_positive": 360,
     "all_missing": 513,
-    "wrong_code": 1962,
-    "close_to_passing": 1659
+    "wrong_code": 1958,
+    "close_to_passing": 1657
   }
 }

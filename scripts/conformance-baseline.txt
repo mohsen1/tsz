@@ -1275,7 +1275,6 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties4.ts
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts
-FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts
 FAIL TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
@@ -1804,7 +1803,6 @@ FAIL TypeScript/tests/cases/conformance/es6/shorthandPropertyAssignment/objectLi
 FAIL TypeScript/tests/cases/conformance/es6/spread/arraySpreadInCall.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray10.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts
-FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall4.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall7.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall8.ts
 FAIL TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall9.ts
@@ -2250,7 +2248,6 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution6.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution7.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/tsxDefaultAttributesResolution3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName7.tsx
@@ -2278,10 +2275,8 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxReactComponentWithDefaultTypePara
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmit5.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxReactEmitSpreadAttribute.ts
-FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution10.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution12.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution14.tsx
-FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution16.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution17.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution4.tsx
@@ -2293,6 +2288,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverloa
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType1.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType3.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxUnionElementType6.tsx
@@ -5904,7 +5900,6 @@ PASS TypeScript/tests/cases/compiler/jsxHash.tsx
 PASS TypeScript/tests/cases/compiler/jsxHasLiteralType.tsx
 PASS TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx
 PASS TypeScript/tests/cases/compiler/jsxImportInAttribute.tsx
-PASS TypeScript/tests/cases/compiler/jsxInferenceProducesLiteralAsExpected.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicElementsCompatability.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicElementsExtendsRecord.tsx
 PASS TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx
@@ -9151,6 +9146,7 @@ PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall11.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall12.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall2.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall3.ts
+PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall4.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall5.ts
 PASS TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInCall6.ts
 PASS TypeScript/tests/cases/conformance/es6/Symbols/symbolDeclarationEmit1.ts
@@ -10545,6 +10541,7 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution9.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxCorrectlyParseLessThanComparison1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDefaultAttributesResolution1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDefaultAttributesResolution2.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxDefaultAttributesResolution3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName4.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxDynamicTagName5.tsx
@@ -10603,9 +10600,11 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxSfcReturnNull.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSfcReturnNullStrictNullChecks.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSfcReturnUndefinedStrictNullChecks.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution1.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution10.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution11.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution13.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution15.tsx
+PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution16.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution7.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution8.tsx
@@ -10626,7 +10625,6 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentWithDef
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentWithDefaultTypeParameter2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentsJsxPreserveOutput.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxTypeErrors.tsx
-PASS TypeScript/tests/cases/conformance/jsx/tsxUnionElementType1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxUnionElementType2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxUnionElementType5.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxUnionTypeComponent2.tsx
