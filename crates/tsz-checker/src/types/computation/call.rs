@@ -188,11 +188,13 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                 );
             }
-            // Still need to check arguments for definite assignment (TS2454) and other errors
+            // Still need to check arguments for definite assignment (TS2454) and other errors.
+            // Return Some(ANY) for every index so spread arguments are accepted (avoids
+            // false TS2556 — `any` is callable with any arguments).
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
-                |_i, _arg_count| None, // No parameter type info for ANY callee
+                |_i, _arg_count| Some(TypeId::ANY),
                 check_excess_properties,
                 None, // No skipping needed
             );
@@ -206,11 +208,13 @@ impl<'a> CheckerState<'a> {
                     self.get_type_from_type_node(arg_idx);
                 }
             }
-            // Still need to check arguments for definite assignment (TS2454) and other errors
+            // Still need to check arguments for definite assignment (TS2454) and other errors.
+            // Return Some(ANY) for every index so spread arguments are accepted (avoids
+            // false TS2556 when the callee couldn't be resolved).
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
-                |_i, _arg_count| None, // No parameter type info for ERROR callee
+                |_i, _arg_count| Some(TypeId::ANY),
                 check_excess_properties,
                 None, // No skipping needed
             );

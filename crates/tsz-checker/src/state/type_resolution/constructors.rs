@@ -306,6 +306,20 @@ impl<'a> CheckerState<'a> {
         let evaluated_type = self.evaluate_application_type(expr_type);
         tracing::debug!(?evaluated_type, "base_constructor_type: evaluated_type");
 
+        // `any` is a valid base constructor type (tsc treats it as callable/constructable).
+        // Return it directly rather than passing through constructor_types_from_type which
+        // skips ANY and would produce an empty list, ultimately causing false TS2556.
+        if evaluated_type == TypeId::ANY {
+            let resolved = Some(TypeId::ANY);
+            if should_cache {
+                self.ctx
+                    .base_constructor_expr_cache
+                    .borrow_mut()
+                    .insert(expr_idx, resolved);
+            }
+            return resolved;
+        }
+
         let ctor_types = self.constructor_types_from_type(evaluated_type);
         tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
