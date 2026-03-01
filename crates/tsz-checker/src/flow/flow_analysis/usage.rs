@@ -387,8 +387,13 @@ impl<'a> CheckerState<'a> {
                 // reaches it; tsc's flow graph handles the "might not execute" case.
                 // Only check DAA when usage precedes the declaration (hoisted binding,
                 // initializer not yet run).
+                //
+                // Exception: if the declaration is inside a try block, the initializer
+                // may not execute (a prior statement could throw), so we must still
+                // run the flow-based DAA check.
                 if let Some(usage_node) = self.ctx.arena.get(idx)
                     && usage_node.pos >= decl_node.end
+                    && !self.is_inside_try_block(decl_id_to_check)
                 {
                     return false;
                 }
@@ -557,6 +562,39 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::SOURCE_FILE {
                 return false;
             }
+        }
+        false
+    }
+
+    /// Check if a declaration is inside the `try` block of a `TryStatement`.
+    /// When a `var` with initializer is inside a try block, the initializer
+    /// may not execute (a prior statement could throw), so the DAA shortcut
+    /// must not be applied.
+    fn is_inside_try_block(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..50 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                return false;
+            };
+            let parent = info.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::TRY_STATEMENT {
+                // `current` is a direct child of the TryStatement.
+                // The try block is the first Block child. Check if `current`
+                // is a Block (the try block) rather than a CatchClause or
+                // the finally block.
+                if let Some(current_node) = self.ctx.arena.get(current) {
+                    return current_node.kind == syntax_kind_ext::BLOCK;
+                }
+                return false;
+            }
+            // Stop at function or source-file boundaries
+            if parent_node.is_function_like() || parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+            current = parent;
         }
         false
     }
