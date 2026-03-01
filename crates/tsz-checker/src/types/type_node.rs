@@ -1291,6 +1291,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        // Scope-based fallback: when a type name isn't at file level (e.g., it's
+        // inside a namespace), use the binder's scope-based resolution to find it.
+        // This handles cases like `Component` referenced within `namespace React`.
+        if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx) {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if (symbol.flags
+                & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                != 0
+            {
+                return Some(sym_id.0);
+            }
+        }
+
         for lib_ctx in &self.ctx.lib_contexts {
             if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                 let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
@@ -1422,20 +1435,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             for lib_ctx in &self.ctx.lib_contexts {
                 if let Some(lib_resolved) = lib_ctx.binder.resolve_import_symbol(left_sym_id)
                     && let Some(lib_symbol) = lib_ctx.binder.get_symbol(lib_resolved)
-                        && let Some(member_sym_id) = lib_symbol.exports.as_ref()?.get(right_name) {
-                            return Some(self.ctx.get_or_create_def_id(member_sym_id));
-                        }
+                    && let Some(member_sym_id) = lib_symbol.exports.as_ref()?.get(right_name)
+                {
+                    return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                }
             }
         }
 
         None
     }
 
-    /// Resolve a type-or-alias symbol from a node index.
+    /// Resolve a type-or-alias-or-namespace symbol from a node index.
     ///
-    /// Like `resolve_type_symbol` but also matches ALIAS-flagged symbols,
-    /// needed for import declarations used as namespace qualifiers
-    /// (e.g., `import Lib = require('./helper')` then `Lib.Type`).
+    /// Like `resolve_type_symbol` but also matches ALIAS and NAMESPACE-flagged
+    /// symbols, needed for:
+    /// - Import declarations used as namespace qualifiers
+    ///   (e.g., `import Lib = require('./helper')` then `Lib.Type`)
+    /// - Namespace declarations used as qualified name prefixes
+    ///   (e.g., `declare namespace NS { class C {} }` then `NS.C`)
     fn resolve_type_or_alias_symbol(&self, node_idx: NodeIndex) -> Option<u32> {
         use tsz_binder::symbol_flags;
 
@@ -1448,7 +1465,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 & (symbol_flags::TYPE
                     | symbol_flags::ALIAS
                     | symbol_flags::REGULAR_ENUM
-                    | symbol_flags::CONST_ENUM))
+                    | symbol_flags::CONST_ENUM
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE))
                 != 0
             {
                 return Some(sym_id.0);
@@ -1462,7 +1481,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     & (symbol_flags::TYPE
                         | symbol_flags::ALIAS
                         | symbol_flags::REGULAR_ENUM
-                        | symbol_flags::CONST_ENUM))
+                        | symbol_flags::CONST_ENUM
+                        | symbol_flags::VALUE_MODULE
+                        | symbol_flags::NAMESPACE_MODULE))
                     != 0
                 {
                     let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
