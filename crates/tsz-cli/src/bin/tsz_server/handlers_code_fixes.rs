@@ -161,8 +161,8 @@ impl Server {
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
-            let to_lsp_diag = |d: &tsz::checker::diagnostics::Diagnostic| {
-                tsz::lsp::diagnostics::LspDiagnostic {
+            let to_lsp_diag =
+                |d: &tsz::checker::diagnostics::Diagnostic| tsz::lsp::diagnostics::LspDiagnostic {
                     range: tsz::lsp::position::Range::new(
                         line_map.offset_to_position(d.start, &content),
                         line_map.offset_to_position(d.start + d.length, &content),
@@ -176,8 +176,7 @@ impl Server {
                         .then_some(true),
                     reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
                         .then_some(true),
-                }
-            };
+                };
             let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .iter()
                 .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
@@ -1419,8 +1418,8 @@ impl Server {
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
-            let to_lsp_diag = |d: &tsz::checker::diagnostics::Diagnostic| {
-                tsz::lsp::diagnostics::LspDiagnostic {
+            let to_lsp_diag =
+                |d: &tsz::checker::diagnostics::Diagnostic| tsz::lsp::diagnostics::LspDiagnostic {
                     range: tsz::lsp::position::Range::new(
                         line_map.offset_to_position(d.start, &content),
                         line_map.offset_to_position(d.start + d.length, &content),
@@ -1434,8 +1433,7 @@ impl Server {
                         .then_some(true),
                     reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
                         .then_some(true),
-                }
-            };
+                };
             let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .iter()
                 .filter(|d| {
