@@ -1236,14 +1236,28 @@ impl Server {
                     let (name, requested_source) = if let Some(s) = entry_name.as_str() {
                         (s.to_string(), None)
                     } else if let Some(obj) = entry_name.as_object() {
+                        let source_from_value = |value: Option<&serde_json::Value>| {
+                            value.and_then(|v| {
+                                v.as_str()
+                                    .map(std::string::ToString::to_string)
+                                    .or_else(|| {
+                                        v.as_array().and_then(|arr| {
+                                            arr.first()
+                                                .and_then(serde_json::Value::as_object)
+                                                .and_then(|part| part.get("text"))
+                                                .and_then(serde_json::Value::as_str)
+                                                .map(std::string::ToString::to_string)
+                                        })
+                                    })
+                            })
+                        };
                         (
                             obj.get("name")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string(),
-                            obj.get("source")
-                                .and_then(|v| v.as_str())
-                                .map(std::string::ToString::to_string),
+                            source_from_value(obj.get("source"))
+                                .or_else(|| source_from_value(obj.get("sourceDisplay"))),
                         )
                     } else {
                         (String::new(), None)
