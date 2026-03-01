@@ -2087,6 +2087,11 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(", ");
                         }
 
+                        // Emit inline comments between keyword and name
+                        // (e.g. `var /*4*/ point = ...` → `declare var /*4*/ point: ...`)
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.emit_inline_block_comments(name_node.pos);
+                        }
                         self.emit_node(decl.name);
                         self.emit_variable_decl_type_or_initializer(
                             keyword,
