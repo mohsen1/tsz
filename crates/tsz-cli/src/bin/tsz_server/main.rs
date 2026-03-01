@@ -606,7 +606,7 @@ impl Server {
             organize_imports_ignore_case: true,
             auto_import_file_exclude_patterns: Vec::new(),
             auto_import_specifier_exclude_regexes: Vec::new(),
-            include_completions_with_class_member_snippets: false,
+            include_completions_with_class_member_snippets: true,
             allow_importing_ts_extensions: false,
             auto_imports_allowed_for_inferred_projects: true,
             inferred_module_is_none_for_projects: false,
