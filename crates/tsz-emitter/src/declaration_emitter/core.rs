@@ -1292,6 +1292,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+
+        // Skip comments within the method body to prevent them from
+        // leaking as leading comments on the next statement.
+        if let Some(body_node) = self.arena.get(method_body) {
+            self.skip_comments_in_node(body_node.pos, body_node.end);
+        }
     }
 
     fn emit_constructor_declaration(&mut self, ctor_idx: NodeIndex) {
@@ -1345,6 +1351,7 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some_and(|n| n.kind == SyntaxKind::PrivateKeyword as u16)
             })
         });
+        let ctor_body = ctor.body;
         if !is_private {
             // Set flag to strip accessibility modifiers from constructor parameters
             self.in_constructor_params = true;
@@ -1353,6 +1360,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.write(");");
         self.write_line();
+
+        // Skip comments within the constructor body to prevent them from
+        // leaking as leading comments on the next statement.
+        if let Some(body_node) = self.arena.get(ctor_body) {
+            self.skip_comments_in_node(body_node.pos, body_node.end);
+        }
     }
 
     /// Emit parameter properties from constructor as class properties
@@ -1463,6 +1476,7 @@ impl<'a> DeclarationEmitter<'a> {
         let is_private = self
             .arena
             .has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword);
+        let accessor_body = accessor.body;
 
         self.write_indent();
 
@@ -1520,6 +1534,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+
+        // Skip comments within the accessor body to prevent them from
+        // leaking as leading comments on the next statement.
+        if let Some(body_node) = self.arena.get(accessor_body) {
+            self.skip_comments_in_node(body_node.pos, body_node.end);
+        }
     }
 
     fn emit_index_signature(&mut self, sig_idx: NodeIndex) {

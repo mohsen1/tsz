@@ -997,35 +997,59 @@ impl<'a> DeclarationEmitter<'a> {
             if comment.end > actual_start {
                 break;
             }
-            let ct = &text[comment.pos as usize..comment.end as usize];
-            if ct.starts_with("/**") {
-                // Check if the comment was on a new line in the source.
-                // Look backwards from the comment position for a newline,
-                // stopping at non-whitespace (which would mean same line).
-                let has_newline = {
-                    let mut pos = comment.pos as usize;
-                    let mut found = false;
-                    while pos > 0 {
-                        pos -= 1;
-                        match bytes[pos] {
-                            b'\n' => {
-                                found = true;
+            let c_pos = comment.pos as usize;
+            let c_end = comment.end as usize;
+            let ct = &text[c_pos..c_end];
+            if ct.starts_with("/*") {
+                // Determine if this is a "leading" comment (before a parameter name)
+                // or a "trailing" comment (after a parameter's type annotation).
+                // Leading: preceded by `(`, `,`, `[`, `<`, whitespace, or another comment.
+                // Trailing: preceded by identifier chars, `)`, type annotation, etc.
+                let is_leading = {
+                    let mut p = c_pos;
+                    let mut leading = true;
+                    while p > 0 {
+                        p -= 1;
+                        match bytes[p] {
+                            b' ' | b'\t' | b'\r' | b'\n' => continue,
+                            b'(' | b',' | b'[' | b'<' => break,
+                            b'/' if p > 0 && bytes[p - 1] == b'*' => break, // end of another comment
+                            _ => {
+                                leading = false;
                                 break;
                             }
-                            b' ' | b'\t' | b'\r' => continue,
-                            _ => break,
                         }
                     }
-                    found
+                    leading
                 };
-                if has_newline {
-                    self.write_line();
-                }
-                self.write(ct);
-                if has_newline {
-                    self.write_line();
-                } else {
-                    self.write(" ");
+
+                if is_leading {
+                    // Check if the comment was on a new line in the source.
+                    let has_newline = {
+                        let mut pos = c_pos;
+                        let mut found = false;
+                        while pos > 0 {
+                            pos -= 1;
+                            match bytes[pos] {
+                                b'\n' => {
+                                    found = true;
+                                    break;
+                                }
+                                b' ' | b'\t' | b'\r' => continue,
+                                _ => break,
+                            }
+                        }
+                        found
+                    };
+                    if has_newline {
+                        self.write_line();
+                    }
+                    self.write(ct);
+                    if has_newline {
+                        self.write_line();
+                    } else {
+                        self.write(" ");
+                    }
                 }
             }
             self.comment_emit_idx += 1;
