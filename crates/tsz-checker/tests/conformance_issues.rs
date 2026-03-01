@@ -3842,3 +3842,88 @@ function test(thing: T | undefined, def: T | undefined) {
         "Should not emit TS18048 inside if(thing &&= def) truthy branch: {diagnostics:?}"
     );
 }
+
+/// Test: IIFE callee gets contextual return type wrapping.
+/// When a function expression is immediately invoked and the call expression
+/// has a contextual type (from a variable annotation), the function expression
+/// should infer its return type from the contextual type, enabling contextual
+/// typing of callback parameters in the return value.
+/// Without wrapping the contextual type into a callable `() => T`, the
+/// function type resolver cannot extract the return type.
+#[test]
+fn test_iife_contextual_return_type_for_callback() {
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    // The IIFE `(() => n => n + 1)()` has contextual type `(n: number) => number`.
+    // The inner arrow `n => n + 1` needs `n` contextually typed as `number`.
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const result: (n: number) => number = (() => n => n + 1)();
+"#,
+        options,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&relevant, 7006),
+        "IIFE should contextually type callback return value params. Got: {relevant:#?}"
+    );
+}
+
+/// Test: Parenthesized IIFE callee also gets contextual return type.
+/// Same as above but with `(function(){})()` syntax (parens around callee).
+#[test]
+fn test_iife_parenthesized_contextual_return_type() {
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+const result: (n: number) => number = (function() { return function(n) { return n + 1; }; })();
+"#,
+        options,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&relevant, 7006),
+        "Parenthesized IIFE should contextually type return value params. Got: {relevant:#?}"
+    );
+}
+
+/// Test: IIFE with object return type provides contextual typing for nested callbacks.
+#[test]
+fn test_iife_contextual_return_type_object_with_callback() {
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Handler = { handle: (x: string) => number };
+const h: Handler = (() => ({ handle: x => x.length }))();
+"#,
+        options,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&relevant, 7006),
+        "IIFE returning object with callback should contextually type callback params. Got: {relevant:#?}"
+    );
+}

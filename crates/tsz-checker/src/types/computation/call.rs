@@ -63,6 +63,54 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing call expression data - propagate error
         };
 
+        // For IIFEs (immediately invoked function expressions), wrap the call expression's
+        // contextual type into a callable type so the function expression resolver can extract
+        // the return type (and for generators, the yield type).
+        // Without this, a generator IIFE like `(function*() { yield x => x.length })()`
+        // with contextual type `Iterable<(x: string) => number>` would fail to provide
+        // contextual typing for `x`, because the function type resolver sees `Iterable<...>`
+        // (not a callable) and can't extract a return type from it.
+        let saved_contextual_for_iife = if let Some(ctx_type) = self.ctx.contextual_type {
+            // Unwrap parenthesized expressions to find the actual callee.
+            // Handles both `function*(){}()` and `(function*(){})()`.
+            let is_function_expr = {
+                let mut expr_idx = call.expression;
+                loop {
+                    match self.ctx.arena.get(expr_idx) {
+                        Some(n)
+                            if n.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARROW_FUNCTION =>
+                        {
+                            break true;
+                        }
+                        Some(n) if n.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                            if let Some(paren) = self.ctx.arena.get_parenthesized(n) {
+                                expr_idx = paren.expression;
+                            } else {
+                                break false;
+                            }
+                        }
+                        _ => break false,
+                    }
+                }
+            };
+            if is_function_expr {
+                // Wrap contextual type as `() => ctx_type` so the function expression
+                // resolver can use get_return_type() to extract the expected return type.
+                let wrapper_fn = self
+                    .ctx
+                    .types
+                    .factory()
+                    .function(tsz_solver::FunctionShape::new(vec![], ctx_type));
+                self.ctx.contextual_type = Some(wrapper_fn);
+                Some(ctx_type) // save original to restore later
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Get the type of the callee
         let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
             if callee_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
@@ -141,6 +189,12 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node(call.expression)
         };
+
+        // Restore original contextual type after IIFE callee evaluation
+        if let Some(original_ctx) = saved_contextual_for_iife {
+            self.ctx.contextual_type = Some(original_ctx);
+        }
+
         trace!(
             callee_type = ?callee_type,
             callee_expr = ?call.expression,
