@@ -314,8 +314,9 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
 
     match key {
         TypeData::Callable(shape_id) => CallSignaturesKind::Callable(shape_id),
-        TypeData::Union(list_id) => {
-            // For unions, collect call signatures from all callable members
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            // For unions/intersections, collect call signatures from all callable members.
+            // Intersections arise from merged declarations (e.g., function + namespace).
             let members = db.type_list(list_id);
             let mut call_signatures = Vec::new();
 
@@ -323,7 +324,6 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                 match db.lookup(member) {
                     Some(TypeData::Callable(shape_id)) => {
                         let shape = db.callable_shape(shape_id);
-                        // Extend with call signatures from this member
                         call_signatures.extend(shape.call_signatures.iter().cloned());
                     }
                     _ => continue,
