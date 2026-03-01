@@ -99,10 +99,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a property declaration has no initializer.
+    /// Check if a property declaration has no initializer and no definite
+    /// assignment assertion (`!`).
     ///
-    /// This is used to detect properties that are declared but not initialized,
-    /// which should trigger TS2729 when referenced in other property initializers.
+    /// Properties with `!` (e.g. `prop!: T`) are definitively asserted to be
+    /// initialized, so they should not trigger TS2729.
     pub(crate) fn has_no_initializer(&self, member_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return false;
@@ -113,7 +114,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-            return prop.initializer.is_none();
+            return prop.initializer.is_none() && !prop.exclamation_token;
         }
 
         false
@@ -488,10 +489,30 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Don't recurse into nested class definitions
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        // Don't recurse into nested class declarations
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+
+        // For class expressions, check heritage clause extends expressions
+        // (e.g. `class extends D.B { ... }`) but don't recurse into the body
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            if let Some(class) = self.ctx.arena.get_class_at(node_idx) {
+                if let Some(heritage_clauses) = &class.heritage_clauses {
+                    for &clause_idx in &heritage_clauses.nodes {
+                        if let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) {
+                            // Only check extends, not implements
+                            if clause.token == SyntaxKind::ExtendsKeyword as u16 {
+                                for &type_idx in &clause.types.nodes {
+                                    self.collect_static_accesses_recursive(
+                                        type_idx, class_name, accesses,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -632,8 +653,54 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in &obj.elements.nodes {
+                        self.collect_static_accesses_recursive(elem_idx, class_name, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
+                    self.collect_static_accesses_recursive(prop.name, class_name, accesses);
+                    self.collect_static_accesses_recursive(prop.initializer, class_name, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                if let Some(computed) = self.ctx.arena.get_computed_property(node) {
+                    self.collect_static_accesses_recursive(
+                        computed.expression,
+                        class_name,
+                        accesses,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                if let Some(spread) = self.ctx.arena.get_spread(node) {
+                    self.collect_static_accesses_recursive(spread.expression, class_name, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                if let Some(template) = self.ctx.arena.get_template_expr(node) {
+                    for &span_idx in &template.template_spans.nodes {
+                        self.collect_static_accesses_recursive(span_idx, class_name, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_SPAN => {
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    self.collect_static_accesses_recursive(span.expression, class_name, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(arr) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in &arr.elements.nodes {
+                        self.collect_static_accesses_recursive(elem_idx, class_name, accesses);
+                    }
+                }
+            }
             _ => {
-                // For other expressions, we don't recurse further to keep it simple
+                // For other expressions, we don't recurse further
             }
         }
     }
@@ -739,8 +806,66 @@ impl<'a> CheckerState<'a> {
                 // because the access doesn't happen during initialization.
                 // (This matches TypeScript's behavior for error 2729)
             }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in &obj.elements.nodes {
+                        self.collect_this_accesses_recursive(elem_idx, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
+                    self.collect_this_accesses_recursive(prop.name, accesses);
+                    self.collect_this_accesses_recursive(prop.initializer, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                if let Some(shorthand) = self.ctx.arena.get_shorthand_property(node) {
+                    self.collect_this_accesses_recursive(shorthand.name, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                if let Some(spread) = self.ctx.arena.get_spread(node) {
+                    self.collect_this_accesses_recursive(spread.expression, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                if let Some(computed) = self.ctx.arena.get_computed_property(node) {
+                    self.collect_this_accesses_recursive(computed.expression, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                if let Some(template) = self.ctx.arena.get_template_expr(node) {
+                    for &span_idx in &template.template_spans.nodes {
+                        self.collect_this_accesses_recursive(span_idx, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::TEMPLATE_SPAN => {
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    self.collect_this_accesses_recursive(span.expression, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(arr) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in &arr.elements.nodes {
+                        self.collect_this_accesses_recursive(elem_idx, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+                if let Some(spread) = self.ctx.arena.get_spread(node) {
+                    self.collect_this_accesses_recursive(spread.expression, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                    self.collect_this_accesses_recursive(access.expression, accesses);
+                    self.collect_this_accesses_recursive(access.name_or_argument, accesses);
+                }
+            }
             _ => {
-                // For other expressions, we don't recurse further to keep it simple
+                // For other expressions, we don't recurse further
             }
         }
     }
