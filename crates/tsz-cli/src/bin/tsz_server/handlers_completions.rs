@@ -1000,10 +1000,19 @@ impl Server {
 
         if item.has_action {
             entry["hasAction"] = serde_json::json!(true);
-            if include_insert_text && let Some(insert_text) = item.insert_text.as_ref() {
+            let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
+            if include_insert_text
+                && let Some(insert_text) = item
+                    .insert_text
+                    .clone()
+                    .or_else(|| {
+                        is_class_member_snippet
+                            .then(|| Self::class_member_snippet_insert_text(item))
+                            .flatten()
+                    })
+            {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
-            let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
             if item.is_snippet {
                 if !is_class_member_snippet {
                     entry["filterText"] = serde_json::json!(item.label.clone());
@@ -1125,7 +1134,8 @@ impl Server {
                 .as_ref()
                 .map(|r| r.is_new_identifier_location)
                 .unwrap_or(false)
-                || (include_class_member_snippets && has_class_member_snippet);
+                || (include_class_member_snippets
+                    && (!is_member_completion || has_class_member_snippet));
 
             Some(serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
