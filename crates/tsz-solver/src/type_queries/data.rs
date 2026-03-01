@@ -204,6 +204,21 @@ pub fn get_tuple_elements(
         }
         // `readonly [A, B]` is wrapped in ReadonlyType — unwrap and retry.
         Some(TypeData::ReadonlyType(inner)) => get_tuple_elements(db, inner),
+        // Intersection of tuples: pick the tuple member with the most specific elements.
+        // e.g., `[any] & [1]` should provide tuple context from `[1]` (more specific).
+        // If multiple tuple members exist, prefer the one whose elements are not `any`.
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let mut best: Option<Vec<crate::types::TupleElement>> = None;
+            for &m in members.iter() {
+                if let Some(elems) = get_tuple_elements(db, m) {
+                    if best.is_none() || elems.iter().any(|e| e.type_id != TypeId::ANY) {
+                        best = Some(elems);
+                    }
+                }
+            }
+            best
+        }
         _ => None,
     }
 }
@@ -277,6 +292,18 @@ pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
                 1 => Some(applicable[0]),
                 _ => Some(db.union(applicable)),
             }
+        }
+        // Intersection of tuples/arrays: if any member is array-applicable, preserve it.
+        // e.g., `[any] & [1]` should be recognized as a tuple context.
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            // Return the first tuple/array member — it provides the structural context
+            for &m in members.iter() {
+                if get_array_applicable_type(db, m).is_some() {
+                    return Some(type_id);
+                }
+            }
+            None
         }
         _ => None,
     }
