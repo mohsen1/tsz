@@ -890,20 +890,31 @@ impl<'a> FlowAnalyzer<'a> {
                         if let Some(assigned_type) =
                             self.get_assigned_type(flow.node, reference, is_destructuring)
                         {
-                            // Killing definition: replace type with RHS type and stop traversal.
-                            // Use the DECLARED type for narrowing (matching tsc's getAssignmentReducedType),
-                            // not initial_type which may be an already-narrowed type from loop analysis.
-                            // This is critical for loops like `let code: 0|1 = 0; while(true) { code = code === 1 ? 0 : 1; }`
-                            // where initial_type is `0` (narrowed) but declared type is `0|1`.
-                            let declared_type = symbol_id
-                                .and_then(|sid| self.binder.get_symbol(sid))
-                                .filter(|sym| sym.value_declaration.is_some())
-                                .and_then(|sym| {
-                                    self.node_types
-                                        .and_then(|nt| nt.get(&sym.value_declaration.0).copied())
-                                });
-                            let narrowing_base = declared_type.unwrap_or(initial_type);
-                            self.narrow_assignment(narrowing_base, assigned_type)
+                            // For logical assignments (&&=, ||=, ??=), the expression
+                            // result type already encodes the correct narrowing
+                            // (e.g. NonNullable<x> | y for ??=). Use it directly
+                            // instead of filtering through narrow_assignment, because
+                            // mutual-subtype filtering doesn't correctly handle the
+                            // logical semantics.
+                            if self.is_logical_assignment(flow.node) {
+                                assigned_type
+                            } else {
+                                // Killing definition: replace type with RHS type and stop traversal.
+                                // Use the DECLARED type for narrowing (matching tsc's getAssignmentReducedType),
+                                // not initial_type which may be an already-narrowed type from loop analysis.
+                                // This is critical for loops like `let code: 0|1 = 0; while(true) { code = code === 1 ? 0 : 1; }`
+                                // where initial_type is `0` (narrowed) but declared type is `0|1`.
+                                let declared_type = symbol_id
+                                    .and_then(|sid| self.binder.get_symbol(sid))
+                                    .filter(|sym| sym.value_declaration.is_some())
+                                    .and_then(|sym| {
+                                        self.node_types.and_then(|nt| {
+                                            nt.get(&sym.value_declaration.0).copied()
+                                        })
+                                    });
+                                let narrowing_base = declared_type.unwrap_or(initial_type);
+                                self.narrow_assignment(narrowing_base, assigned_type)
+                            }
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
                             // The value HAS changed, so we can't continue to antecedent

@@ -49,6 +49,20 @@ impl<'a> FlowAnalyzer<'a> {
                         || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
                         || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
                     {
+                        // For logical assignments (&&=, ||=, ??=), the post-assignment
+                        // type of the LHS must reflect the full expression semantics:
+                        //   x ??= y  →  NonNullable<x> | typeof y
+                        //   x ||= y  →  Truthy<x> | typeof y
+                        //   x &&= y  →  Falsy<x> | typeof y
+                        // Use the expression result type (from the entire binary expr
+                        // node), not just the RHS type. This ensures that after
+                        // `f ??= expr`, the flow type of `f` excludes null/undefined.
+                        if let Some(node_types) = self.node_types
+                            && let Some(&expr_type) = node_types.get(&assignment_node.0)
+                        {
+                            return Some(expr_type);
+                        }
+                        // Fallback to RHS type if expression type not available
                         if let Some(node_types) = self.node_types
                             && let Some(&rhs_type) = node_types.get(&bin.right.0)
                         {

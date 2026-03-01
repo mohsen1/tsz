@@ -264,6 +264,9 @@ mod jsdoc_type_tag_tests;
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
+#[path = "../tests/logical_assignment_narrowing_tests.rs"]
+mod logical_assignment_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
