@@ -50,7 +50,7 @@ impl Server {
         items
     }
 
-    fn class_member_snippet_insert_text(item: &CompletionItem) -> Option<String> {
+    pub(super) fn class_member_snippet_insert_text(item: &CompletionItem) -> Option<String> {
         let detail = item.detail.as_deref().unwrap_or("").trim();
         let is_getter = item
             .kind_modifiers
