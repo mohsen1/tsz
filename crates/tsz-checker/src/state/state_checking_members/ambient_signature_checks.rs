@@ -1200,6 +1200,8 @@ impl<'a> CheckerState<'a> {
                 // and implicit fallthrough are represented (e.g. `T | void`), which
                 // aligns noImplicitReturns diagnostics with TSC behavior.
                 return_type = self.infer_return_type_from_body(member_idx, accessor.body, None);
+                // Cache the inferred return type so the declaration emitter can look it up
+                self.ctx.node_types.insert(member_idx.0, return_type);
             }
 
             // TS7010 (implicit any return) is only emitted for ambient accessors,

@@ -90,9 +90,8 @@ impl<'a> CheckerState<'a> {
             // For enum container types (e.g., `U8.nonExistent`), tsc displays
             // "typeof EnumName" for the type in the error message.
             if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
-            {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         let enum_name = &symbol.escaped_name;
                         let type_str = format!("typeof {enum_name}");
                         let (code, message) = if let Some(ref suggestion) = suggestion {
@@ -119,8 +118,6 @@ impl<'a> CheckerState<'a> {
                         ));
                         return;
                     }
-                }
-            }
 
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
