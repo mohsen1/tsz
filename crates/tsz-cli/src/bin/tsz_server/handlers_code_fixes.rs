@@ -641,9 +641,20 @@ impl Server {
 
                 let mut seen_fixes = std::collections::HashSet::new();
                 for code in &error_codes {
-                    for (fix_name, fix_id, description, fix_all_description) in
+                    let fix_entries: Vec<(&str, &str, &str, &str)> =
                         CodeFixRegistry::fixes_for_error_code(*code)
-                    {
+                            .into_iter()
+                            .filter(|(_, fix_id, _, _)| {
+                                if *code
+                                    == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                                    && import_candidates.is_empty()
+                                {
+                                    return *fix_id == "addMissingConst";
+                                }
+                                true
+                            })
+                            .collect();
+                    for (fix_name, fix_id, description, fix_all_description) in fix_entries {
                         if !seen_fixes.insert((fix_name, fix_id)) {
                             continue;
                         }
