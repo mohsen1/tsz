@@ -1509,9 +1509,9 @@ impl ParserState {
         let Some((pos, len, expression_text)) =
             self.missing_semicolon_after_expression_text(expression)
         else {
-            if self.should_report_error() {
-                self.error_token_expected(";");
-            }
+            // For non-identifier expressions (literals, etc.), don't emit "missing semicolon" errors.
+            // These typically indicate parsing has already gone awry, and emitting additional
+            // errors just adds noise. Let the main error handling deal with malformed constructs.
             return;
         };
 
@@ -1545,13 +1545,10 @@ impl ParserState {
             return;
         }
 
+        // tsc emits TS1005 "';' expected" rather than TS1434 "Unexpected keyword or identifier"
+        // when an expression is followed by keywords. Convert TS1434 case to TS1005.
         if self.should_report_error() {
-            self.parse_error_at(
-                pos,
-                len,
-                "Unexpected keyword or identifier.",
-                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-            );
+            self.error_token_expected(";");
         }
     }
 
