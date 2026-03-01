@@ -178,6 +178,9 @@ pub struct CompilerOptions {
     /// Skip type checking of declaration files (.d.ts)
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub skip_lib_check: Option<bool>,
+    /// Disable emitting declarations that have '@internal' in their JSDoc comments
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub strip_internal: Option<bool>,
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
@@ -322,6 +325,8 @@ pub struct ResolvedCompilerOptions {
     pub check_js: bool,
     /// Skip type checking of declaration files (.d.ts)
     pub skip_lib_check: bool,
+    /// Disable emitting declarations that have '@internal' in their JSDoc comments
+    pub strip_internal: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -843,6 +848,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(skip_lib_check) = options.skip_lib_check {
         resolved.skip_lib_check = skip_lib_check;
+    }
+    if let Some(strip_internal) = options.strip_internal {
+        resolved.strip_internal = strip_internal;
     }
 
     if let Some(ref module_detection) = options.module_detection
@@ -2121,6 +2129,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             allow_js,
             check_js,
             skip_lib_check,
+            strip_internal,
             always_strict,
             use_define_for_class_fields,
             no_implicit_any,

@@ -414,6 +414,40 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    /// Check whether the leading comments before `pos` contain `@internal`.
+    /// Used when `--stripInternal` is enabled to elide internal declarations.
+    pub(crate) fn has_internal_annotation(&self, pos: u32) -> bool {
+        if !self.strip_internal {
+            return false;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        // Search backwards from `pos` through any comments that precede this node.
+        // The `@internal` annotation can appear in `/** @internal */` or `// @internal`.
+        for comment in self.all_comments.iter().rev() {
+            if comment.end > pos {
+                continue;
+            }
+            // Only consider comments immediately before this position
+            // (allow only whitespace between comment end and pos)
+            let between = &text[comment.end as usize..pos as usize];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+            let ct = &text[comment.pos as usize..comment.end as usize];
+            if ct.contains("@internal") {
+                return true;
+            }
+            // If this comment doesn't have @internal, don't look further back
+            break;
+        }
+        false
+    }
+
     /// Return true when a declaration symbol is referenced by the exported API surface.
     pub(crate) fn should_emit_public_api_dependency(&self, name_idx: NodeIndex) -> bool {
         if !self.public_api_filter_enabled() {

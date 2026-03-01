@@ -184,6 +184,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
+                    emitter.set_strip_internal(context.options.strip_internal);
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
@@ -191,6 +192,7 @@ pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<Output
                     emitter.set_binder(Some(&binder));
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
+                    emitter.set_strip_internal(context.options.strip_internal);
                     emitter
                 };
                 let map_info = if context.options.declaration_map {

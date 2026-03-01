@@ -1855,6 +1855,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.remove_comments {
         options.printer.remove_comments = true;
     }
+    if args.strip_internal {
+        options.strip_internal = true;
+    }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
     }

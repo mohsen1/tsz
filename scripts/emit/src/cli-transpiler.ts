@@ -205,6 +205,7 @@ export class CliTranspiler {
       moduleDetection?: string;
       preserveConstEnums?: boolean;
       removeComments?: boolean;
+      stripInternal?: boolean;
       outFile?: string;
       sourceFiles?: SourceInputFile[];
       expectedJsFileName?: string;
@@ -233,6 +234,7 @@ export class CliTranspiler {
       moduleDetection,
       preserveConstEnums = false,
       removeComments = false,
+      stripInternal = false,
       outFile,
       sourceFiles,
       expectedJsFileName,
@@ -328,6 +330,7 @@ export class CliTranspiler {
       if (moduleDetection) args.push('--moduleDetection', moduleDetection);
       if (preserveConstEnums) args.push('--preserveConstEnums');
       if (removeComments) args.push('--removeComments');
+      if (stripInternal) args.push('--stripInternal');
       if (outFile) args.push('--outFile', outFile);
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
@@ -395,6 +398,7 @@ export class CliTranspiler {
           if (moduleDetection) retryArgs.push('--moduleDetection', moduleDetection);
           if (preserveConstEnums) retryArgs.push('--preserveConstEnums');
           if (removeComments) retryArgs.push('--removeComments');
+          if (stripInternal) retryArgs.push('--stripInternal');
           if (outFile) retryArgs.push('--outFile', outFile);
           retryArgs.push(...trailingArgs);
           await runWithArgs(retryArgs);

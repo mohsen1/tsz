@@ -80,6 +80,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) comment_emit_idx: usize,
     /// When true, strip all comments from .d.ts output (--removeComments)
     pub(super) remove_comments: bool,
+    /// When true, strip declarations annotated with `@internal` (--stripInternal)
+    pub(super) strip_internal: bool,
     /// Tracks whether any non-exported declaration was actually emitted
     /// (used for deciding whether `export {};` scope fix marker is needed)
     pub(super) emitted_non_exported_declaration: bool,
@@ -155,6 +157,7 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            strip_internal: false,
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -203,6 +206,7 @@ impl<'a> DeclarationEmitter<'a> {
             all_comments: Vec::new(),
             comment_emit_idx: 0,
             remove_comments: false,
+            strip_internal: false,
             emitted_non_exported_declaration: false,
             emitted_scope_marker: false,
             emitted_module_indicator: false,
@@ -267,6 +271,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
+    }
+
+    pub const fn set_strip_internal(&mut self, strip: bool) {
+        self.strip_internal = strip;
     }
 
     /// Build a map of imported `SymbolId` -> `ModuleSpecifier` for elision.
@@ -997,6 +1005,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(member_node) = self.arena.get(member_idx) else {
             return;
         };
+
+        // Strip members annotated with @internal when --stripInternal is enabled
+        if self.has_internal_annotation(member_node.pos) {
+            return;
+        }
 
         // Skip members with private identifier names (#foo) - these are replaced by `#private;`
         if self.member_has_private_identifier_name(member_idx) {
