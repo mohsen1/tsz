@@ -484,6 +484,18 @@ fn types_are_comparable_inner(
         return true;
     }
 
+    // `never` is comparable to any type (it's the bottom type, subtype of all types).
+    // `any` and `unknown` are also comparable to everything.
+    if source == TypeId::NEVER
+        || target == TypeId::NEVER
+        || source == TypeId::ANY
+        || target == TypeId::ANY
+        || source == TypeId::UNKNOWN
+        || target == TypeId::UNKNOWN
+    {
+        return true;
+    }
+
     // Unwrap ReadonlyType wrappers — `readonly T[]` is comparable to `T[]`
     if let Some(TypeData::ReadonlyType(inner)) = db.lookup(source) {
         return types_are_comparable_inner(db, inner, target, depth + 1);
@@ -537,6 +549,47 @@ fn types_are_comparable_inner(
         return elements
             .iter()
             .any(|elem| types_are_comparable_inner(db, source_elem, elem.type_id, depth + 1));
+    }
+
+    // Tuple↔Tuple comparability: two tuples are comparable if corresponding
+    // element types are pairwise comparable. For fixed-length tuples, lengths
+    // must match. Rest elements are compared by their element type.
+    if let Some(TypeData::Tuple(source_tuple_id)) = db.lookup(source)
+        && let Some(TypeData::Tuple(target_tuple_id)) = db.lookup(target)
+    {
+        let source_elems = db.tuple_list(source_tuple_id);
+        let target_elems = db.tuple_list(target_tuple_id);
+
+        // Count non-rest elements and find rest elements
+        let source_fixed: Vec<_> = source_elems.iter().filter(|e| !e.rest).collect();
+        let target_fixed: Vec<_> = target_elems.iter().filter(|e| !e.rest).collect();
+        let source_rest = source_elems.iter().find(|e| e.rest);
+        let target_rest = target_elems.iter().find(|e| e.rest);
+
+        // For fixed-length tuples (no rest elements), lengths must match
+        if source_rest.is_none() && target_rest.is_none() {
+            if source_fixed.len() != target_fixed.len() {
+                return false;
+            }
+            return source_fixed
+                .iter()
+                .zip(target_fixed.iter())
+                .all(|(s, t)| types_are_comparable_inner(db, s.type_id, t.type_id, depth + 1));
+        }
+
+        // With rest elements, check that the overlapping fixed portion is comparable
+        let min_fixed = source_fixed.len().min(target_fixed.len());
+        for i in 0..min_fixed {
+            if !types_are_comparable_inner(
+                db,
+                source_fixed[i].type_id,
+                target_fixed[i].type_id,
+                depth + 1,
+            ) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Callable types: check if their signatures are comparable.
@@ -891,5 +944,186 @@ fn extract_contextual_type_params_inner(
             candidate
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::types::TupleElement;
+
+    #[test]
+    fn tuple_to_tuple_comparable_same_elements() {
+        let interner = TypeInterner::new();
+        let t1 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        let t2 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        assert!(types_are_comparable(&interner, t1, t2));
+    }
+
+    #[test]
+    fn tuple_to_tuple_comparable_with_never() {
+        // [undefined, string] vs [never, string] — should be comparable
+        // because never is comparable to everything
+        let interner = TypeInterner::new();
+        let t1 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::UNDEFINED,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        let t2 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NEVER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        assert!(types_are_comparable(&interner, t1, t2));
+    }
+
+    #[test]
+    fn tuple_to_tuple_incomparable_different_lengths() {
+        let interner = TypeInterner::new();
+        let t1 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        let t2 = interner.tuple(vec![TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        }]);
+        assert!(!types_are_comparable(&interner, t1, t2));
+    }
+
+    #[test]
+    fn tuple_to_tuple_incomparable_different_elements() {
+        // [number, string] vs [boolean, boolean] — not comparable
+        let interner = TypeInterner::new();
+        let t1 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        let t2 = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::BOOLEAN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::BOOLEAN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        assert!(!types_are_comparable(&interner, t1, t2));
+    }
+
+    #[test]
+    fn never_comparable_to_any_type() {
+        let interner = TypeInterner::new();
+        assert!(types_are_comparable(
+            &interner,
+            TypeId::NEVER,
+            TypeId::STRING
+        ));
+        assert!(types_are_comparable(
+            &interner,
+            TypeId::NEVER,
+            TypeId::NUMBER
+        ));
+        assert!(types_are_comparable(
+            &interner,
+            TypeId::STRING,
+            TypeId::NEVER
+        ));
+    }
+
+    #[test]
+    fn any_comparable_to_any_type() {
+        let interner = TypeInterner::new();
+        assert!(types_are_comparable(&interner, TypeId::ANY, TypeId::STRING));
+        assert!(types_are_comparable(&interner, TypeId::ANY, TypeId::NUMBER));
+        assert!(types_are_comparable(&interner, TypeId::STRING, TypeId::ANY));
+    }
+
+    #[test]
+    fn unknown_comparable_to_any_type() {
+        let interner = TypeInterner::new();
+        assert!(types_are_comparable(
+            &interner,
+            TypeId::UNKNOWN,
+            TypeId::STRING
+        ));
+        assert!(types_are_comparable(
+            &interner,
+            TypeId::STRING,
+            TypeId::UNKNOWN
+        ));
     }
 }
