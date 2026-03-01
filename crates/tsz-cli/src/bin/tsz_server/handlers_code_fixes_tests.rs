@@ -210,7 +210,8 @@ fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates("/main.js", &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates("/main.js", &diagnostics, &[], &[], None, None);
     let module_specifiers: Vec<String> = candidates
         .into_iter()
         .map(|candidate| candidate.module_specifier)
@@ -269,7 +270,8 @@ fn collect_import_candidates_uses_external_project_files() {
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None, None);
     assert!(
         candidates.iter().any(|candidate| {
             candidate.local_name == "externalValue" && candidate.module_specifier == "./dep"
@@ -336,7 +338,8 @@ fn collect_import_candidates_falls_back_to_side_effect_import_specifier() {
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None, None);
     assert!(
         candidates.iter().any(|candidate| {
             candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
@@ -373,7 +376,8 @@ fn collect_import_candidates_falls_back_to_external_project_node_modules_paths()
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None, None);
     assert!(
         candidates.iter().any(|candidate| {
             candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
@@ -446,7 +450,7 @@ fn collect_import_candidates_prefers_package_root_specifier_before_subpath() {
     }];
 
     let candidates =
-        server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None);
+        server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None, None);
     let module_specifiers: Vec<String> = candidates
         .into_iter()
         .filter(|candidate| candidate.local_name == "add")
@@ -530,7 +534,8 @@ fn collect_import_candidates_respects_node_next_package_exports_root_only() {
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
     assert!(
         candidates.is_empty(),
         "expected no import candidates for unreachable node-next subpath export, got {candidates:?}"
@@ -578,7 +583,8 @@ fn collect_import_candidates_prefers_paths_mapping_over_node_modules_package_spe
         reports_deprecated: None,
     }];
 
-    let candidates = server.collect_import_candidates("ts/main.ts", &diagnostics, &[], &[], None);
+    let candidates =
+        server.collect_import_candidates("ts/main.ts", &diagnostics, &[], &[], None, None);
     let module_specifiers: Vec<String> = candidates
         .into_iter()
         .filter(|candidate| candidate.local_name == "Dialog")
