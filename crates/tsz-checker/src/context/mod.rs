@@ -446,6 +446,11 @@ pub struct CheckerContext<'a> {
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 
+    /// The callable type of the current call expression being checked.
+    /// Set before `collect_call_argument_types_with_context` so spread-handling
+    /// code can query rest parameter positions via `ContextualTypeContext`.
+    pub current_callable_type: Option<TypeId>,
+
     /// Whether we're in the statement checking phase (vs type environment building).
     /// During `build_type_environment`, closure parameter types may not have contextual types
     /// yet, so TS7006 should be deferred until the checking phase.

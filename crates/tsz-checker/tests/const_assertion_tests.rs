@@ -81,6 +81,61 @@ fn test_no_errors(source: &str) {
     }
 }
 
+fn test_expect_error(source: &str, expected_error_substring: &str) {
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
+
+    let ctx = TestContext::new();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
+
+    assert!(
+        errors
+            .iter()
+            .any(|d| d.message_text.contains(expected_error_substring)),
+        "Expected error containing '{}', but got:\n{}",
+        expected_error_substring,
+        errors
+            .iter()
+            .map(|d| format!("  {}", d.message_text))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 #[test]
 fn test_const_assertion_primitive_literal() {
     // "hello" as const should preserve the literal type "hello"
@@ -194,14 +249,13 @@ const y: `hello` = x; // Should be allowed
 
 #[test]
 fn test_const_assertion_null_and_undefined() {
-    // null and undefined should preserve their literal types
-    test_no_errors(
+    // tsc emits TS1355: `as const` can only be applied to literals (string, number,
+    // boolean, array, object) or enum member refs — not null/undefined.
+    test_expect_error(
         r#"
 const x = null as const;
-const y = undefined as const;
-const a: null = x; // Should be allowed
-const b: undefined = y; // Should be allowed
 "#,
+        "A 'const' assertion can only be applied to",
     );
 }
 

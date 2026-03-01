@@ -1508,7 +1508,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         );
     }
 
-    fn is_valid_const_assertion_arg(&mut self, expr_idx: NodeIndex) -> bool {
+    fn is_valid_const_assertion_arg(&self, expr_idx: NodeIndex) -> bool {
         let Some(node) = self.checker.ctx.arena.get(expr_idx) else {
             return false;
         };
@@ -1526,15 +1526,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => true,
             // Prefix unary: `-` or `+` on numeric/bigint literal (e.g., `-1 as const`, `-10n as const`)
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
-                    if unary.operator == SyntaxKind::MinusToken as u16
-                        || unary.operator == SyntaxKind::PlusToken as u16
-                    {
-                        if let Some(operand) = self.checker.ctx.arena.get(unary.operand) {
-                            return operand.kind == SyntaxKind::NumericLiteral as u16
-                                || operand.kind == SyntaxKind::BigIntLiteral as u16;
-                        }
-                    }
+                if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node)
+                    && (unary.operator == SyntaxKind::MinusToken as u16
+                        || unary.operator == SyntaxKind::PlusToken as u16)
+                    && let Some(operand) = self.checker.ctx.arena.get(unary.operand)
+                {
+                    return operand.kind == SyntaxKind::NumericLiteral as u16
+                        || operand.kind == SyntaxKind::BigIntLiteral as u16;
                 }
                 false
             }
@@ -1546,21 +1544,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 false
             }
             // Property access: valid only if it's an enum member reference
-            // Handles: Foo.A, import(Foo).A, ns.Foo.A, (Foo).A
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
                 if let Some(access) = self.checker.ctx.arena.get_access_expr(node) {
-                    // Check the type of the object expression — if it resolves to
-                    // an enum type, the property access is an enum member reference.
-                    // This is type-based rather than symbol-based, so it handles
-                    // imports, namespace qualification, and parenthesized expressions.
-                    let expr_type = self.checker.get_type_of_node(access.expression);
-                    if tsz_solver::type_queries::get_enum_def_id(self.checker.ctx.types, expr_type)
-                        .is_some()
-                    {
-                        return true;
-                    }
+                    return self.checker.is_enum_member_property(access.expression, "");
                 }
                 false
             }
