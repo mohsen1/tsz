@@ -590,15 +590,20 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersections, prefer the most specific (non-any) property type.
+        // e.g., `{ a: any } & { a: 1 }` should return `1` for property `a`.
         let members = self.db.type_list(TypeListId(list_id));
+        let mut result: Option<TypeId> = None;
         for &member in members.iter() {
             let mut extractor =
                 PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
             if let Some(ty) = extractor.extract(member) {
-                return Some(ty);
+                if result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)) {
+                    result = Some(ty);
+                }
             }
         }
-        None
+        result
     }
 
     fn default_output() -> Self::Output {
