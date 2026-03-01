@@ -27,6 +27,7 @@ impl Server {
         else {
             return probes;
         };
+        probes.clear();
         for candidate in [
             marker_start.saturating_sub(1),
             marker_start.saturating_sub(2),
@@ -37,6 +38,9 @@ impl Server {
                     probes.push(probe);
                 }
             }
+        }
+        if probes.is_empty() {
+            probes.push(position);
         }
         probes
     }
@@ -82,7 +86,7 @@ impl Server {
         let probe_positions = Self::completion_probe_positions(position, line_map, source_text);
         let mut selected_position = position;
         let mut selected_result = None;
-        let mut selected_score = (false, false, false);
+        let mut selected_score = (false, 0usize);
         for probe_position in probe_positions {
             let candidate = provider.get_completion_result(root, probe_position);
             let score = candidate
@@ -90,11 +94,10 @@ impl Server {
                 .map(|result| {
                     (
                         result.is_member_completion && !result.entries.is_empty(),
-                        !result.entries.is_empty(),
-                        result.is_new_identifier_location,
+                        result.entries.len(),
                     )
                 })
-                .unwrap_or((false, false, false));
+                .unwrap_or((false, 0usize));
             if selected_result.is_none() || score > selected_score {
                 selected_position = probe_position;
                 selected_result = candidate;
@@ -1104,11 +1107,19 @@ impl Server {
                 .iter()
                 .map(|item| Self::completion_entry_from_item(item, &line_map, &source_text))
                 .collect();
+            let has_class_member_snippet = items
+                .iter()
+                .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
+            let is_new_identifier_location = completion_result
+                .as_ref()
+                .map(|r| r.is_new_identifier_location)
+                .unwrap_or(false)
+                || has_class_member_snippet;
 
             Some(serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
                 "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
-                "isNewIdentifierLocation": completion_result.as_ref().map(|r| r.is_new_identifier_location).unwrap_or(false),
+                "isNewIdentifierLocation": is_new_identifier_location,
                 "entries": entries,
             }))
         })();
