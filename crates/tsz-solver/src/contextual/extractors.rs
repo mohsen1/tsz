@@ -656,13 +656,12 @@ fn extract_param_type_at_inner(
             let rest_pos = elements.iter().position(|e| e.rest);
             let has_tail_after_rest = rest_pos.is_some_and(|pos| pos + 1 < elements.len());
 
-            if has_tail_after_rest
-                && let Some(count) = arg_count {
-                    // Use variadic-aware mapping: expand the tuple rest structure
-                    // and map argument position through prefix/variadic/tail.
-                    let rest_arg_count = count.saturating_sub(rest_start);
-                    return variadic_tuple_element_type(db, &elements, rest_index, rest_arg_count);
-                }
+            if has_tail_after_rest && let Some(count) = arg_count {
+                // Use variadic-aware mapping: expand the tuple rest structure
+                // and map argument position through prefix/variadic/tail.
+                let rest_arg_count = count.saturating_sub(rest_start);
+                return variadic_tuple_element_type(db, &elements, rest_index, rest_arg_count);
+            }
 
             // Non-variadic tuple or no arg_count: direct indexing
             if rest_index < elements.len() {
