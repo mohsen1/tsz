@@ -1,7 +1,49 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9735/12570 (77.4%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01j — types/tuple: tuple-to-tuple comparability and never/any/unknown in types_are_comparable
+
+### Fixed: False TS2352 on tuple type assertions — Solver (flow.rs)
+
+**Area**: types/tuple (58.8% → 59.5%), also benefits other areas with tuple comparisons
+
+**Root cause**: `types_are_comparable_inner()` in `flow.rs` handled Array↔Array, Tuple→Array, and Array→Tuple comparability, but had NO Tuple↔Tuple case. When comparing two tuple types, the function fell through to `types_have_common_properties()` which returned empty for tuples (they have no named properties in the structural sense), making tuples incorrectly "not comparable".
+
+Additionally, `never`, `any`, and `unknown` were not handled at the element level in comparability checks. The checker guards these at the top level (skip TS2352 entirely if expr or asserted is never/any/unknown), but when they appeared as nested types (e.g., tuple elements like `[never, string]`), the comparability check failed.
+
+**Fix**: Two additions to `types_are_comparable_inner()`:
+1. Early return `true` when source or target is `never`, `any`, or `unknown` — these are comparable to everything
+2. Tuple↔Tuple comparison: for fixed-length tuples, require same length and pairwise element comparability; for tuples with rest elements, check the overlapping fixed portion
+
+**Tests**: 7 unit tests:
+- `tuple_to_tuple_comparable_same_elements` — [number, string] vs [number, string]
+- `tuple_to_tuple_comparable_with_never` — [undefined, string] vs [never, string]
+- `tuple_to_tuple_incomparable_different_lengths` — [number, string] vs [number]
+- `tuple_to_tuple_incomparable_different_elements` — [number, string] vs [boolean, boolean]
+- `never_comparable_to_any_type` — never vs string/number
+- `any_comparable_to_any_type` — any vs string/number
+- `unknown_comparable_to_any_type` — unknown vs string
+
+**Impact**: +5 conformance tests over 9731 baseline, 0 regressions. Tests that benefited include `tupleTypeInference2.ts` and other tuple assertion patterns.
+
+### Remaining types/tuple gaps (13 failing):
+1. **variadicTuples1.ts** — missing TS2344, fingerprint mismatches for spread patterns
+2. **variadicTuples2.ts** — missing TS1265/TS1266, extra TS2339/TS2555/TS7053
+3. **restTupleElements1.ts** — missing TS17019/TS2574, extra TS1005/TS7006
+4. **contextualTypeTupleEnd.ts** — missing TS2345, extra TS2555/TS7006
+5. **tupleTypes.ts** — missing TS2403 (optional tuple element identity)
+6. **optionalTupleElementsAndUndefined.ts** — false TS2403 (mapped type over tuples not fully evaluated)
+7. **classImplementsMethodWIthTupleArgs.ts** — false TS2416 (overload vs tuple union rest params)
+8. **partiallyNamedTuples2.ts** — false TS2345 (complex generic tuple inference)
+9. **thisInTupleTypeParameterConstraints.ts** — false TS6200
+10. **reverseMappedTupleContext.ts** — false TS2322/TS2345 (reverse mapped type inference)
+11. **contextualTupleTypeParameterReadonly.ts** — missing TS2345
+12. **recursiveTupleTypeInference.ts** — missing TS2345
+13. **destructureTupleWithVariableElement.ts** — TS2339 instead of TS18048
 
 ---
 
