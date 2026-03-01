@@ -835,7 +835,6 @@ FAIL TypeScript/tests/cases/compiler/memberScope.ts
 FAIL TypeScript/tests/cases/compiler/memberVariableDeclarations1.ts
 FAIL TypeScript/tests/cases/compiler/mergedClassNamespaceRecordCast.ts
 FAIL TypeScript/tests/cases/compiler/mergedClassWithNamespacePrototype.ts
-FAIL TypeScript/tests/cases/compiler/mergedDeclarations1.ts
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations2.ts
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations3.ts
 FAIL TypeScript/tests/cases/compiler/mergedDeclarations7.ts
@@ -1526,7 +1525,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateInstanceShadowingPublicInstance.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateStaticShadowingPublicStatic.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedGenericClassWithAny.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/superInStaticMembers1.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers10.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers11.ts
@@ -1560,6 +1558,8 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
+FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
+FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
@@ -1831,7 +1831,6 @@ FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorOverloads2
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck20.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck25.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck6.ts
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck61.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck62.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck63.ts
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck7.ts
@@ -2547,10 +2546,10 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
-FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndForIn.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess2.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
@@ -6006,6 +6005,7 @@ PASS TypeScript/tests/cases/compiler/memberAccessOnConstructorType.ts
 PASS TypeScript/tests/cases/compiler/MemberAccessorDeclaration15.ts
 PASS TypeScript/tests/cases/compiler/memberOverride.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarationExports.ts
+PASS TypeScript/tests/cases/compiler/mergedDeclarations1.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarations4.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarations5.ts
 PASS TypeScript/tests/cases/compiler/mergedDeclarations6.ts
@@ -8267,8 +8267,6 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
-PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
-PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
@@ -9516,6 +9514,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck5
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck58.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck59.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck60.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck61.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck64.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression1_es6.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression10_es6.ts
@@ -11845,12 +11844,12 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/operatorsAndIntersectionTypes.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
+PASS TypeScript/tests/cases/conformance/types/keyof/keyofAndForIn.ts
 PASS TypeScript/tests/cases/conformance/types/keyof/keyofIntersection.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes1.ts
 PASS TypeScript/tests/cases/conformance/types/literal/booleanLiteralTypes2.ts
