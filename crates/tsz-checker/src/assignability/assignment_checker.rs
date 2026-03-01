@@ -1249,4 +1249,87 @@ mod tests {
             "TS2322 should target only the assignment target"
         );
     }
+
+    #[test]
+    fn non_distributive_conditional_with_any_evaluates_to_true_branch() {
+        // `[any] extends [number] ? 1 : 0` should evaluate to `1` (non-distributive).
+        // `any extends number ? 1 : 0` should evaluate to `0 | 1` (distributive, picks both).
+        // Assigning `0` to `U` (= 1) should emit TS2322, with message "...to type '1'",
+        // NOT "...to type '[any] extends [number] ? 1 : 0'".
+        let source = r#"
+            type T = any extends number ? 1 : 0;
+            let x: T;
+            x = 1;
+            x = 0;
+
+            type U = [any] extends [number] ? 1 : 0;
+            let y: U;
+            y = 1;
+            y = 0;
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        // `x = 0` should NOT error: T = 0 | 1, and 0 is assignable to 0 | 1
+        let x_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == 2322
+                    && d.message_text.contains("'0'")
+                    && d.message_text.contains("'0 | 1'")
+            })
+            .collect();
+        assert!(
+            x_errors.is_empty(),
+            "x = 0 should not error since T = 0 | 1"
+        );
+
+        // `y = 0` should error: U = 1, and 0 is not assignable to 1
+        let y_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == 2322 && d.message_text.contains("'0'") && d.message_text.contains("'1'")
+            })
+            .collect();
+        assert_eq!(
+            y_errors.len(),
+            1,
+            "y = 0 should emit TS2322 with type '1', got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+
+        // The error message should reference the evaluated type '1', not the deferred conditional
+        assert!(
+            !y_errors[0].message_text.contains("extends"),
+            "Error message should use evaluated type '1', not deferred conditional. Got: {}",
+            y_errors[0].message_text
+        );
+    }
+
+    #[test]
+    fn generic_conditional_type_alias_stays_deferred() {
+        // Generic type aliases should NOT be eagerly evaluated — they stay deferred
+        // until instantiated. This ensures we don't break generic conditional types.
+        let source = r#"
+            type IsString<T> = T extends string ? true : false;
+            let a: IsString<string> = true;
+            let b: IsString<number> = false;
+            let c: IsString<string> = false;
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        // `c = false` should error: IsString<string> = true, and false is not assignable to true
+        let errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected 1 TS2322 for `c = false`, got: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
 }
