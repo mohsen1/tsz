@@ -381,19 +381,20 @@ impl<'a> CheckerState<'a> {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
 
-            if let Some(usage_node) = self.ctx.arena.get(idx)
-                && should_skip_daa_for_initialized_function_scoped_var(
-                    is_function_scoped,
-                    self.is_container_level_var_decl(decl_id_to_check),
-                    self.enclosing_container_level_statement_kind(decl_id_to_check),
-                    usage_node.pos,
-                    decl_node.end,
-                )
-            {
-                return false;
-            }
-
-            if !is_function_scoped {
+            if is_function_scoped {
+                // For `var` with initializer, skip DAA when usage is at or after the
+                // declaration in source order. The initializer runs when control flow
+                // reaches it; tsc's flow graph handles the "might not execute" case.
+                // Only check DAA when usage precedes the declaration (hoisted binding,
+                // initializer not yet run).
+                if let Some(usage_node) = self.ctx.arena.get(idx)
+                    && usage_node.pos >= decl_node.end
+                {
+                    return false;
+                }
+            } else {
+                // Block-scoped (let/const) with initializer: always skip.
+                // TDZ checks handle pre-declaration use separately.
                 return false;
             }
         }
@@ -538,89 +539,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    /// Returns true if the variable declaration is at "container level" — i.e.
-    /// directly inside a source file or a function body block (not nested inside
-    /// conditionals, loops, or other control flow).
-    fn is_container_level_var_decl(&self, decl_id: NodeIndex) -> bool {
-        let Some(info) = self.ctx.arena.node_info(decl_id) else {
-            return false;
-        };
-        let mut current = info.parent;
-        for _ in 0..50 {
-            let Some(node) = self.ctx.arena.get(current) else {
-                return false;
-            };
-            if node.kind == syntax_kind_ext::SOURCE_FILE {
-                return true;
-            }
-            // A block that is a function body counts as container level
-            if node.kind == syntax_kind_ext::BLOCK
-                && let Some(block_info) = self.ctx.arena.node_info(current)
-                && let Some(grandparent) = self.ctx.arena.get(block_info.parent)
-                && grandparent.is_function_like()
-            {
-                return true;
-            }
-            if node.is_function_like() {
-                return false;
-            }
-            let Some(next) = self.ctx.arena.node_info(current).map(|n| n.parent) else {
-                return false;
-            };
-            current = next;
-            if current.is_none() {
-                return false;
-            }
-        }
-        false
-    }
-
-    /// Returns the kind of the enclosing container-level statement (direct child
-    /// of source file or function body block). This allows the "unconditional
-    /// initializer" skip logic to work for `var` declarations inside functions,
-    /// not just at source-file global scope.
-    ///
-    /// If the container-level statement is a `LabeledStatement`, unwraps it to
-    /// return the inner statement kind (e.g. `L1: for(...)` → `FOR_STATEMENT`).
-    fn enclosing_container_level_statement_kind(&self, node_idx: NodeIndex) -> Option<u16> {
-        let mut current = node_idx;
-        for _ in 0..50 {
-            let info = self.ctx.arena.node_info(current)?;
-            let parent = info.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            let is_container = if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                true
-            } else if parent_node.kind == syntax_kind_ext::BLOCK {
-                // Check if this block is a function body
-                self.ctx.arena.node_info(parent).is_some_and(|block_info| {
-                    self.ctx
-                        .arena
-                        .get(block_info.parent)
-                        .is_some_and(|gp| gp.is_function_like())
-                })
-            } else {
-                false
-            };
-            if is_container {
-                let kind = self.ctx.arena.get(current).map(|n| n.kind)?;
-                // Unwrap labeled statements to get the inner statement kind
-                // (e.g. `L1: for(var i=0;...)` → FOR_STATEMENT)
-                if kind == syntax_kind_ext::LABELED_STATEMENT
-                    && let Some(labeled) = self.ctx.arena.get_labeled_statement_at(current)
-                    && let Some(inner) = self.ctx.arena.get(labeled.statement)
-                {
-                    return Some(inner.kind);
-                }
-                return Some(kind);
-            }
-            current = parent;
-            if current.is_none() {
-                return None;
-            }
-        }
-        None
     }
 
     fn is_inside_function_like(&self, idx: NodeIndex) -> bool {
@@ -1509,71 +1427,5 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
         current
-    }
-}
-
-const fn is_unconditional_top_level_statement(kind: u16) -> bool {
-    kind == syntax_kind_ext::VARIABLE_STATEMENT || kind == syntax_kind_ext::FOR_STATEMENT
-}
-
-fn should_skip_daa_for_initialized_function_scoped_var(
-    is_function_scoped: bool,
-    is_container_level: bool,
-    container_level_statement_kind: Option<u16>,
-    usage_pos: u32,
-    declaration_end: u32,
-) -> bool {
-    is_function_scoped
-        && is_container_level
-        && usage_pos >= declaration_end
-        && container_level_statement_kind.is_some_and(is_unconditional_top_level_statement)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{should_skip_daa_for_initialized_function_scoped_var, syntax_kind_ext};
-
-    #[test]
-    fn skips_after_top_level_var_initializer_runs() {
-        assert!(should_skip_daa_for_initialized_function_scoped_var(
-            true,
-            true,
-            Some(syntax_kind_ext::VARIABLE_STATEMENT),
-            100,
-            50
-        ));
-    }
-
-    #[test]
-    fn skips_after_top_level_for_initializer_runs() {
-        assert!(should_skip_daa_for_initialized_function_scoped_var(
-            true,
-            true,
-            Some(syntax_kind_ext::FOR_STATEMENT),
-            200,
-            80
-        ));
-    }
-
-    #[test]
-    fn does_not_skip_when_declaration_is_conditional() {
-        assert!(!should_skip_daa_for_initialized_function_scoped_var(
-            true,
-            true,
-            Some(syntax_kind_ext::IF_STATEMENT),
-            120,
-            40
-        ));
-    }
-
-    #[test]
-    fn does_not_skip_when_usage_precedes_declaration_end() {
-        assert!(!should_skip_daa_for_initialized_function_scoped_var(
-            true,
-            true,
-            Some(syntax_kind_ext::VARIABLE_STATEMENT),
-            30,
-            40
-        ));
     }
 }
