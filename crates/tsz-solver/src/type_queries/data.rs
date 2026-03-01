@@ -211,10 +211,10 @@ pub fn get_tuple_elements(
             let members = db.type_list(list_id);
             let mut best: Option<Vec<crate::types::TupleElement>> = None;
             for &m in members.iter() {
-                if let Some(elems) = get_tuple_elements(db, m) {
-                    if best.is_none() || elems.iter().any(|e| e.type_id != TypeId::ANY) {
-                        best = Some(elems);
-                    }
+                if let Some(elems) = get_tuple_elements(db, m)
+                    && (best.is_none() || elems.iter().any(|e| e.type_id != TypeId::ANY))
+                {
+                    best = Some(elems);
                 }
             }
             best

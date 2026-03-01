@@ -1361,13 +1361,14 @@ impl<'a> CheckerState<'a> {
             // Evaluate the Lazy type via checker's judge_evaluate (resolves DefIds)
             let resolved = self.judge_evaluate(*m);
             if let Some(call_sigs) = get_call_signatures(self.ctx.types, resolved)
-                && !call_sigs.is_empty() {
-                    let sigs: Vec<Vec<TypeId>> = call_sigs
-                        .iter()
-                        .map(|sig| sig.params.iter().map(|p| p.type_id).collect())
-                        .collect();
-                    callable_member_sigs.push(sigs);
-                }
+                && !call_sigs.is_empty()
+            {
+                let sigs: Vec<Vec<TypeId>> = call_sigs
+                    .iter()
+                    .map(|sig| sig.params.iter().map(|p| p.type_id).collect())
+                    .collect();
+                callable_member_sigs.push(sigs);
+            }
         }
 
         // Need at least 2 callable interface members to check compatibility
