@@ -1916,7 +1916,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/superPropertyAccess/superSym
 FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInInvalidContexts.ts
 FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInInvalidContextsExternalModule.ts
 FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInObjectLiterals.ts
-FAIL TypeScript/tests/cases/conformance/expressions/typeAssertions/constAssertionOnEnum.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeAssertions/constAssertions.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeAssertions/typeAssertions.ts
 FAIL TypeScript/tests/cases/conformance/expressions/typeGuards/typeGuardFunctionErrors.ts
@@ -9851,6 +9850,7 @@ PASS TypeScript/tests/cases/conformance/expressions/superPropertyAccess/superSym
 PASS TypeScript/tests/cases/conformance/expressions/superPropertyAccess/superSymbolIndexedAccess6.ts
 PASS TypeScript/tests/cases/conformance/expressions/thisKeyword/typeOfThisGeneral.ts
 PASS TypeScript/tests/cases/conformance/expressions/thisKeyword/typeOfThisInConstructorParamList.ts
+PASS TypeScript/tests/cases/conformance/expressions/typeAssertions/constAssertionOnEnum.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeAssertions/duplicatePropertiesInTypeAssertions01.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeAssertions/duplicatePropertiesInTypeAssertions02.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeGuards/nullOrUndefinedTypeGuardIsOrderIndependent.ts
