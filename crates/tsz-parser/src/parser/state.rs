@@ -213,6 +213,21 @@ impl ParserState {
         current.abs_diff(self.last_error_pos) > ERROR_SUPPRESSION_DISTANCE
     }
 
+    /// Check if the last emitted parse diagnostic was an unterminated literal error.
+    /// These scanner-level errors (TS1002, TS1160, TS1161) consume tokens past
+    /// closing delimiters, making subsequent "missing )" errors noise.
+    fn last_error_was_unterminated_literal(&self) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.parse_diagnostics.last().is_some_and(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::UNTERMINATED_STRING_LITERAL
+                    | diagnostic_codes::UNTERMINATED_TEMPLATE_LITERAL
+                    | diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL
+            )
+        })
+    }
+
     /// Exit recursion scope
     pub(crate) const fn exit_recursion(&mut self) {
         self.recursion_depth = self.recursion_depth.saturating_sub(1);
@@ -612,13 +627,16 @@ impl ParserState {
         } else {
             // Force error emission for missing ) in common patterns.
             // This bypasses the should_report_error() distance check.
-            // At EOF, only force-emit if no previous error — otherwise the missing )
-            // is likely cascading from an earlier error (e.g., unterminated regex/literal
-            // consuming the closing paren).
+            // tsc's parseExpected always emits TS1005 at the current position
+            // unless an error was already reported at the exact same position.
+            // At EOF, force-emit unless the last error was an unterminated literal
+            // (TS1002/TS1160/TS1161) — these scanner errors consume tokens past
+            // the `)` and the missing `)` is a cascading artifact.
             let force_emit = kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
                     || self.is_token(SyntaxKind::CloseBraceToken)
-                    || (self.is_token(SyntaxKind::EndOfFileToken) && self.last_error_pos == 0));
+                    || (self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.last_error_was_unterminated_literal()));
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
@@ -652,10 +670,13 @@ impl ParserState {
                             // at EOF, statement boundaries, or block delimiters.
                             // Only suppress if on same line with no clear boundary.
                             if self.is_token(SyntaxKind::EndOfFileToken) {
-                                // At EOF with previous errors, suppress: the missing )
-                                // is likely cascading from an earlier error (e.g., unterminated
-                                // regex/literal consuming the closing paren).
-                                self.last_error_pos != 0
+                                // At EOF, suppress when an unterminated literal consumed
+                                // past the `)`. Also suppress when a prior error is within
+                                // suppression distance (cascading error).
+                                self.last_error_was_unterminated_literal()
+                                    || (self.last_error_pos != 0
+                                        && self.token_pos().abs_diff(self.last_error_pos)
+                                            <= ERROR_SUPPRESSION_DISTANCE)
                             } else if self.scanner.has_preceding_line_break() {
                                 // At a line break, suppress unless it's a clear boundary
                                 !self.is_statement_start()
