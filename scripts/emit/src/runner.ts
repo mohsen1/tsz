@@ -68,6 +68,7 @@ interface TestCase {
   moduleDetection?: string;
   preserveConstEnums: boolean;
   removeComments: boolean;
+  stripInternal: boolean;
   outFile?: string;
   emitDeclarationOnly: boolean;
   declarationMap: boolean;
@@ -146,6 +147,7 @@ function getCacheKey(
   moduleDetection: string = '',
   preserveConstEnums: boolean = false,
   removeComments: boolean = false,
+  stripInternal: boolean = false,
   outFile: string = '',
   declarationMap: boolean = false,
 ): string {
@@ -159,7 +161,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${outFile}:${declarationMap}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -436,6 +438,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
     const preserveConstEnums = directives.preserveconstenums === true;
     const removeComments = directives.removecomments === true;
+    const stripInternal = directives.stripinternal === true;
     const emitDeclarationOnly = directives.emitdeclarationonly === true;
     const declarationMap = directives.declarationmap === true;
 
@@ -484,6 +487,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       moduleDetection,
       preserveConstEnums,
       removeComments,
+      stripInternal,
       outFile,
       emitDeclarationOnly,
       declarationMap,
@@ -535,6 +539,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.moduleDetection ?? '',
       testCase.preserveConstEnums,
       testCase.removeComments,
+      testCase.stripInternal,
       testCase.outFile ?? '',
       testCase.declarationMap,
     );
@@ -569,6 +574,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         moduleDetection: testCase.moduleDetection,
         preserveConstEnums: testCase.preserveConstEnums,
         removeComments: testCase.removeComments,
+        stripInternal: testCase.stripInternal,
         outFile: testCase.outFile,
         declarationMap: testCase.declarationMap,
         sourceFiles: testCase.sourceFiles,
