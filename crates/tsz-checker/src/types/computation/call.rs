@@ -448,6 +448,8 @@ impl<'a> CheckerState<'a> {
         // enabling correct type parameter inference (e.g., K = "foo" | "bar").
         // tsc preserves literals during inference and only widens at assignment sites.
         let prev_preserve_literals = self.ctx.preserve_literal_types;
+        let prev_callable_type = self.ctx.current_callable_type;
+        self.ctx.current_callable_type = Some(callee_type_for_context);
         if is_generic_call {
             self.ctx.preserve_literal_types = true;
         }
@@ -718,6 +720,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         self.ctx.preserve_literal_types = prev_preserve_literals;
+        self.ctx.current_callable_type = prev_callable_type;
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 

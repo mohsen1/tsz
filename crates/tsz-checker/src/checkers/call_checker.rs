@@ -334,36 +334,48 @@ impl<'a> CheckerState<'a> {
                         }
 
                         // Not an array literal - treat as variadic (element type applies to all remaining params)
-                        // But first, emit TS2556 error: spread must be tuple or rest parameter
-                        // Only emit when the target function does NOT have a rest parameter.
+                        // But first, emit TS2556 error: spread must be tuple or rest parameter.
                         //
-                        // NOTE: We can't check is_array_like on the expected type because
-                        // extract_param_type_at unwraps rest parameter arrays, returning
-                        // the element type (e.g. `string` for `...z: string[]`). Instead,
-                        // we probe at a very large index: rest parameters accept unlimited
-                        // args, so a probe returns Some only when a rest param exists.
+                        // TS2556 fires when a non-tuple array spread covers a non-rest parameter.
+                        // A spread is valid only if it lands exclusively on a rest parameter position.
+                        // We check this via `is_rest_parameter_position` on the callable type,
+                        // falling back to the large-index probe when the callable type isn't available.
                         if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                             let current_expected =
                                 expected_for_index(effective_index, expanded_count);
-                            let has_rest_param =
-                                expected_for_index(usize::MAX / 2, expanded_count).is_some();
-                            // Determine if the target accepts this spread:
-                            // 1. Expected type is `any` → accepts all spreads
-                            // 2. Probe at large index returns Some → rest param exists
-                            let target_accepts_spread = current_expected
-                                .is_some_and(|t| t == TypeId::ANY)
-                                || has_rest_param;
-                            if !target_accepts_spread && current_expected.is_none() {
-                                // No parameter at this position and no rest param:
-                                // the spread exceeds all declared params → TS2556.
-                                // Don't push to arg_types to avoid a cascading
-                                // TS2554 (arg count mismatch) from the solver.
-                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
-                                continue;
-                            }
-                            if !target_accepts_spread {
-                                // This is a spread of a non-tuple array type
-                                // TypeScript emits TS2556: "A spread argument must either have a tuple type or be passed to a rest parameter."
+
+                            // Check if this spread position is a rest parameter position.
+                            // Use the callable type context if available for precise check;
+                            // when no callable type is set (callee is any/error/unknown),
+                            // fall back to the large-index probe heuristic.
+                            let at_rest_position =
+                                if let Some(callable_type) = self.ctx.current_callable_type {
+                                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                        self.ctx.types,
+                                        callable_type,
+                                    );
+                                    ctx.is_rest_parameter_position(effective_index, expanded_count)
+                                } else {
+                                    // No callable type means callee is any/error/unknown.
+                                    // Use the probe heuristic: if a large-index probe returns
+                                    // Some, a rest param exists. We accept the spread if there's
+                                    // no param at this position (past all non-rest params) or
+                                    // if the callee is any (all positions return Some(ANY)).
+
+                                    expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                                };
+
+                            // A non-tuple array spread is only valid at a rest parameter
+                            // position. Even if the param type is `any`, TS2556 fires
+                            // when the spread covers a non-rest position.
+                            if !at_rest_position {
+                                if current_expected.is_none() {
+                                    // No parameter at this position and not at rest:
+                                    // the spread exceeds all declared params → TS2556.
+                                    self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                    continue;
+                                }
+                                // Non-tuple array spread at a non-rest parameter → TS2556
                                 self.error_spread_must_be_tuple_or_rest_at(arg_idx);
                                 // Push ANY to suppress subsequent TS2345 — tsc
                                 // only reports TS2556 here.
@@ -388,22 +400,29 @@ impl<'a> CheckerState<'a> {
                     if self.is_iterable_type(spread_type) {
                         let element_type = self.for_of_element_type(spread_type);
 
-                        // TS2556 check: A non-tuple spread is only valid at
-                        // a rest parameter position.
+                        // TS2556 check: A non-tuple iterable spread is only valid at
+                        // a rest parameter position (same logic as array spread above).
                         let current_expected = expected_for_index(effective_index, expanded_count);
-                        let has_rest_param =
-                            expected_for_index(usize::MAX / 2, expanded_count).is_some();
-                        let target_accepts_spread =
-                            current_expected.is_some_and(|t| t == TypeId::ANY) || has_rest_param;
-                        if !target_accepts_spread && current_expected.is_none() {
-                            // No parameter at this position and no rest param:
-                            // the spread exceeds all declared params → TS2556.
-                            // Don't push to arg_types to avoid a cascading
-                            // TS2554 (arg count mismatch) from the solver.
-                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
-                            continue;
-                        }
-                        if !target_accepts_spread {
+
+                        let at_rest_position =
+                            if let Some(callable_type) = self.ctx.current_callable_type {
+                                let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                    self.ctx.types,
+                                    callable_type,
+                                );
+                                ctx.is_rest_parameter_position(effective_index, expanded_count)
+                            } else {
+                                // No callable type → callee is any/error/unknown; accept spread
+
+                                expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                            };
+
+                        if !at_rest_position {
+                            if current_expected.is_none() {
+                                // No parameter at this position and not at rest → TS2556.
+                                self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                                continue;
+                            }
                             self.error_spread_must_be_tuple_or_rest_at(arg_idx);
                             // When TS2556 is emitted, push ANY to suppress a
                             // subsequent TS2345 — tsc only reports TS2556 here.
@@ -571,12 +590,15 @@ impl<'a> CheckerState<'a> {
         // nested callback/body diagnostics.
         let first_pass_diagnostics_checkpoint = self.ctx.diagnostics.len();
         self.ctx.node_types = Default::default();
+        let prev_callable_type = self.ctx.current_callable_type;
+        self.ctx.current_callable_type = Some(union_contextual);
         let arg_types = self.collect_call_argument_types_with_context(
             args,
             |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
             false,
             None, // No skipping needed for overload resolution
         );
+        self.ctx.current_callable_type = prev_callable_type;
         let temp_node_types = std::mem::take(&mut self.ctx.node_types);
 
         self.ctx.node_types = std::mem::take(&mut original_node_types);
@@ -661,12 +683,15 @@ impl<'a> CheckerState<'a> {
             let diagnostics_checkpoint = self.ctx.diagnostics.len();
             self.ctx.node_types = Default::default();
 
+            let prev_callable_type = self.ctx.current_callable_type;
+            self.ctx.current_callable_type = Some(func_type);
             let sig_arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                 false,
                 None,
             );
+            self.ctx.current_callable_type = prev_callable_type;
 
             self.ensure_relation_input_ready(func_type);
 

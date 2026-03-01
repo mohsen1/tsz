@@ -282,7 +282,6 @@ add(...args);  // Should work
 }
 
 #[test]
-#[ignore = "spread of non-tuple array emits TS2554 instead of TS2556"]
 fn test_spread_in_function_call_with_wrong_types() {
     let source = r#"
 function add(a: number, b: number, c: number) {
@@ -572,5 +571,71 @@ function f(obj: Obj) {
     assert_eq!(
         ts2322_count, 0,
         "Expected no TS2322 for object rest with concrete type, got {ts2322_count}"
+    );
+}
+
+// TS2556: rest parameter position-aware spread checking
+
+#[test]
+fn test_array_spread_at_non_rest_position_emits_ts2556() {
+    // Spread covers non-rest param `a` → TS2556
+    let source = r#"
+declare function withRest(a: any, ...args: any[]): void;
+declare var n: number[];
+withRest(...n);
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert!(
+        ts2556_count >= 1,
+        "Expected TS2556 for non-tuple spread at non-rest position, got {ts2556_count}"
+    );
+}
+
+#[test]
+fn test_array_spread_at_rest_position_no_ts2556() {
+    // Spread covers only rest param `...args` → no TS2556
+    let source = r#"
+declare function withRest(a: any, ...args: any[]): void;
+declare var n: number[];
+withRest('a', ...n);
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert_eq!(
+        ts2556_count, 0,
+        "Expected no TS2556 when spread is at rest position, got {ts2556_count}"
+    );
+}
+
+#[test]
+fn test_array_spread_to_function_without_rest_emits_ts2556() {
+    // Function has no rest param → TS2556
+    let source = r#"
+declare function noRest(a: number, b: number): void;
+declare var n: number[];
+noRest(...n);
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert!(
+        ts2556_count >= 1,
+        "Expected TS2556 for spread to function without rest param, got {ts2556_count}"
+    );
+}
+
+#[test]
+fn test_tuple_spread_at_non_rest_position_no_ts2556() {
+    // Tuple spread has known length → no TS2556 even at non-rest position
+    let source = r#"
+declare function withRest(a: any, ...args: any[]): void;
+declare var t: [number];
+withRest(...t);
+"#;
+    let diagnostics = check_source(source);
+    let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
+    assert_eq!(
+        ts2556_count, 0,
+        "Expected no TS2556 for tuple spread (known length), got {ts2556_count}"
     );
 }

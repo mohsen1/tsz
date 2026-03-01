@@ -3843,7 +3843,6 @@ function test(thing: T | undefined, def: T | undefined) {
     );
 }
 
-<<<<<<< HEAD
 /// Test: IIFE callee gets contextual return type wrapping.
 /// When a function expression is immediately invoked and the call expression
 /// has a contextual type (from a variable annotation), the function expression

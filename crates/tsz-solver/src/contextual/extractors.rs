@@ -632,6 +632,16 @@ pub(crate) fn extract_param_type_at_for_call(
     extract_param_type_at_inner(db, params, index, Some(arg_count))
 }
 
+/// Check if `index` falls at a rest parameter position in the given parameter list.
+pub(crate) fn is_rest_position(params: &[ParamInfo], index: usize) -> bool {
+    let has_rest = params.last().is_some_and(|p| p.rest);
+    if !has_rest {
+        return false;
+    }
+    let rest_start = params.len().saturating_sub(1);
+    index >= rest_start
+}
+
 fn extract_param_type_at_inner(
     db: &dyn TypeDatabase,
     params: &[ParamInfo],
@@ -1087,6 +1097,133 @@ impl<'a> TypeVisitor for ApplicationArgExtractor<'a> {
     fn visit_application(&mut self, app_id: u32) -> Self::Output {
         let app = self.db.type_application(TypeApplicationId(app_id));
         app.args.get(self.arg_index).copied()
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
+// =============================================================================
+// RestPositionCheckExtractor
+// =============================================================================
+
+/// Visitor to check if a given argument index falls at a rest parameter position
+/// for a callable type. Used by TS2556 checking: non-tuple array spreads must
+/// only land on rest parameter positions.
+///
+/// For overloaded callables, returns `true` only if ALL matching signatures
+/// have the index at a rest position. This is conservative — if any signature
+/// treats the position as non-rest, the spread is invalid.
+pub(crate) struct RestPositionCheckExtractor<'a> {
+    db: &'a dyn TypeDatabase,
+    index: usize,
+    arg_count: usize,
+}
+
+impl<'a> RestPositionCheckExtractor<'a> {
+    pub(crate) fn new(db: &'a dyn TypeDatabase, index: usize, arg_count: usize) -> Self {
+        Self {
+            db,
+            index,
+            arg_count,
+        }
+    }
+
+    pub(crate) fn extract(&mut self, type_id: TypeId) -> bool {
+        self.visit_type(self.db, type_id).unwrap_or(false)
+    }
+
+    fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
+        let required_count = params.iter().filter(|p| !p.optional).count();
+        let has_rest = params.iter().any(|p| p.rest);
+        if has_rest {
+            arg_count >= required_count
+        } else {
+            arg_count >= required_count && arg_count <= params.len()
+        }
+    }
+}
+
+impl<'a> TypeVisitor for RestPositionCheckExtractor<'a> {
+    type Output = Option<bool>;
+
+    fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_function(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.function_shape(FunctionShapeId(shape_id));
+        Some(is_rest_position(&shape.params, self.index))
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+
+        // Check both call and construct signatures (super() uses construct sigs)
+        let all_sigs: Vec<&[ParamInfo]> = shape
+            .call_signatures
+            .iter()
+            .chain(shape.construct_signatures.iter())
+            .map(|sig| sig.params.as_slice())
+            .collect();
+
+        if all_sigs.is_empty() {
+            return None;
+        }
+
+        // Check matching signatures first
+        let mut any_matched = false;
+        let mut all_rest = true;
+        for &params in &all_sigs {
+            if self.signature_accepts_arg_count(params, self.arg_count) {
+                any_matched = true;
+                if !is_rest_position(params, self.index) {
+                    all_rest = false;
+                }
+            }
+        }
+
+        if !any_matched {
+            // Fall back to all signatures
+            for &params in &all_sigs {
+                if !is_rest_position(params, self.index) {
+                    return Some(false);
+                }
+            }
+            return Some(true);
+        }
+
+        Some(all_rest)
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        // If any member says non-rest, the spread is invalid
+        for &m in members.iter() {
+            let mut extractor =
+                RestPositionCheckExtractor::new(self.db, self.index, self.arg_count);
+            if !extractor.extract(m) {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let members = self.db.type_list(TypeListId(list_id));
+        for &m in members.iter() {
+            let mut extractor =
+                RestPositionCheckExtractor::new(self.db, self.index, self.arg_count);
+            if let Some(result) = extractor.visit_type(self.db, m) {
+                return Some(result);
+            }
+        }
+        None
     }
 
     fn default_output() -> Self::Output {

@@ -5,8 +5,8 @@
 use crate::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
-    PropertyExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
-    TupleElementExtractor, collect_single_or_union,
+    PropertyExtractor, RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor,
+    ThisTypeMarkerExtractor, TupleElementExtractor, collect_single_or_union,
 };
 #[cfg(test)]
 use crate::types::*;
@@ -255,6 +255,46 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Use visitor for Function/Callable types
         let mut extractor = ParameterForCallExtractor::new(self.interner, index, arg_count);
+        extractor.extract(expected)
+    }
+
+    /// Check if argument at `index` falls at a rest parameter position in the expected callable.
+    ///
+    /// Returns `true` if the expected callable's parameter at `index` is a rest parameter.
+    /// For overloaded callables, returns `true` only if ALL matching signatures agree.
+    /// Returns `false` if the expected type is not callable or `index` is at a non-rest position.
+    pub fn is_rest_parameter_position(&self, index: usize, arg_count: usize) -> bool {
+        let Some(expected) = self.expected else {
+            return false;
+        };
+
+        // Unwrap Application to base type
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            return ctx.is_rest_parameter_position(index, arg_count);
+        }
+
+        // Handle TypeParameter via constraint
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.is_rest_parameter_position(index, arg_count);
+        }
+
+        // Evaluate Mapped/Conditional/Lazy
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.is_rest_parameter_position(index, arg_count);
+            }
+        }
+
+        let mut extractor = RestPositionCheckExtractor::new(self.interner, index, arg_count);
         extractor.extract(expected)
     }
 

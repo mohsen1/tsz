@@ -407,12 +407,14 @@ takesAny({ a: 1 });  // Should pass
 
 #[test]
 fn test_any_with_const_assertion() {
-    // as const should still work when source is any
-    test_no_errors(
+    // tsc emits TS1355: `as const` can only be applied to literals/enum refs,
+    // not to variables — even when the variable has type `any`.
+    test_expect_error(
         r#"
 let a: any = 42;
-const b = a as const;  // Should pass (any as const is any)
+const b = a as const;
 "#,
+        "A 'const' assertion can only be applied to",
     );
 }
 
