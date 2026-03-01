@@ -791,7 +791,16 @@ impl<'a> CheckerState<'a> {
             // collapse `T & {children?: ReactNode}` into a concrete object type
             // that loses the type parameter information.
             let raw_has_type_params = tsz_solver::contains_type_parameters(self.ctx.types, props);
-            let evaluated = self.evaluate_type_with_env(props);
+            // When the raw props type is already a union (e.g., discriminated unions like
+            // `{ variant: Avatar } | { variant: OneLine }`), skip full evaluation.
+            // The type evaluator may incorrectly merge union members with the same
+            // property names into a single object, losing the discriminated union
+            // structure needed for correct assignability checking.
+            let evaluated = if tsz_solver::is_union_type(self.ctx.types, props) {
+                props
+            } else {
+                self.evaluate_type_with_env(props)
+            };
             return Some((evaluated, raw_has_type_params));
         }
 
@@ -1153,7 +1162,6 @@ impl<'a> CheckerState<'a> {
             self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx);
             return;
         }
-
         // When props_type is any/error or contains error types, skip attribute-vs-props
         // checking but still validate spread types (TS2698) which is independent of props.
         let skip_prop_checks = props_type == TypeId::ANY
