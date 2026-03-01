@@ -1326,9 +1326,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 s_prop.type_id,
                                 t_prop.type_id,
                                 target_placeholder,
-                            ) {
-                                return Some(reversed);
-                            }
+                            )
+                        {
+                            return Some(reversed);
+                        }
                     }
                 }
             }
