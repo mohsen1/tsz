@@ -359,9 +359,8 @@ impl<'a> CheckerState<'a> {
         let module_name = &literal.text;
         let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
         let is_side_effect_import = !has_import_clause;
-        // Note: side-effect imports (import "module") must NOT return early here even when
-        // no_unchecked_side_effect_imports=false. They need to reach the resolution error check
-        // so TS2882 can be emitted for unresolved modules. We return early AFTER that check.
+        // Note: side-effect imports may return early in the resolution error check below
+        // when no_unchecked_side_effect_imports=false (silently ignoring unresolved modules).
         let is_type_only_import = self
             .ctx
             .arena
@@ -478,8 +477,14 @@ impl<'a> CheckerState<'a> {
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
                 || error_code == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
             {
-                // Side-effect imports use TS2882 instead of TS2307/TS2792
+                // Side-effect imports use TS2882 instead of TS2307/TS2792,
+                // but only when noUncheckedSideEffectImports is enabled.
+                // When disabled, side-effect imports with resolution errors are silently ignored.
                 if is_side_effect_import {
+                    if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+                        self.ctx.import_resolution_stack.pop();
+                        return;
+                    }
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                     error_code = diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF;
                     error_message = format_message(
