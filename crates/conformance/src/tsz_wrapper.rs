@@ -678,6 +678,10 @@ fn convert_options_to_tsconfig(
     // conformance test runner strips source pragmas before writing test files, so
     // tsz can only read options from the tsconfig. We must expand strict here to
     // ensure tsz gets the correct sub-options.
+    //
+    // Expand for both `strict: true` and `strict: false` to match the cache generator.
+    // When `strict: false`, the sub-options default to false, and tsc 6.0 emits TS5107
+    // for deprecated values like `alwaysStrict: false`.
     if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
         let strict = *strict;
         for key in [
