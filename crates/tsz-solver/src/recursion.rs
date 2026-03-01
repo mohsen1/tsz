@@ -154,9 +154,8 @@ impl RecursionProfile {
     pub const fn max_depth(self) -> u32 {
         match self {
             Self::SubtypeCheck => 100,
-            Self::TypeEvaluation
-            | Self::TypeApplication
-            | Self::PropertyAccess
+            Self::TypeEvaluation | Self::TypeApplication => 100,
+            Self::PropertyAccess
             | Self::Variance
             | Self::ShapeExtraction
             | Self::ConstAssertion

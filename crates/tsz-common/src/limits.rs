@@ -51,7 +51,7 @@
 /// type Huge = BuildTuple<999>;
 /// //   ~~~~ TS2589
 /// ```
-pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
+pub const MAX_INSTANTIATION_DEPTH: u32 = 100;
 
 /// Maximum depth for function call resolution.
 ///
