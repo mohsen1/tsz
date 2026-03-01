@@ -153,8 +153,7 @@ impl RecursionProfile {
     /// Maximum recursion depth for this profile.
     pub const fn max_depth(self) -> u32 {
         match self {
-            Self::SubtypeCheck => 100,
-            Self::TypeEvaluation | Self::TypeApplication => 100,
+            Self::SubtypeCheck | Self::TypeEvaluation | Self::TypeApplication => 100,
             Self::PropertyAccess
             | Self::Variance
             | Self::ShapeExtraction

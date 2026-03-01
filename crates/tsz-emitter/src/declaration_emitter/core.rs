@@ -1085,10 +1085,21 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(prop.type_annotation);
         } else if !is_private {
-            // For non-private properties without explicit type, infer it.
-            // Abstract properties, properties with initializers, and properties from
-            // non-declaration source files all need type inference.
-            if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
+            // For readonly properties with an enum member access initializer (e.g., `readonly type = E.A`),
+            // emit the initializer expression directly, matching tsc behavior.
+            let use_enum_initializer = is_readonly
+                && !is_abstract
+                && !prop.question_token
+                && prop.initializer.is_some()
+                && self
+                    .arena
+                    .get(prop.initializer)
+                    .is_some_and(|n| self.is_simple_enum_access(n));
+
+            if use_enum_initializer {
+                self.write(" = ");
+                self.emit_expression(prop.initializer);
+            } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // For readonly properties with literal types, use `= value` form
                 // (same as const declarations in tsc)
                 if is_readonly
