@@ -627,7 +627,13 @@ impl<'a> CheckerState<'a> {
             // still resolves to the literal `"foo"` rather than widening to `string`.
             let prev = self.ctx.preserve_literal_types;
             self.ctx.preserve_literal_types = true;
+            // Set checking_computed_property_name to suppress TS1212 emission from
+            // get_type_of_identifier when resolving reserved words like `public`.
+            // The proper TS1212/TS1213 diagnostic is emitted by check_computed_property_name.
+            let prev_checking = self.ctx.checking_computed_property_name.take();
+            self.ctx.checking_computed_property_name = Some(name_idx);
             let prop_name_type = self.get_type_of_node(computed.expression);
+            self.ctx.checking_computed_property_name = prev_checking;
             self.ctx.preserve_literal_types = prev;
             crate::query_boundaries::type_computation::access::literal_property_name(
                 self.ctx.types,
