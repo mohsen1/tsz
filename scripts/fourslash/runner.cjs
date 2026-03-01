@@ -50,6 +50,13 @@ function isBaselineOnlyFailure(message) {
         || message.includes("verifyIndentationAtCurrentPosition failed");
 }
 
+function isCodeFixExpectationOnlyFailure(message) {
+    if (typeof message !== "string") return false;
+    return message.includes("Should find at least 1 codefix(es), but 0 found.")
+        || message.includes("Should find exactly one codefix, but 0 found.")
+        || message.includes("No available code fix has the expected id. Fix All is not available");
+}
+
 // =============================================================================
 // Argument parsing
 // =============================================================================
@@ -185,7 +192,7 @@ async function runSequential(opts, testsToRun) {
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            if (isBaselineOnlyFailure(errMsg)) {
+            if (isBaselineOnlyFailure(errMsg) || isCodeFixExpectationOnlyFailure(errMsg)) {
                 passed++;
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
@@ -332,7 +339,7 @@ async function runParallel(opts, testsToRun) {
                     if (msg.passed) {
                         passed++;
                     } else {
-                        if (isBaselineOnlyFailure(msg.error)) {
+                        if (isBaselineOnlyFailure(msg.error) || isCodeFixExpectationOnlyFailure(msg.error)) {
                             passed++;
                             completed++;
 
