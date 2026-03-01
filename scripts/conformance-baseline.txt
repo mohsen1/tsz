@@ -2573,6 +2573,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -2780,7 +2781,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/no
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionTypeInference.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/initializersWidened.ts
-FAIL TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeCallSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeObjectLiteral.ts
 FAIL TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes2.ts
@@ -11835,7 +11835,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
@@ -12365,6 +12364,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/un
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/arrayLiteralWidened.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/objectLiteralWidened.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/strictNullChecksNoWidening.ts
+PASS TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeCallSignatures.ts
 PASS TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeIndexSignatures.ts
 PASS TypeScript/tests/cases/conformance/types/union/contextualTypeWithUnionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/union/discriminatedUnionTypes3.ts
