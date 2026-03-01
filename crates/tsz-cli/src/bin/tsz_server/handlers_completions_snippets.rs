@@ -83,10 +83,7 @@ impl Server {
                 if !params.starts_with('(') || !params.ends_with(')') || return_type.is_empty() {
                     return None;
                 }
-                Some(format!(
-                    "public {}{}: {} {{\n}}",
-                    item.label, params, return_type
-                ))
+                Some(format!("{}{}: {} {{\n}}", item.label, params, return_type))
             }
             _ => None,
         }
