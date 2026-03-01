@@ -311,6 +311,53 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    /// Check if the source has any property whose type conflicts with the Object
+    /// interface's property of the same name.
+    ///
+    /// For example, `{ toString: number }` conflicts because Object requires
+    /// `toString: () => string`. But `{ x: number }` doesn't conflict because
+    /// `x` is not a property of Object.
+    fn has_conflicting_properties_with_object(
+        &mut self,
+        source: TypeId,
+        object_target: TypeId,
+    ) -> bool {
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+            _ => return false,
+        };
+        let target_shape_id = match self.interner.lookup(object_target) {
+            Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+            _ => return false,
+        };
+
+        let source_props: Vec<_> = self
+            .interner
+            .object_shape(source_shape_id)
+            .properties
+            .clone();
+        let target_props: Vec<_> = self
+            .interner
+            .object_shape(target_shape_id)
+            .properties
+            .clone();
+
+        for source_prop in &source_props {
+            if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
+                // Source has a property with the same name as an Object property.
+                // Check if the types are compatible.
+                self.configure_subtype(self.strict_function_types);
+                if !self
+                    .subtype
+                    .is_subtype_of(source_prop.type_id, target_prop.type_id)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn is_function_target_member(&self, member: TypeId) -> bool {
         let is_function_object_shape = match self.interner.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
@@ -673,6 +720,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return (true, false);
         }
 
+        // The global `Object` interface (capital O from lib.d.ts) also accepts any
+        // properties, just like `object`/`{}`. When it appears as a union member
+        // (e.g., `Object | string`), excess property checking should be suppressed.
+        if self.is_global_object_interface_target(type_id) {
+            return (true, false);
+        }
+
         let type_id = match self.interner.lookup(type_id) {
             Some(TypeData::Lazy(def_id)) => self
                 .subtype
@@ -828,11 +882,31 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // Object interface: any non-nullable source is assignable to Object.
-        // The checker pre-evaluates Lazy(DefId) types, so the Object interface
-        // identity is lost. Detect structurally via property names.
-        if self.is_global_object_interface_target(target) && !source.is_nullable() {
-            return true;
+        // Object interface: any non-nullable source is assignable to Object,
+        // provided it doesn't have conflicting property types. The Object
+        // interface from lib.d.ts has methods like toString, valueOf, etc.
+        // that all objects inherit from Object.prototype, so missing them
+        // is fine. But if the source explicitly declares a conflicting type
+        // (e.g., `toString: number`), it should fail.
+        // Also check union members: e.g., `Object | string` should accept any
+        // non-nullable, non-conflicting value.
+        if !source.is_nullable() {
+            let object_target = if self.is_global_object_interface_target(target) {
+                Some(target)
+            } else if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
+                let members = self.interner.type_list(members_id);
+                members
+                    .iter()
+                    .find(|&&m| self.is_global_object_interface_target(m))
+                    .copied()
+            } else {
+                None
+            };
+            if let Some(obj_target) = object_target {
+                if !self.has_conflicting_properties_with_object(source, obj_target) {
+                    return true;
+                }
+            }
         }
 
         // Function interface: any callable source is assignable to Function.
