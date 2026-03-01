@@ -493,8 +493,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -983,11 +981,6 @@ FAIL TypeScript/tests/cases/compiler/nodeNextImportModeImplicitIndexResolution.t
 FAIL TypeScript/tests/cases/compiler/nodeNextModuleResolution1.ts
 FAIL TypeScript/tests/cases/compiler/nodeNextModuleResolution2.ts
 FAIL TypeScript/tests/cases/compiler/nodeNextPackageImportMapRootDir.ts
-FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDir.ts
-FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDir.ts
-FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirComposite.ts
-FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirCompositeNestedDirs.ts
-FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirNestedDirs.ts
 FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirRootDir.ts
 FAIL TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirRootDir.ts
 FAIL TypeScript/tests/cases/compiler/noEmitAndCompositeListFilesOnly.ts
@@ -1239,7 +1232,6 @@ FAIL TypeScript/tests/cases/compiler/signatureLengthMismatchWithOptionalParamete
 FAIL TypeScript/tests/cases/compiler/simpleRecursionWithBaseCase1.ts
 FAIL TypeScript/tests/cases/compiler/simpleRecursionWithBaseCase3.ts
 FAIL TypeScript/tests/cases/compiler/slightlyIndirectedDeepObjectLiteralElaborations.ts
-FAIL TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForObjectBindingPatternDefaultValues2.ts
 FAIL TypeScript/tests/cases/compiler/sourceMapValidationStatements.ts
 FAIL TypeScript/tests/cases/compiler/specialIntersectionsInMappedTypes.ts
 FAIL TypeScript/tests/cases/compiler/spellingSuggestionJSXAttribute.tsx
@@ -1281,7 +1273,6 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties4.ts
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts
-FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts
 FAIL TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
@@ -1336,7 +1327,6 @@ FAIL TypeScript/tests/cases/compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx
 FAIL TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
-FAIL TypeScript/tests/cases/compiler/tsxResolveExternalModuleExportsTypes.ts
 FAIL TypeScript/tests/cases/compiler/tsxSpreadDoesNotReportExcessProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts
@@ -1558,7 +1548,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateInstanceShadowingPublicInstance.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedClassWithPrivateStaticShadowingPublicStatic.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/inheritanceAndOverriding/derivedGenericClassWithAny.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/superInStaticMembers1.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers10.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers11.ts
@@ -1579,7 +1568,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameDuplicateField.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameEmitHelpers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldDerivedClasses.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldDestructuredBinding.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameHashCharName.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpressionTransform.ts
@@ -1593,7 +1581,6 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndIndexedAccess.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndkeyof.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticFields.ts
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-2.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts
@@ -1683,7 +1670,6 @@ FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnArrowFunct
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnAwait.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnEnum2.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionExpression.ts
-FAIL TypeScript/tests/cases/conformance/directives/multiline.tsx
 FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
 FAIL TypeScript/tests/cases/conformance/directives/ts-ignore.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
@@ -5202,6 +5188,8 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6368,6 +6356,11 @@ PASS TypeScript/tests/cases/compiler/nodeNextCjsNamespaceImportDefault1.ts
 PASS TypeScript/tests/cases/compiler/nodeNextCjsNamespaceImportDefault2.ts
 PASS TypeScript/tests/cases/compiler/nodeNextEsmImportsOfPackagesWithExtensionlessMains.ts
 PASS TypeScript/tests/cases/compiler/nodeNextImportModeImplicitIndexResolution2.ts
+PASS TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDir.ts
+PASS TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDir.ts
+PASS TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirComposite.ts
+PASS TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirCompositeNestedDirs.ts
+PASS TypeScript/tests/cases/compiler/nodeNextPackageSelfNameWithOutDirDeclDirNestedDirs.ts
 PASS TypeScript/tests/cases/compiler/nodeResolution1.ts
 PASS TypeScript/tests/cases/compiler/nodeResolution2.ts
 PASS TypeScript/tests/cases/compiler/nodeResolution3.ts
@@ -7093,6 +7086,7 @@ PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForArrayBin
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForObjectBindingPattern.ts
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForObjectBindingPattern2.ts
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForObjectBindingPatternDefaultValues.ts
+PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForObjectBindingPatternDefaultValues2.ts
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfArrayBindingPattern.ts
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfArrayBindingPattern2.ts
 PASS TypeScript/tests/cases/compiler/sourceMapValidationDestructuringForOfArrayBindingPatternDefaultValues.ts
@@ -8243,6 +8237,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldAssignment.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldCallExpression.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldClassExpression.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldDestructuredBinding.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldInitializer.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldParenthesisLeftAssignment.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameFieldsESNext.ts
@@ -8272,6 +8267,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAndStaticMethods.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesAssertion.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesConstructorChain-1.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterExprReturnValue.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameSetterNoGetter.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInNestedClasses-1.ts
