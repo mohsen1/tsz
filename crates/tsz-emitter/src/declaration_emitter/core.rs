@@ -1071,6 +1071,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
         };
+        let prop_node_end = prop_node.end;
         let Some(prop) = self.arena.get_property_decl(prop_node) else {
             return;
         };
@@ -1146,6 +1147,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write(";");
+        self.emit_trailing_comment(prop_node_end);
         self.write_line();
     }
 

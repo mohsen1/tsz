@@ -1056,6 +1056,44 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Check if there is a trailing block comment on the same source line as `node_end`,
+    /// and if so, emit it (space-separated) before the caller emits a newline.
+    /// Returns true if a trailing comment was emitted.
+    pub(crate) fn emit_trailing_comment(&mut self, node_end: u32) -> bool {
+        if self.remove_comments {
+            return false;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        if self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+        let c_end = self.all_comments[self.comment_emit_idx].end;
+        // The comment must start after the node end
+        if c_pos < node_end {
+            return false;
+        }
+        let ct = &text[c_pos as usize..c_end as usize];
+        // Only handle block comments (/* ... */), not line comments
+        if !ct.starts_with("/*") {
+            return false;
+        }
+        // Check that there's no newline between node_end and the comment start
+        let between = &bytes[node_end as usize..c_pos as usize];
+        if between.contains(&b'\n') || between.contains(&b'\r') {
+            return false;
+        }
+        // Emit as trailing comment
+        self.write(" ");
+        self.write(ct);
+        self.comment_emit_idx += 1;
+        true
+    }
+
     /// Advance the comment index past any comments that end before `pos`,
     /// without emitting them. Used to skip comments that belong to a parent
     /// context (e.g. comments between `:` and the type's opening paren).
