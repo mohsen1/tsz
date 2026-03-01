@@ -107,7 +107,24 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(lit) = self.arena.get_literal(node) {
                     let quote = self.original_quote_char(node);
                     self.write(quote);
-                    self.write(&lit.text);
+                    // Escape special characters that can't appear raw in string literals
+                    // (e.g., template literals produce cooked text with actual newlines)
+                    if lit.text.contains('\n')
+                        || lit.text.contains('\r')
+                        || lit.text.contains('\t')
+                        || lit.text.contains('\0')
+                    {
+                        let escaped = lit
+                            .text
+                            .replace('\\', "\\\\")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t")
+                            .replace('\0', "\\0");
+                        self.write(&escaped);
+                    } else {
+                        self.write(&lit.text);
+                    }
                     self.write(quote);
                 }
             }
