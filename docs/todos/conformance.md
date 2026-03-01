@@ -1,7 +1,56 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9706/12570 (77.2%) — full suite, error-code level
+**Current score**: ~9715/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01h — types/conditional: return type inference with type guard narrowing
+
+### Fixed: False TS2722 from missing type guard narrowing during return type inference — Checker (return_type.rs)
+
+**Area**: types/conditional (60.0% → improved), also benefits other areas
+
+**Root cause**: `collect_return_types_in_statement` in `return_type.rs` walked if-statement branches to find return expressions, but never evaluated the if-condition expression. This meant call-expression type guards (e.g. `isFunction(item)`) never had their callee types cached in `node_types`, so flow narrowing couldn't extract the type predicate. The returned identifier kept its declared (un-narrowed) type.
+
+For example, in:
+```typescript
+declare function isFunction<T>(value: T): value is Extract<T, Function>;
+function getFunction<T>(item: T) {
+    if (isFunction(item)) { return item; }
+    throw new Error();
+}
+```
+The inferred return type of `getFunction<T>` was `T` instead of `Extract<T, Function>`. When instantiated with `T = string | (() => string) | undefined`, callers got the full union instead of the filtered `() => string`, causing false TS2722 ("Cannot invoke an object which is possibly 'undefined'").
+
+**Fix**: Added `self.get_type_of_node(if_data.expression)` before recursing into then/else branches in the IF_STATEMENT arm of `collect_return_types_in_statement`. This populates `node_types` with the callee type and `call_type_predicates` with the type predicate, enabling flow narrowing for identifiers in the branches.
+
+**Tests**: 2 unit tests:
+- `return_type_inference_uses_type_guard_narrowing` — generic Extract type guard
+- `return_type_inference_uses_non_generic_type_guard` — non-generic type guard with interface predicate
+
+**Impact**: +4 conformance tests (conditionalTypes2, assertionFunctionWildcardImport2, genericCallInferenceConditionalType2, privateNamesConstructorChain-1/2), 0 regressions.
+
+### Also: extracted variable_checking/core.rs tests to core_tests.rs
+
+The file was 2035 LOC, exceeding the 2000 LOC architecture limit. Test modules (TS2481, TS2397, TS2403 tests) moved to `core_tests.rs` using `#[path = "core_tests.rs"]`, bringing `core.rs` down to 1588 LOC.
+
+### Not fixed: Missing TS2403 in conditionalTypes1.ts — Solver (conditional type identity)
+
+**Area**: types/conditional (conditionalTypes1.ts line 264)
+
+**Symptom**: `var z: T1; var z: T2;` where `T1 = T & U extends string ? boolean : number` (non-distributive) and `T2 = Foo<T & U>` with `Foo<T> = T extends string ? boolean : number` (distributive). tsc emits TS2403 because these are not identical types. Our solver considers them bidirectionally subtypes.
+
+**Root cause**: The `are_var_decl_types_compatible` bidirectional subtype fallback doesn't distinguish between distributive vs non-distributive conditional types. `T extends U ? X : Y` where `T` is a bare type parameter distributes over unions, while `T & U extends V ? X : Y` does not. Our solver treats them as equivalent because they have the same check type expression.
+
+**Fix direction**: The solver's identity/subtype check needs to compare conditional type distributivity. A conditional type with a bare type parameter check type is structurally different from one with an intersection check type, even if they would produce the same result for any single input type.
+
+**Estimated scope**: ~50-100 LOC in solver relation logic, medium complexity. Requires careful testing to avoid false TS2403 regressions.
+
+### Remaining types/conditional gaps (3 failing after this session):
+1. **conditionalTypes1.ts** — missing TS2403 (see above)
+2. **conditionalTypesExcessProperties.ts** — error codes match but fingerprint-level mismatch
+3. **inferTypes1.ts** — missing TS2322, extra TS2349/TS2556 (Application resolution gap, documented in session 2026-03-01g)
 
 ---
 
