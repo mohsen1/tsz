@@ -66,6 +66,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) import_plan: ImportPlan,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     pub(super) inside_declare_namespace: bool,
+    /// Symbol of the innermost enclosing namespace (for context-relative type names)
+    pub(super) enclosing_namespace_symbol: Option<SymbolId>,
     /// Whether we're inside a non-ambient namespace (filter non-exported members)
     pub(super) inside_non_ambient_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -149,6 +151,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            enclosing_namespace_symbol: None,
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -198,6 +201,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            enclosing_namespace_symbol: None,
             inside_non_ambient_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),

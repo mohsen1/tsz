@@ -458,11 +458,12 @@ impl<'a> CheckerState<'a> {
                     .get_cross_file_symbol(member_sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
             {
-                // Skip type-only members (e.g., `export type { A }`).
+                // Skip type-only members (e.g., `export type { A }`, interfaces).
                 // These should not be resolved as values; let the code fall
-                // through to TS2339 "property doesn't exist" handling.
+                // through to TS2693 "type only" or TS2339 "property doesn't exist" handling.
                 if !member_symbol.is_type_only
                     && !self.symbol_member_is_type_only(member_sym_id, Some(property_name))
+                    && (member_symbol.flags & symbol_flags::VALUE) != 0
                 {
                     let parent_sym_id = member_symbol.parent;
                     if let Some(parent_symbol) = self

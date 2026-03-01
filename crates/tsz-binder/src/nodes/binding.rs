@@ -1048,12 +1048,19 @@ impl BinderState {
                 // The existing_id is from a lib binder, not our local binder.
                 // Create a new symbol in the local binder to shadow the lib symbol.
                 let sym_id = self.symbols.alloc(flags, name.to_string());
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     sym.declarations.push(declaration);
                     if (flags & symbol_flags::VALUE) != 0 {
                         sym.value_declaration = declaration;
                     }
                     sym.is_exported = is_exported;
+                    if let Some(parent_id) = container_sym {
+                        sym.parent = parent_id;
+                    }
                 }
                 // Update current_scope to point to the local symbol (shadowing)
                 self.current_scope.set(name.to_string(), sym_id);
@@ -1083,12 +1090,19 @@ impl BinderState {
                 && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
             {
                 let sym_id = self.symbols.alloc(flags, name.to_string());
+                let container_sym = self
+                    .scope_chain
+                    .get(self.current_scope_idx)
+                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     sym.declarations.push(declaration);
                     if (flags & symbol_flags::VALUE) != 0 {
                         sym.value_declaration = declaration;
                     }
                     sym.is_exported = is_exported;
+                    if let Some(parent_id) = container_sym {
+                        sym.parent = parent_id;
+                    }
                 }
                 self.current_scope.set(name.to_string(), sym_id);
                 self.file_locals.set(name.to_string(), sym_id);
@@ -1139,12 +1153,20 @@ impl BinderState {
         }
 
         let sym_id = self.symbols.alloc(flags, name.to_string());
+        // Set parent to the current container's symbol (namespace, class, etc.)
+        let container_sym = self
+            .scope_chain
+            .get(self.current_scope_idx)
+            .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
         if let Some(sym) = self.symbols.get_mut(sym_id) {
             sym.declarations.push(declaration);
             if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
                 sym.value_declaration = declaration;
             }
             sym.is_exported = is_exported;
+            if let Some(parent_id) = container_sym {
+                sym.parent = parent_id;
+            }
         }
         self.current_scope.set(name.to_string(), sym_id);
 

@@ -1509,6 +1509,11 @@ impl<'a> DeclarationEmitter<'a> {
                 printer = printer.with_type_cache(cache);
             }
 
+            // Set enclosing namespace for context-relative qualified names
+            if let Some(enc_sym) = self.enclosing_namespace_symbol {
+                printer = printer.with_enclosing_symbol(enc_sym);
+            }
+
             printer.print_type(type_id)
         } else {
             // Fallback if no interner available

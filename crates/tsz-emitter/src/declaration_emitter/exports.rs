@@ -1013,6 +1013,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Collect dotted namespace name segments: namespace A.B.C { ... }
         // is represented as a chain of ModuleDeclaration nodes
         let mut current_body = module.body;
+        let mut innermost_ns_idx = module_idx;
         loop {
             if !current_body.is_some() {
                 break;
@@ -1024,6 +1025,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // Body is another module declaration — emit dotted name
                 self.write(".");
                 self.emit_node(nested_mod.name);
+                innermost_ns_idx = current_body;
                 current_body = nested_mod.body;
             } else {
                 break;
@@ -1038,6 +1040,13 @@ impl<'a> DeclarationEmitter<'a> {
             // Inside a declare namespace, don't emit 'declare' keyword for members
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
+            // Track innermost namespace symbol for context-relative type names
+            let prev_enclosing_ns = self.enclosing_namespace_symbol;
+            if let Some(binder) = self.binder
+                && let Some(ns_sym) = binder.get_node_symbol(innermost_ns_idx)
+            {
+                self.enclosing_namespace_symbol = Some(ns_sym);
+            }
             let prev_public_api_scope_depth = self.public_api_scope_depth;
             let prev_inside_non_ambient_namespace = self.inside_non_ambient_namespace;
             // In declare/ambient namespaces, all members are implicitly public,
@@ -1109,6 +1118,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.public_api_scope_depth = prev_public_api_scope_depth;
             self.inside_non_ambient_namespace = prev_inside_non_ambient_namespace;
             self.inside_declare_namespace = prev_inside_declare_namespace;
+            self.enclosing_namespace_symbol = prev_enclosing_ns;
             self.decrease_indent();
             self.write_indent();
             self.write("}");
