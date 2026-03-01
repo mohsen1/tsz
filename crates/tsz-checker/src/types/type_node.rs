@@ -1254,6 +1254,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ///
     /// This function validates the mapped type and emits TS7039 if the type expression
     /// after the colon is missing (e.g., `{[P in "bar"]}` instead of `{[P in "bar"]: string}`).
+    ///
+    /// Note: TS2322 constraint validation (key type must be assignable to
+    /// `string | number | symbol`) is handled by `CheckerState::check_mapped_type_constraint`
+    /// in `check_type_node`, which covers both top-level and conditional-nested mapped types.
     fn get_type_from_mapped_type(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::NodeIndex as ParserNodeIndex;
 
