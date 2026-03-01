@@ -1004,8 +1004,8 @@ impl Server {
             }
             let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
             if item.is_snippet {
-                entry["filterText"] = serde_json::json!(item.label.clone());
                 if !is_class_member_snippet {
+                    entry["filterText"] = serde_json::json!(item.label.clone());
                     entry["isSnippet"] = serde_json::json!(true);
                 }
             }
