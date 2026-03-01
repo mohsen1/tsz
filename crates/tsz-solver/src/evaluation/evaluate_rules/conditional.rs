@@ -315,7 +315,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(substituted_true);
                 }
 
-                // Infer pattern didn't match — take the false branch.
+                // Infer pattern didn't match on check_type directly.
+                // If check_type is a generic type (IndexAccess, KeyOf, etc.) containing
+                // type parameters, try matching with the constraint/upper bound of the
+                // check_type. For example, ReturnType<T[M]> where T extends FunctionsObj<T>:
+                // T[M]'s constraint resolves to () => unknown, which matches (...args) => infer R.
+                //
+                // If the constraint ALSO fails to match, take the false branch (the check_type's
+                // constraint is the most permissive instantiation, so a match failure is definitive).
+                // If the constraint matches, defer — the actual type may match differently once
+                // instantiated.
+                if crate::visitor::contains_type_parameters(self.interner(), check_type) {
+                    let constraint = self.resolve_generic_constraint(check_type);
+                    if let Some(constraint) = constraint
+                        && constraint != check_type {
+                            let mut bindings2 = FxHashMap::default();
+                            let mut visited2 = FxHashSet::default();
+                            let mut checker2 =
+                                SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                            checker2.allow_bivariant_rest = true;
+                            if self.match_infer_pattern(
+                                constraint,
+                                extends_type,
+                                &mut bindings2,
+                                &mut visited2,
+                                &mut checker2,
+                            ) {
+                                // Constraint matched the infer pattern. Take the true branch
+                                // with the inferred type bindings from the constraint match.
+                                // Example: ReturnType<T[M]> where T[M]'s constraint is () => unknown
+                                // matches (...args) => infer R, giving R = unknown.
+                                // True branch is R, so result is unknown.
+                                let substituted_true =
+                                    self.substitute_infer(cond.true_type, &bindings2);
+                                return self.evaluate(substituted_true);
+                            }
+                        }
+                }
+
+                // Infer match failed (and constraint doesn't match either) — take the false branch.
                 // Check if the false branch is a tail-recursive conditional.
                 // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
                 if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
@@ -438,6 +476,54 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Not a tail-recursive case - evaluate normally
             return self.evaluate(result_branch);
+        }
+    }
+
+    /// Resolve the base constraint of a generic type by substituting type parameters
+    /// with their constraints. This is used to determine if a generic `check_type` COULD
+    /// match an extends pattern with infer types.
+    ///
+    /// For example:
+    /// - `T` where `T extends () => unknown` → `() => unknown`
+    /// - `T[M]` where `T extends { [K in keyof T]: () => unknown }` → resolves through index access
+    /// - `KeyOf(T)` → stays as-is (keyof constraints are complex)
+    ///
+    /// Returns `Some(resolved)` if a constraint could be computed, `None` otherwise.
+    fn resolve_generic_constraint(&mut self, type_id: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::TypeParameter(param)) => param.constraint,
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                // For MappedType[TypeParam], if the TypeParam's constraint matches
+                // the mapped type's key constraint, return the template type.
+                // Example: { [K in keyof T]: () => unknown }[M] where M extends keyof T
+                // → () => unknown
+                if let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(obj) {
+                    let mapped = self.interner().mapped_type(mapped_id);
+                    if mapped.name_type.is_none() {
+                        let evaluated_template = self.evaluate(mapped.template);
+                        if !crate::visitor::contains_type_parameters(
+                            self.interner(),
+                            evaluated_template,
+                        ) {
+                            return Some(evaluated_template);
+                        }
+                    }
+                }
+                // Fallback: try resolving the object type's constraint
+                let obj_constraint = self.resolve_generic_constraint(obj);
+                if let Some(obj_constraint) = obj_constraint
+                    && obj_constraint != obj {
+                        let resolved =
+                            self.evaluate(self.interner().index_access(obj_constraint, idx));
+                        if resolved != type_id
+                            && !crate::visitor::contains_type_parameters(self.interner(), resolved)
+                        {
+                            return Some(resolved);
+                        }
+                    }
+                None
+            }
+            _ => None,
         }
     }
 
