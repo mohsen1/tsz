@@ -498,20 +498,21 @@ impl<'a> CheckerState<'a> {
         // (e.g. `class extends D.B { ... }`) but don't recurse into the body
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
             if let Some(class) = self.ctx.arena.get_class_at(node_idx)
-                && let Some(heritage_clauses) = &class.heritage_clauses {
-                    for &clause_idx in &heritage_clauses.nodes {
-                        if let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) {
-                            // Only check extends, not implements
-                            if clause.token == SyntaxKind::ExtendsKeyword as u16 {
-                                for &type_idx in &clause.types.nodes {
-                                    self.collect_static_accesses_recursive(
-                                        type_idx, class_name, accesses,
-                                    );
-                                }
+                && let Some(heritage_clauses) = &class.heritage_clauses
+            {
+                for &clause_idx in &heritage_clauses.nodes {
+                    if let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) {
+                        // Only check extends, not implements
+                        if clause.token == SyntaxKind::ExtendsKeyword as u16 {
+                            for &type_idx in &clause.types.nodes {
+                                self.collect_static_accesses_recursive(
+                                    type_idx, class_name, accesses,
+                                );
                             }
                         }
                     }
                 }
+            }
             return;
         }
 
