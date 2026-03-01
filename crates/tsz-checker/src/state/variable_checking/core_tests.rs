@@ -1,0 +1,450 @@
+//! Tests for variable declaration and redeclaration checking (TS2481, TS2397, TS2403).
+//!
+//! Extracted from core.rs to keep it under the 2000 LOC limit.
+
+mod test_utils {
+    pub fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
+        crate::test_utils::check_source_diagnostics(source)
+            .iter()
+            .filter(|d| d.code == error_code)
+            .map(|d| (d.start, d.message_text.clone()))
+            .collect()
+    }
+}
+
+mod ts2481_tests {
+    use super::test_utils::check_and_collect;
+
+    #[test]
+    fn var_in_for_of_with_let() {
+        let source = "for (let v of []) {\n    var v = 0;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+        assert!(errors[0].1.contains("'v'"));
+    }
+
+    #[test]
+    fn var_in_for_of_without_initializer() {
+        let source = "for (let v of []) {\n    var v;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_nested_block_with_let() {
+        let source = "{\n    let x;\n    {\n        var x = 1;\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_for_in_with_let() {
+        let source = "function test() {\n    for (let v in {}) { var v; }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn var_in_for_with_let() {
+        let source = "function test() {\n    for (let v; ; ) { var v; }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2481: {errors:?}");
+    }
+
+    #[test]
+    fn no_error_when_names_share_function_scope() {
+        // function f() { let x; var x; } — no TS2481 (names share function scope)
+        let source = "function f() {\n    let x = 1;\n    var x = 2;\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            0,
+            "No TS2481 when names share function scope: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn no_error_for_let_only() {
+        let source = "{\n    let x;\n    {\n        let x;\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(errors.len(), 0, "No TS2481 for let-to-let: {errors:?}");
+    }
+
+    #[test]
+    fn deeply_nested_var() {
+        let source = "{\n    let x;\n    {\n        {\n            var x = 1;\n        }\n    }\n}";
+        let errors = check_and_collect(source, 2481);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2481 for deeply nested var: {errors:?}"
+        );
+    }
+}
+
+mod ts2397_tests {
+    use super::test_utils::check_and_collect;
+
+    #[test]
+    fn var_undefined_emits_ts2397() {
+        let errors = check_and_collect("var undefined = null;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'undefined'"));
+    }
+
+    #[test]
+    fn var_global_this_emits_ts2397() {
+        let errors = check_and_collect("var globalThis;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'globalThis'"));
+    }
+
+    #[test]
+    fn let_undefined_emits_ts2397() {
+        let errors = check_and_collect("let undefined = 1;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+    }
+
+    #[test]
+    fn namespace_global_this_emits_ts2397() {
+        let errors = check_and_collect("namespace globalThis { export function foo() {} }", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+        assert!(errors[0].1.contains("'globalThis'"));
+    }
+
+    #[test]
+    fn normal_var_no_ts2397() {
+        let errors = check_and_collect("var x = 1;", 2397);
+        assert_eq!(errors.len(), 0, "No TS2397 for normal var: {errors:?}");
+    }
+
+    #[test]
+    fn const_undefined_emits_ts2397() {
+        let errors = check_and_collect("const undefined = void 0;", 2397);
+        assert_eq!(errors.len(), 1, "Expected 1 TS2397: {errors:?}");
+    }
+}
+
+mod ts2403_false_positive_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn recursive_types_with_typeof_no_false_ts2403() {
+        // From recursiveTypesWithTypeof.ts
+        let source = r#"
+var c: typeof c;
+var c: any;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for circular typeof: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn var_redecl_with_interface_no_false_ts2403() {
+        // From TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts (part3)
+        let source = r#"
+interface Point { x: number; y: number; }
+var o: { x: number; y: number };
+var o: Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for structurally identical types: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn typeof_module_no_false_ts2403() {
+        // From nonInstantiatedModule.ts
+        let source = r#"
+namespace M {
+    export var a = 1;
+}
+var m: typeof M;
+var m = M;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for typeof module: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn optional_tuple_elements_no_false_ts2403() {
+        // From optionalTupleElementsAndUndefined.ts
+        let source = r#"
+var v: [1, 2?];
+var v: [1, (2 | undefined)?];
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for optional tuple elements: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn type_alias_application_no_false_ts2403() {
+        // Type alias applications should be compatible with their evaluated forms.
+        // Uses simple alias (no lib types needed) to test that Application types
+        // are evaluated before TS2403 comparison.
+        let source = r#"
+type Pair<A, B> = [A, B];
+var v: [1, 2];
+var v: Pair<1, 2>;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for type alias application: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn identity_mapped_type_no_false_ts2403() {
+        // Mapped type application should evaluate to same structure.
+        // Uses inline identity mapped type (no lib dependency).
+        let source = r#"
+type Id<T> = { [K in keyof T]: T[K] };
+var v: { x: number };
+var v: Id<{ x: number }>;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for identity mapped type: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn typeof_var_redecl_no_false_ts2403() {
+        // From typeofANonExportedType.ts
+        let source = r#"
+interface I { foo: string; }
+var i: I;
+var i2: I;
+var r5: typeof i;
+var r5: typeof i2;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for typeof var redecl: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn namespace_merged_var_no_false_ts2403() {
+        // From TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName
+        let source = r#"
+namespace A {
+    export interface Point { x: number; y: number; }
+    export var Origin: Point = { x: 0, y: 0 };
+}
+namespace A {
+    var Origin: string = "0,0";
+}
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for merged namespace vars: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn namespace_merged_var_redecl_no_false_ts2403() {
+        // From TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts (part3 vars)
+        let source = r#"
+namespace A {
+    export interface Point { x: number; y: number; }
+    export var Origin: Point = { x: 0, y: 0 };
+}
+var o: { x: number; y: number };
+var o: A.Point;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for interface/object-literal redecl: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn non_instantiated_module_redecl_no_false_ts2403() {
+        // From nonInstantiatedModule.ts
+        let source = r#"
+namespace M {
+    export var a = 1;
+}
+var a1: number;
+var a1 = M.a;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for module property access: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn enum_var_redecl_emits_ts2403() {
+        // From duplicateLocalVariable4.ts: var x = E; var x = E.a;
+        // First x is `typeof E`, second x is `E` — types differ, should emit TS2403.
+        let source = r#"
+enum E { a }
+var x = E;
+var x = E.a;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2403.len(), 1, "Expected 1 TS2403 for enum var redecl");
+    }
+
+    #[test]
+    fn for_loop_var_redecl_emits_ts2403() {
+        // var declarations in for-loop initializers should trigger TS2403
+        // when re-declared with incompatible types.
+        let source = r#"
+for(var a: any;;) break;
+for(var a: number;;) break;
+for(var a: string;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            2,
+            "Expected 2 TS2403 for for-loop var redecls: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_var_redecl_with_initializer_emits_ts2403() {
+        // var with initializer in for-loop also triggers TS2403
+        let source = r#"
+for(var a: any;;) break;
+for(var a = 1;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for for-loop var with initializer: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_var_compatible_no_ts2403() {
+        // Same type should NOT trigger TS2403
+        let source = r#"
+for(var a: number;;) break;
+for(var a: number;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for compatible for-loop var redecls: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn nested_for_loop_var_emits_ts2403() {
+        // var in nested block scopes (if inside for) still hoists to function scope
+        let source = r#"
+var a: string;
+if (true) {
+    for(var a: number;;) break;
+}
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for nested for-loop var: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_let_no_cross_scope_ts2403() {
+        // let declarations in for-loops are block-scoped, should NOT trigger TS2403
+        let source = r#"
+for(let a: any;;) break;
+for(let a: number;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for let in separate for-loops: {ts2403:?}"
+        );
+    }
+}
