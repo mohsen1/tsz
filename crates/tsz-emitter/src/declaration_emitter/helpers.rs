@@ -1652,23 +1652,21 @@ impl<'a> DeclarationEmitter<'a> {
             let is_unique_symbol =
                 keyword == "const" && has_initializer && self.is_symbol_call(initializer);
 
-            let is_null_or_undefined = if has_initializer {
-                if let Some(init_node) = self.arena.get(initializer) {
-                    let k = init_node.kind;
+            // For `const x = null` / `const x = undefined`, tsc always emits `: any`.
+            // For `let`/`var`, tsc preserves the solver's type (e.g., `let x: null`).
+            let is_const_null_or_undefined = keyword == "const"
+                && has_initializer
+                && self.arena.get(initializer).is_some_and(|n| {
+                    let k = n.kind;
                     k == SyntaxKind::NullKeyword as u16 || k == SyntaxKind::UndefinedKeyword as u16
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+                });
 
             if has_type_annotation {
                 self.write(": ");
                 self.emit_type(type_annotation);
             } else if is_unique_symbol {
                 self.write(": unique symbol");
-            } else if is_null_or_undefined {
+            } else if is_const_null_or_undefined {
                 self.write(": any");
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
                 // For const declarations referencing another const with a literal type,
