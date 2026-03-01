@@ -119,7 +119,7 @@ impl<'a> ObjectLiteralBuilder<'a> {
             return Vec::new();
         };
 
-        match key {
+        let props = match key {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(shape_id);
                 shape.properties.to_vec()
@@ -141,7 +141,19 @@ impl<'a> ObjectLiteralBuilder<'a> {
                 merged.into_values().collect()
             }
             _ => Vec::new(),
-        }
+        };
+
+        // Spread removes readonly modifiers from properties (TypeScript spec).
+        // `{ ...readonlyObj }` produces a mutable copy.
+        // Also reset write_type to match type_id so the property is fully writable.
+        props
+            .into_iter()
+            .map(|mut p| {
+                p.readonly = false;
+                p.write_type = p.type_id;
+                p
+            })
+            .collect()
     }
 
     /// Apply contextual type to a value type.
