@@ -834,12 +834,13 @@ impl<'a> CheckerState<'a> {
             if annotation_type == TypeId::SYMBOL
                 && self.is_const_variable_declaration(idx)
                 && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
-                && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
-                    return self
-                        .ctx
-                        .types
-                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
-                }
+                && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
+            {
+                return self
+                    .ctx
+                    .types
+                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+            }
             return annotation_type;
         }
 
