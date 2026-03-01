@@ -52,13 +52,31 @@ impl<'a> CheckerState<'a> {
 
             // Skip type-only exports (interfaces, type aliases) — they don't conflict
             // with value properties. Only value exports collide with existing value props.
-            let member_flags = self
-                .ctx
-                .binder
-                .get_symbol(*member_id)
-                .map_or(0, |s| s.flags);
+            let member_symbol = self.ctx.binder.get_symbol(*member_id);
+            let member_flags = member_symbol.map_or(0, |s| s.flags);
             if member_flags & tsz_binder::symbol_flags::VALUE == 0 {
                 continue;
+            }
+
+            // Skip non-instantiated namespace exports — they don't produce runtime values
+            // and should not conflict with class static members.
+            // e.g., `declare namespace A { namespace X {} }` merged with `class A { static X = X; }`
+            let non_module_value_flags = member_flags
+                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE);
+            if non_module_value_flags == 0
+                && member_flags & tsz_binder::symbol_flags::VALUE_MODULE != 0
+            {
+                // The only VALUE flag is VALUE_MODULE — this is a pure namespace export.
+                // Check if any of its declarations are instantiated.
+                if let Some(sym) = member_symbol {
+                    let any_instantiated = sym
+                        .declarations
+                        .iter()
+                        .any(|&d| d.is_some() && self.ctx.arena.is_namespace_instantiated(d));
+                    if !any_instantiated {
+                        continue;
+                    }
+                }
             }
 
             let type_id = self.get_type_of_symbol(*member_id);
