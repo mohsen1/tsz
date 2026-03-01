@@ -1926,20 +1926,20 @@ impl<'a> DeclarationEmitter<'a> {
         // referencing the enum value directly (e.g., `var x = E`)
         if let Some(tid) = type_id
             && let Some((def_id, _members_id)) = tsz_solver::visitor::enum_components(interner, tid)
+        {
+            // Verify the enum name matches the identifier to avoid
+            // false positives with enum member types
+            if let Some(cache) = &self.type_cache
+                && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+                && let Some(binder) = self.binder
+                && let Some(symbol) = binder.symbols.get(sym_id)
+                && symbol.escaped_name == identifier_name
+                && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
+                && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
             {
-                // Verify the enum name matches the identifier to avoid
-                // false positives with enum member types
-                if let Some(cache) = &self.type_cache
-                    && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
-                    && let Some(binder) = self.binder
-                    && let Some(symbol) = binder.symbols.get(sym_id)
-                    && symbol.escaped_name == identifier_name
-                    && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
-                    && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
-                {
-                    return Some(format!("typeof {identifier_name}"));
-                }
+                return Some(format!("typeof {identifier_name}"));
             }
+        }
 
         // For Lazy(DefId) types pointing to VALUE_MODULE/FUNCTION, the printer
         // already handles the typeof prefix in print_lazy_type.
