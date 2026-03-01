@@ -1155,14 +1155,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     _ => None,
                 }),
             ];
-            // When `strict` is explicitly present, sub-options like `alwaysStrict`
-            // are considered inherited (not explicitly user-set). TSC does not emit
-            // TS5107 for inherited strict sub-options.
-            let has_strict = compiler_opts.contains_key("strict");
             for (key, check_fn) in value_deprecations {
-                if has_strict && *key == "alwaysStrict" {
-                    continue;
-                }
                 if let Some(value) = compiler_opts.get(*key)
                     && let Some(display_value) = check_fn(value)
                 {
