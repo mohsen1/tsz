@@ -1,7 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9715/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01i — types/conditional: eager evaluation of concrete conditional type aliases
+
+### Fixed: Concrete conditional type aliases not evaluated during resolution — Checker (computed.rs)
+
+**Area**: types/conditional, compiler/conditional
+
+**Root cause**: Non-generic type aliases whose body is a concrete conditional type (e.g., `type U = [any] extends [number] ? 1 : 0`) were stored as the raw unevaluated `TypeData::Conditional` in the symbol table. When used in assignability checks, the solver correctly evaluated the conditional (subtype check `[any] <: [number]` → true → take true branch → `1`), but the error reporter used the original unevaluated type from the symbol, producing diagnostic messages like "Type '0' is not assignable to type '[any] extends [number] ? 1 : 0'" instead of tsc's "Type '0' is not assignable to type '1'".
+
+**Fix**: In `compute_type_of_symbol` for `TYPE_ALIAS`, after computing `alias_type`, if the alias has no type parameters AND the body is a `Conditional` type AND `contains_type_parameters` returns false, evaluate it immediately via `evaluate_type_with_env`. This matches tsc's behavior of resolving fully-concrete conditionals during type alias resolution.
+
+**Guard conditions**: Only applies when:
+1. `params.is_empty()` — generic aliases stay deferred
+2. `is_conditional_type(alias_type)` — only conditionals, not other meta-types
+3. `!contains_type_parameters(alias_type)` — no deferred type params in the body
+
+**Tests**: 2 unit tests:
+- `non_distributive_conditional_with_any_evaluates_to_true_branch` — `[any] extends [number] ? 1 : 0` evaluates to `1`; distributive `any extends number ? 1 : 0` evaluates to `0 | 1`
+- `generic_conditional_type_alias_stays_deferred` — `type IsString<T>` stays generic until instantiated
+
+**Impact**: +2 conformance tests (conditionalAnyCheckTypePicksBothBranches, genericCallInferenceConditionalType2), 0 regressions.
+
+### Remaining types/conditional gaps (13 failing after this session):
+1. **conditionalDoesntLeakUninstantiatedTypeParameter.ts** — Application instantiation: `SyntheticDestination<number, Synthetic<number, number>>` doesn't resolve to `number`
+2. **conditionalExpression1.ts** — ternary type computed as `1 | ""` instead of `string | number`
+3. **conditionalReturnExpression.ts** — errors on whole ternary instead of per-branch
+4. **conditionalTypeAssignabilityWhenDeferred.ts** — deferred conditional assignability gaps
+5. **conditionalTypeDoesntSpinForever.ts** — unknown issue
+6. **conditionalOperatorConditionIsBooleanType.ts** — extra TS2454 (use before assign)
+7. **conditionalOperatorConditoinIsAnyType.ts** — missing TS2873 (always falsy)
+8. **conditionalOperatorWithoutIdenticalBCT.ts** — unknown issue
+9. **conditionalExportsResolutionFallback.ts** — module resolution
+10. **conditionalExportsResolutionFallbackNull.ts** — module resolution
+11. **conditionalTypes1.ts** — missing TS2403 (see session 2026-03-01h notes)
+12. **conditionalTypes2.ts** — unknown issue
+13. **conditionalTypesExcessProperties.ts** — fingerprint mismatch
+14. **inferTypes1.ts** — missing TS2322, extra TS2349/TS2556
 
 ---
 
