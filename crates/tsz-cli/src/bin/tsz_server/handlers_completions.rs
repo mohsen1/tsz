@@ -1242,11 +1242,16 @@ impl Server {
                                     .map(std::string::ToString::to_string)
                                     .or_else(|| {
                                         v.as_array().and_then(|arr| {
-                                            arr.first()
-                                                .and_then(serde_json::Value::as_object)
-                                                .and_then(|part| part.get("text"))
-                                                .and_then(serde_json::Value::as_str)
-                                                .map(std::string::ToString::to_string)
+                                            let mut text = String::new();
+                                            for part in arr {
+                                                let part_text = part
+                                                    .as_object()
+                                                    .and_then(|obj| obj.get("text"))
+                                                    .and_then(serde_json::Value::as_str)
+                                                    .unwrap_or_default();
+                                                text.push_str(part_text);
+                                            }
+                                            (!text.is_empty()).then_some(text)
                                         })
                                     })
                             })
