@@ -1134,6 +1134,13 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(" = ");
                     self.write(&Self::format_literal_initializer(&lit, interner));
+                } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
+                    prop.initializer,
+                    prop.initializer.is_some(),
+                    Some(type_id),
+                ) {
+                    self.write(": ");
+                    self.write(&typeof_text);
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));

@@ -1030,6 +1030,18 @@ impl<'a> TypePrinter<'a> {
             && let Some(symbol) = arena.get(sym_id)
             && (self.is_symbol_visible(sym_id) || self.is_global_symbol(sym_id))
         {
+            // Lazy(DefId) for value-space entities (enums, modules, functions) represents
+            // the VALUE side of the symbol. In .d.ts output, these must be prefixed with
+            // `typeof` to distinguish from the type-side meaning.
+            // E.g., `var x = MyEnum` → `declare var x: typeof MyEnum;`
+            // The type-side meaning (e.g., enum member union) uses Enum(DefId, members)
+            // and is handled by print_enum, not print_lazy_type.
+            let needs_typeof = symbol.has_any_flags(
+                symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::FUNCTION,
+            );
+            if needs_typeof {
+                return format!("typeof {}", symbol.escaped_name);
+            }
             return symbol.escaped_name.clone();
         }
 

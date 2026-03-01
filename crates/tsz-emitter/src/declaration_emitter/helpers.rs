@@ -1878,6 +1878,12 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(" = ");
                     self.write(&Self::format_literal_initializer(&lit, interner));
+                } else if let Some(typeof_text) =
+                    self.typeof_prefix_for_value_entity(initializer, has_initializer, Some(type_id))
+                {
+                    // Bare identifier referencing an enum/module → emit typeof
+                    self.write(": ");
+                    self.write(&typeof_text);
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
@@ -1892,6 +1898,63 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": any");
             }
         }
+    }
+
+    /// Check if a type should be printed with a `typeof` prefix because the
+    /// initializer is a bare identifier referencing a value-space entity (enum,
+    /// module, function). Returns `Some("typeof Name")` if so, `None` otherwise.
+    ///
+    /// In tsc, `var x = E` (where E is an enum) emits `declare var x: typeof E;`
+    /// because the variable holds the enum's runtime VALUE, not its TYPE meaning.
+    pub(crate) fn typeof_prefix_for_value_entity(
+        &self,
+        initializer: NodeIndex,
+        has_initializer: bool,
+        type_id: Option<tsz_solver::types::TypeId>,
+    ) -> Option<String> {
+        if !has_initializer {
+            return None;
+        }
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let identifier_name = self.get_identifier_text(initializer)?;
+        let interner = self.type_interner?;
+
+        // Check if the type is an Enum type — this means the initializer is
+        // referencing the enum value directly (e.g., `var x = E`)
+        if let Some(tid) = type_id
+            && let Some((def_id, _members_id)) = tsz_solver::visitor::enum_components(interner, tid)
+            {
+                // Verify the enum name matches the identifier to avoid
+                // false positives with enum member types
+                if let Some(cache) = &self.type_cache
+                    && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+                    && let Some(binder) = self.binder
+                    && let Some(symbol) = binder.symbols.get(sym_id)
+                    && symbol.escaped_name == identifier_name
+                    && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
+                    && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
+                {
+                    return Some(format!("typeof {identifier_name}"));
+                }
+            }
+
+        // For Lazy(DefId) types pointing to VALUE_MODULE/FUNCTION, the printer
+        // already handles the typeof prefix in print_lazy_type.
+        None
+    }
+
+    /// Get the text of an identifier node.
+    fn get_identifier_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        self.arena
+            .get_identifier(node)
+            .map(|id| id.escaped_text.clone())
     }
 
     /// Format a literal value as an initializer string for `const` declarations in .d.ts.
