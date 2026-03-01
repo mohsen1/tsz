@@ -1130,9 +1130,16 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
-                        // Equality and relational operators always produce boolean,
-                        // regardless of operand validity.
-                        TypeId::BOOLEAN
+                        // Result type depends on operator category:
+                        // - Equality/relational → boolean
+                        // - Arithmetic (+, -, *, /, %, **) → number
+                        //   (+ could also be string, but number is a safe fallback
+                        //    that avoids cascading TS2322 from boolean)
+                        if is_arithmetic_op {
+                            TypeId::NUMBER
+                        } else {
+                            TypeId::BOOLEAN
+                        }
                     }
                 }
             };
