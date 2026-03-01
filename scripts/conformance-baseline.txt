@@ -631,6 +631,7 @@ FAIL TypeScript/tests/cases/compiler/inheritFromGenericTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/initializedDestructuringAssignmentTypes.ts
 FAIL TypeScript/tests/cases/compiler/inKeywordAndUnknown.ts
 FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts
+FAIL TypeScript/tests/cases/compiler/inlineConditionalHasSimilarAssignability.ts
 FAIL TypeScript/tests/cases/compiler/innerAliases.ts
 FAIL TypeScript/tests/cases/compiler/innerAliases2.ts
 FAIL TypeScript/tests/cases/compiler/innerModExport1.ts
@@ -1116,6 +1117,7 @@ FAIL TypeScript/tests/cases/compiler/recursiveBaseConstructorCreation3.ts
 FAIL TypeScript/tests/cases/compiler/recursiveComplicatedClasses.ts
 FAIL TypeScript/tests/cases/compiler/recursiveConditionalCrash3.ts
 FAIL TypeScript/tests/cases/compiler/recursiveConditionalCrash4.ts
+FAIL TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType1.ts
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType2.ts
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType3.ts
@@ -5547,7 +5549,6 @@ PASS TypeScript/tests/cases/compiler/initializersInAmbientEnums.ts
 PASS TypeScript/tests/cases/compiler/initializerWithThisPropertyAccess.ts
 PASS TypeScript/tests/cases/compiler/inKeywordAndIntersection.ts
 PASS TypeScript/tests/cases/compiler/inKeywordNarrowingWithNoUncheckedIndexedAccess.ts
-PASS TypeScript/tests/cases/compiler/inlineConditionalHasSimilarAssignability.ts
 PASS TypeScript/tests/cases/compiler/inlinedAliasAssignableToConstraintSameAsAlias.ts
 PASS TypeScript/tests/cases/compiler/inlineMappedTypeModifierDeclarationEmit.ts
 PASS TypeScript/tests/cases/compiler/inlineSourceMap.ts

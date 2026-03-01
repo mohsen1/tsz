@@ -64,15 +64,15 @@ fn test_mapped_type_as_never_skips_property() {
     // Evaluate the mapped type
     let result = evaluate_type(&interner, mapped_id);
 
-    // The result should be an object type
-    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
-        let shape = interner.object_shape(shape_id);
-        // Should have 2 properties (x and y)
-        // The 'as never' remapping doesn't filter anything because we're not using 'K' to filter
-        assert_eq!(shape.properties.len(), 2);
-    } else {
-        panic!("Expected object type, got {:?}", interner.lookup(result));
-    }
+    // When K is an unresolved type parameter, the conditional `P extends K ? never : P`
+    // is deferred (since the result depends on what K is instantiated to).
+    // This means the mapped type can't fully resolve its key remapping,
+    // so it stays as a Mapped type rather than evaluating to an object.
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "Expected mapped type (deferred due to unresolved K), got {:?}",
+        interner.lookup(result)
+    );
 }
 
 #[test]

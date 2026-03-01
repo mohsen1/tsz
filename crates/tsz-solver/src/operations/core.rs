@@ -853,14 +853,59 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
+            TypeData::Conditional(cond_id) => {
+                // First try to evaluate the conditional type to a concrete type.
+                let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, func_type);
+                if resolved != func_type {
+                    return self.resolve_call(resolved, arg_types);
+                }
+                // For deferred conditional types (containing type parameters that
+                // can't be resolved yet), check if both branches are callable.
+                // tsc extracts call signatures from both branches of a deferred
+                // conditional type. For example:
+                //   type Q<T> = number extends T ? (n: number) => void : never;
+                // When T is unknown, Q<T> is still callable because the true branch
+                // is callable and the false branch is `never`.
+                let cond = self.interner.conditional_type(cond_id);
+                let true_type = cond.true_type;
+                let false_type = cond.false_type;
+                let true_is_never = true_type == TypeId::NEVER;
+                let false_is_never = false_type == TypeId::NEVER;
+                if true_is_never && false_is_never {
+                    CallResult::NotCallable { type_id: func_type }
+                } else if false_is_never {
+                    self.resolve_call(true_type, arg_types)
+                } else if true_is_never {
+                    self.resolve_call(false_type, arg_types)
+                } else {
+                    // Both branches are non-never — try calling the true branch.
+                    // If that succeeds, also try the false branch and union their
+                    // return types, matching tsc behavior.
+                    let true_result = self.resolve_call(true_type, arg_types);
+                    let false_result = self.resolve_call(false_type, arg_types);
+                    match (&true_result, &false_result) {
+                        (CallResult::Success(true_ret), CallResult::Success(false_ret)) => {
+                            CallResult::Success(self.interner.union2(*true_ret, *false_ret))
+                        }
+                        (CallResult::Success(_), _) | (_, CallResult::Success(_)) => {
+                            // One branch callable, other not — still callable
+                            // (the non-callable branch may be unreachable)
+                            match true_result {
+                                CallResult::Success(_) => true_result,
+                                _ => false_result,
+                            }
+                        }
+                        _ => CallResult::NotCallable { type_id: func_type },
+                    }
+                }
+            }
             TypeData::Lazy(_)
-            | TypeData::Conditional(_)
             | TypeData::IndexAccess(_, _)
             | TypeData::Mapped(_)
             | TypeData::TemplateLiteral(_) => {
                 // Resolve meta-types to their actual types before checking callability.
-                // This handles cases like conditional types that resolve to function types,
-                // index access types like T["method"], and mapped types.
+                // This handles cases like index access types like T["method"],
+                // and mapped types.
                 let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, func_type);
                 if resolved != func_type {
                     self.resolve_call(resolved, arg_types)

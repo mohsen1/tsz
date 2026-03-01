@@ -368,6 +368,30 @@ fn split_nullish_members(
         return;
     }
 
+    // Handle deferred conditional types where both branches are nullish/never.
+    // For example: `string extends T ? undefined : never` is deferred as a Conditional,
+    // but both branches (undefined, never) are nullish, so the whole type is nullish.
+    if let Some(TypeData::Conditional(cond_id)) = types.lookup(type_id) {
+        let cond = types.conditional_type(cond_id);
+        let true_nullish = cond.true_type == TypeId::NEVER || cond.true_type.is_nullable();
+        let false_nullish = cond.false_type == TypeId::NEVER || cond.false_type.is_nullable();
+        if true_nullish && false_nullish {
+            // Both branches are nullish/never — classify the whole conditional as nullish.
+            // The actual nullish type is the union of non-never branches.
+            if cond.true_type != TypeId::NEVER && cond.true_type.is_nullable() {
+                nullish.push(normalize_nullish(cond.true_type));
+            }
+            if cond.false_type != TypeId::NEVER && cond.false_type.is_nullable() {
+                nullish.push(normalize_nullish(cond.false_type));
+            }
+            if nullish.is_empty() {
+                // Both branches are never — effectively never, not nullish
+                non_nullish.push(type_id);
+            }
+            return;
+        }
+    }
+
     non_nullish.push(type_id);
 }
 
