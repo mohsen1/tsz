@@ -154,6 +154,24 @@ pub fn is_conditional_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Conditional(_)))
 }
 
+/// Check if a type contains a deferred conditional type, either directly
+/// or as a member of an intersection. Used to determine whether an
+/// excess property failure should be downgraded to a structural mismatch
+/// (TS2322) since the deferred conditional makes the assignment incompatible
+/// regardless of excess properties.
+pub fn has_deferred_conditional_member(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match types.lookup(type_id) {
+        Some(TypeData::Conditional(_)) => true,
+        Some(TypeData::Intersection(list_id)) => {
+            let members = types.type_list(list_id);
+            members
+                .iter()
+                .any(|m| matches!(types.lookup(*m), Some(TypeData::Conditional(_))))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a mapped type.
 pub fn is_mapped_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Mapped(_)))
