@@ -5,6 +5,27 @@
 
 ---
 
+## Session 2026-03-01k — types/conditional: defer conditional when extends_type has type params
+
+### Fixed: Conditional types with unresolved extends_type eagerly took false branch — Solver (conditional.rs)
+
+**Area**: types/conditional, compiler/conditional
+
+**Root cause**: When evaluating `number extends T ? fn : never` where T is an unresolved type parameter, `is_subtype_of(number, T)` returns false (number is not a subtype of unconstrained T), causing the conditional to eagerly take the false branch (`never`). This is incorrect — T could be instantiated to `number`, making the condition true. tsc defers these conditionals when the result is indeterminate.
+
+**Fix (5 changes)**:
+1. **conditional.rs Step 2b**: Identity simplification — if `check_type == extends_type`, take true branch immediately (e.g., `keyof Params extends keyof Params ? X : Y` → X)
+2. **conditional.rs Step 3**: After subtype check fails, if `contains_type_parameters(extends_type)`, defer the conditional instead of taking the false branch
+3. **core.rs resolve_call**: Handle deferred `TypeData::Conditional` by checking both branches — if false_branch is `never`, try calling true_branch (and vice versa)
+4. **utils.rs split_nullish_members**: Recognize deferred conditionals where both branches are nullish/never (e.g., `string extends T ? undefined : never`)
+5. **call.rs optional chain**: Evaluate Application types before splitting nullish members, so type aliases like `Transform1<T>` resolve to their union before nullish detection
+
+**Impact**: +2 improvements (privateNamesConstructorChain-1/2), -1 regression (inlineConditionalHasSimilarAssignability — assignability gap with deferred conditionals). Net: +1.
+
+**Known remaining gap**: `inlineConditionalHasSimilarAssignability.ts` regresses because deferred conditional types aren't handled by the assignability checker — `any[] extends T ? any[] : never` (deferred) is not recognized as assignable to T.
+
+---
+
 ## Session 2026-03-01j — types/tuple: tuple-to-tuple comparability and never/any/unknown in types_are_comparable
 
 ### Fixed: False TS2352 on tuple type assertions — Solver (flow.rs)
