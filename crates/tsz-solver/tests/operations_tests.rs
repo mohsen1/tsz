@@ -261,6 +261,168 @@ fn test_generic_call_resets_constraint_step_budget() {
     }
 }
 
+/// When a non-const type parameter has a constraint that the widened argument
+/// type would violate, the solver should fall back to the unwidened (literal)
+/// argument type. This prevents false TS2322 errors like:
+///   `<T extends [string, string, 'a' | 'b']>(x: T): T`
+///   called with `["x", "y", "a"]` → T should be `["x", "y", "a"]` not `[string, string, string]`
+#[test]
+fn test_generic_call_widening_falls_back_when_constraint_violated() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // Build constraint: [string, 'a' | 'b']
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let ab_union = interner.union(vec![a_lit, b_lit]);
+    let constraint = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: ab_union,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Build: <T extends [string, 'a' | 'b']>(x: T): T
+    let tp_name = interner.intern_string("T");
+    let tp = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: Some(constraint),
+        default: None,
+    };
+    let tp_id = interner.type_param(tp.clone());
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(tp_id)],
+        this_type: None,
+        return_type: tp_id,
+        type_params: vec![tp],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with ["hello", "a"] — literal tuple
+    let hello_lit = interner.literal_string("hello");
+    let arg = interner.tuple(vec![
+        TupleElement {
+            type_id: hello_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: a_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    match result {
+        CallResult::Success(ret) => {
+            // The return type should be the unwidened literal tuple,
+            // because widening to [string, string] would violate the constraint
+            assert_eq!(ret, arg, "Expected unwidened literal tuple as return type");
+        }
+        other => panic!("Expected Success with literal tuple, got {other:?}"),
+    }
+}
+
+/// When widening does NOT violate the constraint, the widened type should be used.
+#[test]
+fn test_generic_call_widening_applies_when_constraint_satisfied() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // Build constraint: [string, string]
+    let constraint = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Build: <T extends [string, string]>(x: T): T
+    let tp_name = interner.intern_string("T");
+    let tp = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: Some(constraint),
+        default: None,
+    };
+    let tp_id = interner.type_param(tp.clone());
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(tp_id)],
+        this_type: None,
+        return_type: tp_id,
+        type_params: vec![tp],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with ["hello", "world"] — literal tuple
+    let hello_lit = interner.literal_string("hello");
+    let world_lit = interner.literal_string("world");
+    let arg = interner.tuple(vec![
+        TupleElement {
+            type_id: hello_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: world_lit,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    match result {
+        CallResult::Success(ret) => {
+            // Widening ["hello", "world"] → [string, string] satisfies constraint,
+            // so the widened type should be used
+            let expected = interner.tuple(vec![
+                TupleElement {
+                    type_id: TypeId::STRING,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                },
+                TupleElement {
+                    type_id: TypeId::STRING,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                },
+            ]);
+            assert_eq!(ret, expected, "Expected widened tuple as return type");
+        }
+        other => panic!("Expected Success with widened tuple, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_get_contextual_signature_with_compat_checker_matches_call_evaluator() {
     let interner = TypeInterner::new();
