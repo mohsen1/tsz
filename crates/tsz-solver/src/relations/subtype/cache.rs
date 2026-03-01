@@ -25,7 +25,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
         // Fast paths (no cycle tracking needed)
         // =========================================================================
-
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         let mut source = source;
         let mut target = target;
@@ -244,7 +243,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let def_entered = if let Some((s_def, t_def)) = def_pair {
+        let mut def_entered = if let Some((s_def, t_def)) = def_pair {
             // Check reversed pair for bivariant cross-recursion
             if self.def_guard.is_visiting(&(t_def, s_def)) {
                 self.guard.leave(pair);
@@ -337,6 +336,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let source_resolved = self.resolve_lazy_type(source);
                 let target_resolved = self.resolve_lazy_type(target);
                 if source_resolved != source || target_resolved != target {
+                    // Leave def_guard before recursing ONLY when a Lazy type resolved to
+                    // an Enum with the same DefId. This prevents false cycle detection when
+                    // Lazy(DefId(X)) resolves to Enum(DefId(X), ...) — the recursive call
+                    // would extract the same DefId and falsely detect a cycle. For non-enum
+                    // resolutions (e.g., recursive interfaces), the def_guard is critical.
+                    let has_lazy_to_enum = |orig: TypeId, resolved: TypeId| -> bool {
+                        if let Some(lazy_def) = lazy_def_id(self.interner, orig)
+                            && let Some((enum_def, _)) = enum_components(self.interner, resolved)
+                        {
+                            return lazy_def == enum_def;
+                        }
+                        false
+                    };
+                    if (has_lazy_to_enum(source, source_resolved)
+                        || has_lazy_to_enum(target, target_resolved))
+                        && let Some(dp) = def_entered.take()
+                    {
+                        self.def_guard.leave(dp);
+                    }
                     self.check_subtype(source_resolved, target_resolved)
                 } else {
                     self.check_subtype_inner(source, target)
@@ -347,6 +365,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let target_eval = self.evaluate_type(target);
 
             if source_eval != source || target_eval != target {
+                // Leave def_guard before recursing ONLY when a Lazy type resolved to an
+                // Enum with the same DefId. When Lazy(DefId(X)) evaluates to Enum(DefId(X), ...),
+                // the recursive call extracts the same DefId and falsely detects a cycle.
+                // For non-enum Lazy resolutions (e.g., recursive generic interfaces), the
+                // def_guard is critical for preventing infinite recursion — don't release it.
+                let has_lazy_to_enum = |orig: TypeId, eval: TypeId| -> bool {
+                    if let Some(lazy_def) = lazy_def_id(self.interner, orig)
+                        && let Some((enum_def, _)) = enum_components(self.interner, eval)
+                    {
+                        return lazy_def == enum_def;
+                    }
+                    false
+                };
+                if (has_lazy_to_enum(source, source_eval) || has_lazy_to_enum(target, target_eval))
+                    && let Some(dp) = def_entered.take()
+                {
+                    self.def_guard.leave(dp);
+                }
                 self.check_subtype(source_eval, target_eval)
             } else if target == TypeId::NEVER {
                 SubtypeResult::False

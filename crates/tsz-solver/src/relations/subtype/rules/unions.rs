@@ -11,9 +11,10 @@ use crate::type_queries::data::get_object_shape_id;
 use crate::types::{
     MappedModifier, MappedTypeId, ObjectShapeId, PropertyInfo, TypeId, TypeParamInfo,
 };
+use crate::visitor::enum_components;
 use crate::visitor::{
     application_id, index_access_parts, is_identity_comparable_type, is_literal_type,
-    keyof_inner_type, mapped_type_id, type_param_info, union_list_id,
+    keyof_inner_type, lazy_def_id, mapped_type_id, type_param_info, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -289,8 +290,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_shape = self.interner.object_shape(source_shape_id);
 
         // Find discriminant properties in the source that discriminate target
-        let disc_props =
-            find_discriminant_properties(self.interner, &source_shape.properties, target_members);
+        let disc_props = find_discriminant_properties(
+            self.interner,
+            self.resolver,
+            &source_shape.properties,
+            target_members,
+        );
         if disc_props.is_empty() {
             return SubtypeResult::False;
         }
@@ -384,14 +389,50 @@ fn get_type_constituents(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> 
 ///
 /// This expands `boolean` to `true | false` to enable discriminated union matching,
 /// since TypeScript treats `boolean` as equivalent to `true | false` for this purpose.
-/// For other types, returns constituents as-is.
+/// Type parameters are resolved to their constraints before extracting values, so that
+/// `T extends "a" | "b"` yields `["a", "b"]` rather than `[T]`. Without this, objects
+/// like `{ k: T }` would fail the per-value discriminant check against `{ k: "a" } | { k: "b" }`.
+/// Unions containing type parameters (e.g., `T | E.A`) are flattened by resolving each
+/// type parameter member to its constraint values.
 fn get_discriminant_values(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
     // Special case: boolean is equivalent to true | false for discriminated union matching
     if type_id == TypeId::BOOLEAN {
         return vec![TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE];
     }
 
-    get_type_constituents(db, type_id)
+    // Resolve type parameters to their constraints for discriminant matching.
+    // e.g., T extends "a" | "b" → use "a" | "b" as discriminant values.
+    if let Some(info) = type_param_info(db, type_id)
+        && let Some(constraint) = info.constraint
+    {
+        return get_discriminant_values(db, constraint);
+    }
+
+    // Expand enum types to their structural member values.
+    // e.g., enum E { A, B } → Enum(def, 0 | 1) → [0, 1]
+    // This allows discriminated union matching against E.A | E.B targets,
+    // since 0 <: Enum(E.A_def, 0) succeeds via structural enum subtyping.
+    if let Some((_def_id, structural_type)) = enum_components(db, type_id) {
+        return get_discriminant_values(db, structural_type);
+    }
+
+    let constituents = get_type_constituents(db, type_id);
+
+    // Expand unions containing type parameters by resolving each member.
+    // e.g., T | E.A where T extends E → expand T to its constraint values.
+    if constituents.len() > 1
+        && constituents
+            .iter()
+            .any(|c| type_param_info(db, *c).is_some())
+    {
+        let mut result = Vec::new();
+        for &c in &constituents {
+            result.extend(get_discriminant_values(db, c));
+        }
+        return result;
+    }
+
+    constituents
 }
 
 /// Get a property type from an object-like type by atom name.
@@ -418,15 +459,16 @@ fn get_property_type_of_object(
 /// - It exists in every target union member (as an object property)
 /// - At least one target member has a unit/literal type for it
 /// - The property types differ across members
-fn find_discriminant_properties(
+fn find_discriminant_properties<R: TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     source_props: &[PropertyInfo],
     target_members: &[TypeId],
 ) -> Vec<(Atom, TypeId)> {
     let mut result = Vec::new();
 
     for prop in source_props {
-        if is_discriminant_for_union(db, prop.name, target_members) {
+        if is_discriminant_for_union(db, resolver, prop.name, target_members) {
             result.push((prop.name, prop.type_id));
         }
     }
@@ -435,8 +477,16 @@ fn find_discriminant_properties(
 }
 
 /// Check if a property name is a discriminant for a target union.
-fn is_discriminant_for_union(
+///
+/// Resolves `Lazy(DefId)` property types before checking identity-comparability,
+/// since enum member types like `E.A` may still be stored as `Lazy(DefId)` in
+/// object shapes even after top-level evaluation.
+/// Resolves `Lazy(DefId)` property types before checking identity-comparability,
+/// since enum member types like `E.A` may still be stored as `Lazy(DefId)` in
+/// object shapes even after top-level evaluation.
+fn is_discriminant_for_union<R: TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     prop_name: Atom,
     target_members: &[TypeId],
 ) -> bool {
@@ -460,9 +510,16 @@ fn is_discriminant_for_union(
             };
 
         let prop_type = prop.type_id;
-        // Check if any constituent is a unit type
+        // Check if any constituent is a unit type.
+        // Resolve Lazy types first — enum member property types may still
+        // be Lazy(DefId) in the object shape after top-level union evaluation.
         for &constituent in &get_type_constituents(db, prop_type) {
-            if is_identity_comparable_type(db, constituent) || is_literal_type(db, constituent) {
+            let resolved = if let Some(def_id) = lazy_def_id(db, constituent) {
+                resolver.resolve_lazy(def_id, db).unwrap_or(constituent)
+            } else {
+                constituent
+            };
+            if is_identity_comparable_type(db, resolved) || is_literal_type(db, resolved) {
                 has_unit = true;
             }
         }

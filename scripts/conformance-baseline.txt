@@ -287,7 +287,6 @@ FAIL TypeScript/tests/cases/compiler/discriminantNarrowingCouldBeCircular.ts
 FAIL TypeScript/tests/cases/compiler/discriminantPropertyCheck.ts
 FAIL TypeScript/tests/cases/compiler/discriminantPropertyInference.ts
 FAIL TypeScript/tests/cases/compiler/discriminantsAndNullOrUndefined.ts
-FAIL TypeScript/tests/cases/compiler/discriminatedUnionJsxElement.tsx
 FAIL TypeScript/tests/cases/compiler/discriminateWithMissingProperty.ts
 FAIL TypeScript/tests/cases/compiler/discriminateWithOptionalProperty2.ts
 FAIL TypeScript/tests/cases/compiler/discriminateWithOptionalProperty3.ts
@@ -785,7 +784,6 @@ FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxIssuesErrorWhenTagExpectsTooManyArguments.tsx
 FAIL TypeScript/tests/cases/compiler/jsxLibraryManagedAttributesUnusedGeneric.tsx
 FAIL TypeScript/tests/cases/compiler/jsxLocalNamespaceIndexSignatureNoCrash.tsx
-FAIL TypeScript/tests/cases/compiler/jsxNamespacedNameNotComparedToNonMatchingIndexSignature.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceGlobalReexport.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceGlobalReexportMissingAliasTarget.tsx
@@ -1275,6 +1273,7 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties4.ts
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts
+FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts
 FAIL TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
@@ -1651,7 +1650,6 @@ FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIIFE.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrors.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrorsAsync.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain.ts
-FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowOptionalChain3.tsx
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowParameter.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowWhileStatement.ts
 FAIL TypeScript/tests/cases/conformance/controlFlow/definiteAssignmentAssertions.ts
@@ -4451,6 +4449,7 @@ PASS TypeScript/tests/cases/compiler/discriminantsAndPrimitives.ts
 PASS TypeScript/tests/cases/compiler/discriminantsAndTypePredicates.ts
 PASS TypeScript/tests/cases/compiler/discriminantUsingEvaluatableTemplateExpression.ts
 PASS TypeScript/tests/cases/compiler/discriminatedUnionErrorMessage.ts
+PASS TypeScript/tests/cases/compiler/discriminatedUnionJsxElement.tsx
 PASS TypeScript/tests/cases/compiler/discriminatedUnionWithIndexSignature.ts
 PASS TypeScript/tests/cases/compiler/discriminateObjectTypesOnly.ts
 PASS TypeScript/tests/cases/compiler/discriminateWithDivergentAccessors1.ts
