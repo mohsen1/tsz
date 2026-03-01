@@ -783,6 +783,16 @@ impl<'a> DeclarationEmitter<'a> {
             .arena
             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
 
+        // `export default function() { ... }` — delegate to the export default handler
+        // which correctly emits `export default function (): ReturnType;`
+        let is_default = self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::DefaultKeyword);
+        if is_exported && is_default {
+            self.emit_export_default_function(func_idx);
+            return;
+        }
+
         if !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
         {
