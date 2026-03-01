@@ -304,3 +304,95 @@ interface Foo extends Base {
         "Should emit TS2430 for interface extending class with private member. Got: {diags:?}"
     );
 }
+
+// =========================================================================
+// TS2430: index signature incompatibility
+// =========================================================================
+
+#[test]
+fn test_index_signature_string_incompatible() {
+    // Derived interface has string index signature incompatible with base
+    let source = r#"
+interface E {
+    [a: string]: string;
+}
+interface F extends E {
+    [a: string]: number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when derived string index type is not assignable to base"
+    );
+}
+
+#[test]
+fn test_index_signature_number_incompatible() {
+    // Derived interface has number index signature incompatible with base
+    let source = r#"
+interface G {
+    [a: number]: string;
+}
+interface H extends G {
+    [a: number]: number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when derived number index type is not assignable to base"
+    );
+}
+
+#[test]
+fn test_index_signature_compatible_no_error() {
+    // Derived index signature is a subtype of base — no error
+    let source = r#"
+interface A {
+    [a: string]: number;
+}
+interface B extends A {
+    [a: string]: number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "Should NOT emit TS2430 when derived index type matches base"
+    );
+}
+
+#[test]
+fn test_inherited_index_signatures_conflict_across_bases() {
+    // Interface extends two bases with conflicting index signatures
+    // tsc emits TS2430 against the second base
+    let source = r#"
+interface A {
+    [s: string]: number;
+}
+interface D {
+    [s: string]: string;
+}
+interface E extends A, D { }
+"#;
+    assert!(
+        has_error_with_code(source, 2430),
+        "Should emit TS2430 when bases have conflicting index signatures"
+    );
+}
+
+#[test]
+fn test_inherited_index_signatures_compatible_across_bases() {
+    // Interface extends two bases with compatible index signatures — no error
+    let source = r#"
+interface A {
+    [s: string]: number;
+}
+interface B {
+    [s: string]: number;
+}
+interface C extends A, B { }
+"#;
+    assert!(
+        !has_error_with_code(source, 2430),
+        "Should NOT emit TS2430 when bases have compatible index signatures"
+    );
+}
