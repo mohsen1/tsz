@@ -1,46 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9717/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
 
 ---
 
-## Session 2026-03-01f — types/tuple: TS2540 for readonly tuple elements + TS1354
+## Session 2026-03-01f — types/tuple: false TS2556 for array spreads into variadic tuple rest params
 
-### Fixed: TS2540 vs TS2542 for readonly tuple element assignment — Checker (readonly.rs) + Solver (property_readonly.rs)
+### Fixed: False TS2556 for array/generic spreads into variadic tuple rest parameters — Solver (extractors.rs) + Checker (call.rs, complex.rs)
 
-**Area**: types/tuple (58.8%)
+**Area**: types/tuple (58.8%), but impact spread across multiple areas
 
-**Root cause (TS2540)**: When assigning to a fixed element of a readonly tuple (e.g., `v[0] = 1` on `readonly [number, number, ...number[]]`), the checker emitted TS2542 (index signature) instead of TS2540 (named property). The solver's `resolve_array_property` resolves all numeric tuple access through `Array<T>` interface from lib.d.ts, which sets `from_index_signature: true`. But tsc treats fixed tuple element indices as named properties.
+**Root cause**: Two bugs caused false "spread argument must have tuple type" (TS2556) errors when spreading arrays into functions with variadic tuple rest parameters (e.g., `...args: [...T, number]`):
 
-**Fix**: Added `is_readonly_tuple_fixed_element()` solver query (property_readonly.rs) that checks if a type is `ReadonlyType(Tuple(...))` and the index falls within the fixed (non-rest) element range. The checker's `check_readonly_assignment` now calls this before checking `from_index_signature`, emitting TS2540 for fixed elements and TS2542 for rest-range indices.
+1. **Solver bug** (`contextual/extractors.rs`): `variadic_tuple_element_type` returned `None` for out-of-bounds suffix indices when a variadic element exists. The `has_rest_param` probe at `usize::MAX/2` triggered this because:
+   - For `[...T, number]` with `rest_arg_count=3` and `total_suffix_len=1`, `suffix_start=2`
+   - The probe at `offset=usize::MAX/2-1` exceeds `suffix_start`, placing it in the suffix region
+   - But `outer_tail.get(huge_index)` returns `None` even though the variadic accepts unlimited args
+   - Fix: return `Some(variadic)` as fallback when past the outer tail in the suffix region
 
-**Root cause (TS1354)**: The `readonly` type modifier (e.g., `readonly string`, `readonly Array<string>`) was accepted without error. tsc requires the operand to be an array type (`T[]`) or tuple type (`[T, U]`).
+2. **Checker bug** (`call.rs`, `complex.rs`): In Round 2 of two-pass generic inference, the closure used `round2_contextual_types.get(i)` which returns `None` for the large rest parameter probe indices (the vector only has entries for actual arguments). Fix: fall back to `ctx_helper.get_parameter_type_for_call()` for indices beyond the vector.
 
-**Fix**: Added TS1354 check in `get_type_from_type_operator` (type_node.rs) — when the operator is `readonly` and the operand's syntax kind is not ARRAY_TYPE or TUPLE_TYPE, emit TS1354.
+**Tests**: 3 new unit tests:
+- `test_array_spread_into_variadic_tuple_rest_no_ts2556` — `foo(1, ...u, 2)` with `...args: [...T, number]`
+- `test_array_spread_into_variadic_tuple_curry_pattern_no_ts2556` — curry pattern `f(...a, ...b)` with `[...T, ...U]`
+- `test_array_spread_into_generic_variadic_round2_no_ts2556` — `call(...sa, callback)` with Round 2 inference
 
-**Tests**: 7 new unit tests in ts2540_readonly_tests.rs:
-- `test_readonly_tuple_fixed_element_emits_ts2540` — v[0] on readonly [number, number] → TS2540
-- `test_readonly_tuple_rest_element_emits_ts2542` — v[2] on readonly [number, number, ...number[]] → TS2542
-- `test_readonly_tuple_mixed_fixed_and_rest` — fixed=TS2540, rest=TS2542
-- `test_readonly_on_non_array_type_emits_ts1354` — readonly string → TS1354
-- `test_readonly_on_array_type_no_ts1354` — readonly string[] → no TS1354
-- `test_readonly_on_tuple_type_no_ts1354` — readonly [string, number] → no TS1354
-- `test_readonly_on_type_reference_emits_ts1354` — readonly Array<string> → TS1354
+**Impact**: +3 conformance tests (9719→9721 after including remote changes). Tests that benefited from TS2556 removal span variadic tuple patterns, curry functions, and generic spread patterns.
 
-**Impact**: readonlyArraysAndTuples.ts now has all expected error codes (TS1354, TS2322, TS2540, TS2542, TS4104) matching tsc. Fingerprint-level mismatches remain due to column offsets on TS2540/TS2542 (col 1 vs col 3 for `v[0]`). 0 error-code regressions.
-
-### Remaining TS2540 gaps (9 tests missing TS2540):
-1. **jsdocReadonly.ts** — JSDoc `@readonly` on class properties in JS files. Different code path.
-2. **constAssertions.ts** — Needs TS1355 (const assertion on non-literal) plus readonly const object property assignment
-3. **objectFreeze.ts** — Needs Object.freeze lib type support (Readonly<T> mapping)
-4. **checkExportsObjectAssignProperty/Prototype.ts** — JSDoc/salsa specific
-5. **checkObjectDefineProperty.ts** — Object.defineProperty lib type
-6. **checkOtherObjectAssignProperty.ts** — Object.assign lib type
-7. **enumMergeWithExpando.ts** — Enum with expando properties (salsa)
-
-### TS1354 impact:
-- Only 1 conformance test had TS1354 missing (readonlyArraysAndTuples.ts). Low broader impact but correct behavior.
+### Remaining types/tuple gaps (16 failing):
+1. **variadicTuples1/2/3** — Missing TS2344 (type constraint violations), fingerprint-level mismatches for spread argument type printing, extra TS2339/TS7053 in variadicTuples2
+2. **restTupleElements1** — Missing TS17019 (rest element must be last), TS2574; extra TS1005, TS7006
+3. **readonlyArraysAndTuples** — Missing TS1354 (readonly keyword), TS2540 (readonly property assignment)
+4. **contextualTypeTupleEnd** — Missing TS2345; extra TS2555, TS7006
+5. **7 fingerprint-only failures** — Error codes match but message text/location differs
 
 ---
 

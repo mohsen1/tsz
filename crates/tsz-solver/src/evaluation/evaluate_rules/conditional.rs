@@ -275,10 +275,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &mut checker,
                 ) {
                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                    // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
+                    // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
+                    // The substituted true branch Trim<T> is an Application that expands
+                    // to another Conditional — handle it as a tail call WITHOUT
+                    // incrementing the depth guard, controlled by MAX_TAIL_RECURSION_DEPTH.
+                    if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                        if let Some(TypeData::Conditional(next_cond_id)) =
+                            self.interner().lookup(substituted_true)
+                        {
+                            let next_cond = self.interner().conditional_type(next_cond_id);
+                            current_cond = (*next_cond).clone();
+                            tail_recursion_count += 1;
+                            continue;
+                        }
+                        if let Some(instantiated) =
+                            self.try_instantiate_application_for_tail_call(substituted_true)
+                        {
+                            if let Some(TypeData::Conditional(next_cond_id)) =
+                                self.interner().lookup(instantiated)
+                            {
+                                let next_cond = self.interner().conditional_type(next_cond_id);
+                                current_cond = (*next_cond).clone();
+                                tail_recursion_count += 1;
+                                continue;
+                            }
+                            // Not a conditional — evaluate normally
+                            return self.evaluate(instantiated);
+                        }
+                    }
                     return self.evaluate(substituted_true);
                 }
 
-                // Check if the result branch is directly a conditional for tail-recursion
+                // Infer pattern didn't match — take the false branch.
+                // Check if the false branch is a tail-recursive conditional.
                 // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
                 if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
                     if let Some(TypeData::Conditional(next_cond_id)) =
@@ -291,19 +321,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     // Also detect Application that expands to Conditional (common pattern):
                     // type TrimLeft<T> = T extends ` ${infer R}` ? TrimLeft<R> : T;
-                    // The true branch `TrimLeft<R>` is an Application, not a Conditional.
-                    if let Some(TypeData::Application(_)) = self.interner().lookup(cond.false_type)
+                    // The false branch may be `TrimLeft<R>` (Application, not Conditional).
+                    if let Some(instantiated) =
+                        self.try_instantiate_application_for_tail_call(cond.false_type)
                     {
-                        let expanded = self.evaluate(cond.false_type);
                         if let Some(TypeData::Conditional(next_cond_id)) =
-                            self.interner().lookup(expanded)
+                            self.interner().lookup(instantiated)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
                             current_cond = (*next_cond).clone();
                             tail_recursion_count += 1;
                             continue;
                         }
-                        return expanded;
+                        return self.evaluate(instantiated);
                     }
                 }
 
@@ -345,17 +375,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 // Also detect Application that expands to Conditional (tail-call through
                 // type alias like `TrimLeft<R>` which is Application, not Conditional)
-                if let Some(TypeData::Application(_)) = self.interner().lookup(result_branch) {
-                    let expanded = self.evaluate(result_branch);
+                if let Some(instantiated) =
+                    self.try_instantiate_application_for_tail_call(result_branch)
+                {
                     if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(expanded)
+                        self.interner().lookup(instantiated)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
                         current_cond = (*next_cond).clone();
                         tail_recursion_count += 1;
                         continue;
                     }
-                    return expanded;
+                    return self.evaluate(instantiated);
                 }
             }
 
