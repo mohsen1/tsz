@@ -458,20 +458,12 @@ impl<'a> CheckerState<'a> {
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
                 return None;
             }
-            // G5: Skip union-typed props — we don't do contextual union narrowing
-            // for discriminated unions in JSX attribute checking
-            if tsz_solver::is_union_type(self.ctx.types, props) {
-                return None;
-            }
             return Some((props, raw_has_tp));
         }
 
         // Try class component: get construct signatures → instance type → props
         if let Some(props) = self.get_class_component_props_type(component_type) {
             if tsz_solver::type_queries::is_type_parameter_like(self.ctx.types, props) {
-                return None;
-            }
-            if tsz_solver::is_union_type(self.ctx.types, props) {
                 return None;
             }
             return Some((props, false));
@@ -1120,6 +1112,17 @@ impl<'a> CheckerState<'a> {
         // (QueryCache's resolve_lazy returns None), causing silent TypeId::ANY fallback.
         let props_type = self.resolve_type_for_property_access(props_type);
 
+        // When props is a union type (e.g., discriminated unions like
+        // `{ editable: false } | { editable: true, onEdit: ... }`),
+        // per-property checking doesn't work because `get_object_shape` returns None
+        // for unions. Instead, build an attributes object type from the JSX attributes
+        // and check whole-object assignability against the union props type.
+        // This lets the solver's union assignability handle discriminated unions correctly.
+        if tsz_solver::is_union_type(self.ctx.types, props_type) {
+            self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx);
+            return;
+        }
+
         // When props_type is any/error or contains error types, skip attribute-vs-props
         // checking but still validate spread types (TS2698) which is independent of props.
         let skip_prop_checks = props_type == TypeId::ANY
@@ -1633,211 +1636,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_missing_required_jsx_props(intrinsic_attrs_type, &provided_attrs, tag_name_idx);
-    }
-
-    /// TS2322: Check that spread attribute property types are compatible with props.
-    ///
-    /// tsc checks if the spread type is assignable to the expected props type and
-    /// emits TS2322 with "Type '{`spread_type`}' is not assignable to type '{`props_type`}'"
-    /// when a property type mismatch is found. Missing properties are handled
-    /// separately by TS2741, not TS2322.
-    ///
-    /// Properties overridden by explicit attributes (either before or after the spread)
-    /// are excluded from the check.
-    ///
-    /// tsc anchors these errors at the JSX opening tag (not the spread expression).
-    fn check_spread_property_types(
-        &mut self,
-        spread_type: TypeId,
-        props_type: TypeId,
-        tag_name_idx: NodeIndex,
-        overridden_names: &rustc_hash::FxHashSet<&str>,
-    ) {
-        use tsz_solver::operations::property::PropertyAccessResult;
-
-        // Safety guard: skip when types involve unresolved generics or errors
-        if tsz_solver::contains_type_parameters(self.ctx.types, spread_type)
-            || tsz_solver::contains_error_type(self.ctx.types, spread_type)
-        {
-            return;
-        }
-
-        // If the whole spread type is assignable to props, no error needed.
-        // This is the fast path and also prevents false positives from imprecise
-        // per-property extraction (e.g., mapped/conditional/utility types).
-        if self.is_assignable_to(spread_type, props_type) {
-            return;
-        }
-
-        // Resolve the spread type to extract its properties
-        let resolved_spread = self.evaluate_type_with_env(spread_type);
-        let resolved_spread = self.resolve_type_for_property_access(resolved_spread);
-
-        let Some(spread_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_spread)
-        else {
-            // If spread type has no object shape (e.g., type parameter), emit
-            // whole-type TS2322: "Type 'U' is not assignable to type 'IntrinsicAttributes & U'".
-            let spread_name = self.format_type(spread_type);
-            let props_name = self.format_type(props_type);
-            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                tag_name_idx,
-                &message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-            return;
-        };
-
-        // tsc suppresses TS2322 for per-property type mismatches in spreads when
-        // the spread also has missing required properties from the target. In that case,
-        // TS2741 (missing required property) is emitted instead, and tsc doesn't pile on
-        // with TS2322 for the type mismatches. Check if any required props are missing
-        // from the spread + explicit attributes.
-        if let Some(props_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
-        {
-            let spread_prop_names: rustc_hash::FxHashSet<String> = spread_shape
-                .properties
-                .iter()
-                .map(|p| self.ctx.types.resolve_atom(p.name))
-                .collect();
-            for req_prop in &props_shape.properties {
-                if req_prop.optional {
-                    continue;
-                }
-                let req_name = self.ctx.types.resolve_atom(req_prop.name).to_string();
-                if req_name == "children" || req_name == "key" || req_name == "ref" {
-                    continue;
-                }
-                if !spread_prop_names.contains(&req_name)
-                    && !overridden_names.contains(req_name.as_str())
-                {
-                    // Missing required property → TS2741 will fire, suppress TS2322
-                    return;
-                }
-            }
-        }
-
-        // Check if the mismatch is a TYPE mismatch (not just missing properties).
-        // tsc only emits TS2322 for spread type mismatches, not for missing properties
-        // (those are handled by TS2741).
-        let mut has_type_mismatch = false;
-        for prop in &spread_shape.properties {
-            let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
-
-            // Skip properties overridden by explicit attributes
-            if overridden_names.contains(prop_name.as_str()) {
-                continue;
-            }
-
-            // Skip key/ref — same as other JSX attribute handling
-            if prop_name == "key" || prop_name == "ref" {
-                continue;
-            }
-
-            // Look up the expected type for this property in the props type
-            let expected_type = match self.resolve_property_access_with_env(props_type, &prop_name)
-            {
-                PropertyAccessResult::Success { type_id, .. } => {
-                    tsz_solver::remove_undefined(self.ctx.types, type_id)
-                }
-                _ => continue,
-            };
-
-            // Check if the spread property type is assignable to the expected type
-            if !self.is_assignable_to(prop.type_id, expected_type) {
-                has_type_mismatch = true;
-                break;
-            }
-        }
-
-        // Emit a single TS2322 with whole-type message matching tsc's format:
-        // "Type '{ x: number; }' is not assignable to type 'Attribs1'."
-        if has_type_mismatch {
-            let spread_name = self.format_type(spread_type);
-            let props_name = self.format_type(props_type);
-            let message = format!("Type '{spread_name}' is not assignable to type '{props_name}'.");
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                tag_name_idx,
-                &message,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-        }
-    }
-
-    /// TS2783: Check if a later spread attribute will overwrite the current attribute.
-    ///
-    /// In JSX, `<Foo a={1} {...props}>` — if `props` has a required property `a`,
-    /// the spread overwrites the explicit `a={1}`. TSC warns with TS2783:
-    /// "'a' is specified more than once, so this usage will be overwritten."
-    ///
-    /// Only emitted under `strictNullChecks` (matching tsc behavior) and only for
-    /// non-optional spread properties (optional properties may not overwrite).
-    /// Returns `true` if the attribute is overwritten by a later spread (and
-    /// optionally emits TS2783 when `strictNullChecks` is enabled).
-    fn check_jsx_attr_overwritten_by_spread(
-        &mut self,
-        attr_name: &str,
-        attr_name_idx: NodeIndex,
-        attr_nodes: &[NodeIndex],
-        current_idx: usize,
-    ) -> bool {
-        // Look at later siblings for spreads that contain this property
-        for &later_idx in &attr_nodes[current_idx + 1..] {
-            let Some(later_node) = self.ctx.arena.get(later_idx) else {
-                continue;
-            };
-            if later_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(later_node) else {
-                    continue;
-                };
-                let spread_type = self.compute_type_of_node(spread_data.expression);
-                let spread_type = self.resolve_type_for_property_access(spread_type);
-
-                // Skip any/error/unknown — they might cover everything but we
-                // can't tell which specific properties they contain.
-                if spread_type == TypeId::ANY
-                    || spread_type == TypeId::ERROR
-                    || spread_type == TypeId::UNKNOWN
-                {
-                    continue;
-                }
-
-                // Check if the spread type has a non-optional property with this name
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
-                {
-                    let attr_atom = self.ctx.types.intern_string(attr_name);
-                    let has_required_prop = shape
-                        .properties
-                        .iter()
-                        .any(|p| p.name == attr_atom && !p.optional);
-                    if has_required_prop {
-                        // TS2783: only emitted under strictNullChecks (matching tsc)
-                        if self.ctx.strict_null_checks() {
-                            use tsz_common::diagnostics::{
-                                diagnostic_codes, diagnostic_messages, format_message,
-                            };
-                            let message = format_message(
-                                diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                                &[attr_name],
-                            );
-                            self.error_at_node(
-                                attr_name_idx,
-                                &message,
-                                diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
-                            );
-                        }
-                        // Attribute is overwritten regardless of SNC
-                        return true;
-                    }
-                }
-            }
-        }
-        false
     }
 
     // JSX Factory Check

@@ -9,6 +9,7 @@ pub mod enum_checker;
 pub mod generic_checker;
 pub mod iterable_checker;
 pub mod jsx_checker;
+pub mod jsx_checker_attrs;
 pub mod parameter_checker;
 pub mod promise_checker;
 pub mod property_checker;
