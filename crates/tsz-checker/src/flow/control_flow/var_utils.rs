@@ -519,6 +519,22 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Check if an assignment node is a logical assignment (&&=, ||=, ??=).
+    pub(crate) fn is_logical_assignment(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+        if node_data.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(node_data) else {
+            return false;
+        };
+        bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+            || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+    }
+
     /// Check if a node is a binding pattern (array or object destructuring pattern)
     fn is_binding_pattern(&self, node: NodeIndex) -> bool {
         self.arena.get(node).is_some_and(|n| n.is_binding_pattern())

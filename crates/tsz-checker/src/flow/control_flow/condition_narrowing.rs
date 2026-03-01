@@ -190,6 +190,9 @@ impl<'a> FlowAnalyzer<'a> {
                 k if k == SyntaxKind::AmpersandAmpersandToken as u16
                     || k == SyntaxKind::BarBarToken as u16
                     || k == SyntaxKind::QuestionQuestionToken as u16
+                    || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                    || k == SyntaxKind::BarBarEqualsToken as u16
+                    || k == SyntaxKind::QuestionQuestionEqualsToken as u16
                     || k == SyntaxKind::EqualsToken as u16
                     || k == SyntaxKind::InstanceOfKeyword as u16
                     || k == SyntaxKind::InKeyword as u16
@@ -802,7 +805,13 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<TypeId> {
         let operator = bin.operator_token;
 
-        if operator == SyntaxKind::AmpersandAmpersandToken as u16 {
+        // Logical assignment operators (&&=, ||=, ??=) used in conditions
+        // (e.g. `if (x &&= y)`) have the same truthiness/narrowing semantics
+        // as their corresponding logical operators (&&, ||, ??). The assignment
+        // side-effect is handled by the ASSIGNMENT flow node separately.
+        if operator == SyntaxKind::AmpersandAmpersandToken as u16
+            || operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+        {
             if is_true_branch {
                 let left_true = self.narrow_type_by_condition_inner(
                     type_id,
@@ -853,7 +862,97 @@ impl<'a> FlowAnalyzer<'a> {
             ));
         }
 
-        if operator == SyntaxKind::BarBarToken as u16 {
+        // For ||= and ??= in condition context: `if (x ||= y)` / `if (x ??= y)`
+        // When the LHS matches the target reference, the assignment ensures x holds
+        // the expression result. So in the true branch, x is truthy (the result was
+        // truthy). This is different from plain `||`/`??` where the LHS is NOT
+        // assigned the result.
+        if (operator == SyntaxKind::BarBarEqualsToken as u16
+            || operator == SyntaxKind::QuestionQuestionEqualsToken as u16)
+            && self.is_matching_reference(bin.left, target)
+        {
+            let env_borrow;
+            let narrowing = if let Some(env) = &self.type_environment {
+                env_borrow = env.borrow();
+                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            } else {
+                NarrowingContext::new(self.interner)
+            };
+            if is_true_branch {
+                // x holds the truthy result → remove null/undefined
+                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
+                let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+                return Some(narrowed);
+            } else {
+                // x holds the falsy result → keep only falsy types
+                return Some(narrowing.narrow_to_falsy(type_id));
+            }
+        }
+        // For non-matching references, fall through to || handling below
+
+        if operator == SyntaxKind::BarBarToken as u16
+            || operator == SyntaxKind::BarBarEqualsToken as u16
+        {
+            if is_true_branch {
+                let left_true = self.narrow_type_by_condition_inner(
+                    type_id,
+                    bin.left,
+                    target,
+                    true,
+                    antecedent_id,
+                    visited_aliases,
+                );
+                let left_false = self.narrow_type_by_condition_inner(
+                    type_id,
+                    bin.left,
+                    target,
+                    false,
+                    antecedent_id,
+                    visited_aliases,
+                );
+                let right_true = self.narrow_type_by_condition_inner(
+                    left_false,
+                    bin.right,
+                    target,
+                    true,
+                    antecedent_id,
+                    visited_aliases,
+                );
+                return Some(tsz_solver::utils::union_or_single(
+                    self.interner,
+                    vec![left_true, right_true],
+                ));
+            }
+
+            let left_false = self.narrow_type_by_condition_inner(
+                type_id,
+                bin.left,
+                target,
+                false,
+                antecedent_id,
+                visited_aliases,
+            );
+            let right_false = self.narrow_type_by_condition_inner(
+                left_false,
+                bin.right,
+                target,
+                false,
+                antecedent_id,
+                visited_aliases,
+            );
+            return Some(right_false);
+        }
+
+        // ??= in condition context: `if (x ??= y)` narrows like `if (x ?? y)`
+        // In the true branch, the result is non-nullish — either x was non-nullish,
+        // or y was assigned and was truthy.
+        if operator == SyntaxKind::QuestionQuestionEqualsToken as u16
+            || operator == SyntaxKind::QuestionQuestionToken as u16
+        {
+            // For ?? / ??=, the narrowing on the reference follows truthiness semantics:
+            // true branch: result was truthy (either left was non-null, or right was truthy)
+            // false branch: both left and right were falsy
+            // We treat this like || for condition narrowing since the truthiness patterns match.
             if is_true_branch {
                 let left_true = self.narrow_type_by_condition_inner(
                     type_id,
