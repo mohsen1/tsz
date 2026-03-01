@@ -644,7 +644,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
                 let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
-                let constraint_ty = instantiate_type(self.interner, constraint, &final_subst);
+                let constraint_ty_raw = instantiate_type(self.interner, constraint, &final_subst);
+                // Evaluate the instantiated constraint so concrete conditionals like
+                // `null extends string ? any : never` resolve to their branch (`never`)
+                // instead of remaining as unevaluated Conditional types.
+                let constraint_ty = self.interner.evaluate_type(constraint_ty_raw);
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
