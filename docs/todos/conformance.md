@@ -1,7 +1,53 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9735/12570 (77.4%) — full suite, error-code level
+**Current score**: ~9764/12570 (77.7%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01m — control flow: defer switch clause narrowing until antecedent computed
+
+### Fixed: Switch clause narrowing lost preceding control flow narrowing — Checker (control_flow/core.rs)
+
+**Area**: Cross-cutting (control flow narrowing affects all areas)
+
+**Root cause**: `SWITCH_CLAUSE` flow nodes in the iterative flow analysis did not defer when their pre-switch antecedent hadn't been computed yet. When a switch statement was preceded by narrowing control flow (e.g., `if (c !== undefined) { switch(c.kind) { ... } }`), the switch clause handler would compute narrowing against the original declared type instead of the narrowed type.
+
+The `CONDITION` flow node handler already had explicit defer logic (push antecedent to front of worklist, push self to back, `continue`), but the `SWITCH_CLAUSE` handler simply scheduled the antecedent for traversal and then immediately processed using the stale `current_type`.
+
+**Fix**: Added the same defer pattern from `CONDITION` nodes to `SWITCH_CLAUSE` nodes. When `flow.antecedent.first()` hasn't been visited or computed yet, push it to front of worklist, re-queue self to back, and `continue`. This ensures the pre-switch narrowing is available before switch clause narrowing runs.
+
+**File**: `crates/tsz-checker/src/flow/control_flow/core.rs`
+
+**Tests**: 2 unit tests:
+- `test_switch_clause_uses_narrowed_type_from_preceding_if` — `if (c !== undefined)` + exhaustive switch narrows default to `never`
+- `test_switch_clause_uses_truthiness_narrowing` — `if (c)` + exhaustive switch narrows default to `never`
+
+**Impact**: +5 conformance tests, 0 regressions:
+- `discriminantsAndNullOrUndefined.ts` — false TS2345 removed (switch default after if-undefined guard)
+- `genericCallInferenceConditionalType1.ts` — generic inference with switch narrowing
+- `privateNamesConstructorChain-1.ts` — private names constructor chain
+- `privateNamesConstructorChain-2.ts` — private names constructor chain
+- `intersectionTypeInference3.ts` — intersection type inference
+
+### Key pattern this fixes:
+```typescript
+type C = A | B | undefined;
+declare var c: C;
+if (c !== undefined) {       // narrows c to A | B
+    switch (c.kind) {
+        case 'A': break;
+        case 'B': break;
+        default: c;           // was: undefined (wrong), now: never (correct)
+    }
+}
+```
+
+### Remaining false TS2322/TS2345 from narrowing:
+- **typeof narrowing in typeof expressions**: `typeof x.p` doesn't use the narrowed type of `x.p`
+- **Destructuring + narrowing**: Destructured variables don't reflect narrowed property types
+- **Non-null assertion on constrained type params**: `T extends string | undefined`, `one!` should be `NonNullable<T>` assignable to `string`
+- Root causes are diverse (documented in previous sessions)
 
 ---
 
