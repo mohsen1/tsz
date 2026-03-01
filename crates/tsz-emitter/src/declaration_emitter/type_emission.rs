@@ -333,7 +333,20 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if type_op.operator == SyntaxKind::UniqueKeyword as u16 {
                         self.write("unique ");
                     }
+                    // Our parser doesn't create ParenthesizedType nodes, so we must
+                    // add parens when the operand is a union or intersection type
+                    // (keyof/readonly bind tighter than | and &).
+                    let needs_parens = self.arena.get(type_op.type_node).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::UNION_TYPE
+                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                    });
+                    if needs_parens {
+                        self.write("(");
+                    }
                     self.emit_type(type_op.type_node);
+                    if needs_parens {
+                        self.write(")");
+                    }
                 }
             }
 
