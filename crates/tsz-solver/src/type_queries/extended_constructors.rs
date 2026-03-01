@@ -100,6 +100,11 @@ pub enum ConstructorCheckKind {
     Lazy(DefId),
     /// `TypeQuery` (typeof) - check referenced symbol
     TypeQuery(crate::types::SymbolRef),
+    /// Conditional type - check true branch for constructability
+    Conditional {
+        true_type: TypeId,
+        false_type: TypeId,
+    },
     /// Not a constructor type or needs special handling
     Other,
 }
@@ -133,6 +138,13 @@ pub fn classify_for_constructor_check(
         }
         TypeData::Lazy(def_id) => ConstructorCheckKind::Lazy(def_id),
         TypeData::TypeQuery(sym_ref) => ConstructorCheckKind::TypeQuery(sym_ref),
+        TypeData::Conditional(cond_id) => {
+            let cond = db.conditional_type(cond_id);
+            ConstructorCheckKind::Conditional {
+                true_type: cond.true_type,
+                false_type: cond.false_type,
+            }
+        }
         _ => ConstructorCheckKind::Other,
     }
 }

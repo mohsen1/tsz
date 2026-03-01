@@ -596,10 +596,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        let kind = query::classify_for_constructor_check(self.ctx.types, type_id);
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         // For application types, check if the base type is a constructor type
-        match query::classify_for_constructor_check(self.ctx.types, type_id) {
+        match kind {
             query::ConstructorCheckKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
                     self.is_constructor_type(constraint)
@@ -718,6 +719,65 @@ impl<'a> CheckerState<'a> {
                             return self.is_constructor_type(cached_type);
                         }
                     }
+
+                    // For TYPE_ALIAS symbols without a cached type, lower the type alias body
+                    // and check if it resolves to a constructor type. This handles cases like:
+                    //   type FooConstructor = typeof Mixin extends (a: C) => infer Cls ? Cls : never;
+                    //   const Mixin2 = <C extends FooConstructor>(Base: C) => class extends Base {};
+                    // where FooConstructor resolves to a constructor type through conditional type
+                    // inference, but hasn't been resolved yet when the heritage clause is checked.
+                    if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
+                        && !symbol.declarations.is_empty()
+                    {
+                        use tsz_lowering::TypeLowering;
+                        let symbol_arena = self
+                            .ctx
+                            .binder
+                            .symbol_arenas
+                            .get(&symbol_id)
+                            .map_or(self.ctx.arena, |arena| arena.as_ref());
+
+                        // Find the TYPE_ALIAS_DECLARATION among the symbol's declarations
+                        let alias_decl = symbol.declarations.iter().find_map(|&d| {
+                            let node = symbol_arena.get(d)?;
+                            if node.kind
+                                == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            {
+                                symbol_arena.get_type_alias(node)
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(alias) = alias_decl {
+                            let type_param_bindings = self.get_type_param_bindings();
+                            let type_resolver = |node_idx: tsz_parser::parser::NodeIndex| {
+                                self.resolve_type_symbol_for_lowering(node_idx)
+                            };
+                            let value_resolver = |node_idx: tsz_parser::parser::NodeIndex| {
+                                self.resolve_value_symbol_for_lowering(node_idx)
+                            };
+                            let lowering = TypeLowering::with_resolvers(
+                                symbol_arena,
+                                self.ctx.types,
+                                &type_resolver,
+                                &value_resolver,
+                            )
+                            .with_type_param_bindings(type_param_bindings);
+                            let alias_type = lowering.lower_type(alias.type_node);
+
+                            // The lowered type might be a conditional, mapped, or other deferred type.
+                            // Try evaluating it through the solver to get the concrete result.
+                            let evaluated = self.ctx.types.evaluate_type(alias_type);
+                            if evaluated != type_id && evaluated != TypeId::ERROR {
+                                return self.is_constructor_type(evaluated);
+                            }
+                            // Also check the unevaluated type (might have construct signatures directly)
+                            if alias_type != type_id && alias_type != evaluated {
+                                return self.is_constructor_type(alias_type);
+                            }
+                        }
+                    }
                 }
                 // For other symbols (namespaces, enums, etc.) without cached types, they're not constructors
                 false
@@ -748,7 +808,30 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            query::ConstructorCheckKind::Other => false,
+            query::ConstructorCheckKind::Conditional { .. } => {
+                // For conditional types used as constraints, try evaluating first.
+                // If evaluation succeeds (resolves to a concrete type), check that.
+                // If not (deferred conditional with infer types), treat as potentially
+                // constructable — tsc does not reject deferred conditional types as
+                // non-constructable in heritage clause checks.
+                let evaluated = self.ctx.types.evaluate_type(type_id);
+                if evaluated != type_id && evaluated != TypeId::ERROR && evaluated != TypeId::NEVER
+                {
+                    self.is_constructor_type(evaluated)
+                } else {
+                    // Deferred conditional type — assume constructable to match tsc
+                    true
+                }
+            }
+            query::ConstructorCheckKind::Other => {
+                // For other deferred types, try evaluating to get the resolved type.
+                let evaluated = self.ctx.types.evaluate_type(type_id);
+                if evaluated != type_id && evaluated != TypeId::ERROR {
+                    self.is_constructor_type(evaluated)
+                } else {
+                    false
+                }
+            }
         }
     }
 
