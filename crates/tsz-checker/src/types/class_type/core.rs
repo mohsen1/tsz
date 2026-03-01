@@ -299,7 +299,10 @@ impl<'a> CheckerState<'a> {
                         let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
-                            self.infer_getter_return_type(accessor.body)
+                            let t = self.infer_getter_return_type(accessor.body);
+                            // Cache so the declaration emitter can look it up
+                            self.ctx.node_types.insert(member_idx.0, t);
+                            t
                         };
                         entry.getter = Some(getter_type);
                     } else {
