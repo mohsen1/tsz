@@ -50,5 +50,9 @@ path = "tests/type_alias_namespace_merge_tests.rs"
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
+[[test]]
+name = "control_flow_type_guard_tests"
+path = "tests/control_flow_type_guard_tests.rs"
+
 [lints]
 workspace = true
