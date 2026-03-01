@@ -392,7 +392,6 @@ FAIL TypeScript/tests/cases/compiler/esModuleInteropDefaultImports.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropImportCall.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropImportNamespace.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropPrettyErrorRelatedInformation.ts
-FAIL TypeScript/tests/cases/compiler/esModuleInteropTslibHelpers.ts
 FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts
 FAIL TypeScript/tests/cases/compiler/evalOrArgumentsInDeclarationFunctions.ts
 FAIL TypeScript/tests/cases/compiler/evolvingArrayResolvedAssert.ts
@@ -487,7 +486,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -564,9 +562,6 @@ FAIL TypeScript/tests/cases/compiler/importedEnumMemberMergedWithExportedAliasIs
 FAIL TypeScript/tests/cases/compiler/importedModuleAddToGlobal.ts
 FAIL TypeScript/tests/cases/compiler/importElisionExportNonExportAndDefault.ts
 FAIL TypeScript/tests/cases/compiler/importEqualsError45874.ts
-FAIL TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.1.ts
-FAIL TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.2.ts
-FAIL TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.3.ts
 FAIL TypeScript/tests/cases/compiler/importHelpersWithLocalCollisions.ts
 FAIL TypeScript/tests/cases/compiler/importInsideModule.ts
 FAIL TypeScript/tests/cases/compiler/importNonExportedMember.ts
@@ -1661,7 +1656,6 @@ FAIL TypeScript/tests/cases/conformance/es2020/constructBigint.ts
 FAIL TypeScript/tests/cases/conformance/es2020/es2020IntlAPIs.ts
 FAIL TypeScript/tests/cases/conformance/es2020/localesObjectArgument.ts
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_exportAssignment.ts
-FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_missingEmitHelpers.ts
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace1.ts
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace2.ts
 FAIL TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace3.ts
@@ -2748,6 +2742,7 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/ge
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericContextualTypes1.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/indexSignatureTypeInference.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferences.ts
+FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/intraExpressionInferencesJsx.tsx
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/keyofInferenceIntersectsResults.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/keyofInferenceLowerPriorityThanReturn.ts
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/noInfer.ts
@@ -4797,6 +4792,7 @@ PASS TypeScript/tests/cases/compiler/esModuleInteropEnablesSyntheticDefaultImpor
 PASS TypeScript/tests/cases/compiler/esModuleInteropImportDefaultWhenAllNamedAreDefaultAlias.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropImportTSLibHasImport.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropNamedDefaultImports.ts
+PASS TypeScript/tests/cases/compiler/esModuleInteropTslibHelpers.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropUsesExportStarWhenDefaultPlusNames.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropWithExportStar.ts
 PASS TypeScript/tests/cases/compiler/esModuleIntersectionCrash.ts
@@ -5160,6 +5156,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -5389,6 +5386,9 @@ PASS TypeScript/tests/cases/compiler/importHelpersSystem.ts
 PASS TypeScript/tests/cases/compiler/importHelpersVerbatimModuleSyntax.ts
 PASS TypeScript/tests/cases/compiler/importHelpersWithExportStarAs.ts
 PASS TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefault.ts
+PASS TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.1.ts
+PASS TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.2.ts
+PASS TypeScript/tests/cases/compiler/importHelpersWithImportOrExportDefaultNoTslib.3.ts
 PASS TypeScript/tests/cases/compiler/importHelpersWithImportStarAs.ts
 PASS TypeScript/tests/cases/compiler/importInTypePosition.ts
 PASS TypeScript/tests/cases/compiler/importNonExportedMember1.ts
@@ -8593,6 +8593,7 @@ PASS TypeScript/tests/cases/conformance/es2020/bigintMissingES2019.ts
 PASS TypeScript/tests/cases/conformance/es2020/bigintMissingES2020.ts
 PASS TypeScript/tests/cases/conformance/es2020/bigintMissingESNext.ts
 PASS TypeScript/tests/cases/conformance/es2020/intlNumberFormatES2020.ts
+PASS TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_missingEmitHelpers.ts
 PASS TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace_nonExistent.ts
 PASS TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace4.ts
 PASS TypeScript/tests/cases/conformance/es2020/modules/exportAsNamespace5.ts
