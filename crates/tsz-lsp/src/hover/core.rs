@@ -527,7 +527,7 @@ impl<'a> HoverProvider<'a> {
             let mut type_string = self
                 .merged_function_initializer_display_type(decl_node_idx)
                 .unwrap_or_else(|| type_string.to_string());
-            if type_string == "any"
+            if (type_string == "any" || type_string == "unknown" || type_string == "error")
                 && self.is_parameter_declaration(decl_node_idx)
                 && let Some(contextual_type) =
                     self.contextual_parameter_annotation_text(decl_node_idx)
