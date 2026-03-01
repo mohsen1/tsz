@@ -1,102 +1,39 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9725/12570 (77.4%) — full suite, error-code level
+**Current score**: ~9723/12559 (77.4%) — full suite, error-code level
 
 ---
 
-## Session 2026-03-01c — jsx: union-typed component props checking
+## Session 2026-03-01a — jsx: overloaded SFC investigation (TS2769, G4/G5 bail-outs)
 
-### Fixed: JSX attribute checking against union-typed props — Checker (jsx_checker.rs, jsx_checker_attrs.rs)
+### Analysis: JSX overloaded SFC handling
 
-**Area**: jsx (59.5%)
+**Area**: jsx (59.5%, 79 failures out of 195 tests)
 
-**Root cause**: The G5 guard in `get_jsx_props_type_for_component()` skipped ALL attribute checking when the component's props type was a union. This meant discriminated union props like `{ editable: false } | { editable: true, onEdit: () => void }` were never validated, missing TS2322 errors.
+**Investigation**: Deep investigation into JSX overload resolution for TS2769 ("No overload matches this call"). 4 JSX tests need TS2769: tsxStatelessFunctionComponentOverload4/5, checkJsxChildrenCanBeTupleType, tsxStatelessFunctionComponentsWithTypeArguments4.
 
-**Fix** (2 files):
-1. **`jsx_checker.rs`** — Removed G5 union-props skip for both SFC and class component paths. Added union detection in `check_jsx_attributes_against_props` that routes to `check_jsx_union_props` when props type is a union.
-2. **`jsx_checker_attrs.rs`** (new) — Extracted `check_jsx_union_props`, `check_spread_property_types`, and `check_jsx_attr_overwritten_by_spread` to keep main file under 2000 LOC. The union check:
-   - Pre-scans for arrow/function expressions (bails out — contextual typing not supported yet)
-   - Collects attribute name→type pairs with `preserve_literal_types = true` to prevent widening
-   - For each union member: checks all provided attrs are type-compatible AND all required non-children props are present
-   - If no member is compatible, builds attributes object type and emits TS2322
+**G4 bail-out** (jsx_checker.rs:822-827): `get_sfc_props_type` returns `None` when a component has ≥2 non-generic call signatures. This causes the caller to skip all attribute checking for overloaded SFCs — no errors emitted, no TS2769.
 
-**Tests**: 4 new + 1 updated in `jsx_component_attribute_tests.rs`:
-- `test_union_props_conflicting_discriminant_emits_ts2322` — `<TextComponent editable={true} />` missing `onEdit`
-- `test_union_props_matching_discriminant_no_error` — `<UnionComp kind="a" x={42} />` matches member
-- `test_union_props_callback_attribute_skips_check` — arrow function in onChange bails out
-- `test_union_props_class_component_missing_required_emits_ts2322` — class component missing required prop
+**G5 bail-out** (jsx_checker.rs:461-476): `get_jsx_props_type_for_component` returns `None` when the extracted props type is a union. This was investigated in a previous session and is blocked by solver assignability bugs (union-to-union check always returns `Assignable`).
 
-**Result**: 9725/12570 (77.4%) — no regressions. The originally targeted diff=1 tests (tsxGenericAttributesType7/8, checkJsxGenericTagHasCorrectInferences, tsxLibraryManagedAttributes) were NOT union-props issues — they involve generic spreads, intersection inference, and mapped type Defaultize patterns. The fix correctly handles discriminated union props but doesn't fix those unrelated TS2322 gaps.
+**Attempted fix 1 — Full overload resolution**: Used diagnostic checkpointing (like call_checker.rs) to try each overload with `check_jsx_attributes_against_props`. **Failed**: 9 regressions because `check_jsx_attributes_against_props` has type computation side effects (TS7006 for implicit any, attribute type evaluation) that persist even after diagnostic truncation. Would need `node_types` save/restore (like call_checker.rs does) but the JSX checker doesn't have that infrastructure.
 
-### Remaining JSX TS2322 gaps (non-union):
-1. **Generic spread attrs** (tsxGenericAttributesType7/8): `<Component {...props} />` where `U` isn't assignable to `IntrinsicAttributes & U` — needs type-parameter spread handling
-2. **Generic tag inference** (checkJsxGenericTagHasCorrectInferences): Intersection type inference for generic JSX tags
-3. **Library managed attributes** (tsxLibraryManagedAttributes): Complex `Defaultize` mapped type props — per-property TS2322 mismatches (17 missing diagnostics)
+**Attempted fix 2 — Lightweight property-existence check**: Replaced full type checking with structural property-name matching (`jsx_attrs_match_overload_props`). **Failed**: Too conservative — doesn't handle JSX `data-*` attributes, hyphenated property names, string index signatures. Would emit false TS2769 for valid JSX.
 
----
+**Minimal fix applied**: Added `is_overloaded_sfc()` guard to suppress fallback checks (TS2604, intrinsic attributes) when `get_jsx_props_type_for_component` returns `None` due to G4 bail-out. Zero net conformance impact but prevents potential false positives from fallback path.
 
-## Session 2026-03-01b — types/tuple: variadic tuple contextual typing
+**Key finding**: overload6 test has a pre-existing TS2769 regression from `call_errors.rs` (function call overload resolution path), not from JSX-specific code. The baseline.txt was stale.
 
-### Fixed: Contextual typing for variadic tuple rest parameters — Solver (contextual/extractors.rs, contextual/core.rs) + Checker (helpers.rs)
+### Blocking issues for JSX overload resolution:
+1. **Type computation side effects**: `check_jsx_attributes_against_props` evaluates attribute types (TS7006, type assignments). Speculative calling without rollback causes persistent side effects. Need `node_types` save/restore similar to `resolve_call_with_checker_adapter` in call_checker.rs.
+2. **Union props assignability**: G5 bail-out blocks union-typed props checking. Solver's union-to-union relation always returns `Assignable` — see previous session analysis.
+3. **Generic overload resolution**: Tests like tsxStatelessFunctionComponentsWithTypeArguments4 have generic overloads (`<T extends Props>`) which require type inference, not just structural matching.
 
-**Area**: types/tuple (58.8%)
-
-**Root cause**: `extract_param_type_at()` in the solver's contextual typing path used naive direct indexing into tuple elements. For variadic tuples like `[...((arg: number) => void)[], (arg: string) => void]`, calling `f1(x => x)` where `f1(...args: Funcs)`:
-- The contextual path indexed `elements[0]` (the variadic array type `((arg: number) => void)[]`)
-- Should have recognized that with 1 argument, it maps to the last element `(arg: string) => void`
-- Result: no contextual type provided → TS7006 (implicit any) false positive
-
-The solver already had correct variadic-aware logic in `call_args.rs:tuple_rest_element_type()` for runtime type checking, but the contextual typing path in `extractors.rs` didn't use it.
-
-**Fix** (3 files):
-1. **`contextual/extractors.rs`** — Added `extract_param_type_at_for_call()` that passes `arg_count` through to the tuple handling logic. Added `variadic_tuple_element_type()` function that decomposes tuples through prefix/variadic/tail structure using `expand_tuple_rest()`. Only activates for tuples with rest elements followed by tail elements (avoids overhead on simple tuples).
-2. **`contextual/core.rs`** — Added `get_tuple_element_type_with_count()` method on `ContextualTypeContext` for array literal contexts. Updated `TupleElementExtractor` to accept and use `element_count` for variadic-aware mapping.
-3. **`checker/computation/helpers.rs`** — Array literal contextual typing now passes element count to `get_tuple_element_type_with_count()`.
-
-**Performance guard**: The variadic expansion path only activates when:
-- The tuple has a rest element with non-rest elements AFTER it (the variadic pattern)
-- `arg_count` is available (call site or array literal context)
-- This prevents overhead on the vast majority of tuples which are non-variadic
-
-**Tests**: 4 unit tests in `contextual_tests.rs`:
-- `test_variadic_tuple_call_single_arg_gets_tail_type` — 1 arg to `[...T[], U]` gets U
-- `test_variadic_tuple_call_multiple_args_prefix_and_tail` — 3 args: prefix gets T, last gets U
-- `test_variadic_tuple_element_contextual_type_single_element` — array literal `[a]` for `[...T[], U]`
-- `test_variadic_tuple_element_contextual_type_multiple_elements` — array literal `[a, b, c]` for `[...T[], U]`
-
-**Result**: +1 net passing (intersectionTypeInference3 flipped to PASS, improved contextual typing). No regressions. TS7006 false positives eliminated for non-generic variadic tuple call sites and array literals.
-
-### Remaining types/tuple gaps:
-1. **TS7006 in generic variadic tuples** (contextualTypeTupleEnd lines 37-38): `createSelector<S extends SelectorTuple>(...selectors: [...S, f])` — requires generic inference before contextual typing can provide types.
-2. **TS2555 false positive** (contextualTypeTupleEnd line 12): `f1()` emits TS2555 instead of TS2345 for empty-args call on variadic tuple rest params.
-3. **TS1265/TS1266** (variadicTuples2): Parser-level — "A rest element cannot follow another rest element" not implemented.
-4. **TS2344** (variadicTuples1): Type constraint violations for variadic tuple type params.
-5. **TS2556** (variadicTuples1/2): False positive "A spread argument must have a tuple type" in variadic tuple contexts.
-6. **7 fingerprint-only failures**: Error codes match but message text/line differ.
-
----
-
-## Session 2026-03-01a — jsx: suppress false TS2322 in spreads + IntrinsicAttributes checking
-
-### Fixed: Two JSX attribute checking improvements — Checker (jsx_checker.rs)
-
-**Area**: jsx (59.5% → 60.0%, 78 failures out of 195 tests)
-
-**Fix 1 — Suppress false TS2322 from spread with missing required props**:
-When a spread attribute has a per-property type mismatch AND the spread is also missing required properties from the target, tsc suppresses the TS2322 and lets TS2741 (missing property) take priority. Added early-return in `check_spread_property_types` that detects this scenario.
-
-**Fix 2 — IntrinsicAttributes checking**:
-Added `get_intrinsic_attributes_type()` to resolve `JSX.IntrinsicAttributes` from the JSX namespace. After component props checking, now also checks for missing required properties in IntrinsicAttributes (TS2741). Also restructured key/ref handling to track them as provided attributes.
-
-**Tests**: 4 unit tests (spread with missing props suppresses TS2322, compatible spread no errors, required IntrinsicAttributes missing emits TS2741, optional IntrinsicAttributes no error)
-
-**Result**: +2 net passing conformance tests. No regressions.
-
-### Remaining JSX gaps (updated):
-1. **Union-typed components** (tsxUnionTypeComponent1): `get_jsx_props_type_for_component` doesn't decompose union types — needs architectural work.
-2. **Intersection target types** (tsxAttributeResolution12): tsc builds `IntrinsicAttributes & Props` as target type for assignability — needs intersection type construction refactor.
-3. **Type parameter names in diagnostics**: tsc prints "Type 'T'" but we print expanded constraint type.
+### Broader false-positive analysis (non-JSX):
+- **TS2322 false positives** (71 tests): Root causes are diverse — typeof narrowing, Extract<T, string|undefined>, destructured bindings, boolean widening, Uint8Array<ArrayBuffer> vs Uint8Array. No single fix addresses more than a few tests.
+- **TS2339 false positives** (60 tests): Property access on narrowed types, generic constraints.
+- **TS7006 false positives** (16 tests): Implicit any in contextual typing contexts.
 
 ---
 
