@@ -1002,7 +1002,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let inferred_ty = if tp.is_const {
             arg_ty
         } else {
-            crate::operations::widening::widen_type(self.interner.as_type_database(), arg_ty)
+            let widened =
+                crate::operations::widening::widen_type(self.interner.as_type_database(), arg_ty);
+            // When a constraint exists and the widened type violates it, fall back
+            // to the unwidened (literal) type. This matches tsc's behavior: for
+            // `<T extends 'a' | 'b'>(x: T)` called with `'a'`, T infers as `"a"`
+            // (not `string`), because widening to `string` would violate the
+            // constraint. Similarly for tuple constraints like
+            // `<T extends [string, string, 'a' | 'b']>(x: T)`.
+            if let Some(constraint) = tp.constraint {
+                if !self.checker.is_assignable_to(widened, constraint)
+                    && self.checker.is_assignable_to(arg_ty, constraint)
+                {
+                    arg_ty
+                } else {
+                    widened
+                }
+            } else {
+                widened
+            }
         };
         if let Some(constraint) = tp.constraint
             && !self.checker.is_assignable_to(inferred_ty, constraint)

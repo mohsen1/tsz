@@ -269,9 +269,34 @@ impl<'a> CheckerState<'a> {
         // When the contextual type is a union like `[number] | string`, narrow it to
         // only the array/tuple constituents applicable to an array literal. This ensures
         // `[1]` with contextual type `[number] | string` is typed as `[number]` not `number[]`.
+        let mut tuple_context_from_constraint = false;
         let applicable_contextual_type = resolved_contextual_type.and_then(|resolved| {
             let evaluated = self.evaluate_application_type(resolved);
-            tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
+            // Try the type directly first
+            if let Some(applicable) =
+                tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
+            {
+                return Some(applicable);
+            }
+            // When the contextual type is a type parameter (e.g., `T extends [string, number]`),
+            // use its base constraint for tuple context detection. This matches tsc's behavior
+            // where `getApparentTypeOfContextualType` resolves type parameter constraints so
+            // array literals are typed as tuples instead of being widened to arrays.
+            // We only use this for shape detection (tuple vs array), NOT for element contextual
+            // typing — element types should be inferred independently to preserve literals.
+            if let Some(constraint) =
+                tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, evaluated)
+            {
+                let constraint = self.resolve_lazy_type(constraint);
+                let constraint = self.evaluate_application_type(constraint);
+                if let Some(applicable) =
+                    tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, constraint)
+                {
+                    tuple_context_from_constraint = true;
+                    return Some(applicable);
+                }
+            }
+            None
         });
 
         let tuple_context = applicable_contextual_type.and_then(|applicable| {
@@ -279,8 +304,17 @@ impl<'a> CheckerState<'a> {
         });
 
         // Use the applicable (narrowed) type for contextual typing when available,
-        // falling back to the full resolved contextual type
-        let effective_contextual = applicable_contextual_type.or(resolved_contextual_type);
+        // falling back to the full resolved contextual type.
+        // When tuple context came from a type parameter constraint, don't use it for
+        // element contextual typing — only use it for tuple shape detection. Element
+        // types should be inferred independently to preserve literal types during
+        // generic inference (e.g., `fx<T extends [string, 'a'|'b']>(x: T)` called
+        // with `['x', 'a']` should infer `["x", "a"]`, not `[string, string]`).
+        let effective_contextual = if tuple_context_from_constraint {
+            resolved_contextual_type
+        } else {
+            applicable_contextual_type.or(resolved_contextual_type)
+        };
         let ctx_helper = match effective_contextual {
             Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
