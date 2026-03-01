@@ -1,7 +1,43 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9748/12570 (77.5%) — full suite, error-code level
+**Current score**: ~9723/12570 (77.4%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01d — types/tuple: homomorphic mapped type detection for Pick/Omit
+
+### Fixed: Pick/Omit now detected as homomorphic mapped types — Solver (evaluation/evaluate_rules/mapped.rs)
+
+**Area**: types/tuple (58.8%), but impact spread across compiler area
+
+**Root cause**: `homomorphic_mapped_source()` in mapped.rs Method 2 required exact equality between the constraint keys and `keyof obj`. For `Omit<A, 'a'>` = `{ [P in Exclude<keyof A, 'a'>]: A[P] }`, the constraint evaluates to a **subset** of `keyof A` (e.g., `'b' | 'c' | 'd'` vs `'a' | 'b' | 'c' | 'd'`). Exact equality failed, so the mapped type was not detected as homomorphic, and readonly/optional modifiers were NOT inherited from source properties.
+
+**How tsc handles it**: tsc treats mapped types as homomorphic when the constraint is derived from `keyof T`, including filtered subsets. For Pick/Omit, the constraint is a subset of `keyof T`, and tsc still preserves source modifiers.
+
+**Fix**: Added a subset check after the exact equality check. If all string literal keys in the constraint exist in `keyof obj`, the mapped type is detected as homomorphic. Uses `extract_mapped_keys()` on both sides and `FxHashSet` containment check.
+
+**Tests**: 2 unit tests:
+- `test_omit_preserves_readonly` — strengthened existing test to assert readonly=true
+- `test_omit_preserves_optional_via_subset_homomorphic` — 3-property object, constraint is 2-key subset, verifies both optional and readonly inheritance
+
+**Net impact**: +3 conformance tests, 0 regressions
+- **New passes**: omitTypeHelperModifiers01, prespecializedGenericMembers1, privateNamesConstructorChain-1
+
+### Remaining TS2540 gaps (not addressed in this session):
+- TS2540 for readonly tuple element access (`tuple[0] = ...`) — readonlyArraysAndTuples.ts
+- TS2540 for `Object.freeze` return type — objectFreeze.ts
+- TS2540 for `as const` assertions — constAssertions.ts
+- TS2540 for enum members — enumMergeWithExpando.ts
+- TS2540 for JSDoc @readonly — jsdocReadonly.ts (also missing JSDoc property resolution)
+
+### types/tuple area remaining gaps (14 failures):
+- 7 tests with diff=0 (error codes match, fingerprint-level mismatch: line/column/message text)
+- variadicTuples2.ts: missing TS1265/TS1266 (parser: leading/trailing rest element syntax)
+- restTupleElements1.ts: missing TS17019/TS2574, extra TS1005/TS7006
+- contextualTypeTupleEnd.ts: missing TS2345 (emits TS2555 instead for variadic tuple rest param with 0 args), extra TS7006 (contextual typing of callbacks in variadic tuple not working)
+- readonlyArraysAndTuples.ts: missing TS1354/TS2540
+- variadicTuples1.ts: 60 errors vs tsc's 22 — many extra TS2322 from overly strict spread/tuple assignability
 
 ---
 
