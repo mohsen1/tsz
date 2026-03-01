@@ -828,7 +828,21 @@ impl<'a> CheckerState<'a> {
 
         // First check type annotation - this takes precedence
         if var_decl.type_annotation.is_some() {
-            return self.get_type_from_type_node(var_decl.type_annotation);
+            let annotation_type = self.get_type_from_type_node(var_decl.type_annotation);
+            // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol type
+            // using the variable's binder symbol as the identity.
+            if annotation_type == TypeId::SYMBOL
+                && self.is_const_variable_declaration(idx)
+                && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
+            {
+                if let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
+                    return self
+                        .ctx
+                        .types
+                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                }
+            }
+            return annotation_type;
         }
 
         if self.is_catch_clause_variable_declaration(idx)
@@ -863,6 +877,19 @@ impl<'a> CheckerState<'a> {
                 return widened;
             }
 
+            // `const k = Symbol()` — infer unique symbol type.
+            // In TypeScript, const declarations initialized with Symbol() get
+            // a unique symbol type (typeof k), not the general `symbol` type.
+            if init_type == TypeId::SYMBOL && self.is_symbol_call_initializer(var_decl.initializer)
+            {
+                if let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
+                    return self
+                        .ctx
+                        .types
+                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                }
+            }
+
             // const: preserve literal type
             init_type
         } else {
@@ -870,6 +897,33 @@ impl<'a> CheckerState<'a> {
             // This requires explicit type annotation or prevents unsafe usage
             TypeId::UNKNOWN
         }
+    }
+
+    /// Check if an initializer expression is a `Symbol()` or `Symbol("desc")` call.
+    pub(crate) fn is_symbol_call_initializer(&self, init_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+            ident.escaped_text == "Symbol"
+        } else {
+            false
+        }
+    }
+
+    /// Get the binder SymbolId for a variable declaration's name node.
+    fn get_symbol_id_for_variable_name(&self, name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        self.ctx.binder.get_node_symbol(name_idx)
     }
 
     /// Get the type of an assignment target without definite assignment checks.

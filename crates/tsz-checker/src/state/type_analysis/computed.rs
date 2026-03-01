@@ -637,6 +637,9 @@ impl<'a> CheckerState<'a> {
                     (params, updates) = self.push_type_parameters(&interface.type_parameters);
                 }
 
+                // Pre-compute computed property names that the lowering can't resolve from AST alone.
+                let computed_names = self.precompute_computed_property_names(&declarations);
+
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
@@ -653,6 +656,9 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+                    computed_names.get(&expr_idx).copied()
+                };
                 let lowering = TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
@@ -660,7 +666,8 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
+                .with_type_param_bindings(type_param_bindings)
+                .with_computed_name_resolver(&computed_name_resolver);
                 let interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
                 let interface_type =
@@ -862,10 +869,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                     // First try type annotation using type-node lowering (resolves through binder).
                     if var_decl.type_annotation.is_some() {
-                        return (
-                            self.get_type_from_type_node(var_decl.type_annotation),
-                            Vec::new(),
-                        );
+                        let annotation_type =
+                            self.get_type_from_type_node(var_decl.type_annotation);
+                        // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol
+                        // type using the variable's binder symbol as identity.
+                        if annotation_type == TypeId::SYMBOL
+                            && self.is_const_variable_declaration(resolved_value_decl)
+                            && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
+                        {
+                            return (
+                                self.ctx
+                                    .types
+                                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0)),
+                                Vec::new(),
+                            );
+                        }
+                        return (annotation_type, Vec::new());
                     }
                     if let Some(jsdoc_type) =
                         self.jsdoc_type_annotation_for_node(resolved_value_decl)
@@ -878,6 +897,20 @@ impl<'a> CheckerState<'a> {
                             self.literal_type_from_initializer(var_decl.initializer)
                     {
                         return (literal_type, Vec::new());
+                    }
+                    // `const k = Symbol()` — infer unique symbol type.
+                    // In TypeScript, const declarations initialized with Symbol() get
+                    // a unique symbol type (typeof k), not the general `symbol` type.
+                    if var_decl.initializer.is_some()
+                        && self.is_const_variable_declaration(resolved_value_decl)
+                        && self.is_symbol_call_initializer(var_decl.initializer)
+                    {
+                        return (
+                            self.ctx
+                                .types
+                                .unique_symbol(tsz_solver::SymbolRef(sym_id.0)),
+                            Vec::new(),
+                        );
                     }
                     // Fall back to inferring from initializer
                     if var_decl.initializer.is_some() {

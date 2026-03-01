@@ -630,6 +630,20 @@ impl<'a> CheckerState<'a> {
                         .index_access(pre_resolution_object_type, index_type);
                 }
             }
+            // Case 4: Type param with unique symbol index. Unique symbols are concrete
+            // (not generic), but when the object is a type parameter, the result type
+            // depends on the specific T at instantiation time. Produce a deferred
+            // IndexAccess(T, UniqueSymbol) to match tsc behavior (e.g., T[typeof fooProp]).
+            if tsz_solver::visitor::is_type_parameter(self.ctx.types, pre_resolution_object_type)
+                && tsz_solver::visitor::unique_symbol_ref(self.ctx.types, index_type).is_some()
+                && pre_resolution_object_type != object_type_for_access
+            {
+                return self
+                    .ctx
+                    .types
+                    .factory()
+                    .index_access(pre_resolution_object_type, index_type);
+            }
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
 

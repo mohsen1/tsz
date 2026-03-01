@@ -1146,6 +1146,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Pre-compute computed property names that the lowering can't resolve from AST alone.
+        // This handles cases like `[k]` where k is a `const` unique symbol variable.
+        let computed_names = self.precompute_computed_property_names(&declarations);
+
         // Get type parameters from the first interface declaration
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
@@ -1167,6 +1171,9 @@ impl<'a> CheckerState<'a> {
                 })
         };
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+        let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
+            computed_names.get(&expr_idx).copied()
+        };
         let lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
@@ -1174,7 +1181,8 @@ impl<'a> CheckerState<'a> {
             &def_id_resolver,
             &value_resolver,
         )
-        .with_type_param_bindings(type_param_bindings);
+        .with_type_param_bindings(type_param_bindings)
+        .with_computed_name_resolver(&computed_name_resolver);
         let interface_type =
             lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
 
@@ -1182,6 +1190,60 @@ impl<'a> CheckerState<'a> {
         let _ = params; // params are not needed for this path
 
         self.merge_interface_heritage_types(&declarations, interface_type)
+    }
+
+    /// Pre-compute property names for computed property name expressions in interface members.
+    /// Iterates over all members of all declarations, finds COMPUTED_PROPERTY_NAME nodes,
+    /// evaluates the expression type, and builds a map from expression NodeIndex to Atom.
+    pub(crate) fn precompute_computed_property_names(
+        &mut self,
+        declarations: &[NodeIndex],
+    ) -> rustc_hash::FxHashMap<NodeIndex, tsz_common::Atom> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut map = rustc_hash::FxHashMap::default();
+        for &decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                let Some(member) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                // Get the name node from signature or accessor
+                let name_idx = if let Some(sig) = self.ctx.arena.get_signature(member) {
+                    sig.name
+                } else if let Some(acc) = self.ctx.arena.get_accessor(member) {
+                    acc.name
+                } else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(name_idx) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                // Set checking_computed_property_name so that TS2467 (type parameter
+                // reference in computed property name) is properly emitted.
+                let prev = self.ctx.checking_computed_property_name;
+                self.ctx.checking_computed_property_name = Some(name_idx);
+                // Evaluate the expression type and get the property name
+                let expr_type = self.get_type_of_node(computed.expression);
+                self.ctx.checking_computed_property_name = prev;
+                if let Some(name) =
+                    tsz_solver::type_queries::get_literal_property_name(self.ctx.types, expr_type)
+                {
+                    map.insert(computed.expression, name);
+                }
+            }
+        }
+        map
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.

@@ -599,6 +599,19 @@ impl<'a> CheckerState<'a> {
                     // Note: Freshness is tracked by the TypeId flags.
                     // Fresh vs non-fresh object types are interned distinctly.
                 }
+                // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol
+                // type using the variable's binder symbol as identity.
+                if declared_type == TypeId::SYMBOL
+                    && checker.is_const_variable_declaration(decl_idx)
+                    && checker.is_unique_symbol_type_annotation(var_decl.type_annotation)
+                {
+                    if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
+                        return checker
+                            .ctx
+                            .types
+                            .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                    }
+                }
                 // Type annotation determines the final type
                 return declared_type;
             }
@@ -669,6 +682,17 @@ impl<'a> CheckerState<'a> {
                         checker.literal_type_from_initializer(var_decl.initializer)
                     {
                         return literal_type;
+                    }
+                    // `const k = Symbol()` — infer unique symbol type.
+                    // In TypeScript, const declarations initialized with Symbol() get
+                    // a unique symbol type (typeof k), not the general `symbol` type.
+                    if checker.is_symbol_call_initializer(var_decl.initializer) {
+                        if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
+                            return checker
+                                .ctx
+                                .types
+                                .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                        }
                     }
                     return init_type;
                 }
