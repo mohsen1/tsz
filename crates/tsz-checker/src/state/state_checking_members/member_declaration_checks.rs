@@ -721,6 +721,9 @@ impl<'a> CheckerState<'a> {
         // Check method signatures in type literals
         else if node.kind == syntax_kind_ext::METHOD_SIGNATURE {
             if let Some(sig) = self.ctx.arena.get_signature(node) {
+                // Push method type parameters so they are in scope when
+                // resolving return type annotations (e.g., groupBy<T>(): { [k: string]: T[] })
+                let (_, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
                 if let Some(params) = &sig.parameters {
                     self.check_strict_mode_reserved_parameter_names(
                         &params.nodes,
@@ -742,6 +745,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 self.check_type_for_parameter_properties(sig.type_annotation);
+                self.pop_type_parameters(type_param_updates);
                 if self.ctx.no_implicit_any()
                     && sig.type_annotation.is_none()
                     && let Some(name) = self.property_name_for_error(sig.name)

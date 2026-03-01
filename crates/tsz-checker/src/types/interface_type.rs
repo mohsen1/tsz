@@ -170,14 +170,25 @@ impl<'a> CheckerState<'a> {
                             .map(|name| self.ctx.types.intern_string(&name))
                     });
                     if let Some(name_atom) = name_atom {
-                        if member_node.kind == METHOD_SIGNATURE
-                            && let Some(ref _params) = sig.parameters
-                        {}
+                        // For method signatures, push type parameters so they
+                        // are in scope when resolving the return type annotation
+                        // (e.g., `groupBy<T>(): { [key: string]: T[] }`)
+                        let type_param_updates = if member_node.kind == METHOD_SIGNATURE {
+                            let (_, updates) = self.push_type_parameters(&sig.type_parameters);
+                            Some(updates)
+                        } else {
+                            None
+                        };
+
                         let type_id = if sig.type_annotation.is_some() {
                             self.get_type_from_type_node(sig.type_annotation)
                         } else {
                             TypeId::ANY
                         };
+
+                        if let Some(updates) = type_param_updates {
+                            self.pop_type_parameters(updates);
+                        }
 
                         properties.push(PropertyInfo {
                             name: name_atom,
