@@ -9694,3 +9694,129 @@ fn test_call_index_access_on_mapped_type_constraint() {
         "Expected T[K] to be callable when T extends {{ [P in K]: () => void }}, got {result:?}"
     );
 }
+
+/// When a type parameter has a conditional type constraint that evaluates to `never`
+/// for the inferred type, the solver should report an `ArgumentTypeMismatch` with
+/// `never` as the expected type (not the unevaluated conditional).
+///
+/// Pattern: `<T extends null extends T ? any : never>(value: T): void`
+/// Called with `string` → constraint is `null extends string ? any : never` → `never`
+/// → `string` is not assignable to `never` → TS2345
+#[test]
+fn test_generic_call_evaluates_conditional_constraint_to_never() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // Build the conditional constraint: null extends T ? any : never
+    let tp_name = interner.intern_string("T");
+    let tp = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: None,
+        default: None,
+    };
+    let tp_id = interner.type_param(tp);
+
+    // Conditional: null extends T ? any : never
+    let cond = interner.conditional(ConditionalType {
+        check_type: TypeId::NULL,
+        extends_type: tp_id,
+        true_type: TypeId::ANY,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    // Now create the type param with the conditional constraint
+    let tp_with_constraint = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: Some(cond),
+        default: None,
+    };
+    let tp_id_constrained = interner.type_param(tp_with_constraint.clone());
+
+    // function<T extends null extends T ? any : never>(value: T): void
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(tp_id_constrained)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![tp_with_constraint],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with `string` — should fail because null !<: string → constraint = never
+    let result = evaluator.resolve_call(func, &[TypeId::STRING]);
+    match result {
+        CallResult::ArgumentTypeMismatch { expected, .. } => {
+            // The expected type should be `never` (the evaluated constraint),
+            // not the raw Conditional type
+            assert_eq!(
+                expected,
+                TypeId::NEVER,
+                "Expected constraint to evaluate to `never`, got {:?}",
+                interner.lookup(expected)
+            );
+        }
+        _ => panic!("Expected ArgumentTypeMismatch with never, got {result:?}"),
+    }
+}
+
+/// When a conditional constraint evaluates to a concrete type (not never),
+/// inference should succeed normally.
+///
+/// Pattern: `<T extends null extends T ? any : never>(value: T): void`
+/// Called with `string | null` → constraint is `null extends (string | null) ? any : never` → `any`
+/// → `string | null` is assignable to `any` → OK
+#[test]
+fn test_generic_call_conditional_constraint_accepts_nullable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let tp_name = interner.intern_string("T");
+    let tp = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: None,
+        default: None,
+    };
+    let tp_id = interner.type_param(tp);
+
+    // Conditional: null extends T ? any : never
+    let cond = interner.conditional(ConditionalType {
+        check_type: TypeId::NULL,
+        extends_type: tp_id,
+        true_type: TypeId::ANY,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let tp_with_constraint = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: Some(cond),
+        default: None,
+    };
+    let tp_id_constrained = interner.type_param(tp_with_constraint.clone());
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(tp_id_constrained)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![tp_with_constraint],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Call with `string | null` — should succeed because null <: (string | null) → any
+    let nullable = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+    let result = evaluator.resolve_call(func, &[nullable]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for nullable argument, got {result:?}"
+    );
+}

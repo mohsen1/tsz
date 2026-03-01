@@ -1,7 +1,68 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9766/12570 (77.7%) — full suite, error-code level
+**Current score**: ~9772/12570 (77.7%) — full suite, error-code level
+
+---
+
+## Session 2026-03-02b — Evaluate conditional type constraints after instantiation in generic call inference
+
+### Fixed: Unevaluated conditional constraints caused missing TS2345 — Solver (generic_call.rs)
+
+**Area**: types/conditional, classes/privateNames (cross-cutting via generic call inference)
+
+**Root cause**: In `resolve_generic_call_inner` (generic_call.rs line 647), after instantiating a type parameter constraint with inferred types, the resulting conditional type was not evaluated. For example, `T extends null extends T ? any : never` with `T = string` produced the instantiated conditional `null extends string ? any : never` — but this remained as an unevaluated `TypeData::Conditional` instead of being evaluated to `never`.
+
+This caused two cascading bugs:
+1. **Wrong substitution**: When the constraint check failed, the fallback substituted `T = <unevaluated conditional>` instead of `T = never`. The parameter `value: T` became `value: <conditional>` instead of `value: never`.
+2. **Suppressed error**: The checker's `should_defer_contextual_argument_mismatch` detected `any` inside the unevaluated conditional's true branch and suppressed the TS2345 error, even though the conditional would have evaluated to `never` (which contains no `any`).
+
+**Fix**: Added `self.interner.evaluate_type(constraint_ty_raw)` after `instantiate_type` to evaluate the constraint. This resolves concrete conditionals to their branch result before they're used for constraint checking or fallback substitution.
+
+**Tests**: 2 unit tests:
+- `test_generic_call_evaluates_conditional_constraint_to_never` — `null extends string ? any : never` evaluates to `never`, reports `ArgumentTypeMismatch` with `expected = never`
+- `test_generic_call_conditional_constraint_accepts_nullable` — `null extends (string | null) ? any : never` evaluates to `any`, call succeeds
+
+**Impact**: +2 conformance tests (privateNamesConstructorChain-1, privateNamesConstructorChain-2), 0 regressions. Also fixes error code mismatch in conditionalTypeAssignabilityWhenDeferred.ts (now emits TS2345, still has fingerprint-level gaps).
+
+**Files changed**:
+- `crates/tsz-solver/src/operations/generic_call.rs` — evaluate constraint after instantiation
+- `crates/tsz-solver/tests/operations_tests.rs` — 2 new tests
+
+---
+
+## Session 2026-03-02 — Fix false TS2349 for IndexAccess callability with generic constraints
+
+### Fixed: resolve_call used NoopResolver for IndexAccess/Lazy/Mapped types — Solver (operations/core.rs)
+
+**Area**: types/conditional (inferTypes1.ts), cross-cutting (generic call patterns)
+
+**Root cause**: `resolve_call()` in `CallEvaluator` used the standalone `evaluate_type()` (with `NoopResolver`) for `IndexAccess`/`Lazy`/`Mapped`/`TemplateLiteral` types, while `Application` and `TypeQuery` arms already used `self.checker.evaluate_type()` (with full resolver context). This meant `T[K]` where `T extends Record<K, F>` couldn't be resolved because `Record` is stored as `Application(Lazy(DefId), [K, F])` which requires DefId resolution to expand into its mapped type form.
+
+**Fix**: Changed the `IndexAccess`/`Lazy`/`Mapped`/`TemplateLiteral` arm in `resolve_call()` to use `self.checker.evaluate_type(func_type)` instead of `crate::evaluation::evaluate::evaluate_type(self.interner, func_type)`.
+
+**Pattern fixed**:
+```typescript
+function invoker<K extends string | number | symbol, A extends any[]>(key: K, ...args: A) {
+    return <T extends Record<K, (...args: A) => any>>(obj: T): ReturnType<T[K]> => obj[key](...args)
+    // Was: false TS2349 ("not callable") on obj[key](...args)
+    // Now: no error (correct)
+}
+```
+
+**Files changed**:
+- `crates/tsz-solver/src/operations/core.rs` — resolve_call evaluation path
+- `crates/tsz-solver/tests/operations_tests.rs` — test_call_index_access_on_mapped_type_constraint
+
+**Impact**: +2 net conformance (3 improvements, 0 real regressions):
+- `genericCallInferenceConditionalType1.ts` — false TS2536 removed
+- `privateNamesConstructorChain-1.ts` — false errors removed
+- `privateNamesConstructorChain-2.ts` — false errors removed
+
+**Remaining gaps in inferTypes1.ts**:
+- TS2556 (spread argument): `...args` where `A extends any[]` — tsc allows spreading generic array-constrained types, we don't yet
+- TS2322 (line 154): `{ [P in T]: void }` where `string extends T` — missing check for non-PropertyKey mapped type constraint
+- TS2344 message text: "new (...args)" vs "abstract new (...args)" — message wording difference, low priority
 
 ---
 
