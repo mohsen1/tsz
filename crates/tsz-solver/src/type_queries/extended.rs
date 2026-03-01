@@ -137,14 +137,17 @@ fn is_invalid_index_type_inner(
             value,
             crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
         ),
+        // Note: Lazy types are intentionally NOT listed here. They are
+        // deferred references (type aliases, etc.) that could resolve to
+        // valid index types like `string`. They fall through to the default
+        // `false` case below.
         Some(
             TypeData::Array(_)
             | TypeData::Tuple(_)
             | TypeData::Object(_)
             | TypeData::ObjectWithIndex(_)
             | TypeData::Function(_)
-            | TypeData::Callable(_)
-            | TypeData::Lazy(_),
+            | TypeData::Callable(_),
         ) => true,
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
             for &member in db.type_list(list_id).iter() {
