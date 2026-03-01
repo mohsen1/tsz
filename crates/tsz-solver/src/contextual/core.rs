@@ -125,11 +125,9 @@ impl<'a> ContextualTypeContext<'a> {
                 return None;
             }
             // If all callable members that contribute agree on the same type, use it.
-            let first = param_types[0];
-            if param_types.iter().all(|&t| t == first) {
-                return Some(first);
-            }
-            return None;
+            // If they disagree, return a union of the parameter types (tsc behavior:
+            // contextual type is the union of parameter types across union members).
+            return collect_single_or_union(self.interner, param_types);
         }
 
         // Handle Application explicitly - unwrap to base type
