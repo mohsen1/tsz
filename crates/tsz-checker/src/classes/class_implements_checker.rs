@@ -693,8 +693,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                     };
 
-                    let is_ambient = self.has_declare_modifier(&class_data.modifiers);
-                    if !is_ambient && !missing_members.is_empty() {
+                    if !missing_members.is_empty() {
                         let missing_message = if missing_members.len() == 1 {
                             format!(
                                 "Property '{}' is missing in type '{}' but required in type '{}'.",
