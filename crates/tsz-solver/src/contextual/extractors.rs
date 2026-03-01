@@ -458,15 +458,20 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersections, try each member and return the first match.
+        // For intersections, collect element types from all tuple members.
+        // Pick the most specific (non-any) type to preserve contextual narrowing.
+        // e.g., `[any] & [1]` at index 0 should return `1`, not `any`.
         let members = self.db.type_list(TypeListId(list_id));
+        let mut result: Option<TypeId> = None;
         for &member in members.iter() {
             let mut extractor = TupleElementExtractor::new(self.db, self.index, self.element_count);
             if let Some(ty) = extractor.extract(member) {
-                return Some(ty);
+                if result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)) {
+                    result = Some(ty);
+                }
             }
         }
-        None
+        result
     }
 
     fn default_output() -> Self::Output {
