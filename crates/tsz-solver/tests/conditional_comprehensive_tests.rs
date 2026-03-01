@@ -722,3 +722,129 @@ fn test_concrete_conditional_not_affected_by_constraint() {
         "Concrete conditional: both branches are string literals, assignable to string"
     );
 }
+
+// =============================================================================
+// Conditional-to-Conditional Subtype: Relaxed Check-Type Comparison
+// =============================================================================
+// When two conditional types have the same extends_type, their check_types
+// only need to be RELATED (in either direction), not strictly equivalent.
+// This is critical for variance to work through conditional types in generic
+// interfaces. tsc: isRelatedTo(source.checkType, target.checkType) ||
+//                  isRelatedTo(target.checkType, source.checkType)
+
+#[test]
+fn test_conditional_subtype_with_related_check_types() {
+    // A extends string ? A : number  <:  B extends string ? B : number
+    // where B <: A (B is constrained to extend A)
+    //
+    // This models: Covariant<A> <: Covariant<B> is WRONG when B extends A,
+    //              but Covariant<B> <: Covariant<A> should succeed.
+    //
+    // After expansion, the properties become conditional types and we
+    // need the relaxed check-type comparison for the subtype check to pass.
+    let interner = TypeInterner::new();
+
+    let a_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let b_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: Some(a_param), // B extends A
+        default: None,
+        is_const: false,
+    });
+
+    // A extends string ? A : number
+    let cond_a = interner.conditional(ConditionalType {
+        check_type: a_param,
+        extends_type: TypeId::STRING,
+        true_type: a_param,
+        false_type: TypeId::NUMBER,
+        is_distributive: true,
+    });
+
+    // B extends string ? B : number
+    let cond_b = interner.conditional(ConditionalType {
+        check_type: b_param,
+        extends_type: TypeId::STRING,
+        true_type: b_param,
+        false_type: TypeId::NUMBER,
+        is_distributive: true,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // B extends A, so B <: A. The conditional types should be related
+    // because check_types are related (B <: A) and extends/branches match.
+    assert!(
+        checker.is_subtype_of(cond_b, cond_a),
+        "B extends string ? B : number should be subtype of A extends string ? A : number when B <: A"
+    );
+}
+
+#[test]
+fn test_conditional_subtype_unrelated_check_types_rejected() {
+    // string extends string ? number : boolean  vs  number extends string ? number : boolean
+    // check_types (string, number) are NOT related in either direction:
+    //   string <: number → false, number <: string → false
+    // So the conditional subtype check should fail.
+    let interner = TypeInterner::new();
+
+    let cond_str = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    });
+
+    let cond_num = interner.conditional(ConditionalType {
+        check_type: TypeId::NUMBER,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(cond_str, cond_num),
+        "Conditional types with unrelated check types (string vs number) should not be subtypes"
+    );
+    assert!(
+        !checker.is_subtype_of(cond_num, cond_str),
+        "Conditional types with unrelated check types (number vs string) should not be subtypes"
+    );
+}
+
+#[test]
+fn test_conditional_subtype_same_check_type_still_works() {
+    // Identical conditional types should still be subtypes of each other.
+    // T extends string ? number : boolean  <:  T extends string ? number : boolean
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: true,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(cond, cond),
+        "Identical conditional types should be subtypes of each other"
+    );
+}
