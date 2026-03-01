@@ -1,7 +1,46 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9719/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9717/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01f — types/tuple: TS2540 for readonly tuple elements + TS1354
+
+### Fixed: TS2540 vs TS2542 for readonly tuple element assignment — Checker (readonly.rs) + Solver (property_readonly.rs)
+
+**Area**: types/tuple (58.8%)
+
+**Root cause (TS2540)**: When assigning to a fixed element of a readonly tuple (e.g., `v[0] = 1` on `readonly [number, number, ...number[]]`), the checker emitted TS2542 (index signature) instead of TS2540 (named property). The solver's `resolve_array_property` resolves all numeric tuple access through `Array<T>` interface from lib.d.ts, which sets `from_index_signature: true`. But tsc treats fixed tuple element indices as named properties.
+
+**Fix**: Added `is_readonly_tuple_fixed_element()` solver query (property_readonly.rs) that checks if a type is `ReadonlyType(Tuple(...))` and the index falls within the fixed (non-rest) element range. The checker's `check_readonly_assignment` now calls this before checking `from_index_signature`, emitting TS2540 for fixed elements and TS2542 for rest-range indices.
+
+**Root cause (TS1354)**: The `readonly` type modifier (e.g., `readonly string`, `readonly Array<string>`) was accepted without error. tsc requires the operand to be an array type (`T[]`) or tuple type (`[T, U]`).
+
+**Fix**: Added TS1354 check in `get_type_from_type_operator` (type_node.rs) — when the operator is `readonly` and the operand's syntax kind is not ARRAY_TYPE or TUPLE_TYPE, emit TS1354.
+
+**Tests**: 7 new unit tests in ts2540_readonly_tests.rs:
+- `test_readonly_tuple_fixed_element_emits_ts2540` — v[0] on readonly [number, number] → TS2540
+- `test_readonly_tuple_rest_element_emits_ts2542` — v[2] on readonly [number, number, ...number[]] → TS2542
+- `test_readonly_tuple_mixed_fixed_and_rest` — fixed=TS2540, rest=TS2542
+- `test_readonly_on_non_array_type_emits_ts1354` — readonly string → TS1354
+- `test_readonly_on_array_type_no_ts1354` — readonly string[] → no TS1354
+- `test_readonly_on_tuple_type_no_ts1354` — readonly [string, number] → no TS1354
+- `test_readonly_on_type_reference_emits_ts1354` — readonly Array<string> → TS1354
+
+**Impact**: readonlyArraysAndTuples.ts now has all expected error codes (TS1354, TS2322, TS2540, TS2542, TS4104) matching tsc. Fingerprint-level mismatches remain due to column offsets on TS2540/TS2542 (col 1 vs col 3 for `v[0]`). 0 error-code regressions.
+
+### Remaining TS2540 gaps (9 tests missing TS2540):
+1. **jsdocReadonly.ts** — JSDoc `@readonly` on class properties in JS files. Different code path.
+2. **constAssertions.ts** — Needs TS1355 (const assertion on non-literal) plus readonly const object property assignment
+3. **objectFreeze.ts** — Needs Object.freeze lib type support (Readonly<T> mapping)
+4. **checkExportsObjectAssignProperty/Prototype.ts** — JSDoc/salsa specific
+5. **checkObjectDefineProperty.ts** — Object.defineProperty lib type
+6. **checkOtherObjectAssignProperty.ts** — Object.assign lib type
+7. **enumMergeWithExpando.ts** — Enum with expando properties (salsa)
+
+### TS1354 impact:
+- Only 1 conformance test had TS1354 missing (readonlyArraysAndTuples.ts). Low broader impact but correct behavior.
 
 ---
 
