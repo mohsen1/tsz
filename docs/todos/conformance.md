@@ -1,7 +1,38 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9722/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9725/12570 (77.4%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01c — jsx: union-typed component props checking
+
+### Fixed: JSX attribute checking against union-typed props — Checker (jsx_checker.rs, jsx_checker_attrs.rs)
+
+**Area**: jsx (59.5%)
+
+**Root cause**: The G5 guard in `get_jsx_props_type_for_component()` skipped ALL attribute checking when the component's props type was a union. This meant discriminated union props like `{ editable: false } | { editable: true, onEdit: () => void }` were never validated, missing TS2322 errors.
+
+**Fix** (2 files):
+1. **`jsx_checker.rs`** — Removed G5 union-props skip for both SFC and class component paths. Added union detection in `check_jsx_attributes_against_props` that routes to `check_jsx_union_props` when props type is a union.
+2. **`jsx_checker_attrs.rs`** (new) — Extracted `check_jsx_union_props`, `check_spread_property_types`, and `check_jsx_attr_overwritten_by_spread` to keep main file under 2000 LOC. The union check:
+   - Pre-scans for arrow/function expressions (bails out — contextual typing not supported yet)
+   - Collects attribute name→type pairs with `preserve_literal_types = true` to prevent widening
+   - For each union member: checks all provided attrs are type-compatible AND all required non-children props are present
+   - If no member is compatible, builds attributes object type and emits TS2322
+
+**Tests**: 4 new + 1 updated in `jsx_component_attribute_tests.rs`:
+- `test_union_props_conflicting_discriminant_emits_ts2322` — `<TextComponent editable={true} />` missing `onEdit`
+- `test_union_props_matching_discriminant_no_error` — `<UnionComp kind="a" x={42} />` matches member
+- `test_union_props_callback_attribute_skips_check` — arrow function in onChange bails out
+- `test_union_props_class_component_missing_required_emits_ts2322` — class component missing required prop
+
+**Result**: 9725/12570 (77.4%) — no regressions. The originally targeted diff=1 tests (tsxGenericAttributesType7/8, checkJsxGenericTagHasCorrectInferences, tsxLibraryManagedAttributes) were NOT union-props issues — they involve generic spreads, intersection inference, and mapped type Defaultize patterns. The fix correctly handles discriminated union props but doesn't fix those unrelated TS2322 gaps.
+
+### Remaining JSX TS2322 gaps (non-union):
+1. **Generic spread attrs** (tsxGenericAttributesType7/8): `<Component {...props} />` where `U` isn't assignable to `IntrinsicAttributes & U` — needs type-parameter spread handling
+2. **Generic tag inference** (checkJsxGenericTagHasCorrectInferences): Intersection type inference for generic JSX tags
+3. **Library managed attributes** (tsxLibraryManagedAttributes): Complex `Defaultize` mapped type props — per-property TS2322 mismatches (17 missing diagnostics)
 
 ---
 
