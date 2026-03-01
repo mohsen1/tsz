@@ -215,14 +215,9 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // TS18019: Check for private identifiers in ambient classes
-                    if is_declared {
-                        self.error_at_node(
-                            member_name_idx,
-                            diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                        );
-                    }
+                    // Note: In tsc 6.0, private identifiers (#name) ARE allowed
+                    // in ambient (declare) classes. TS18019 is only for member-level
+                    // 'declare' modifier on private-named members, not class-level.
                 }
 
                 // Check for abstract members in non-abstract class

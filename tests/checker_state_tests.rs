@@ -11903,10 +11903,11 @@ declare module "@scoped/package" {
 }
 
 #[test]
-fn test_private_identifier_in_ambient_class_2819() {
+fn test_private_identifier_in_ambient_class_allowed() {
     use crate::parser::ParserState;
 
-    // TS2819: Private identifiers are not allowed in ambient contexts
+    // In tsc 6.0, private identifiers (#name) ARE allowed in ambient classes.
+    // TS18019 should NOT be emitted for # members in declare classes.
     let source = r#"
 declare class AmbientClass {
     #privateField: string;
@@ -11940,10 +11941,10 @@ declare class AmbientClass {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let error_count = codes.iter().filter(|&&c| c == 18019).count();
 
-    // Should report error for all 5 private identifiers
+    // Should NOT report TS18019 for private identifiers in ambient classes
     assert!(
-        error_count >= 4,
-        "Expected at least 4 errors with code 18019 for private identifiers in ambient class, got {error_count} errors: {codes:?}"
+        error_count == 0,
+        "Expected 0 errors with code 18019 for private identifiers in ambient class, got {error_count} errors: {codes:?}"
     );
 }
 
