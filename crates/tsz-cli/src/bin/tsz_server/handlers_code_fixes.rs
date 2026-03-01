@@ -387,24 +387,30 @@ impl Server {
                 && let Some(prop_name) =
                     Self::find_property_access_name_for_missing_member_fallback(&content)
             {
-                response_actions.extend([
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare method '{prop_name}'"),
-                        "changes": [],
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Declare property '{prop_name}'"),
-                        "changes": [],
-                    }),
-                    serde_json::json!({
-                        "fixName": "addMissingMember",
-                        "description": format!("Add index signature for property '{prop_name}'"),
-                        "changes": [],
-                    }),
-                ]);
-            }
+                    response_actions.extend([
+                        serde_json::json!({
+                            "fixName": "addMissingMember",
+                            "description": format!("Declare method '{prop_name}'"),
+                            "changes": [],
+                            "fixId": "fixMissingMember",
+                            "fixAllDescription": "Add all missing members",
+                        }),
+                        serde_json::json!({
+                            "fixName": "addMissingMember",
+                            "description": format!("Declare property '{prop_name}'"),
+                            "changes": [],
+                            "fixId": "fixMissingMember",
+                            "fixAllDescription": "Add all missing members",
+                        }),
+                        serde_json::json!({
+                            "fixName": "addMissingMember",
+                            "description": format!("Add index signature for property '{prop_name}'"),
+                            "changes": [],
+                            "fixId": "fixMissingMember",
+                            "fixAllDescription": "Add all missing members",
+                        }),
+                    ]);
+                }
 
             if response_actions.is_empty()
                 && error_codes.len() == 1
@@ -612,16 +618,22 @@ impl Server {
                                 "fixName": "addMissingMember",
                                 "description": format!("Declare method '{prop_name}'"),
                                 "changes": [],
+                                "fixId": "fixMissingMember",
+                                "fixAllDescription": "Add all missing members",
                             }),
                             serde_json::json!({
                                 "fixName": "addMissingMember",
                                 "description": format!("Declare property '{prop_name}'"),
                                 "changes": [],
+                                "fixId": "fixMissingMember",
+                                "fixAllDescription": "Add all missing members",
                             }),
                             serde_json::json!({
                                 "fixName": "addMissingMember",
                                 "description": format!("Add index signature for property '{prop_name}'"),
                                 "changes": [],
+                                "fixId": "fixMissingMember",
+                                "fixAllDescription": "Add all missing members",
                             }),
                         ]);
                     }
