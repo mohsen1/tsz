@@ -20,8 +20,8 @@ use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::*;
 use crate::types::{
     ConditionalType, ConditionalTypeId, MappedType, MappedTypeId, StringIntrinsicKind,
-    TemplateLiteralId, TemplateSpan, TypeApplicationId, TypeData, TypeId, TypeListId,
-    TypeParamInfo,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
+    TypeId, TypeListId, TypeParamInfo,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1045,6 +1045,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
             TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::Tuple(tuple_list_id) => self.visit_tuple(*tuple_list_id, type_id),
             TypeData::NoInfer(inner) => {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
                 self.evaluate(*inner)
@@ -1132,6 +1133,108 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit an intersection type: A & B & C
     fn visit_intersection(&mut self, list_id: TypeListId) -> TypeId {
         self.evaluate_intersection(list_id)
+    }
+
+    /// Visit a tuple type: [A, B, ...C]
+    ///
+    /// Evaluates each element's type if it is a meta-type that can simplify
+    /// (`IndexAccess`, Mapped, Conditional, etc.). For rest/spread elements
+    /// whose evaluated type is itself a tuple, flattens them inline.
+    /// For example: `[string, ...([number, boolean])]` → `[string, number, boolean]`
+    ///
+    /// Conservative: only evaluates element types that are known meta-types
+    /// to avoid exponential blowup with recursive conditional types that
+    /// produce tuples.
+    fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
+        let elements = self.interner.tuple_list(tuple_list_id);
+
+        // Quick check: does any element need evaluation?
+        let needs_eval = elements
+            .iter()
+            .any(|elem| Self::is_evaluable_meta_type(self.interner, elem.type_id));
+        if !needs_eval {
+            return original_type_id;
+        }
+
+        let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut changed = false;
+
+        for elem in elements.iter() {
+            // Only evaluate element types that are meta-types (IndexAccess,
+            // Mapped, Lazy, Application, etc.) — skip type parameters,
+            // primitives, and already-concrete types to avoid blowup.
+            let evaluated = if Self::is_evaluable_meta_type(self.interner, elem.type_id) {
+                self.evaluate(elem.type_id)
+            } else {
+                elem.type_id
+            };
+            if evaluated != elem.type_id {
+                changed = true;
+            }
+
+            // For rest/spread elements, if the evaluated type is a tuple,
+            // flatten its elements inline (spreading the inner tuple).
+            if elem.rest {
+                if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated) {
+                    let inner_elements = self.interner.tuple_list(inner_list_id);
+                    for inner_elem in inner_elements.iter() {
+                        result.push(inner_elem.clone());
+                    }
+                    changed = true;
+                    continue;
+                } else if let Some(TypeData::Array(element_type)) = self.interner.lookup(evaluated)
+                {
+                    // Rest element evaluating to an array stays as rest
+                    result.push(TupleElement {
+                        type_id: element_type,
+                        name: elem.name,
+                        optional: elem.optional,
+                        rest: true,
+                    });
+                    if element_type != elem.type_id {
+                        changed = true;
+                    }
+                    continue;
+                }
+            }
+
+            result.push(TupleElement {
+                type_id: evaluated,
+                name: elem.name,
+                optional: elem.optional,
+                rest: elem.rest,
+            });
+        }
+
+        if !changed {
+            return original_type_id;
+        }
+
+        self.interner.tuple(result)
+    }
+
+    /// Check if a type is a meta-type that would benefit from evaluation
+    /// inside a tuple element. Excludes type parameters and concrete types
+    /// to avoid recursive blowup.
+    fn is_evaluable_meta_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        let Some(key) = db.lookup(type_id) else {
+            return false;
+        };
+        matches!(
+            key,
+            TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::Lazy(_)
+                | TypeData::Application(_)
+                | TypeData::KeyOf(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::ReadonlyType(_)
+                | TypeData::TypeQuery(_)
+        )
     }
 
     /// Visit a union type: A | B | C

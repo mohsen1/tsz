@@ -41959,3 +41959,142 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         other => panic!("Expected Object type, got {other:?}"),
     }
 }
+
+// =============================================================================
+// Lazy type as valid index type (TS2538 fix)
+// =============================================================================
+
+#[test]
+fn test_lazy_type_not_invalid_for_indexing() {
+    // A Lazy(DefId) type (e.g., `type SS1 = string`) should NOT be
+    // flagged as invalid for indexing. Only concrete invalid types
+    // (objects, arrays, void, etc.) should be invalid.
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(100);
+    let lazy_type = interner.lazy(def_id);
+
+    let result = crate::type_queries::get_invalid_index_type_member(&interner, lazy_type);
+    assert!(
+        result.is_none(),
+        "Lazy type should not be flagged as invalid index type"
+    );
+}
+
+#[test]
+fn test_concrete_invalid_types_still_flagged() {
+    // Verify that actual invalid types (objects, arrays, void) are still caught.
+    let interner = TypeInterner::new();
+
+    // Object type is invalid for indexing
+    let obj = interner.object(vec![]);
+    assert!(
+        crate::type_queries::get_invalid_index_type_member(&interner, obj).is_some(),
+        "Object type should be invalid for indexing"
+    );
+
+    // Array type is invalid for indexing
+    let arr = interner.array(TypeId::NUMBER);
+    assert!(
+        crate::type_queries::get_invalid_index_type_member(&interner, arr).is_some(),
+        "Array type should be invalid for indexing"
+    );
+
+    // string is valid for indexing
+    assert!(
+        crate::type_queries::get_invalid_index_type_member(&interner, TypeId::STRING).is_none(),
+        "string should be valid for indexing"
+    );
+
+    // number is valid for indexing
+    assert!(
+        crate::type_queries::get_invalid_index_type_member(&interner, TypeId::NUMBER).is_none(),
+        "number should be valid for indexing"
+    );
+}
+
+// =============================================================================
+// Tuple element evaluation (visit_tuple)
+// =============================================================================
+
+#[test]
+fn test_tuple_evaluates_index_access_element() {
+    // A tuple with an IndexAccess element should evaluate the element.
+    let interner = TypeInterner::new();
+
+    // Create mapped type: { [K in string]: number }
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        },
+        constraint: TypeId::STRING,
+        template: TypeId::NUMBER,
+        name_type: None,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    // Create IndexAccess: MappedType[string]
+    let index_access = interner.index_access(mapped, TypeId::STRING);
+
+    // Create tuple: [string, IndexAccess]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: index_access,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluate_type(&interner, tuple);
+
+    // The tuple should have been evaluated — the IndexAccess element
+    // should be simplified
+    match interner.lookup(result) {
+        Some(TypeData::Tuple(list_id)) => {
+            let elements = interner.tuple_list(list_id);
+            assert_eq!(elements.len(), 2, "Tuple should still have 2 elements");
+            assert_eq!(elements[0].type_id, TypeId::STRING);
+            assert_ne!(
+                elements[1].type_id, index_access,
+                "IndexAccess element should have been evaluated"
+            );
+        }
+        _ => panic!("Expected evaluated Tuple type"),
+    }
+}
+
+#[test]
+fn test_tuple_preserves_concrete_elements() {
+    // A tuple with only concrete elements should pass through unchanged.
+    let interner = TypeInterner::new();
+
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluate_type(&interner, tuple);
+    // Should be the same tuple — no evaluation needed
+    assert_eq!(result, tuple, "Concrete tuple should be unchanged");
+}
