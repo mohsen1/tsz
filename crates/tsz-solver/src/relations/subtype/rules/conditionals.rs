@@ -12,23 +12,20 @@ use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check conditional type to conditional type subtyping.
     ///
-    /// Validates that two conditional types are equivalent in their structure and
-    /// that their true/false branches are subtype-compatible.
+    /// For two conditional types `S extends U ? X : Y` <: `T extends V ? X' : Y'`:
     ///
-    /// ## Conditional Type Structure:
-    /// ```typescript
-    /// T extends U ? X : Y
-    /// ```
+    /// ## Subtyping Rules (matches tsc):
+    /// 1. **Distributive flags must match**
+    /// 2. **Extends types must be equivalent** (bidirectional subtype)
+    /// 3. **Check types must be related** in either direction
+    ///    (not strict equivalence — this handles generic interface variance)
+    /// 4. **Branch compatibility**: both true and false branches must be compatible
     ///
-    /// ## Subtyping Rules:
-    /// 1. **Distributive flags must match**: Both must be distributive or non-distributive
-    /// 2. **Check type must be equivalent**: `check_type` parameters must be the same
-    /// 3. **Extends type must be equivalent**: `extends_type` must match structurally
-    /// 4. **Branch compatibility**: Both true and false branches must be compatible
-    ///
-    /// ## Examples:
-    /// - `T extends string ? number : boolean` ≡ `T extends string ? number : boolean` ✅
-    /// - `T extends U ? number` ≢ `T extends U ? string` ❌ (different branches)
+    /// The relaxed check-type rule (step 3) is critical for variance to work
+    /// through conditional types. When comparing properties of `Covariant<A>`
+    /// vs `Covariant<B>` (where B extends A), the expanded conditional types
+    /// `A extends string ? A : number` vs `B extends string ? B : number`
+    /// have check types that are related but not equivalent.
     pub(crate) fn check_conditional_subtype(
         &mut self,
         source: &ConditionalType,
@@ -38,11 +35,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        if !self.types_equivalent(source.check_type, target.check_type) {
+        // Extends types must be structurally identical (equivalent).
+        if !self.types_equivalent(source.extends_type, target.extends_type) {
             return SubtypeResult::False;
         }
 
-        if !self.types_equivalent(source.extends_type, target.extends_type) {
+        // Check types must be related in either direction.
+        // tsc: isRelatedTo(source.checkType, target.checkType) ||
+        //      isRelatedTo(target.checkType, source.checkType)
+        if !self
+            .check_subtype(source.check_type, target.check_type)
+            .is_true()
+            && !self
+                .check_subtype(target.check_type, source.check_type)
+                .is_true()
+        {
             return SubtypeResult::False;
         }
 
