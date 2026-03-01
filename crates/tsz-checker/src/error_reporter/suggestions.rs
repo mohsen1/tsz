@@ -133,10 +133,11 @@ impl<'a> CheckerState<'a> {
         // Collect enum member names directly from the binder's symbol exports.
         if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
             && let Some(&sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && let Some(exports) = symbol.exports.as_ref() {
-                        return exports.iter().map(|(name, _)| name.clone()).collect();
-                    }
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(exports) = symbol.exports.as_ref()
+        {
+            return exports.iter().map(|(name, _)| name.clone()).collect();
+        }
 
         crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
             self.ctx.types,

@@ -1263,7 +1263,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
-                .or_else(|| self.get_node_type_or_names(&[method_name]));
+                .or_else(|| self.get_node_type_or_names(&[method_name]))
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
 
             if let Some(method_type_id) = method_type_id
                 && let Some(return_type_id) =
@@ -1279,6 +1280,18 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
+                }
+            } else if let Some(method_type_id) = method_type_id {
+                // Cached value is a direct return type (not a function type),
+                // e.g. from checker's inferred body return type
+                if method_type_id == tsz_solver::types::TypeId::ANY
+                    && method_body.is_some()
+                    && self.body_returns_void(method_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(method_type_id));
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
