@@ -39,6 +39,45 @@ The conservative filter only evaluates types that are "reducible" (IndexAccess, 
 
 ---
 
+## Session 2026-03-01g — types/conditional: TS1338 fix + Application resolution gap analysis
+
+### Fixed: TS1338 — 'infer' outside conditional extends — Checker (member_declaration_checks.rs, context)
+
+**Area**: types/conditional (60.0%)
+
+**Root cause**: The checker never validated that `infer` type nodes only appear inside the `extends` clause of a conditional type. tsc emits TS1338 for `infer` appearing in standalone type aliases, check_type, true_type, or false_type positions.
+
+**Fix**: Added `in_conditional_extends_depth: u32` counter to `CheckerContext`. In `check_type_for_missing_names`, the CONDITIONAL_TYPE arm increments the counter before recursing into `extends_type` and decrements after. The INFER_TYPE arm emits TS1338 when the counter is 0 (meaning we're not inside any conditional extends clause). This correctly handles nested conditionals where `infer` in an inner extends is still valid.
+
+**Tests**: 5 new unit tests in `ts1338_tests.rs`:
+- `infer_outside_conditional_emits_ts1338` — standalone `type T = infer U`
+- `infer_in_check_type_emits_ts1338` — `(infer A) extends ...` emits 3 errors (check, true, false)
+- `infer_in_extends_clause_no_error` — valid position
+- `infer_in_nested_conditional_extends_no_error` — valid at any nesting depth
+- `infer_with_constraint_in_extends_no_error` — constrained infer in extends
+
+### Not fixed: False TS2349/TS2556 — Application type resolution gap in TypeEnvironment — Solver
+
+**Area**: types/conditional (inferTypes1.ts lines 184-185)
+
+**Symptom**: For `function test2<K extends string, T extends Record<K, () => void>>(key: K, obj: T) { obj[key](); }`, tsz falsely emits TS2349 ("not callable") and TS2556 ("spread must be tuple"). tsc emits nothing.
+
+**Root cause**: When evaluating the index access `T[K]`, the solver:
+1. Gets T's constraint: `Record<K, () => void>` stored as `Application(Lazy(DefId(2)), [K, () => void])`
+2. Tries to evaluate the Application to resolve Record into its mapped type form
+3. `evaluate_application` calls `resolver.resolve_lazy(DefId(2))` → returns `None`
+4. Because lib types like `Record` are resolved lazily (not eagerly in `build_type_environment`), and Record only appears in a type parameter constraint, its DefId is never registered in `type_env`
+5. Application evaluates to itself (unevaluated) → IndexAccess is deferred → checker sees a non-callable type → false TS2349
+
+**Impact**: Affects any pattern where a lib utility type (Record, Partial, Pick, etc.) appears only in a generic constraint and is then indexed. This is a deep solver/TypeEnvironment gap.
+
+**Potential fix direction**: The TypeResolver's `resolve_lazy` path needs to handle lib type DefIds that haven't been eagerly resolved. Options:
+1. Eagerly resolve lib type DefIds when they appear in type parameter constraints during binding
+2. Add a fallback in `resolve_lazy` that checks the global lib type registry for unresolved DefIds
+3. Add `visit_application` to `IndexAccessVisitor` to evaluate Application types before indexing
+
+---
+
 ## Session 2026-03-01f — types/tuple: false TS2556 for array spreads into variadic tuple rest params
 
 ### Fixed: False TS2556 for array/generic spreads into variadic tuple rest parameters — Solver (extractors.rs) + Checker (call.rs, complex.rs)
