@@ -1652,13 +1652,26 @@ impl<'a> DeclarationEmitter<'a> {
             } else if is_null_or_undefined {
                 self.write(": any");
             } else if let Some(type_id) = self.get_node_type_or_names(&[decl_idx, decl_name]) {
-                // The inferred type is printed directly as a type annotation.
-                // Note: `= value` (initializer form) is only used when the AST
-                // initializer is a direct literal (handled by Path A above).
-                // When the literal type is inferred through other expressions,
-                // tsc uses `: type` annotation form even for single literal types.
-                self.write(": ");
-                self.write(&self.print_type_id(type_id));
+                // For const declarations referencing another const with a literal type,
+                // tsc uses `= value` form (e.g., `const c3 = c1` → `declare const c3 = "abc"`).
+                // Only apply when the initializer is a simple Identifier reference,
+                // not function calls or complex expressions (those use `: type` form).
+                let is_simple_ref = has_initializer
+                    && self
+                        .arena
+                        .get(initializer)
+                        .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+                if keyword == "const"
+                    && is_simple_ref
+                    && let Some(interner) = self.type_interner
+                    && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
+                {
+                    self.write(" = ");
+                    self.write(&Self::format_literal_initializer(&lit, interner));
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(type_id));
+                }
             } else if let Some(type_text) = self.infer_fallback_type_text(initializer) {
                 self.write(": ");
                 self.write(&type_text);
