@@ -126,31 +126,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - `T extends U ? T : Y` → `(T & U) | Y` (Extract pattern)
     /// - Other patterns: returns the general `X | Y` union
     fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
-        // Only compute the constraint when the check type is a type parameter.
-        // Deferred conditionals (where T is unresolved) always have a type parameter
-        // as check type. For resolved conditionals with concrete check types,
-        // the evaluator would have already picked a branch.
-        if !matches!(
+        // Compute the default constraint for deferred conditional types.
+        //
+        // Deferred conditionals arise when the check_type is:
+        // - A naked type parameter (T extends U ? X : Y)
+        // - An index access with type params (TObj[K] extends U ? X : Y)
+        // - Other generic expressions containing type parameters
+        //
+        // For type parameter check types, compute inferred true = check & extends.
+        // For other generic check types, use the true type directly (can't intersect
+        // non-type-parameter check types meaningfully).
+        let is_type_param = matches!(
             self.interner.lookup(cond.check_type),
             Some(TypeData::TypeParameter(_))
-        ) {
+        );
+
+        // For non-type-parameter, non-generic check types, the evaluator would have
+        // already picked a branch — no constraint needed.
+        if !is_type_param
+            && !crate::visitor::contains_type_parameters(self.interner, cond.check_type)
+        {
             return None;
         }
 
         // Compute the "inferred true type": the true branch with the check type
         // replaced by check_type & extends_type.
-        let inferred_true = if cond.true_type == cond.check_type {
+        let inferred_true = if cond.true_type == cond.check_type && is_type_param {
             // Common case: Extract<T, U> = T extends U ? T : never
             // Inferred true = T & U
             self.interner
                 .intersection2(cond.check_type, cond.extends_type)
-        } else if self.type_references_check_type(cond.true_type, cond.check_type) {
+        } else if is_type_param && self.type_references_check_type(cond.true_type, cond.check_type)
+        {
             // True branch references check_type but isn't identical to it.
             // We can't do full instantiation in the subtype checker, so
             // fall back to using the true type as-is (less precise but safe).
             cond.true_type
         } else {
-            // True branch doesn't reference check_type at all.
+            // True branch doesn't reference check_type at all, or check_type
+            // is a complex generic type (not a type parameter).
             // Inferred true = X (unchanged).
             cond.true_type
         };

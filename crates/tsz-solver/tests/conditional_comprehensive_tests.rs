@@ -848,3 +848,230 @@ fn test_conditional_subtype_same_check_type_still_works() {
         "Identical conditional types should be subtypes of each other"
     );
 }
+
+// =============================================================================
+// Constraint-Based Infer Retry for Generic Check Types
+// =============================================================================
+
+#[test]
+fn test_conditional_infer_with_constrained_type_param_index_access() {
+    // Tests the fix for genericConditionalConstrainedToUnknownNotAssignableToConcreteObject.
+    //
+    // Models: ReturnType<T[M]> where T[M] resolves to () => unknown via constraint.
+    //
+    // Since the evaluator needs a resolver to handle real MappedType expansion,
+    // we model this with T constrained to () => unknown directly:
+    //   T extends () => unknown, so check_type T has constraint () => unknown.
+    //   The conditional: T extends (...args: any) => infer R ? R : any
+    //
+    // Without the fix: T is a type param, infer match fails, conditional stays deferred.
+    // With the fix: T's constraint (() => unknown) is tried, matches the infer pattern,
+    // and R is bound to unknown, so the result is unknown.
+    let interner = TypeInterner::new();
+
+    // Create T with constraint () => unknown
+    let fn_returning_unknown = interner.function(FunctionShape::new(vec![], TypeId::UNKNOWN));
+    let check_type = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(fn_returning_unknown),
+        default: None,
+        is_const: false,
+    });
+
+    // Create infer R
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // extends_type = (...args: any) => infer R
+    let extends_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: infer_r,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Conditional: check_type extends extends_fn ? infer_r : any
+    // This models ReturnType<T[M]>
+    let cond = ConditionalType {
+        check_type,
+        extends_type: extends_fn,
+        true_type: infer_r,
+        false_type: TypeId::ANY,
+        is_distributive: false,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    // T's constraint is () => unknown, which matches (...args: any) => infer R,
+    // giving R = unknown. So the result should be unknown, NOT a deferred conditional.
+    assert_eq!(
+        result,
+        TypeId::UNKNOWN,
+        "ReturnType<T> where T extends () => unknown should resolve to unknown via \
+         constraint-based infer retry, not remain deferred"
+    );
+}
+
+#[test]
+fn test_conditional_infer_with_type_param_check_type_stays_deferred() {
+    // When check_type is a bare TypeParameter (not IndexAccess), and there's an infer pattern,
+    // the conditional should remain deferred (not eagerly resolved).
+    // This is the standard case: ReturnType<T> where T is unconstrained.
+    let interner = TypeInterner::new();
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: infer_r,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_fn,
+        true_type: infer_r,
+        false_type: TypeId::ANY,
+        is_distributive: false,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    // With an unconstrained type param, the conditional should stay deferred
+    // (returned as-is, still a Conditional type)
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Conditional(_))),
+        "ReturnType<T> with unconstrained T should remain a deferred conditional type, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_conditional_infer_concrete_check_type_takes_true_branch() {
+    // When check_type is concrete (not generic), infer matching should work directly.
+    // (() => string) extends (...args: any) => infer R ? R : any → string
+    let interner = TypeInterner::new();
+
+    let fn_returning_string = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: infer_r,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: fn_returning_string,
+        extends_type: extends_fn,
+        true_type: infer_r,
+        false_type: TypeId::ANY,
+        is_distributive: false,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "(() => string) extends (...args) => infer R should give R = string"
+    );
+}
+
+#[test]
+fn test_conditional_infer_non_matching_concrete_takes_false_branch() {
+    // When check_type is concrete but doesn't match the extends pattern,
+    // should take the false branch.
+    // string extends (...args: any) => infer R ? R : any → any
+    let interner = TypeInterner::new();
+
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: infer_r,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: extends_fn,
+        true_type: infer_r,
+        false_type: TypeId::ANY,
+        is_distributive: false,
+    };
+
+    let cond_id = interner.conditional(cond);
+    let result = evaluate_type(&interner, cond_id);
+
+    assert_eq!(
+        result,
+        TypeId::ANY,
+        "string extends (...args) => infer R should take false branch (any)"
+    );
+}
