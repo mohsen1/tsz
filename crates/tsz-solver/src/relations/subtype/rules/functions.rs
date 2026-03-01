@@ -14,8 +14,8 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
-    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
-    TypePredicate, Visibility,
+    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId,
+    TypeParamInfo, TypePredicate, Visibility,
 };
 use crate::visitor::contains_this_type;
 
@@ -198,6 +198,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Count required (non-optional, non-rest) parameters.
     pub(crate) fn required_param_count(&self, params: &[ParamInfo]) -> usize {
         crate::utils::required_param_count(params)
+    }
+
+    /// Check if a parameter type contains `void` — either is `void` directly
+    /// or is a union with `void` as a member (e.g., `number | void`).
+    fn param_type_contains_void(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::VOID {
+            return true;
+        }
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return members.contains(&TypeId::VOID);
+        }
+        false
     }
 
     /// Check return type compatibility with void special-casing.
@@ -624,7 +637,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .iter()
                 .skip(target_fixed_count)
                 .take(source_required - target_fixed_count)
-                .all(|param| param.type_id == TypeId::VOID);
+                .all(|param| self.param_type_contains_void(param.type_id));
             if !extra_are_void {
                 return SubtypeResult::False;
             }
