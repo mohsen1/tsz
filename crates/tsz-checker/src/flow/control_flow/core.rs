@@ -838,15 +838,23 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                 )
             } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
-                // CRITICAL FIX: Schedule antecedent 0 (switch header) for traversal
-                // Fallthrough cases are handled by the is_merge_point block above,
-                // but single-clause cases need this to continue traversal.
+                // Defer if the pre-switch antecedent hasn't been computed yet.
+                // Without this, switch clause narrowing uses the stale current_type
+                // instead of the narrowed type from prior control flow (e.g., after
+                // `if (x !== undefined) { switch(x.kind) { ... } }`).
                 if let Some(&ant) = flow.antecedent.first()
-                    && !in_worklist.contains(&ant)
                     && !visited.contains(&ant)
+                    && !results.contains_key(&ant)
                 {
-                    worklist.push_back((ant, current_type));
-                    in_worklist.insert(ant);
+                    if !in_worklist.contains(&ant) {
+                        worklist.push_front((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                    if !in_worklist.contains(&current_flow) {
+                        worklist.push_back((current_flow, current_type));
+                        in_worklist.insert(current_flow);
+                    }
+                    continue;
                 }
 
                 // Switch clause - apply switch-specific narrowing
