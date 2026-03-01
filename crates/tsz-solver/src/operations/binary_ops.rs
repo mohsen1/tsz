@@ -921,6 +921,20 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// template literals, unique symbols). For unions, ALL members must be valid.
     /// This check is independent of strictNullChecks.
     pub fn is_valid_computed_property_name_type(&self, type_id: TypeId) -> bool {
+        self.is_valid_key_type_impl(type_id, false)
+    }
+
+    /// Check if a type is a valid mapped type constraint key type (TS2322).
+    ///
+    /// Like `is_valid_computed_property_name_type` but treats deferred types
+    /// (Application, Lazy, Conditional, `IndexAccess`) as valid, since they
+    /// cannot be fully resolved in generic context and will be checked at
+    /// instantiation time.
+    pub fn is_valid_mapped_type_key_type(&self, type_id: TypeId) -> bool {
+        self.is_valid_key_type_impl(type_id, true)
+    }
+
+    fn is_valid_key_type_impl(&self, type_id: TypeId, defer_unresolved: bool) -> bool {
         if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
             return true;
         }
@@ -931,15 +945,31 @@ impl<'a> BinaryOpEvaluator<'a> {
                 !members.is_empty()
                     && members
                         .iter()
-                        .all(|&m| self.is_valid_computed_property_name_type(m))
+                        .all(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
             }
             // For type parameters, check the constraint (e.g., K extends keyof T).
             // tsc uses getBaseConstraintOfType(type) for this check.
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
-                .is_some_and(|c| self.is_valid_computed_property_name_type(c)),
+                .is_some_and(|c| self.is_valid_key_type_impl(c, defer_unresolved)),
             // keyof always produces string | number | symbol, which are all valid.
             Some(TypeData::KeyOf(_)) => true,
+            // For intersection types, valid if any member is a valid key type.
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members
+                    .iter()
+                    .any(|&m| self.is_valid_key_type_impl(m, defer_unresolved))
+            }
+            // Deferred types (generic applications, lazy refs, conditionals, indexed access)
+            // cannot be fully resolved without instantiation context. When checking mapped
+            // type constraints, assume valid to avoid false positives.
+            Some(
+                TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _),
+            ) if defer_unresolved => true,
             _ => {
                 self.is_string_like(type_id)
                     || self.is_number_like(type_id)

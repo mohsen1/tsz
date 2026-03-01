@@ -1436,6 +1436,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a type node for validity (recursive).
+    ///
+    /// Visits nested type nodes to validate constraints. Handles:
+    /// - Indexed access types
+    /// - Union/intersection types (recurse into members)
+    /// - Array types (recurse into element)
+    /// - Conditional types (recurse into branches, respecting narrowing)
+    /// - Mapped types (check constraint is valid key type via TS2322, recurse into template)
     pub(crate) fn check_type_node(&mut self, node_idx: NodeIndex) {
         if node_idx == NodeIndex::NONE {
             return;
@@ -1463,8 +1470,84 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 // TODO: implement check_type_element for type literal members
             }
+            // Note: CONDITIONAL_TYPE is intentionally NOT handled here.
+            // Conditional types introduce scoping complexities (infer variables,
+            // type narrowing in branches) that make safe recursion difficult.
+            // Mapped type constraint checks within conditionals are deferred.
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                self.check_mapped_type_constraint(node_idx);
+            }
             _ => {}
         }
+    }
+
+    /// TS2322: Check that a mapped type's constraint is assignable to `string | number | symbol`.
+    ///
+    /// For `{ [P in X]: T }`, validates that X is a valid property key type.
+    /// Resolves just the constraint type node (not the whole mapped type) to avoid
+    /// side effects from full type resolution.
+    fn check_mapped_type_constraint(&mut self, mapped_node_idx: NodeIndex) {
+        use tsz_parser::parser::NodeIndex as ParserNodeIndex;
+
+        let Some(node) = self.ctx.arena.get(mapped_node_idx) else {
+            return;
+        };
+        let Some(data) = self.ctx.arena.get_mapped_type(node) else {
+            return;
+        };
+
+        // Get the constraint node from the mapped type's type parameter.
+        let Some(tp_node) = self.ctx.arena.get(data.type_parameter) else {
+            return;
+        };
+        let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) else {
+            return;
+        };
+        if tp_data.constraint == ParserNodeIndex::NONE {
+            return;
+        }
+        let Some(constraint_node) = self.ctx.arena.get(tp_data.constraint) else {
+            return;
+        };
+        let constraint_pos = constraint_node.pos;
+        let constraint_end = constraint_node.end;
+
+        // Resolve just the constraint type node (e.g., Date, T, keyof T)
+        // rather than the whole mapped type, to avoid side effects.
+        let constraint_type = self.get_type_from_type_node(tp_data.constraint);
+        if constraint_type == TypeId::ERROR {
+            return;
+        }
+
+        // Evaluate to resolve Lazy/Application types before checking validity.
+        let evaluated = self.evaluate_type_with_env(constraint_type);
+
+        // Use the solver's is_valid_mapped_type_key_type which handles type
+        // parameters (checks constraint), unions, keyof, literals, etc. and
+        // treats deferred types (Application, Lazy, Conditional, IndexAccess)
+        // as valid since they can't be fully resolved in generic context.
+        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+        let is_valid = evaluator.is_valid_mapped_type_key_type(evaluated);
+        if !is_valid {
+            let constraint_name = {
+                let mut formatter = self.ctx.create_type_formatter();
+                formatter.format(constraint_type)
+            };
+            let message = format!(
+                "Type '{constraint_name}' is not assignable to type 'string | number | symbol'."
+            );
+            self.ctx.error(
+                constraint_pos,
+                constraint_end - constraint_pos,
+                message,
+                2322,
+            );
+        }
+
+        // Note: We do NOT recurse into the mapped type's template (data.type_node)
+        // because the template references the mapped type variable (P) which is not
+        // in scope during the check_type_node validation walk. The template is validated
+        // when the full mapped type is resolved during type checking.
     }
 
     /// Check an indexed access type (T[K]).

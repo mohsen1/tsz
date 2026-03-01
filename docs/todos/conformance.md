@@ -1,7 +1,40 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9764/12570 (77.7%) — full suite, error-code level
+**Current score**: ~9766/12570 (77.7%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01 — TS2322: mapped type key constraint validation
+
+### Added: TS2322 for invalid mapped type constraints — Checker (type_checking/core.rs) + Solver (binary_ops.rs)
+
+**Area**: types/conditional (target: inferTypes1.ts), types/mapped (mappedTypeErrors*.ts)
+
+**Root cause**: Missing TS2322 diagnostic for mapped types whose constraint type (`[P in X]`) is not assignable to `string | number | symbol` (PropertyKey). For example, `{ [P in Date]: number }` should emit TS2322 because `Date` is not a valid key type.
+
+**Fix**: Three-part implementation:
+
+1. **`check_type_node` (core.rs)**: Added `MAPPED_TYPE` case that calls new `check_mapped_type_constraint` validation. Intentionally does NOT recurse into conditional type branches (CONDITIONAL_TYPE) due to scoping complexities (infer variables, type narrowing in branches cause spurious TS2304 emissions).
+
+2. **`check_mapped_type_constraint` (core.rs)**: Resolves the mapped type's constraint type node (just the `in X` part), evaluates it with env to resolve Lazy/Application types, then uses `is_valid_mapped_type_key_type` from the solver to check validity.
+
+3. **`is_valid_mapped_type_key_type` (binary_ops.rs)**: New solver function that extends `is_valid_computed_property_name_type` with deferred-type handling. For types that can't be fully resolved in generic context (Application, Lazy, Conditional, IndexAccess), assumes valid to avoid false positives. Handles TypeParameter (checks constraint), Union (all members valid), Intersection (any member valid), KeyOf (always valid).
+
+**Key design decisions**:
+- Resolves ONLY the constraint node (not the whole mapped type) from `check_type_node` to minimize side effects
+- Does NOT recurse into mapped type template (would trigger TS2304 for mapped type variable `P`)
+- Does NOT recurse into conditional types (would trigger TS2304 for `infer` variables)
+- Separate `is_valid_mapped_type_key_type` vs `is_valid_computed_property_name_type` to avoid affecting TS2464 behavior for computed property names
+
+**Known gap**: Mapped types nested inside conditional type branches (e.g., `string extends T ? { [P in T]: void } : T`) are not checked. Covering them requires resolving conditional type scoping (infer variables, type narrowing) which caused 48 regressions in initial attempts. This is deferred for a future session.
+
+**Files changed**:
+- `crates/tsz-checker/src/types/type_checking/core.rs` — check_type_node + check_mapped_type_constraint
+- `crates/tsz-checker/src/types/type_node.rs` — updated doc comment
+- `crates/tsz-solver/src/operations/binary_ops.rs` — is_valid_mapped_type_key_type + refactored is_valid_key_type_impl
+
+**Impact**: 0 regressions, 0 net conformance flip (TS2322 now emitted but target tests need other codes too)
 
 ---
 
