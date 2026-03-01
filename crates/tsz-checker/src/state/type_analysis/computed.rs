@@ -182,6 +182,52 @@ impl<'a> CheckerState<'a> {
         (enum_type, Vec::new())
     }
 
+    /// Compute the body type of a type alias from its declarations.
+    ///
+    /// Used when a type alias is merged with a namespace so the alias body
+    /// can be registered as the "instance type" for type-position resolution.
+    /// Returns `None` if the type alias declaration can't be found.
+    fn compute_type_alias_body(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let symbol = self.get_symbol_globally(sym_id)?;
+        let escaped_name = symbol.escaped_name.clone();
+        let declarations = symbol.declarations.clone();
+
+        // Find the TYPE_ALIAS_DECLARATION among the symbol's declarations
+        let decl_idx = declarations.iter().copied().find(|&d| {
+            self.ctx
+                .arena
+                .get(d)
+                .and_then(|n| {
+                    if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                        let type_alias = self.ctx.arena.get_type_alias(n)?;
+                        let name_node = self.ctx.arena.get(type_alias.name)?;
+                        let ident = self.ctx.arena.get_identifier(name_node)?;
+                        let name = self.ctx.arena.resolve_identifier_text(ident);
+                        Some(name == escaped_name)
+                    } else {
+                        Some(false)
+                    }
+                })
+                .unwrap_or(false)
+        })?;
+
+        let node = self.ctx.arena.get(decl_idx)?;
+        let type_alias = self.ctx.arena.get_type_alias(node)?;
+        let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+        let alias_type = self.get_type_from_type_node(type_alias.type_node);
+        self.pop_type_parameters(updates);
+
+        // Also register type params + DefId so Application expansion works for generic aliases
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if !params.is_empty() {
+            self.ctx.insert_def_type_params(def_id, params);
+        }
+
+        Some(alias_type)
+    }
+
     /// Compute the type of a namespace or module symbol.
     ///
     /// Returns a Lazy type with the `DefId` for deferred resolution.
@@ -198,6 +244,17 @@ impl<'a> CheckerState<'a> {
                 .symbol_instance_types
                 .insert(sym_id, interface_type);
         }
+
+        // When a type alias is merged with a namespace (e.g.,
+        //   type Foo = Foo.A | Foo.B;
+        //   namespace Foo { export type A = number; export type B = string; }
+        // ), compute the type alias body and store it as the "instance type".
+        // Without this, resolve_lazy returns Lazy(DefId) which self-references,
+        // preventing the type alias from ever resolving to its actual body.
+        if flags & symbol_flags::TYPE_ALIAS != 0
+            && let Some(alias_type) = self.compute_type_alias_body(sym_id) {
+                self.ctx.symbol_instance_types.insert(sym_id, alias_type);
+            }
 
         // Keep namespace symbols as Lazy references so namespace member resolution
         // can differentiate value-vs-type-only members (TS2693/TS2708 paths).
