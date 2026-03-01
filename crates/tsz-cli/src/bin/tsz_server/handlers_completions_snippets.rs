@@ -741,6 +741,14 @@ impl Server {
         mut provider_candidates: Vec<CompletionItem>,
         fallback_candidates: Vec<CompletionItem>,
     ) -> Vec<CompletionItem> {
+        let detail_score = |item: &CompletionItem| {
+            let detail = item.detail.as_deref().unwrap_or("").trim();
+            if detail.is_empty() || detail == "any" || detail == "(...) => any" {
+                0u8
+            } else {
+                1u8
+            }
+        };
         for fallback in fallback_candidates {
             if let Some(idx) = provider_candidates
                 .iter()
@@ -750,6 +758,11 @@ impl Server {
                     Self::class_member_snippet_insert_text(&provider_candidates[idx]).is_some();
                 let fallback_ok = Self::class_member_snippet_insert_text(&fallback).is_some();
                 if !existing_ok && fallback_ok {
+                    provider_candidates[idx] = fallback;
+                } else if existing_ok
+                    && fallback_ok
+                    && detail_score(&fallback) > detail_score(&provider_candidates[idx])
+                {
                     provider_candidates[idx] = fallback;
                 }
                 continue;
