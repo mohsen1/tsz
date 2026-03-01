@@ -788,8 +788,21 @@ impl<'a> CheckerState<'a> {
                 && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
             {
                 let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                let mut alias_type = self.get_type_from_type_node(type_alias.type_node);
                 self.pop_type_parameters(updates);
+
+                // Eagerly evaluate non-generic type aliases whose body is a concrete
+                // conditional type.  tsc resolves `type U = [any] extends [number] ? 1 : 0`
+                // to `1` during alias resolution so that diagnostics print the resolved
+                // type.  We do the same here: if the alias has no type parameters AND
+                // the body is evaluable (Conditional, IndexAccess, Mapped, etc.) AND it
+                // does not contain deferred type parameters, evaluate it now.
+                if params.is_empty()
+                    && tsz_solver::is_conditional_type(self.ctx.types, alias_type)
+                    && !tsz_solver::contains_type_parameters(self.ctx.types, alias_type)
+                {
+                    alias_type = self.evaluate_type_with_env(alias_type);
+                }
 
                 // Check for invalid circular reference (TS2456)
                 // A type alias circularly references itself if it resolves to itself

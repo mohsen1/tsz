@@ -124,7 +124,6 @@ FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1_ES6.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertiesInDestructuring1.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertiesNarrowed.ts
 FAIL TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
-FAIL TypeScript/tests/cases/compiler/conditionalAnyCheckTypePicksBothBranches.ts
 FAIL TypeScript/tests/cases/compiler/conditionalDoesntLeakUninstantiatedTypeParameter.ts
 FAIL TypeScript/tests/cases/compiler/conditionalExpression1.ts
 FAIL TypeScript/tests/cases/compiler/conditionalReturnExpression.ts
@@ -3690,6 +3689,7 @@ PASS TypeScript/tests/cases/compiler/computerPropertiesInES5ShouldBeTransformed.
 PASS TypeScript/tests/cases/compiler/concatClassAndString.ts
 PASS TypeScript/tests/cases/compiler/concatError.ts
 PASS TypeScript/tests/cases/compiler/concatTuples.ts
+PASS TypeScript/tests/cases/compiler/conditionalAnyCheckTypePicksBothBranches.ts
 PASS TypeScript/tests/cases/compiler/conditionalEqualityOnLiteralObjects.ts
 PASS TypeScript/tests/cases/compiler/conditionalEqualityTestingNullability.ts
 PASS TypeScript/tests/cases/compiler/conditionalExpressionNewLine1.ts
