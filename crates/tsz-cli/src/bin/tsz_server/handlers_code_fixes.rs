@@ -95,6 +95,12 @@ impl Server {
                 .get("preferences")
                 .and_then(|p| p.get("organizeImportsIgnoreCase"))
                 .and_then(serde_json::Value::as_bool)
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("organizeImportsIgnoreCase")
+                        .and_then(serde_json::Value::as_bool)
+                })
                 .unwrap_or(self.organize_imports_ignore_case);
 
             let line_map = LineMap::build(&content);
@@ -195,6 +201,12 @@ impl Server {
                 .get("preferences")
                 .and_then(|p| p.get("importModuleSpecifierPreference"))
                 .and_then(|v| v.as_str())
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("importModuleSpecifierPreference")
+                        .and_then(serde_json::Value::as_str)
+                })
                 .or(self.import_module_specifier_preference.as_deref());
             let import_candidates = self.collect_import_candidates(
                 file_path,
