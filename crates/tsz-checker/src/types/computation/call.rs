@@ -631,9 +631,15 @@ impl<'a> CheckerState<'a> {
                     // Now that type parameters are partially inferred, lambdas get proper contextual types.
                     self.collect_call_argument_types_with_context(
                         args,
-                        |i, _arg_count| {
-                            // Guard: large indices are used to probe for rest parameters
-                            round2_contextual_types.get(i).copied().flatten()
+                        |i, arg_count| {
+                            // For normal argument indices, use the precomputed contextual types.
+                            // For large indices (rest parameter probes), fall back to the
+                            // contextual type helper to correctly detect rest params.
+                            if i < round2_contextual_types.len() {
+                                round2_contextual_types[i]
+                            } else {
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            }
                         },
                         check_excess_properties,
                         None, // Don't skip anything in Round 2 - check all args with inferred context

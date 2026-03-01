@@ -3843,6 +3843,7 @@ function test(thing: T | undefined, def: T | undefined) {
     );
 }
 
+<<<<<<< HEAD
 /// Test: IIFE callee gets contextual return type wrapping.
 /// When a function expression is immediately invoked and the call expression
 /// has a contextual type (from a variable annotation), the function expression
@@ -3925,5 +3926,66 @@ const h: Handler = (() => ({ handle: x => x.length }))();
     assert!(
         !has_error(&relevant, 7006),
         "IIFE returning object with callback should contextually type callback params. Got: {relevant:#?}"
+    );
+}
+
+// =========================================================================
+// Array spread into variadic tuple rest params — no false TS2556
+// =========================================================================
+
+#[test]
+fn test_array_spread_into_variadic_tuple_rest_no_ts2556() {
+    // Spreading an array into a function with variadic tuple rest parameter
+    // (e.g., ...args: [...T, number]) should NOT emit TS2556.
+    // The variadic_tuple_element_type function must correctly handle the
+    // rest parameter probe at large indices.
+    let source = r#"
+declare function foo<T extends unknown[]>(x: number, ...args: [...T, number]): T;
+function bar<U extends unknown[]>(u: U) {
+    foo(1, ...u, 2);
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2556),
+        "Should not emit TS2556 for array spread to variadic tuple rest param. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_spread_into_variadic_tuple_curry_pattern_no_ts2556() {
+    // The curry pattern: spreading generic array params into a function call
+    // within the body. This was a false TS2556 because the rest parameter
+    // probe returned None for variadic tuple parameters.
+    let source = r#"
+function curry<T extends unknown[], U extends unknown[], R>(
+    f: (...args: [...T, ...U]) => R, ...a: T
+) {
+    return (...b: U) => f(...a, ...b);
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2556),
+        "Should not emit TS2556 for spread of generic arrays into variadic tuple. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_spread_into_generic_variadic_round2_no_ts2556() {
+    // Generic function with context-sensitive callback arg — tests the
+    // Round 2 closure correctly falls back to ctx_helper for rest param
+    // probes at large indices.
+    let source = r#"
+declare function call<T extends unknown[], R>(
+    ...args: [...T, (...args: T) => R]
+): [T, R];
+declare const sa: string[];
+call(...sa, (...x) => 42);
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2556),
+        "Should not emit TS2556 for spread+callback in generic variadic. Got: {diagnostics:?}"
     );
 }

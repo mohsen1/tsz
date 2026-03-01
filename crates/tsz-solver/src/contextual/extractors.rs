@@ -772,7 +772,14 @@ fn variadic_tuple_element_type(
                 return Some(expansion.tail[suffix_index].type_id);
             }
             let outer_index = suffix_index - expansion_tail_len;
-            return outer_tail.get(outer_index).map(|elem| elem.type_id);
+            if let Some(elem) = outer_tail.get(outer_index) {
+                return Some(elem.type_id);
+            }
+            // Past the outer tail — still in the variadic region.
+            // This can happen when probing at a very large index to detect
+            // whether a rest parameter exists. Return the variadic element
+            // type so the probe correctly reports "has rest param".
+            return Some(variadic);
         }
         if offset < prefix_len {
             return Some(prefix[offset].type_id);
