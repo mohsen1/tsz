@@ -46,6 +46,38 @@ fn has_code(diags: &[(u32, String)], code: u32) -> bool {
     diags.iter().any(|(c, _)| *c == code)
 }
 
+/// Return diagnostics with position info (code, start, message).
+fn jsx_diagnostics_with_pos(source: &str) -> Vec<(u32, u32, String)> {
+    let file_name = "test.tsx";
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let options = CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        ..CheckerOptions::default()
+    };
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
 /// Inline JSX namespace preamble for tests (with `ElementAttributesProperty` { props: {} }).
 /// This mimics react16.d.ts's structure where props are accessed via instance.props.
 const JSX_PREAMBLE: &str = r#"
@@ -1414,5 +1446,112 @@ let x = <Editor mode="write" />;
     assert!(
         has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 for union props with missing required property, got: {diags:?}"
+    );
+}
+
+// =============================================================================
+// Diagnostic anchor: JSX attribute errors should point at the attribute, not
+// the enclosing variable statement.
+// =============================================================================
+
+#[test]
+fn test_jsx_attr_error_anchors_at_attribute_not_variable_statement() {
+    // TS2322 for JSX attribute type mismatch should point at the attribute name,
+    // not at the `let` statement. The attribute `name={42}` should be the anchor.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Greet(props: {{ name: string }}) {{
+    return <div>Hello</div>;
+}}
+let p = <Greet name={{42}} />;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2322 = diags
+        .iter()
+        .filter(|(c, _, _)| *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect::<Vec<_>>();
+    assert!(!ts2322.is_empty(), "Expected TS2322, got: {diags:?}");
+    // The error should NOT point at the `let` keyword (start of the variable statement)
+    let let_pos = source.find("let p").unwrap() as u32;
+    let attr_pos = source.find("name={42}").unwrap() as u32;
+    for (_, start, _) in &ts2322 {
+        assert!(
+            *start >= attr_pos,
+            "TS2322 should anchor at attribute name (pos >= {attr_pos}), not at variable statement (pos {let_pos}). Got start={start}"
+        );
+    }
+}
+
+// =============================================================================
+// Boolean shorthand: `<Foo x/>` should report `Type 'true'` not `Type 'boolean'`
+// =============================================================================
+
+#[test]
+fn test_boolean_shorthand_reports_true_not_boolean() {
+    // When target is `false`, `<Foo x/>` (x=true) should produce
+    // "Type 'true' is not assignable to type 'false'",
+    // not "Type 'boolean' is not assignable to type 'false'".
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Foo(props: {{ x: false }}) {{
+    return <div />;
+}}
+let p = <Foo x />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322_msgs: Vec<&str> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(!ts2322_msgs.is_empty(), "Expected TS2322, got: {diags:?}");
+    // Should say 'true', not 'boolean'
+    let has_true = ts2322_msgs.iter().any(|m| m.contains("'true'"));
+    let has_boolean = ts2322_msgs.iter().any(|m| m.contains("'boolean'"));
+    assert!(
+        has_true && !has_boolean,
+        "Expected message with 'true' not 'boolean'. Got: {ts2322_msgs:?}"
+    );
+}
+
+// =============================================================================
+// TS2741 source type formatting: should show types, not just property names
+// =============================================================================
+
+#[test]
+fn test_ts2741_source_type_includes_property_types() {
+    // TS2741 "Property 'y' is missing in type '{ x: string; }' but required in type ..."
+    // should show property TYPES (not just names like `{ x }`).
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+function Comp(props: {{ x: string; y: number }}) {{
+    return <div />;
+}}
+let p = <Comp x="hello" />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2741_msgs: Vec<&str> = diags
+        .iter()
+        .filter(|(c, _)| *c == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(
+        !ts2741_msgs.is_empty(),
+        "Expected TS2741 for missing 'y', got: {diags:?}"
+    );
+    // The source type should include property types, e.g., `{ x: string; }`
+    // not just `{ x }`
+    let has_typed_format = ts2741_msgs
+        .iter()
+        .any(|m| m.contains("x: string") || m.contains("x: \"hello\""));
+    assert!(
+        has_typed_format,
+        "TS2741 source type should include property types. Got: {ts2741_msgs:?}"
     );
 }
