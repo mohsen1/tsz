@@ -1,7 +1,7 @@
 //! Module import/export validation and circular re-export detection.
 
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::Visibility;
@@ -864,6 +864,8 @@ impl<'a> CheckerState<'a> {
         let inside_ambient_module =
             self.is_inside_string_literal_module_declaration(named_exports_idx);
 
+        let mut seen_export_names: FxHashMap<String, NodeIndex> = FxHashMap::default();
+
         for &specifier_idx in &named_exports.elements.nodes {
             let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
                 continue;
@@ -889,6 +891,32 @@ impl<'a> CheckerState<'a> {
             let name_str = self
                 .get_identifier_text_from_idx(name_idx)
                 .unwrap_or_else(|| String::from("unknown"));
+
+            // Check for duplicate exported names in the same export clause
+            let export_name_str = self
+                .get_identifier_text_from_idx(specifier.name)
+                .unwrap_or_else(|| name_str.clone());
+            match seen_export_names.entry(export_name_str.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    use tsz_common::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let msg = format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER,
+                        &[&export_name_str],
+                    );
+                    let code = diagnostic_codes::DUPLICATE_IDENTIFIER;
+                    let first_idx = *entry.get();
+                    if first_idx != NodeIndex::NONE {
+                        self.error_at_node(first_idx, &msg, code);
+                        *entry.get_mut() = NodeIndex::NONE;
+                    }
+                    self.error_at_node(specifier.name, &msg, code);
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(specifier.name);
+                }
+            }
 
             // Check if the symbol is a local declaration or import.
             // file_locals includes merged globals from other files, so we must also

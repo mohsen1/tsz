@@ -1509,9 +1509,22 @@ impl ParserState {
         let Some((pos, len, expression_text)) =
             self.missing_semicolon_after_expression_text(expression)
         else {
-            // For non-identifier expressions (literals, etc.), don't emit "missing semicolon" errors.
-            // These typically indicate parsing has already gone awry, and emitting additional
-            // errors just adds noise. Let the main error handling deal with malformed constructs.
+            // For non-identifier expressions (postfix, literals, etc.),
+            // emit a plain TS1005 "';' expected" if no prior error within the
+            // expression's range. Errors inside the expression indicate parsing
+            // already went wrong and adding TS1005 would be noise.
+            if self.should_report_error() {
+                let expr_had_error = if let Some(node) = self.arena.get(expression) {
+                    self.last_error_pos > 0
+                        && self.last_error_pos >= node.pos
+                        && self.last_error_pos <= node.end
+                } else {
+                    false
+                };
+                if !expr_had_error {
+                    self.error_token_expected(";");
+                }
+            }
             return;
         };
 
