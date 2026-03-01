@@ -28,6 +28,7 @@ impl Server {
             return probes;
         };
         probes.clear();
+        probes.push(position);
         for candidate in [
             marker_start.saturating_sub(1),
             marker_start.saturating_sub(2),
