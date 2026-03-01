@@ -941,10 +941,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             ) {
                 return None;
             }
-            // Verify: the constraint is exactly the keys of obj
+            // Verify: the constraint is the keys of obj (exact match or subset).
+            // Exact match handles `{ [P in keyof T]: T[P] }` after instantiation.
+            // Subset match handles Pick/Omit where constraint is a filtered subset
+            // of `keyof T` (e.g., `Exclude<keyof T, K>` evaluates to a subset of keys).
+            // In both cases, the mapped type is homomorphic w.r.t. obj so modifiers
+            // (readonly, optional) should be inherited from source properties.
             let expected_keys = self.evaluate_keyof(obj);
             if expected_keys == mapped.constraint {
                 return Some(obj);
+            }
+            // Subset check: all constraint keys must exist in keyof obj
+            if let (Some(constraint_keys), Some(expected_key_set)) = (
+                self.extract_mapped_keys(mapped.constraint),
+                self.extract_mapped_keys(expected_keys),
+            ) {
+                // Only do subset check for pure string literal keys (no string/number index)
+                if !constraint_keys.has_string
+                    && !constraint_keys.has_number
+                    && !constraint_keys.string_literals.is_empty()
+                {
+                    let expected_set: rustc_hash::FxHashSet<Atom> =
+                        expected_key_set.string_literals.iter().copied().collect();
+                    let is_subset = constraint_keys
+                        .string_literals
+                        .iter()
+                        .all(|k| expected_set.contains(k));
+                    if is_subset {
+                        return Some(obj);
+                    }
+                }
             }
         }
 
