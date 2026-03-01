@@ -1412,21 +1412,49 @@ impl<'a> DeclarationEmitter<'a> {
 
             match stmt_node.kind {
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    // `export {}` or `export { ... }` — scope marker
                     if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                        // Check if it's `export {}` (empty named exports)
+                        // `export {}` — explicit scope marker
                         if let Some(clause_node) = self.arena.get(export.export_clause)
                             && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
                             && let Some(named) = self.arena.get_named_imports(clause_node)
                             && named.elements.nodes.is_empty()
                         {
-                            return true; // explicit `export {}`
+                            return true;
                         }
-                        has_exported = true;
+                        // `export *` or `export * from "mod"` — scope marker
+                        // (export_clause is None for bare `export *`)
+                        if !export.export_clause.is_some()
+                            || self
+                                .arena
+                                .get(export.export_clause)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::NAMESPACE_EXPORT)
+                        {
+                            return true;
+                        }
+                        // Check if export_clause wraps a declaration (e.g., `export class Foo`)
+                        // — these count as exported members, not scope markers
+                        if let Some(clause_node) = self.arena.get(export.export_clause) {
+                            let ck = clause_node.kind;
+                            if ck == syntax_kind_ext::CLASS_DECLARATION
+                                || ck == syntax_kind_ext::FUNCTION_DECLARATION
+                                || ck == syntax_kind_ext::INTERFACE_DECLARATION
+                                || ck == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                || ck == syntax_kind_ext::ENUM_DECLARATION
+                                || ck == syntax_kind_ext::VARIABLE_STATEMENT
+                                || ck == syntax_kind_ext::MODULE_DECLARATION
+                                || ck == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            {
+                                has_exported = true;
+                            } else {
+                                // Named exports like `export { a, b }` — scope marker
+                                return true;
+                            }
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                    has_exported = true;
+                    // `export = value` or `export default` — scope marker
+                    return true;
                 }
                 _ => {
                     if self.stmt_has_export_modifier(stmt_node) {
