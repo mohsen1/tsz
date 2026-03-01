@@ -46,5 +46,9 @@ path = "tests/jsx_component_attribute_tests.rs"
 name = "type_alias_namespace_merge_tests"
 path = "tests/type_alias_namespace_merge_tests.rs"
 
+[[test]]
+name = "ts2540_readonly_tests"
+path = "tests/ts2540_readonly_tests.rs"
+
 [lints]
 workspace = true

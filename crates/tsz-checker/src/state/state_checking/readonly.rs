@@ -48,9 +48,21 @@ impl<'a> CheckerState<'a> {
                         // Check if the property resolved through an index signature
                         // (either the explicit "index signature" sentinel or via
                         // from_index_signature on a named property).
-                        use tsz_solver::operations::property::PropertyAccessResult;
+                        //
+                        // Exception: readonly tuple fixed elements (e.g., v[0] on
+                        // `readonly [number, number, ...number[]]`) are named properties
+                        // even though resolve_array_property reports from_index_signature.
+                        use tsz_solver::operations::property::{
+                            PropertyAccessResult, is_readonly_tuple_fixed_element,
+                        };
                         let from_idx_sig = if name == "index signature" {
                             true
+                        } else if is_readonly_tuple_fixed_element(
+                            self.ctx.types,
+                            object_type,
+                            &name,
+                        ) {
+                            false
                         } else {
                             matches!(
                                 self.resolve_property_access_with_env(object_type, &name),

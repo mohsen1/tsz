@@ -253,6 +253,39 @@ fn is_numeric_index_name(name: &str) -> bool {
     utils::is_numeric_literal_name(name)
 }
 
+/// Check if a numeric property name refers to a fixed (non-rest) tuple element
+/// on a `ReadonlyType(Tuple(...))`.
+///
+/// Returns `true` when:
+/// - `type_id` is `ReadonlyType(Tuple(elements))`, AND
+/// - `prop_name` is a numeric index within the tuple's fixed (non-rest) element count.
+///
+/// This is used to distinguish TS2540 (readonly named property) from TS2542
+/// (readonly index signature) on readonly tuples. For example, given
+/// `readonly [number, number, ...number[]]`:
+/// - `v[0]` → fixed element 0 → TS2540 ("Cannot assign to '0'...")
+/// - `v[2]` → rest element range → TS2542 (index signature only permits reading)
+pub fn is_readonly_tuple_fixed_element(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    prop_name: &str,
+) -> bool {
+    let Some(TypeData::ReadonlyType(inner)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let Some(TypeData::Tuple(list_id)) = interner.lookup(inner) else {
+        return false;
+    };
+    let index: usize = match prop_name.parse() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    let elements = interner.tuple_list(list_id);
+    // Count fixed (non-rest) elements before any rest element
+    let fixed_count = elements.iter().take_while(|e| !e.rest).count();
+    index < fixed_count
+}
+
 // =============================================================================
 // Binary Operations - Extracted to binary_ops.rs
 // =============================================================================

@@ -2,8 +2,8 @@
 //!
 //! Verifies that assigning to readonly properties emits TS2540.
 
-use crate::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -20,7 +20,7 @@ fn has_error_with_code(source: &str, code: u32) -> bool {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -41,7 +41,7 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        tsz_checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -385,5 +385,114 @@ globalThis.x = 3;
     assert!(
         !has_error_with_code(source, 2540),
         "Should NOT emit TS2540 for assigning to var-declared global via globalThis"
+    );
+}
+
+// =========================================================================
+// Readonly tuple element access: TS2540 vs TS2542
+// =========================================================================
+
+#[test]
+fn test_readonly_tuple_fixed_element_emits_ts2540() {
+    // Assigning to a fixed element of a readonly tuple should emit TS2540
+    // (named property), NOT TS2542 (index signature).
+    let source = r"
+declare var v: readonly [number, number];
+v[0] = 1;
+";
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2540),
+        "Should emit TS2540 for assigning to readonly tuple fixed element, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2542),
+        "Should NOT emit TS2542 for readonly tuple fixed element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_rest_element_emits_ts2542() {
+    // Assigning to a rest-range index of a readonly tuple should emit TS2542
+    // (index signature only permits reading).
+    let source = r"
+declare var v: readonly [number, number, ...number[]];
+v[2] = 1;
+";
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to readonly tuple rest element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_mixed_fixed_and_rest() {
+    // Fixed elements get TS2540, rest-range elements get TS2542.
+    let source = r"
+declare var v: readonly [number, number, ...number[]];
+v[0] = 1;
+v[1] = 1;
+v[2] = 1;
+";
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2542_count = diags.iter().filter(|d| d.0 == 2542).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected 2 TS2540 for fixed elements 0 and 1, got {ts2540_count}: {diags:?}"
+    );
+    assert_eq!(
+        ts2542_count, 1,
+        "Expected 1 TS2542 for rest element 2, got {ts2542_count}: {diags:?}"
+    );
+}
+
+// =========================================================================
+// TS1354: readonly type modifier on non-array/tuple types
+// =========================================================================
+
+#[test]
+fn test_readonly_on_non_array_type_emits_ts1354() {
+    let source = r"
+type T = readonly string;
+";
+    assert!(
+        has_error_with_code(source, 1354),
+        "Should emit TS1354 for 'readonly string'"
+    );
+}
+
+#[test]
+fn test_readonly_on_array_type_no_ts1354() {
+    let source = r"
+type T = readonly string[];
+";
+    assert!(
+        !has_error_with_code(source, 1354),
+        "Should NOT emit TS1354 for 'readonly string[]'"
+    );
+}
+
+#[test]
+fn test_readonly_on_tuple_type_no_ts1354() {
+    let source = r"
+type T = readonly [string, number];
+";
+    assert!(
+        !has_error_with_code(source, 1354),
+        "Should NOT emit TS1354 for 'readonly [string, number]'"
+    );
+}
+
+#[test]
+fn test_readonly_on_type_reference_emits_ts1354() {
+    // readonly Array<string> should emit TS1354 — use ReadonlyArray<string> instead
+    let source = r"
+type T = readonly Array<string>;
+";
+    assert!(
+        has_error_with_code(source, 1354),
+        "Should emit TS1354 for 'readonly Array<string>'"
     );
 }
