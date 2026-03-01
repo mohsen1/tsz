@@ -373,11 +373,28 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                    self.error_type_constraint_not_satisfied(
-                        type_arg,
-                        instantiated_constraint,
-                        arg_idx,
-                    );
+                    // Check if the failure is due to a weak type violation (TS2559).
+                    // In tsc, when the constraint is a "weak type" (all-optional properties)
+                    // and the type argument shares no common properties, tsc emits TS2559
+                    // instead of TS2344.
+                    let analysis =
+                        self.analyze_assignability_failure(type_arg, instantiated_constraint);
+                    if matches!(
+                        analysis.failure_reason,
+                        Some(tsz_solver::SubtypeFailureReason::NoCommonProperties { .. })
+                    ) {
+                        self.error_no_common_properties_constraint(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    } else {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
                 }
             }
         }

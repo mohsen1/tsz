@@ -89,6 +89,43 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2559: Type has no properties in common with constraint.
+    ///
+    /// Emitted instead of TS2344 when the constraint is a "weak type" (all-optional
+    /// properties) and the type argument shares no common properties with it. tsc
+    /// emits TS2559 in this case because the failure is specifically about weak type
+    /// detection, not a general constraint violation.
+    pub fn error_no_common_properties_constraint(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+        idx: NodeIndex,
+    ) {
+        if type_arg == TypeId::ERROR
+            || constraint == TypeId::ERROR
+            || type_arg == TypeId::ANY
+            || constraint == TypeId::ANY
+        {
+            return;
+        }
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let type_str = self.format_type(type_arg);
+            let constraint_str = self.format_type(constraint);
+            let message = format_message(
+                diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+                &[&type_str, &constraint_str],
+            );
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
+            ));
+        }
+    }
+
     /// Report TS2352: Conversion of type 'X' to type 'Y' may be a mistake because neither type
     /// sufficiently overlaps with the other. If this was intentional, convert the expression to
     /// 'unknown' first.
