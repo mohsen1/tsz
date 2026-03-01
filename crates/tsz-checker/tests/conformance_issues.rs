@@ -3799,3 +3799,46 @@ fn no_ts2427_for_regular_interface_name() {
         "Should not emit TS2427 for `interface Foo {{}}`: {diagnostics:?}"
     );
 }
+
+/// After `f ??= (a => a)`, f should be narrowed to exclude undefined.
+/// The ??= creates a two-branch flow (short-circuit when non-nullish vs assignment),
+/// and on the assignment branch the variable holds exactly the RHS value.
+/// Regression test for false-positive TS2722.
+#[test]
+fn logical_nullish_assignment_narrows_out_undefined() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function foo(f?: (a: number) => void) {
+    f ??= (a => a);
+    f(42);
+}
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2722),
+        "Should not emit TS2722 after f ??= ...: {diagnostics:?}"
+    );
+}
+
+/// `if (x &&= y)` should narrow both x and y to truthy in the then-branch.
+/// For &&=, the result is y when x was truthy, so if the if-condition is truthy
+/// then y must be truthy.
+#[test]
+fn logical_and_assignment_condition_narrows_truthy() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface T { name: string; original?: T }
+declare const v: number;
+function test(thing: T | undefined, def: T | undefined) {
+    if (thing &&= def) {
+        thing.name;
+        def.name;
+    }
+}
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 18048),
+        "Should not emit TS18048 inside if(thing &&= def) truthy branch: {diagnostics:?}"
+    );
+}

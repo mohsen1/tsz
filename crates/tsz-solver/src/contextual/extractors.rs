@@ -466,10 +466,9 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         for &member in members.iter() {
             let mut extractor = TupleElementExtractor::new(self.db, self.index, self.element_count);
             if let Some(ty) = extractor.extract(member)
-                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-            {
-                result = Some(ty);
-            }
+                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY))) {
+                    result = Some(ty);
+                }
         }
         result
     }
@@ -598,10 +597,9 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
             let mut extractor =
                 PropertyExtractor::from_atom(self.db, self.name_atom, self.is_numeric_name);
             if let Some(ty) = extractor.extract(member)
-                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY)))
-            {
-                result = Some(ty);
-            }
+                && (result.is_none() || (ty != TypeId::ANY && result == Some(TypeId::ANY))) {
+                    result = Some(ty);
+                }
         }
         result
     }
