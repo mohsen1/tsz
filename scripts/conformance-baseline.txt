@@ -483,7 +483,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -2312,8 +2311,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ConstructorDeclaratio
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ConstructorDeclarations/parserConstructorDeclaration9.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/EnumDeclarations/parserEnum5.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/AccessibilityAfterStatic/parserAccessibilityAfterStatic6.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList6.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList7.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression3.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction3.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/parserX_ArrowFunction3.ts
@@ -2388,7 +2385,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegularExpressions/pa
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity3.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/RegularExpressions/parserRegularExpressionDivideAmbiguity7.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens16.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens17.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement2.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement4.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement5.ts
@@ -5149,6 +5145,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -10835,6 +10832,8 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/Argumen
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList3.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList4.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList6.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArgumentLists/parserErrorRecovery_ArgumentList7.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression1.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrayLiteralExpressions/parserErrorRecoveryArrayLiteralExpression2.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction1.ts
@@ -11171,6 +11170,7 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserS
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens13.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens14.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens15.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens17.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens18.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens19.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript5/SkippedTokens/parserSkippedTokens2.ts
