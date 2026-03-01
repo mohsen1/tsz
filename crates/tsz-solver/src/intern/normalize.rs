@@ -874,10 +874,13 @@ impl TypeInterner {
             return;
         }
 
-        // OPTIMIZATION: Skip reduction if all types are identity-comparable or non-reducible structures.
-        // Identity-comparable types are disjoint. Arrays, tuples, and objects always return false in
-        // is_subtype_shallow unless they are identical (handled by dedup) or one is a structural subtype.
-        if len > 2 {
+        // Skip reduction if all types are identity-comparable or non-reducible structures.
+        // tsc's default union reduction (UnionReduction.Literal) does NOT remove structural
+        // subtypes — it only absorbs literals into primitives. Structural subtype reduction
+        // (UnionReduction.Subtype) is only used in specific contexts like conditional type
+        // results. Object/Array/Tuple/Enum types are structurally distinct after dedup, so
+        // subtype reduction would incorrectly collapse unions like `{A: number} | {A: number; B: number}`.
+        {
             let all_non_reducible = flat.iter().all(|&ty| {
                 if self.is_identity_comparable_type(ty) {
                     return true;
