@@ -1207,8 +1207,24 @@ impl<'a> DeclarationEmitter<'a> {
     // Helper methods
 
     pub(crate) fn emit_parameters(&mut self, params: &NodeList) {
+        // Find the index of the last required parameter (no ?, no initializer, no rest).
+        // Parameters with initializers before the last required param cannot use `?` syntax;
+        // instead they emit `param: Type | undefined` (matching tsc behavior).
+        let last_required_idx = params
+            .nodes
+            .iter()
+            .rposition(|&idx| {
+                self.arena
+                    .get(idx)
+                    .and_then(|n| self.arena.get_parameter(n))
+                    .is_some_and(|p| {
+                        !p.question_token && p.initializer.is_none() && !p.dot_dot_dot_token
+                    })
+            })
+            .unwrap_or(0);
+
         let mut first = true;
-        for &param_idx in &params.nodes {
+        for (i, &param_idx) in params.nodes.iter().enumerate() {
             if !first {
                 self.write(", ");
             }
@@ -1231,8 +1247,15 @@ impl<'a> DeclarationEmitter<'a> {
                 // Name
                 self.emit_node(param.name);
 
-                // Optional — either explicit ? or has initializer (default value)
-                if param.question_token || param.initializer.is_some() {
+                // A parameter with an initializer that appears before the last required
+                // parameter is NOT optional — you can't omit it. Instead, its type
+                // gets `| undefined` appended. Explicitly optional (?) params always use `?`.
+                let has_initializer_before_required =
+                    param.initializer.is_some() && !param.question_token && i < last_required_idx;
+
+                if param.question_token
+                    || (param.initializer.is_some() && !has_initializer_before_required)
+                {
                     self.write("?");
                 }
 
