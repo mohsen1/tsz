@@ -383,6 +383,10 @@ impl ParserState {
                 // 'interface' followed by identifier 'I', not InterfaceDeclaration.
                 if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
                     self.parse_interface_declaration()
+                } else if self.look_ahead_next_is_open_brace_on_same_line() {
+                    // `interface { }` — parse as interface with missing name (TS1438)
+                    // rather than as expression statement. Matches tsc behavior.
+                    self.parse_interface_declaration()
                 } else {
                     self.parse_expression_statement()
                 }
@@ -676,6 +680,19 @@ impl ParserState {
         let current = self.current_token;
         self.next_token(); // skip the modifier keyword
         let result = !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    /// Check if the next token is `{` on the same line.
+    /// Used to detect `interface { }` where the interface name is missing.
+    fn look_ahead_next_is_open_brace_on_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::OpenBraceToken);
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         result

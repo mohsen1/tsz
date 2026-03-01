@@ -1319,6 +1319,28 @@ fn resolve_node_module_specifier(
                         if resolved.is_some() {
                             return resolved;
                         }
+
+                        // Output-to-source remapping for self-reference imports.
+                        // When outDir/declarationDir is set, export map targets point
+                        // to the output directory (e.g., "./dist/index.js"). tsc
+                        // remaps these back to source files by stripping the output
+                        // prefix and substituting output extensions with source
+                        // extensions (tryLoadInputFileForPath).
+                        if let Some(ref exports) = pj.exports {
+                            let subpath_key = match &subpath {
+                                Some(value) => format!("./{value}"),
+                                None => ".".to_string(),
+                            };
+                            if let Some(target) =
+                                resolve_exports_subpath(exports, &subpath_key, &conditions)
+                            {
+                                if let Some(resolved) =
+                                    try_remap_output_to_source(dir, &target, from_file, options)
+                                {
+                                    return Some(resolved);
+                                }
+                            }
+                        }
                     }
                     // Stop at the first package.json with a name (that's the package boundary)
                     if pj.name.is_some() {
@@ -1610,6 +1632,103 @@ fn resolve_export_entry(
     for candidate in expand_export_path_candidates(&path, options, package_type) {
         if candidate.is_file() && is_valid_module_file(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
+        }
+    }
+
+    None
+}
+
+/// Remap an export map target from the output directory to the source directory.
+///
+/// When `outDir` or `declarationDir` is set, export targets like `./dist/index.js`
+/// point to the output directory which doesn't exist at compile time. tsc's
+/// `tryLoadInputFileForPath` handles this by stripping the output directory prefix
+/// and substituting output extensions (.js, .d.ts) with source extensions (.ts, .tsx).
+///
+/// Example: outDir="./dist", target="./dist/index.js"
+///   → strip "./dist" → "index.js" → try "index.ts" → found!
+fn try_remap_output_to_source(
+    package_root: &Path,
+    target: &str,
+    from_file: &Path,
+    options: &ResolvedCompilerOptions,
+) -> Option<PathBuf> {
+    let target = target.trim_start_matches("./");
+    // Canonicalize package_root first (it exists) so that symlinks are resolved
+    // before joining the target (which may not exist on disk).
+    let canon_root = canonicalize_or_owned(package_root);
+    let target_path = canon_root.join(target);
+
+    // Compute the source directory: the root from which source files are organized.
+    // Use rootDir if set (already canonicalized), otherwise fall back to the
+    // package root (where package.json lives). tsc uses getCommonSourceDirectory()
+    // which defaults to the requesting file's directory for single-file projects,
+    // but for self-reference resolution the package root is the correct fallback
+    // since export targets are relative to it.
+    let source_dir_owned;
+    let source_dir = if let Some(ref root_dir) = options.root_dir {
+        root_dir.as_path()
+    } else {
+        source_dir_owned = canonicalize_or_owned(package_root);
+        source_dir_owned.as_path()
+    };
+
+    let out_dirs: Vec<&Path> = [
+        options.out_dir.as_deref(),
+        options.declaration_dir.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    if out_dirs.is_empty() {
+        return None;
+    }
+
+    for out_dir in &out_dirs {
+        // Resolve the out_dir relative to package_root
+        let resolved_out_dir = if out_dir.is_absolute() {
+            out_dir.to_path_buf()
+        } else {
+            package_root.join(out_dir)
+        };
+
+        // Check if the target path falls inside the output directory.
+        let target_canon = normalize_path(&target_path);
+        let out_canon = normalize_path(&resolved_out_dir);
+
+        if let Ok(relative) = target_canon.strip_prefix(&out_canon) {
+            // Target is inside the output dir. Build the source path.
+            let source_base = source_dir.join(relative);
+
+            // Try substituting output extensions with source extensions
+            let source_exts: &[(&str, &[&str])] = &[
+                (".js", &[".ts", ".tsx"]),
+                (".jsx", &[".tsx", ".ts"]),
+                (".mjs", &[".mts"]),
+                (".cjs", &[".cts"]),
+                (".d.ts", &[".ts", ".tsx"]),
+                (".d.mts", &[".mts"]),
+                (".d.cts", &[".cts"]),
+            ];
+
+            let source_str = source_base.to_string_lossy();
+            for (out_ext, src_exts) in source_exts {
+                if source_str.ends_with(out_ext) {
+                    let base = &source_str[..source_str.len() - out_ext.len()];
+                    for src_ext in *src_exts {
+                        let candidate = PathBuf::from(format!("{base}{src_ext}"));
+                        if candidate.is_file() {
+                            return Some(canonicalize_or_owned(&candidate));
+                        }
+                    }
+                }
+            }
+
+            // Also try the path as-is (it might be a .ts file already)
+            if source_base.is_file() {
+                return Some(canonicalize_or_owned(&source_base));
+            }
         }
     }
 
