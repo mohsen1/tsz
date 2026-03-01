@@ -1034,17 +1034,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // A class declaration with the same name serves as an implementation
-        // for preceding function overload signatures (the "clodule" pattern).
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            && let Some(class) = self.ctx.arena.get_class(node)
-            && let Some(class_name_node) = self.ctx.arena.get(class.name)
-            && let Some(class_ident) = self.ctx.arena.get_identifier(class_name_node)
-            && class_ident.escaped_text == name
-        {
-            return (true, Some(name.to_string()), Some(stmt_idx));
-        }
-
+        // NOTE: A class declaration with the same name does NOT serve as a
+        // function implementation. TSC reports TS2391 even when a class with the
+        // same name follows the overload signatures (they merge, but the function
+        // still needs its own body).
         (false, None, None)
     }
 
