@@ -307,14 +307,63 @@ impl<'a> CheckerState<'a> {
     /// Check if a property access refers to an enum member.
     /// All enum members are readonly — `A.foo = 1` is invalid for `enum A { foo }`.
     pub(crate) fn is_enum_member_property(&self, object_expr: NodeIndex, _prop_name: &str) -> bool {
-        let sym_id = self.resolve_identifier_symbol(object_expr);
-        let Some(sym_id) = sym_id else {
-            return false;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
+        // Unwrap parenthesized expressions: (Foo).X as const
+        let object_expr = self.ctx.arena.skip_parenthesized(object_expr);
+
+        self.resolve_expression_to_enum_symbol(object_expr)
+    }
+
+    /// Resolve an expression to check if it refers to an enum symbol.
+    /// Handles simple identifiers (e.g. `Foo`), imported enums (e.g. `import {Foo}`),
+    /// and property access chains through namespaces (e.g. `ns.Foo`).
+    fn resolve_expression_to_enum_symbol(&self, expr: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            // Handle ns.Foo — resolve LHS, then look up property in exports
+            if let Some(access) = self.ctx.arena.get_access_expr(node)
+                && let lhs = self.ctx.arena.skip_parenthesized(access.expression)
+                && let Some(lhs_sym_id) = self.resolve_identifier_symbol(lhs)
+                && let Some(prop_ident) = self.ctx.arena.get_identifier_at(access.name_or_argument)
+            {
+                // Follow aliases (imported namespaces)
+                let resolved_sym_id = self
+                    .resolve_alias_symbol(lhs_sym_id, &mut Vec::new())
+                    .unwrap_or(lhs_sym_id);
+                let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
+                    return false;
+                };
+
+                if (resolved_symbol.flags & symbol_flags::NAMESPACE) == 0 {
+                    return false;
+                }
+
+                let name = prop_ident.escaped_text.as_str();
+                if let Some(ref exports) = resolved_symbol.exports
+                    && let Some(member_sym_id) = exports.get(name)
+                    && let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id)
+                {
+                    return member_symbol.flags & symbol_flags::ENUM != 0;
+                }
+            }
+            return false;
+        }
+
+        // Simple identifier case — follow aliases for imported enums
+        let Some(sym_id) = self.resolve_identifier_symbol(expr) else {
+            return false;
+        };
+        let resolved_sym_id = self
+            .resolve_alias_symbol(sym_id, &mut Vec::new())
+            .unwrap_or(sym_id);
+        let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
+            return false;
+        };
         symbol.flags & symbol_flags::ENUM != 0
     }
 
