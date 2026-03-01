@@ -250,6 +250,14 @@ impl Server {
                     local_name.trim(),
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
+            } else if let Some(module_specifier) = trimmed
+                .strip_prefix("import ")
+                .and_then(extract_quoted_text)
+            {
+                format!(
+                    "require(\"{}\")",
+                    Self::normalize_commonjs_module_specifier(module_specifier)
+                )
             } else if let Some(rest) = trimmed.strip_prefix("import ") {
                 let (local_name, module_specifier) = rest.split_once(" from ")?;
                 let module_specifier = extract_quoted_text(module_specifier)?;
