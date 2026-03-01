@@ -1101,6 +1101,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         expr_type
                     } else if is_const_assertion {
+                        // TS1355: Check that the expression is a valid const assertion target.
+                        self.check_const_assertion_expression(assertion.expression);
                         let expr_type = self.checker.get_type_of_node(assertion.expression);
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         use tsz_solver::widening::apply_const_assertion;
@@ -1486,6 +1488,75 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 );
                 TypeId::ERROR
             }
+        }
+    }
+
+    /// TS1355: Check that an expression is a valid target for `as const`.
+    ///
+    /// Valid targets: string/number/bigint/boolean literals, array/object literals,
+    /// template expressions, enum member references, parenthesized valid targets,
+    /// and prefix unary `-` on numeric literals.
+    fn check_const_assertion_expression(&mut self, expr_idx: NodeIndex) {
+        if self.is_valid_const_assertion_arg(expr_idx) {
+            return;
+        }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.checker.error_at_node(
+            expr_idx,
+            diagnostic_messages::A_CONST_ASSERTION_CAN_ONLY_BE_APPLIED_TO_REFERENCES_TO_ENUM_MEMBERS_OR_STRING_NU,
+            diagnostic_codes::A_CONST_ASSERTION_CAN_ONLY_BE_APPLIED_TO_REFERENCES_TO_ENUM_MEMBERS_OR_STRING_NU,
+        );
+    }
+
+    fn is_valid_const_assertion_arg(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.checker.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            // Literal types
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::BigIntLiteral as u16 => true,
+            k if k == SyntaxKind::TrueKeyword as u16 => true,
+            k if k == SyntaxKind::FalseKeyword as u16 => true,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
+            // Compound literal types
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => true,
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => true,
+            // Prefix unary: `-` or `+` on numeric/bigint literal (e.g., `-1 as const`, `-10n as const`)
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
+                    if unary.operator == SyntaxKind::MinusToken as u16
+                        || unary.operator == SyntaxKind::PlusToken as u16
+                    {
+                        if let Some(operand) = self.checker.ctx.arena.get(unary.operand) {
+                            return operand.kind == SyntaxKind::NumericLiteral as u16
+                                || operand.kind == SyntaxKind::BigIntLiteral as u16;
+                        }
+                    }
+                }
+                false
+            }
+            // Parenthesized: recurse
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.checker.ctx.arena.get_parenthesized(node) {
+                    return self.is_valid_const_assertion_arg(paren.expression);
+                }
+                false
+            }
+            // Property access: valid only if it's an enum member reference
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if let Some(access) = self.checker.ctx.arena.get_access_expr(node) {
+                    return self
+                        .checker
+                        .is_enum_member_property(access.expression, &String::new());
+                }
+                false
+            }
+            _ => false,
         }
     }
 }
