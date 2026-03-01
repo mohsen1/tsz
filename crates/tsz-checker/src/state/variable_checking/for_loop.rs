@@ -318,11 +318,16 @@ impl<'a> CheckerState<'a> {
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let var_type = self.get_type_of_assignment_target(initializer);
-            // The LHS type must be string, any, or a type assignable to string
+            // The LHS type must accept the for-in element type. TSC checks
+            // `isTypeAssignableTo(indexType, variableType)` where indexType
+            // comes from the source expression's key type (keyof T & string
+            // for generic expressions, plain string otherwise).
+            // Using `element_type` instead of hardcoded `string` correctly
+            // handles `keyof T`, `K extends string`, `K extends keyof T`, etc.
             if var_type != TypeId::STRING
                 && var_type != TypeId::ANY
                 && var_type != TypeId::UNKNOWN
-                && !self.is_assignable_to(TypeId::STRING, var_type)
+                && !self.is_assignable_to(element_type, var_type)
             {
                 self.error_at_node(
                     initializer,
