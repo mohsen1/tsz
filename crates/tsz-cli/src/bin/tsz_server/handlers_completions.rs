@@ -1107,7 +1107,7 @@ impl Server {
             let include_insert_text = Self::bool_pref_or_default(
                 Some(preferences),
                 "includeCompletionsWithInsertText",
-                false,
+                true,
             );
 
             let entries: Vec<serde_json::Value> = items
@@ -1124,7 +1124,8 @@ impl Server {
             let is_new_identifier_location = completion_result
                 .as_ref()
                 .map(|r| r.is_new_identifier_location)
-                .unwrap_or(false);
+                .unwrap_or(false)
+                || (include_class_member_snippets && has_class_member_snippet);
 
             Some(serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
