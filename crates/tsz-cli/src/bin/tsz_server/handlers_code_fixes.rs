@@ -161,8 +161,25 @@ impl Server {
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
-            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
-                .into_iter()
+            let to_lsp_diag = |d: &tsz::checker::diagnostics::Diagnostic| {
+                tsz::lsp::diagnostics::LspDiagnostic {
+                    range: tsz::lsp::position::Range::new(
+                        line_map.offset_to_position(d.start, &content),
+                        line_map.offset_to_position(d.start + d.length, &content),
+                    ),
+                    message: d.message_text.clone(),
+                    code: Some(d.code),
+                    severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+                    source: Some("tsz".to_string()),
+                    related_information: None,
+                    reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
+                        .then_some(true),
+                    reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
+                        .then_some(true),
+                }
+            };
+            let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+                .iter()
                 .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
                 .filter(|d| {
                     let Some((req_start, req_end)) = request_span else {
@@ -172,22 +189,15 @@ impl Server {
                     let diag_end = line_map.offset_to_position(d.start + d.length, &content);
                     positions_overlap(req_start, req_end, diag_start, diag_end)
                 })
-                .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
-                    range: tsz::lsp::position::Range::new(
-                        line_map.offset_to_position(d.start, &content),
-                        line_map.offset_to_position(d.start + d.length, &content),
-                    ),
-                    message: d.message_text,
-                    code: Some(d.code),
-                    severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
-                    source: Some("tsz".to_string()),
-                    related_information: None,
-                    reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
-                        .then_some(true),
-                    reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
-                        .then_some(true),
-                })
+                .map(to_lsp_diag)
                 .collect();
+            if filtered_diagnostics.is_empty() && request_span.is_some() {
+                filtered_diagnostics = diagnostics
+                    .iter()
+                    .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
+                    .map(to_lsp_diag)
+                    .collect();
+            }
             let no_filtered_diagnostics = filtered_diagnostics.is_empty();
 
             let auto_import_file_exclude_patterns =
