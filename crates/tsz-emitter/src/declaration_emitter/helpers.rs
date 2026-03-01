@@ -867,8 +867,10 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     let mut w = 0usize;
                     for &b in &bytes[ls..cp] {
-                        if b == b' ' || b == b'\t' {
+                        if b == b' ' {
                             w += 1;
+                        } else if b == b'\t' {
+                            w = (w / 4 + 1) * 4;
                         } else {
                             break;
                         }
@@ -897,18 +899,35 @@ impl<'a> DeclarationEmitter<'a> {
                             first = false;
                         } else {
                             self.write_line();
-                            let s = line.trim_end();
-                            let bs = s.as_bytes();
-                            let mut sk = 0;
-                            for &b in bs.iter().take(si) {
-                                if b == b' ' || b == b'\t' {
-                                    sk += 1;
+                            let line_bytes = line.as_bytes();
+                            // Count leading whitespace visual width
+                            // (tabs expand to next multiple of 4)
+                            let mut line_ws = 0usize;
+                            let mut char_ws = 0usize;
+                            for &b in line_bytes.iter() {
+                                if b == b' ' {
+                                    line_ws += 1;
+                                    char_ws += 1;
+                                } else if b == b'\t' {
+                                    line_ws = (line_ws / 4 + 1) * 4;
+                                    char_ws += 1;
                                 } else {
                                     break;
                                 }
                             }
-                            self.write_indent();
-                            self.write(&s[sk..]);
+                            let content = line[char_ws..].trim_end();
+                            // Compute output indent: apply the relative offset
+                            // from the source /** indent to the output indent.
+                            let output_indent = (self.indent_level as usize) * 4;
+                            let out_ws = if line_ws >= si {
+                                output_indent + (line_ws - si)
+                            } else {
+                                output_indent.saturating_sub(si - line_ws)
+                            };
+                            for _ in 0..out_ws {
+                                self.write_raw(" ");
+                            }
+                            self.write(content);
                         }
                     }
                 } else {
