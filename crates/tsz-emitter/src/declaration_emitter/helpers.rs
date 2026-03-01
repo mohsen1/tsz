@@ -927,8 +927,34 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let ct = &text[comment.pos as usize..comment.end as usize];
             if ct.starts_with("/**") {
+                // Check if the comment was on a new line in the source.
+                // Look backwards from the comment position for a newline,
+                // stopping at non-whitespace (which would mean same line).
+                let has_newline = {
+                    let mut pos = comment.pos as usize;
+                    let mut found = false;
+                    while pos > 0 {
+                        pos -= 1;
+                        match bytes[pos] {
+                            b'\n' => {
+                                found = true;
+                                break;
+                            }
+                            b' ' | b'\t' | b'\r' => continue,
+                            _ => break,
+                        }
+                    }
+                    found
+                };
+                if has_newline {
+                    self.write_line();
+                }
                 self.write(ct);
-                self.write(" ");
+                if has_newline {
+                    self.write_line();
+                } else {
+                    self.write(" ");
+                }
             }
             self.comment_emit_idx += 1;
         }
