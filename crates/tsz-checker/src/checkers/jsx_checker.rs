@@ -219,9 +219,11 @@ impl<'a> CheckerState<'a> {
                     jsx_opening.tag_name,
                     raw_has_type_params,
                 );
-            } else {
+            } else if !self.is_overloaded_sfc(evaluated) {
                 // TS2604: JSX element type does not have any construct or call signatures.
                 // Emit when the component type is concrete but lacks call/construct signatures.
+                // Skip for overloaded SFCs — they have valid signatures but we can't yet
+                // resolve which overload matches (full JSX overload resolution not implemented).
                 self.check_jsx_element_has_signatures(evaluated, tag_name_idx);
 
                 // Even when we can't extract component props (e.g., no ElementAttributesProperty),
@@ -417,17 +419,10 @@ impl<'a> CheckerState<'a> {
 
     // JSX Component Props Extraction
 
-    /// Extract the props type from a JSX component type.
-    ///
-    /// TSC extracts props differently for function vs class components:
-    /// - **SFC (Stateless Function Component)**: first parameter type of call signature
-    /// - **Class component**: construct signature return type → property from
-    ///   `JSX.ElementAttributesProperty` (or the full instance type if empty)
-    ///
-    /// Returns `(props_type, raw_has_type_params)`:
-    /// - `props_type`: the evaluated props type for attribute type checking
-    /// - `raw_has_type_params`: whether the pre-evaluation props type contained type
-    ///   parameters (used to suppress excess property checking)
+    /// Extract props type from a JSX component (SFC: first param of call sig;
+    /// class: construct sig return → `JSX.ElementAttributesProperty` member).
+    /// Returns `(props_type, raw_has_type_params)` where `raw_has_type_params`
+    /// suppresses excess property checking when true.
     fn get_jsx_props_type_for_component(
         &mut self,
         component_type: TypeId,
@@ -540,14 +535,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check that a JSX component's return/instance type is a valid JSX element (TS2786).
-    ///
-    /// For function components (SFC): the call signature return type must be assignable
-    /// to `JSX.Element`.
-    /// For class components: the construct signature return type (instance type) must be
-    /// assignable to `JSX.ElementClass`.
-    ///
-    /// tsc fires this at the JSX usage site, not the component definition.
+    /// TS2786: Check that a JSX component's return type is assignable to
+    /// `JSX.Element` (SFC) or `JSX.ElementClass` (class component).
     fn check_jsx_component_return_type(&mut self, component_type: TypeId, tag_name_idx: NodeIndex) {
         // Skip for types that are inherently allowed in JSX position
         if component_type == TypeId::ANY
@@ -830,6 +819,20 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Check if a component type is an overloaded SFC (>= 2 non-generic call signatures).
+    ///
+    /// Used to suppress fallback checks (TS2604, intrinsic attributes) for overloaded
+    /// SFCs where `get_jsx_props_type_for_component` returned `None` due to the G4 bail-out.
+    fn is_overloaded_sfc(&self, component_type: TypeId) -> bool {
+        let Some(sigs) =
+            tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+        else {
+            return false;
+        };
+        let non_generic_count = sigs.iter().filter(|s| s.type_params.is_empty()).count();
+        non_generic_count >= 2
     }
 
     /// Extract props type from a class component via construct signatures.

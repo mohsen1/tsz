@@ -873,6 +873,7 @@ FAIL TypeScript/tests/cases/compiler/missingDomElements.ts
 FAIL TypeScript/tests/cases/compiler/missingPropertiesOfClassExpression.ts
 FAIL TypeScript/tests/cases/compiler/missingTypeArguments1.ts
 FAIL TypeScript/tests/cases/compiler/misspelledNewMetaProperty.ts
+FAIL TypeScript/tests/cases/compiler/mixinOverMappedTypeNoCrash.ts
 FAIL TypeScript/tests/cases/compiler/mixinPrivateAndProtected.ts
 FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6ArrayWithOnlyES6ArrayLib.ts
 FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6FeaturesWithOnlyES5Lib.ts
@@ -1097,7 +1098,6 @@ FAIL TypeScript/tests/cases/compiler/pathsValidation2.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation3.ts
 FAIL TypeScript/tests/cases/compiler/pathsValidation5.ts
 FAIL TypeScript/tests/cases/compiler/performanceComparisonOfStructurallyIdenticalInterfacesWithGenericSignatures.ts
-FAIL TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 FAIL TypeScript/tests/cases/compiler/primaryExpressionMods.ts
 FAIL TypeScript/tests/cases/compiler/primitiveConstraints2.ts
 FAIL TypeScript/tests/cases/compiler/privacyClassExtendsClauseDeclFile.ts
@@ -1275,6 +1275,7 @@ FAIL TypeScript/tests/cases/compiler/strictOptionalProperties4.ts
 FAIL TypeScript/tests/cases/compiler/strictSubtypeAndNarrowing.ts
 FAIL TypeScript/tests/cases/compiler/stringIndexerAssignments2.ts
 FAIL TypeScript/tests/cases/compiler/stringLiteralsErrors.ts
+FAIL TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable01.ts
 FAIL TypeScript/tests/cases/compiler/subclassThisTypeAssignable02.ts
 FAIL TypeScript/tests/cases/compiler/subSubClassCanAccessProtectedConstructor.ts
@@ -1607,11 +1608,13 @@ FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/typeFromPri
 FAIL TypeScript/tests/cases/conformance/classes/mixinAbstractClasses.2.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts
+FAIL TypeScript/tests/cases/conformance/classes/mixinClassesAnnotated.ts
 FAIL TypeScript/tests/cases/conformance/classes/mixinWithBaseDependingOnSelfNoCrash1.ts
 FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractPropertyInitializer.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideMethod.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty8.ts
+FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty9.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/assignParameterPropertyToPropertyDeclarationES2022.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/assignParameterPropertyToPropertyDeclarationESNext.ts
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor5.ts
@@ -1675,6 +1678,7 @@ FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnArrowFunct
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnAwait.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnEnum2.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionExpression.ts
+FAIL TypeScript/tests/cases/conformance/directives/multiline.tsx
 FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
 FAIL TypeScript/tests/cases/conformance/directives/ts-ignore.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
@@ -2287,6 +2291,7 @@ FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadAttributesResolution6.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxSpreadChildrenInvalidType.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload5.tsx
+FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents2.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments4.tsx
 FAIL TypeScript/tests/cases/conformance/jsx/tsxTypeArgumentResolution.tsx
@@ -6068,7 +6073,6 @@ PASS TypeScript/tests/cases/compiler/mixingApparentTypeOverrides.ts
 PASS TypeScript/tests/cases/compiler/mixingFunctionAndAmbientModule1.ts
 PASS TypeScript/tests/cases/compiler/mixingStaticAndInstanceOverloads.ts
 PASS TypeScript/tests/cases/compiler/mixinIntersectionIsValidbaseType.ts
-PASS TypeScript/tests/cases/compiler/mixinOverMappedTypeNoCrash.ts
 PASS TypeScript/tests/cases/compiler/modFunctionCrash.ts
 PASS TypeScript/tests/cases/compiler/modifierOnParameter1.ts
 PASS TypeScript/tests/cases/compiler/modifierParenCast.ts
@@ -6696,6 +6700,7 @@ PASS TypeScript/tests/cases/compiler/prefixIncrementAsOperandOfPlusExpression.ts
 PASS TypeScript/tests/cases/compiler/prefixUnaryOperatorsOnExportedVariables.ts
 PASS TypeScript/tests/cases/compiler/preserveConstEnums.ts
 PASS TypeScript/tests/cases/compiler/preserveUnusedImports.ts
+PASS TypeScript/tests/cases/compiler/prespecializedGenericMembers1.ts
 PASS TypeScript/tests/cases/compiler/prettyContextNotDebugAssertion.ts
 PASS TypeScript/tests/cases/compiler/prettyFileWithErrorsAndTabs.ts
 PASS TypeScript/tests/cases/compiler/primitiveConstraints1.ts
@@ -8305,7 +8310,6 @@ PASS TypeScript/tests/cases/conformance/classes/mixinAccessors1.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors2.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors4.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinAccessors5.ts
-PASS TypeScript/tests/cases/conformance/classes/mixinClassesAnnotated.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinClassesAnonymous.ts
 PASS TypeScript/tests/cases/conformance/classes/mixinClassesMembers.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/abstractProperty.ts
@@ -8318,7 +8322,6 @@ PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/acces
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty5.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty6.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty7.ts
-PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty9.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor1.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor10.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessor11.ts
@@ -10613,7 +10616,6 @@ PASS TypeScript/tests/cases/conformance/jsx/tsxSpreadInvalidType.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload2.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload3.tsx
-PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentOverload6.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents1.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponents3.tsx
 PASS TypeScript/tests/cases/conformance/jsx/tsxStatelessFunctionComponentsWithTypeArguments1.tsx
