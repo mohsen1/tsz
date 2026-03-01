@@ -343,9 +343,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Subtype check path — use strict checking (no bivariant rest)
             // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
-            let mut strict_checker =
-                SubtypeChecker::with_resolver(self.interner(), self.resolver());
-            let is_sub = strict_checker.is_subtype_of(check_type, extends_type);
+            //
+            // Thread-local depth guard: evaluating conditional types can trigger
+            // subtype checks that evaluate MORE conditional types, creating an
+            // Evaluator → SubtypeChecker → Evaluator → ... chain where each
+            // instance has fresh cycle-detection state. Without this global
+            // depth limit, recursive generic types like `Vector<T> implements
+            // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
+            thread_local! {
+                static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            }
+            let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+                let c = d.get();
+                d.set(c + 1);
+                c
+            });
+            let is_sub = if prev_depth >= 50 {
+                // At excessive depth, conservatively assume not a subtype
+                // (takes the false/else branch of the conditional).
+                // This matches tsc's behavior of returning the deferred
+                // conditional when instantiation depth is exceeded.
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                false
+            } else {
+                let mut strict_checker =
+                    SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let result = strict_checker.is_subtype_of(check_type, extends_type);
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                result
+            };
             trace!(
                 check = check_type.0,
                 extends = extends_type.0,

@@ -886,16 +886,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
 
-            // Symbol-level cycle detection for recursive interface types.
-            // When both objects have symbols (e.g., Promise<X> vs PromiseLike<Y>),
-            // check if we're already comparing objects with the same symbol pair.
-            // This catches cycles where type evaluation loses DefId identity:
-            // Promise<never> evaluates to Object(51) which has no DefId, but its
-            // `then` method returns Promise<TResult> which, after instantiation and
-            // evaluation, produces another Object with the same Promise symbol.
-            if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol)
-                && s_sym != t_sym
-            {
+            // Symbol-level cycle detection for recursive interface/class types.
+            // When both objects have symbols, check if we're already comparing objects
+            // with the same symbol pair. This catches cycles where type evaluation loses
+            // DefId identity (e.g., Promise<never> evaluates to Object without DefId, but
+            // its `then` method returns Promise<TResult> which produces another Object with
+            // the same Promise symbol after instantiation/evaluation).
+            //
+            // Handles both same-symbol (Opt<X> vs Opt<Y>) and different-symbol
+            // (Promise<X> vs PromiseLike<Y>) comparisons. Same-symbol cycles arise from
+            // recursive generic types where structural expansion produces fresh TypeIds
+            // that evade TypeId-based cycle detection.
+            if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol) {
                 let sym_pair = (s_sym, t_sym);
                 if !self.sym_visiting.insert(sym_pair) {
                     // Already visiting this symbol pair — coinductive cycle
@@ -915,6 +917,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
+
+            // Symbol-level cycle detection for ObjectWithIndex types (class instances).
+            // Class instance types are interned as ObjectWithIndex with a symbol. Without
+            // this check, recursive generic classes (e.g., `Opt<Vector<T>>` vs `Opt<Seq<T>>`)
+            // cause infinite structural expansion: the subtype checker keeps expanding members
+            // that produce new TypeIds, so TypeId-based cycle detection never fires.
+            //
+            // This handles BOTH same-symbol (Opt vs Opt with different type args) and
+            // different-symbol (Vector vs Seq) comparisons. For same-symbol cases like
+            // `Opt<X>` vs `Opt<Y>`, structural expansion of members can lead right back
+            // to comparing `Opt<X'>` vs `Opt<Y'>`, creating infinite expansion.
+            if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol) {
+                let sym_pair = (s_sym, t_sym);
+                if !self.sym_visiting.insert(sym_pair) {
+                    return SubtypeResult::CycleDetected;
+                }
+                let result =
+                    self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
+                self.sym_visiting.remove(&sym_pair);
+                return result;
+            }
+
             return self.check_object_with_index_subtype(&s_shape, Some(s_shape_id), &t_shape);
         }
 
