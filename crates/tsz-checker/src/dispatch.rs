@@ -1446,10 +1446,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // Get the operand type (strip the ! assertion — removes null/undefined)
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
                     let operand_type = self.checker.get_type_of_node(unary.expression);
-                    tsz_solver::remove_nullish(
-                        self.checker.ctx.types.as_type_database(),
-                        operand_type,
-                    )
+                    let db = self.checker.ctx.types.as_type_database();
+                    let result = tsz_solver::remove_nullish(db, operand_type);
+                    // When the flow-narrowed type is purely nullish (e.g. after `x = undefined`),
+                    // remove_nullish produces `never`. In tsc, `x!` in this scenario uses
+                    // the declared type of the variable minus nullish instead of the
+                    // flow-narrowed type. This prevents false TS2339 "Property does not exist
+                    // on type 'never'" errors on expressions like `x!.slice()`.
+                    if result == TypeId::NEVER && operand_type != TypeId::NEVER {
+                        if let Some(expr_node) = self.checker.ctx.arena.get(unary.expression)
+                            && expr_node.kind == SyntaxKind::Identifier as u16
+                            && let Some(sym_id) =
+                                self.checker.resolve_identifier_symbol(unary.expression)
+                        {
+                            let declared_type = self.checker.get_type_of_symbol(sym_id);
+                            let declared_result = tsz_solver::remove_nullish(db, declared_type);
+                            if declared_result != TypeId::NEVER {
+                                return declared_result;
+                            }
+                        }
+                    }
+                    result
                 } else {
                     TypeId::ERROR
                 }
