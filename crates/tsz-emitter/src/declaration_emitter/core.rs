@@ -2128,9 +2128,10 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.arena.get(decl.name).map_or(0, |n| n.end)
                             };
                             if skip_end > 0
-                                && let Some(dn) = self.arena.get(*decl_idx) {
-                                    self.skip_comments_in_node(dn.pos, skip_end);
-                                }
+                                && let Some(dn) = self.arena.get(*decl_idx)
+                            {
+                                self.skip_comments_in_node(dn.pos, skip_end);
+                            }
                         }
                     }
 
