@@ -1,7 +1,44 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9740/12570 (77.5%) — full suite, error-code level
+**Current score**: ~9748/12570 (77.5%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01c — types/conditional: deferred conditional type evaluation
+
+### Fixed: Over-eager conditional type resolution when check type is a type parameter — Solver (evaluation/conditional.rs)
+
+**Area**: types/conditional (60.0%), but impact spread across multiple areas
+
+**Root cause**: The conditional type evaluator in `evaluate_conditional` (evaluation/evaluate_rules/conditional.rs) eagerly resolved conditional types to their true/false branch based on the type parameter's constraint. For example, `T extends string ? number : boolean` where `T extends string` was resolved to `number` immediately. This is WRONG — tsc keeps conditional types deferred when the check type is a type parameter, because T could be instantiated with different subtypes at call sites.
+
+**How tsc actually works**: When check_type is a type parameter:
+- The conditional type ALWAYS remains deferred in the evaluator (returned as-is)
+- The subtype checker handles source-position usage via `conditional_branches_subtype` + `get_conditional_constraint` on demand
+- For target-position (assigning TO a deferred conditional), tsc requires both branches to be satisfied (very strict)
+- tsc NEVER eagerly resolves based on constraint alone — even if constraint satisfies extends_type
+
+**Fix**: Removed the constraint-based true/false branch resolution block (lines 248-301 in the old code). When check_type is a TypeParameter, the evaluator now always defers (returns the conditional as-is), regardless of constraint. Special cases for `T extends T` (identity) and `T extends never` (always false) are preserved.
+
+**Tests**: 2 new unit tests:
+- `test_conditional_deferred_type_parameter_with_constraint` — T extends string with constraint string, should stay deferred
+- `test_conditional_deferred_type_parameter_constraint_not_satisfying` — T extends number with constraint string, should stay deferred
+
+**Net impact**: +4 conformance tests (5 new passes, 1 regression)
+- **New passes**: assertionFunctionWildcardImport2, genericCallInferenceConditionalType2, jsxInferenceProducesLiteralAsExpected, privateNamesConstructorChain-1, intersectionTypeInference3
+- **Regression**: localTypeParameterInferencePriority (pre-existing gap in generic constructor signature comparison exposed by correct deferred behavior — tsc uses a different comparison path for constructor signatures that we don't implement)
+
+### Remaining gaps in types/conditional area (3 failing):
+1. **conditionalTypes1.ts** — Multiple issues: missing TS2339, TS2403; extra TS2349; fingerprint mismatches for type alias name preservation (prints `U extends string ? true : 42` instead of `T94<U>`), message text for DeepReadonlyArray generic parameter
+2. **conditionalTypesExcessProperties.ts** — Missing 2 TS2322 for assigning to intersection containing deferred conditional. Object literal passes when it shouldn't because property collection ignores deferred conditional member of intersection
+3. **inferTypes1.ts** — Missing TS1338 (infer outside extends clause), TS2322, TS2344; extra TS2349, TS2556
+
+### Known issue: localTypeParameterInferencePriority regression
+- `UnrollOnHover<S>` stays deferred correctly, but `Table<S>` vs `Table<UnrollOnHover<S>>` comparison fails
+- tsc handles this through generic constructor signature comparison that doesn't deep-check type parameter substitution
+- Our code lacks this constructor signature comparison path
+- Fix would be in generic callable/constructor signature comparison in the subtype checker
 
 ---
 
