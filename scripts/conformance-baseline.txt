@@ -494,7 +494,6 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
@@ -1279,7 +1278,6 @@ FAIL TypeScript/tests/cases/compiler/superPropertyAccessInSuperCall01.ts
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument.ts
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument2.ts
 FAIL TypeScript/tests/cases/compiler/superWithTypeArgument3.ts
-FAIL TypeScript/tests/cases/compiler/switchComparableCompatForBrands.ts
 FAIL TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults.ts
 FAIL TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions2.ts
 FAIL TypeScript/tests/cases/compiler/taggedTemplatesWithIncompleteTemplateExpressions4.ts
@@ -1323,6 +1321,7 @@ FAIL TypeScript/tests/cases/compiler/tsxInferenceShouldNotYieldAnyOnUnions.tsx
 FAIL TypeScript/tests/cases/compiler/tsxInvokeComponentType.tsx
 FAIL TypeScript/tests/cases/compiler/tsxNotUsingApparentTypeOfSFC.tsx
 FAIL TypeScript/tests/cases/compiler/tsxReactPropsInferenceSucceedsOnIntersections.tsx
+FAIL TypeScript/tests/cases/compiler/tsxResolveExternalModuleExportsTypes.ts
 FAIL TypeScript/tests/cases/compiler/tsxSpreadDoesNotReportExcessProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxStatelessComponentDefaultProps.tsx
 FAIL TypeScript/tests/cases/compiler/tsxTypeArgumentPartialDefinitionStillErrors.ts
@@ -5172,6 +5171,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -7288,6 +7288,7 @@ PASS TypeScript/tests/cases/compiler/switchCaseInternalComments.ts
 PASS TypeScript/tests/cases/compiler/switchCaseNarrowsMatchingClausesEvenWhenNonMatchingClausesExist.ts
 PASS TypeScript/tests/cases/compiler/switchCases.ts
 PASS TypeScript/tests/cases/compiler/switchCasesExpressionTypeMismatch.ts
+PASS TypeScript/tests/cases/compiler/switchComparableCompatForBrands.ts
 PASS TypeScript/tests/cases/compiler/switchFallThroughs.ts
 PASS TypeScript/tests/cases/compiler/switchStatementsWithMultipleDefaults1.ts
 PASS TypeScript/tests/cases/compiler/symbolLinkDeclarationEmitModuleNames.ts
