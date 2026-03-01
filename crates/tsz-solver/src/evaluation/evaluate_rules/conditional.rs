@@ -260,6 +260,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(cond.clone());
             }
 
+            // Step 2b: Identity simplification for any type (not just type params).
+            // If check_type == extends_type, the conditional trivially takes the true branch,
+            // regardless of what the types contain (type params, keyof, etc.).
+            // e.g., `keyof Params extends keyof Params ? X : Y` → X
+            if check_type == extends_type {
+                return self.evaluate(cond.true_type);
+            }
+
             // Step 3: Perform subtype check or infer pattern matching
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
@@ -381,10 +389,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
+            } else if crate::visitor::contains_type_parameters(self.interner(), extends_type) {
+                // Subtype check failed, but extends_type contains unresolved type
+                // parameters. The result is indeterminate: once the type parameter
+                // is instantiated, `check_type` might become a subtype.
+                // For example: `number extends T ? fn : never` — T could be `number`.
+                // Defer the conditional instead of eagerly taking the false branch.
+                return self.interner().conditional(ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type: cond.true_type,
+                    false_type: cond.false_type,
+                    is_distributive: cond.is_distributive,
+                });
             } else {
-                // Check if types are definitely disjoint
-                // For now, we use a simple heuristic: if not subtype, assume disjoint
-                // More sophisticated: check if intersection is never
+                // Types are definitely not in a subtype relationship and extends_type
+                // has no type parameters — take the false branch.
                 cond.false_type
             };
 

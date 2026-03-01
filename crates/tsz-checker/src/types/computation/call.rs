@@ -309,7 +309,11 @@ impl<'a> CheckerState<'a> {
 
         let mut nullish_cause = None;
         if (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0 {
-            let (non_nullish, cause) = self.split_nullish_type(callee_type);
+            // Evaluate the callee type to resolve Application/Lazy types before
+            // splitting nullish members. Without this, `Transform1<T>` stays as an
+            // unevaluated Application and split_nullish_type can't see its union members.
+            let callee_for_split = self.evaluate_type_with_env(callee_type);
+            let (non_nullish, cause) = self.split_nullish_type(callee_for_split);
             nullish_cause = cause;
             let Some(non_nullish) = non_nullish else {
                 return TypeId::UNDEFINED;
