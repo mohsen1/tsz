@@ -25,7 +25,9 @@ impl<'a> DeclarationEmitter<'a> {
         match expr_node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(expr_node) {
-                    self.write(&lit.text);
+                    // Normalize large numeric literals through f64 representation
+                    // to match tsc's behavior (round-trips numbers through JS).
+                    self.write(&Self::normalize_numeric_literal(&lit.text));
                 }
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
@@ -1722,8 +1724,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Format a f64 value as JavaScript would display it.
     ///
-    /// Handles special values: Infinity → "Infinity", NaN → "NaN".
-    /// Regular numbers use Rust's default f64 formatting which matches JS.
+    /// Matches JS `Number.prototype.toString()` behavior:
+    /// - Infinity/NaN → "Infinity"/"NaN"
+    /// - Uses scientific notation for numbers with >= 21 integer digits
+    /// - Uses scientific notation for very small numbers
     pub(crate) fn format_js_number(n: f64) -> String {
         if n.is_infinite() {
             if n.is_sign_positive() {
@@ -1734,8 +1738,55 @@ impl<'a> DeclarationEmitter<'a> {
         } else if n.is_nan() {
             "NaN".to_string()
         } else {
-            n.to_string()
+            let s = n.to_string();
+            // Rust's default formatter doesn't use scientific notation for large
+            // integers. JS switches to scientific notation when the integer part
+            // has 21+ digits. Detect and convert.
+            let abs_s = s.strip_prefix('-').unwrap_or(&s);
+            let needs_scientific = if let Some(dot_pos) = abs_s.find('.') {
+                dot_pos >= 21
+            } else {
+                abs_s.len() >= 21
+            };
+            if needs_scientific {
+                Self::format_js_scientific(n)
+            } else {
+                s
+            }
         }
+    }
+
+    /// Format a number in JavaScript-style scientific notation (e.g., `1.2345678912345678e+53`).
+    fn format_js_scientific(n: f64) -> String {
+        let neg = n < 0.0;
+        let abs_n = n.abs();
+        // Use Rust's {:e} format which gives e.g. "1.2345678912345678e53"
+        let s = format!("{abs_n:e}");
+        // JS uses e+N for positive exponents, e-N for negative
+        let result = if let Some(pos) = s.find('e') {
+            let (mantissa, exp_part) = s.split_at(pos);
+            let exp_str = &exp_part[1..]; // skip 'e'
+            if exp_str.starts_with('-') {
+                format!("{mantissa}e{exp_str}")
+            } else {
+                format!("{mantissa}e+{exp_str}")
+            }
+        } else {
+            s
+        };
+        if neg { format!("-{result}") } else { result }
+    }
+
+    /// Normalize a numeric literal string through f64, matching tsc's JS round-trip behavior.
+    /// E.g., `123456789123456789123456789123456789123456789123456789` → `1.2345678912345678e+53`
+    pub(crate) fn normalize_numeric_literal(text: &str) -> String {
+        if let Ok(val) = text.parse::<f64>() {
+            let normalized = Self::format_js_number(val);
+            if normalized != text {
+                return normalized;
+            }
+        }
+        text.to_string()
     }
 
     /// Emit required imports at the beginning of the .d.ts file.
