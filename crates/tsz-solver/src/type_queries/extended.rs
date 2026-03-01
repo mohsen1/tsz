@@ -775,7 +775,9 @@ pub fn classify_for_property_access_resolution(
             let members = db.type_list(list_id);
             PropertyAccessResolutionKind::Intersection(members.to_vec())
         }
-        TypeData::ReadonlyType(inner) => PropertyAccessResolutionKind::Readonly(inner),
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            PropertyAccessResolutionKind::Readonly(inner)
+        }
         TypeData::Function(_) | TypeData::Callable(_) => PropertyAccessResolutionKind::FunctionLike,
         _ => PropertyAccessResolutionKind::Resolved,
     }
