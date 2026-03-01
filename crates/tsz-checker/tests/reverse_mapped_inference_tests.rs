@@ -123,3 +123,52 @@ function test() {
     assert!(!codes.contains(&2339), "Expected no TS2339, got: {codes:?}");
     assert!(!codes.contains(&2322), "Expected no TS2322, got: {codes:?}");
 }
+
+#[test]
+fn reverse_mapped_union_template_definition_pattern() {
+    // When the mapped type template is a union like `(() => T[K]) | Definition<T[K]>`,
+    // reverse inference should try each union member. For `() => number` as source,
+    // the function member `() => T[K]` should reverse to T[K] = number.
+    let code = r#"
+type Schema = Record<string, unknown> | readonly unknown[];
+type Definition<T> = {
+  [K in keyof T]: (() => T[K]) | Definition<T[K]>;
+};
+declare function create<T extends Schema>(definition: Definition<T>): T;
+const created = create({
+  a: () => 1,
+  b: [() => ""],
+});
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2345),
+        "Expected no TS2345 for union template reverse inference, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 for union template reverse inference, got: {codes:?}"
+    );
+}
+
+#[test]
+fn reverse_mapped_object_template_nested_properties() {
+    // When the mapped type template is an object like `{ items: Wrap<T[K]> }`,
+    // reverse inference should recurse through matching properties to find the
+    // target placeholder.
+    let code = r#"
+type Wrap<T extends string[]> = { [K in keyof T]: T[K]; };
+declare function test<T extends Record<string, string[]>>(obj: {
+  [K in keyof T]: { items: Wrap<T[K]>; };
+}): T;
+const result = test({
+  x: { items: ["a", "b"] },
+  y: { items: ["c"] },
+});
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2345),
+        "Expected no TS2345 for object template reverse inference, got: {codes:?}"
+    );
+}
