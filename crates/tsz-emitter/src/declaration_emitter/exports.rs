@@ -1359,6 +1359,14 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_heritage_clauses(&mut self, clauses: &NodeList) {
+        self.emit_heritage_clauses_inner(clauses, false);
+    }
+
+    pub(crate) fn emit_interface_heritage_clauses(&mut self, clauses: &NodeList) {
+        self.emit_heritage_clauses_inner(clauses, true);
+    }
+
+    fn emit_heritage_clauses_inner(&mut self, clauses: &NodeList, is_interface: bool) {
         for &clause_idx in &clauses.nodes {
             let Some(clause_node) = self.arena.get(clause_idx) else {
                 continue;
@@ -1373,12 +1381,31 @@ impl<'a> DeclarationEmitter<'a> {
                 _ => continue,
             };
 
+            // For interfaces, filter out heritage types with non-entity-name
+            // expressions (e.g. `typeof X`, parenthesized expressions).
+            // tsc strips these in declaration emit.
+            let valid_types: Vec<_> = if is_interface {
+                heritage
+                    .types
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter(|&type_idx| self.is_entity_name_heritage(type_idx))
+                    .collect()
+            } else {
+                heritage.types.nodes.clone()
+            };
+
+            if valid_types.is_empty() {
+                continue;
+            }
+
             self.write(" ");
             self.write(keyword);
             self.write(" ");
 
             let mut first = true;
-            for &type_idx in &heritage.types.nodes {
+            for &type_idx in &valid_types {
                 if !first {
                     self.write(", ");
                 }
@@ -1386,6 +1413,38 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_type(type_idx);
             }
         }
+    }
+
+    /// Check if a heritage type expression is an entity name (identifier or
+    /// property access chain). Non-entity-name expressions like `typeof X` or
+    /// parenthesized expressions are invalid in interface `extends` clauses
+    /// and should be stripped in .d.ts output.
+    fn is_entity_name_heritage(&self, type_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        // Heritage types may be wrapped in ExpressionWithTypeArguments (when
+        // type args are present, e.g. `extends Foo<T>`), or may be bare
+        // identifiers / property access chains (e.g. `extends A, B`).
+        if let Some(eta) = self.arena.get_expr_type_args(type_node) {
+            self.is_entity_name_expr(eta.expression)
+        } else {
+            self.is_entity_name_expr(type_idx)
+        }
+    }
+
+    fn is_entity_name_expr(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node) {
+                return self.is_entity_name_expr(access.expression);
+            }
+        false
     }
 
     /// Pre-scan a module body to determine if it has a "scope marker" —

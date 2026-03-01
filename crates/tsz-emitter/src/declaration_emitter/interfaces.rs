@@ -47,9 +47,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type_parameters(type_params);
         }
 
-        // Heritage (extends)
+        // Heritage (extends) — filter out non-entity-name expressions
         if let Some(ref heritage) = iface.heritage_clauses {
-            self.emit_heritage_clauses(heritage);
+            self.emit_interface_heritage_clauses(heritage);
         }
 
         self.write(" {");
