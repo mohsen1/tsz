@@ -229,7 +229,20 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         callee_type: TypeId,
     ) -> Option<PredicateSignature> {
-        match classify_for_predicate_signature(self.interner, callee_type) {
+        // Resolve Lazy(DefId) types before classification — type aliases
+        // for callback types (e.g., JSDoc @callback) are stored as Lazy(DefId)
+        // and must be resolved to their underlying function type first.
+        let resolved_type = match self.interner.lookup(callee_type) {
+            Some(tsz_solver::TypeData::Lazy(def_id)) => {
+                if let Some(ref env) = self.type_environment {
+                    env.borrow().get_def(def_id).unwrap_or(callee_type)
+                } else {
+                    callee_type
+                }
+            }
+            _ => callee_type,
+        };
+        match classify_for_predicate_signature(self.interner, resolved_type) {
             PredicateSignatureKind::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 let predicate = shape.type_predicate.clone()?;
