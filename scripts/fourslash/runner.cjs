@@ -334,7 +334,6 @@ async function runParallel(opts, testsToRun) {
                         passed++;
                     } else {
                         if (isBaselineOnlyFailure(msg.error)) {
-                        if (isBaselineOnlyFailure(msg.error)) {
                             passed++;
                             completed++;
 
@@ -346,7 +345,6 @@ async function runParallel(opts, testsToRun) {
                             }
                             return;
                         }
-
                         failed++;
                         if (msg.timedOut) timedOut++;
                         errors.push({ file: msg.testFile, error: msg.error, timedOut: msg.timedOut });
