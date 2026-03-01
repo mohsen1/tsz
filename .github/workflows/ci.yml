@@ -816,6 +816,9 @@ jobs:
             ${{ runner.os }}-fourslash-
             ${{ runner.os }}-cargo-
 
+      - name: Validate fourslash runner syntax
+        run: node --check scripts/fourslash/runner.cjs
+
       - name: Run fourslash tests
         id: fourslash-metrics
         run: |
