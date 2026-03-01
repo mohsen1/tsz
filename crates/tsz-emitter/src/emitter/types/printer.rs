@@ -36,6 +36,9 @@ pub struct TypePrinter<'a> {
     /// `Some(n)` enables multi-line formatting at indent level `n`;
     /// `None` keeps flat single-line format.
     indent_level: Option<u32>,
+    /// The enclosing symbol (namespace/class) whose qualified name prefix should
+    /// be stripped from type references to produce context-relative names.
+    enclosing_symbol: Option<SymbolId>,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -47,6 +50,7 @@ impl<'a> TypePrinter<'a> {
             current_depth: 0,
             max_depth: 10,
             indent_level: None,
+            enclosing_symbol: None,
         }
     }
 
@@ -73,6 +77,14 @@ impl<'a> TypePrinter<'a> {
     /// using 4-space indentation. Without this, object types use flat format.
     pub const fn with_indent_level(mut self, indent_level: u32) -> Self {
         self.indent_level = Some(indent_level);
+        self
+    }
+
+    /// Set the enclosing symbol (namespace/class) for context-relative name resolution.
+    /// Qualified names that share a prefix with this symbol's path will have the
+    /// shared prefix stripped (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
+    pub const fn with_enclosing_symbol(mut self, sym_id: SymbolId) -> Self {
+        self.enclosing_symbol = Some(sym_id);
         self
     }
 
@@ -105,13 +117,36 @@ impl<'a> TypePrinter<'a> {
     }
 
     /// Resolve a SymbolRef/SymbolId to its qualified name (e.g., "M.c" for `typeof M.c`).
+    /// If an enclosing symbol is set, the qualified name is relative to it
+    /// (e.g., inside namespace `m1.m2`, type `m1.m2.c` becomes `c`).
     fn resolve_symbol_qualified_name(&self, sym_id: SymbolId) -> Option<String> {
         let arena = self.symbol_arena?;
         let sym = arena.get(sym_id)?;
         let mut qualified_name = sym.escaped_name.clone();
         let mut current_parent = sym.parent;
 
+        // Build the enclosing symbol's ancestor set for stripping
+        let enclosing_ancestors = if let Some(enc_id) = self.enclosing_symbol {
+            let mut ancestors = rustc_hash::FxHashSet::default();
+            ancestors.insert(enc_id);
+            let mut p = enc_id;
+            while let Some(ps) = arena.get(p) {
+                if ps.parent == SymbolId::NONE {
+                    break;
+                }
+                ancestors.insert(ps.parent);
+                p = ps.parent;
+            }
+            ancestors
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
+
         while current_parent != SymbolId::NONE {
+            // Stop qualifying when we reach the enclosing scope
+            if enclosing_ancestors.contains(&current_parent) {
+                break;
+            }
             if let Some(parent_sym) = arena.get(current_parent) {
                 // Don't prepend for source files and blocks
                 if !parent_sym.escaped_name.starts_with('"')
@@ -1039,10 +1074,13 @@ impl<'a> TypePrinter<'a> {
             let needs_typeof = symbol.has_any_flags(
                 symbol_flags::ENUM | symbol_flags::VALUE_MODULE | symbol_flags::FUNCTION,
             );
+            let name = self
+                .resolve_symbol_qualified_name(sym_id)
+                .unwrap_or_else(|| symbol.escaped_name.clone());
             if needs_typeof {
-                return format!("typeof {}", symbol.escaped_name);
+                return format!("typeof {name}");
             }
-            return symbol.escaped_name.clone();
+            return name;
         }
 
         // Symbol is not visible or we don't have symbol info.
@@ -1071,7 +1109,9 @@ impl<'a> TypePrinter<'a> {
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(sym_id)
         {
-            return symbol.escaped_name.clone();
+            return self
+                .resolve_symbol_qualified_name(sym_id)
+                .unwrap_or_else(|| symbol.escaped_name.clone());
         }
         // Fallback: print the member type structure
         format!("enum({})", def_id.0)
