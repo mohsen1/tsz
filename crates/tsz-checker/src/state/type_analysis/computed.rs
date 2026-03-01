@@ -604,6 +604,12 @@ impl<'a> CheckerState<'a> {
             // If function is merged with namespace, merge namespace exports into function type
             // This allows accessing namespace members through the function name: Model.Options
             if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                // Pre-cache the function type before merging namespace exports.
+                // This breaks circularity when the namespace body references the function
+                // itself (e.g., `namespace point { export var origin = point(0, 0); }`).
+                // Without this, the placeholder is Lazy(DefId) with no call signatures,
+                // causing false TS2349 "not callable" errors.
+                self.ctx.symbol_types.insert(sym_id, function_type);
                 return self.merge_namespace_exports_into_function(sym_id, function_type);
             }
 
