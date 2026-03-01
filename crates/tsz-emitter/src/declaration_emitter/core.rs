@@ -1673,10 +1673,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // For ambient enums (inside declare context), only emit
-                // values for members with explicit initializers.
+                // For ambient enums (inside declare context or with declare keyword), only
+                // emit values for members with explicit initializers.
                 // For implementation enums, always emit computed values.
-                let is_ambient = self.inside_declare_namespace;
+                let is_ambient = self.inside_declare_namespace
+                    || self
+                        .arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
+                    || self.source_is_declaration_file;
                 let has_explicit_init = member.initializer.is_some();
                 let should_emit_value = !is_ambient || has_explicit_init || is_const;
                 if should_emit_value {
