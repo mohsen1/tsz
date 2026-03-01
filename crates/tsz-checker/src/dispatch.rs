@@ -574,6 +574,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 return false;
             }
 
+            // Decorator expression: the result of a decorator is applied to the
+            // decorated declaration but is not "used" as an expression result.
+            // This suppresses false TS7057 for `@(yield 0) class C {}`.
+            if parent.kind == syntax_kind_ext::DECORATOR {
+                return true;
+            }
+
             // Binary comma expression: left side is always unused;
             // right side is unused if the parent comma expression is unused
             if parent.kind == syntax_kind_ext::BINARY_EXPRESSION
