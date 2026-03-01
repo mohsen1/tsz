@@ -42,6 +42,10 @@ pub(crate) fn get_application_info(
     tsz_solver::type_queries::get_application_info(db, type_id)
 }
 
+pub(crate) fn has_nominal_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::has_nominal_symbol(db, type_id)
+}
+
 #[cfg(test)]
 #[path = "../../../tests/state_type_resolution.rs"]
 mod tests;

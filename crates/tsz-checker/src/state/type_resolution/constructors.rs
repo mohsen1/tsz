@@ -92,7 +92,21 @@ impl<'a> CheckerState<'a> {
                 if args.len() > sig.type_params.len() {
                     args.truncate(sig.type_params.len());
                 }
-                let result = self.instantiate_signature(sig, &args);
+                let mut result = self.instantiate_signature(sig, &args);
+
+                // Wrap the return type in an Application so the declaration emitter
+                // preserves type arguments (e.g., `g<string>` instead of just `g`).
+                // Only do this when the original return type has a nominal symbol
+                // (class/interface instance), indicating this is a generic class
+                // instantiation.
+                if !sig.type_params.is_empty() {
+                    let has_symbol = query::has_nominal_symbol(self.ctx.types, sig.return_type);
+                    if has_symbol {
+                        let factory = self.ctx.types.factory();
+                        result.return_type = factory.application(sig.return_type, args.clone());
+                    }
+                }
+
                 {
                     let app_info = query::get_application_info(self.ctx.types, result.return_type)
                         .map(|(base, args)| format!("base={base:?} args={args:?}"))
