@@ -3988,3 +3988,59 @@ call(...sa, (...x) => 42);
         "Should not emit TS2556 for spread+callback in generic variadic. Got: {diagnostics:?}"
     );
 }
+
+/// Return type inference should use narrowed types from type guard predicates.
+/// When `isFunction(item)` narrows `item` to `Extract<T, Function>` inside an
+/// if-block, the inferred return type should reflect the narrowed type, not the
+/// declared parameter type `T`. Without evaluating the if-condition during
+/// return type collection, flow narrowing can't find the type predicate.
+#[test]
+fn return_type_inference_uses_type_guard_narrowing() {
+    let source = r#"
+declare function isFunction<T>(value: T): value is Extract<T, Function>;
+
+function getFunction<T>(item: T) {
+    if (isFunction(item)) {
+        return item;
+    }
+    throw new Error();
+}
+
+function f12(x: string | (() => string) | undefined) {
+    const f = getFunction(x);
+    f();
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2722),
+        "Should not emit TS2722 for calling result of type-guard-narrowed return. Got: {diagnostics:?}"
+    );
+}
+
+/// Non-generic type guard predicates should also work in return type inference.
+/// User-defined type guards with non-generic predicate types should also
+/// produce correct narrowing during return type inference.
+#[test]
+fn return_type_inference_uses_non_generic_type_guard() {
+    let source = r#"
+interface Callable { (): string; }
+declare function isCallable(value: unknown): value is Callable;
+
+function getCallable(item: string | Callable | undefined) {
+    if (isCallable(item)) {
+        return item;
+    }
+    throw "not callable";
+}
+
+declare const x: string | Callable | undefined;
+const f = getCallable(x);
+const result: string = f();
+"#;
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        !has_error(&diagnostics, 2722),
+        "Should not emit TS2722 for non-generic type guard return inference. Got: {diagnostics:?}"
+    );
+}

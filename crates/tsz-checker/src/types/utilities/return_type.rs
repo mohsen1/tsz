@@ -526,6 +526,15 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    // Evaluate the condition expression so that call-expression type
+                    // guards (e.g. `isFunction(item)`) get their callee types cached
+                    // in `node_types` and their predicates stored in
+                    // `call_type_predicates`. Without this, flow narrowing for
+                    // identifiers in the then/else branches cannot find the type
+                    // predicate and falls back to the declared (un-narrowed) type.
+                    if if_data.expression.is_some() {
+                        self.get_type_of_node(if_data.expression);
+                    }
                     self.collect_return_types_in_statement(
                         if_data.then_statement,
                         return_types,
