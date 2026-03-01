@@ -411,8 +411,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // TS1212: Check interface name for strict mode reserved words
-        self.check_strict_mode_reserved_name_at(iface.name, stmt_idx);
+        // NOTE: TSC does NOT emit TS1212 for interface declaration names.
+        // e.g. `interface interface {}` gets TS1438 only, not TS1212.
 
         // Check for circular inheritance (TS2310)
         // Must be done before resolving types to avoid infinite recursion
