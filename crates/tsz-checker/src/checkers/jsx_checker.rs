@@ -1088,6 +1088,34 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    // JSX Attribute Name Extraction
+
+    /// Extract the attribute name from a JSX attribute name node.
+    ///
+    /// Handles both simple identifiers (`name`) and namespaced names (`ns:name`).
+    /// Returns `None` if the node is neither.
+    pub(crate) fn get_jsx_attribute_name(
+        &self,
+        name_node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            Some(ident.escaped_text.as_str().to_string())
+        } else if let Some(ns) = self.ctx.arena.get_jsx_namespaced_name(name_node) {
+            let ns_id = self.ctx.arena.get(ns.namespace)?;
+            let ns_text = self.ctx.arena.get_identifier(ns_id)?.escaped_text.as_str();
+            let name_id = self.ctx.arena.get(ns.name)?;
+            let name_text = self
+                .ctx
+                .arena
+                .get_identifier(name_id)?
+                .escaped_text
+                .as_str();
+            Some(format!("{ns_text}:{name_text}"))
+        } else {
+            None
+        }
+    }
+
     // JSX Attribute Type Checking
 
     /// Check JSX attributes against an already-evaluated props type.
@@ -1188,13 +1216,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // Get attribute name
+                // Get attribute name (handles both simple and namespaced names like `ns:attr`)
                 let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
                     continue;
                 };
-                let attr_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.as_str().to_string()
-                } else {
+                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
                     continue;
                 };
 
@@ -1490,9 +1516,9 @@ impl<'a> CheckerState<'a> {
                 if node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                     && let Some(attr_data) = self.ctx.arena.get_jsx_attribute(node)
                     && let Some(name_node) = self.ctx.arena.get(attr_data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && let Some(attr_name) = self.get_jsx_attribute_name(name_node)
                 {
-                    explicit_attr_names_with_pos.push((i, ident.escaped_text.as_str().to_string()));
+                    explicit_attr_names_with_pos.push((i, attr_name));
                 }
             }
 
@@ -1623,9 +1649,9 @@ impl<'a> CheckerState<'a> {
             if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
                 if let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node)
                     && let Some(name_node) = self.ctx.arena.get(attr_data.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && let Some(attr_name) = self.get_jsx_attribute_name(name_node)
                 {
-                    provided_attrs.push(ident.escaped_text.as_str().to_string());
+                    provided_attrs.push(attr_name);
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 // Spread of `any` covers all properties

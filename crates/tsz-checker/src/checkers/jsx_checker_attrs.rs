@@ -50,9 +50,7 @@ impl<'a> CheckerState<'a> {
                 let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
                     continue;
                 };
-                let attr_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.as_str().to_string()
-                } else {
+                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
                     continue;
                 };
 
