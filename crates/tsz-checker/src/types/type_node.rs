@@ -401,6 +401,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
+                // TS1354: 'readonly' type modifier is only permitted on array and tuple literal types.
+                if let Some(operand_node) = self.ctx.arena.get(type_op.type_node) {
+                    let operand_kind = operand_node.kind;
+                    if operand_kind != syntax_kind_ext::ARRAY_TYPE
+                        && operand_kind != syntax_kind_ext::TUPLE_TYPE
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.ctx.error(
+                            node.pos,
+                            node.end.saturating_sub(node.pos),
+                            diagnostic_messages::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES.to_string(),
+                            diagnostic_codes::READONLY_TYPE_MODIFIER_IS_ONLY_PERMITTED_ON_ARRAY_AND_TUPLE_LITERAL_TYPES,
+                        );
+                    }
+                }
                 return factory.readonly_type(inner_type);
             }
 
