@@ -25,6 +25,7 @@ impl Server {
         symbol_name: &str,
         auto_import_file_exclude_patterns: &[String],
         auto_import_specifier_exclude_regexes: &[String],
+        import_module_specifier_ending: Option<&str>,
         import_module_specifier_preference: Option<&str>,
     ) -> Option<String> {
         let mut files = self.open_files.clone();
@@ -53,7 +54,9 @@ impl Server {
             self.auto_imports_allowed_for_inferred_projects,
         );
         project.set_import_module_specifier_ending(
-            self.completion_import_module_specifier_ending.clone(),
+            import_module_specifier_ending
+                .map(std::string::ToString::to_string)
+                .or_else(|| self.completion_import_module_specifier_ending.clone()),
         );
         project.set_import_module_specifier_preference(
             import_module_specifier_preference

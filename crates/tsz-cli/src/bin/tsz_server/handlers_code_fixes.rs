@@ -1307,6 +1307,7 @@ impl Server {
                 &ident,
                 auto_import_file_exclude_patterns,
                 auto_import_specifier_exclude_regexes,
+                self.completion_import_module_specifier_ending.as_deref(),
                 import_module_specifier_preference,
             ) && let std::collections::hash_map::Entry::Vacant(entry) =
                 class_imports.entry(ident.clone())
