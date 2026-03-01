@@ -294,7 +294,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a property access refers to an enum member.
     /// All enum members are readonly — `A.foo = 1` is invalid for `enum A { foo }`.
-    fn is_enum_member_property(&self, object_expr: NodeIndex, _prop_name: &str) -> bool {
+    pub(crate) fn is_enum_member_property(&self, object_expr: NodeIndex, _prop_name: &str) -> bool {
         let sym_id = self.resolve_identifier_symbol(object_expr);
         let Some(sym_id) = sym_id else {
             return false;
