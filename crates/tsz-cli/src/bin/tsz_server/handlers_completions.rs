@@ -1254,7 +1254,7 @@ impl Server {
                         let source_from_value = |value: Option<&serde_json::Value>| {
                             value.and_then(|v| {
                                 v.as_str()
-                                    .map(std::string::ToString::to_string)
+                                    .map(|s| s.trim().to_string())
                                     .or_else(|| {
                                         v.as_array().and_then(|arr| {
                                             let mut text = String::new();
@@ -1266,6 +1266,7 @@ impl Server {
                                                     .unwrap_or_default();
                                                 text.push_str(part_text);
                                             }
+                                            let text = text.trim().to_string();
                                             (!text.is_empty()).then_some(text)
                                         })
                                     })
