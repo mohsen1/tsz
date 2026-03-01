@@ -1029,7 +1029,6 @@ FAIL TypeScript/tests/cases/compiler/objectLiteralWithNumericPropertyName.ts
 FAIL TypeScript/tests/cases/compiler/objectLitStructuralTypeMismatch.ts
 FAIL TypeScript/tests/cases/compiler/octalLiteralAndEscapeSequence.ts
 FAIL TypeScript/tests/cases/compiler/omittedExpressionForOfLoop.ts
-FAIL TypeScript/tests/cases/compiler/omitTypeHelperModifiers01.ts
 FAIL TypeScript/tests/cases/compiler/omitTypeTestErrors01.ts
 FAIL TypeScript/tests/cases/compiler/optionalChainWithInstantiationExpression1.ts
 FAIL TypeScript/tests/cases/compiler/optionalFunctionArgAssignability.ts
@@ -6502,6 +6501,7 @@ PASS TypeScript/tests/cases/compiler/objectRestSpread.ts
 PASS TypeScript/tests/cases/compiler/objectSpreadWithinMethodWithinObjectWithSpread.ts
 PASS TypeScript/tests/cases/compiler/objectTypeWithOptionalProperty1.ts
 PASS TypeScript/tests/cases/compiler/observableInferenceCanBeMade.ts
+PASS TypeScript/tests/cases/compiler/omitTypeHelperModifiers01.ts
 PASS TypeScript/tests/cases/compiler/omitTypeTests01.ts
 PASS TypeScript/tests/cases/compiler/operationsAvailableOnPromisedType.ts
 PASS TypeScript/tests/cases/compiler/operatorAddNullUndefined.ts
