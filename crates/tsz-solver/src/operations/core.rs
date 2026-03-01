@@ -485,40 +485,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Phase 2: If only ONE member has multiple overloads, use that member's
         // overloads as the base and combine each with the single-signature members.
         if multi_overload_count == 1
-            && let Some(master_idx) = single_overload_with_multi_idx {
-                let (_, master_sigs) = &sig_lists[master_idx];
-                let mut combined_results: Vec<CallSignature> = master_sigs.clone();
+            && let Some(master_idx) = single_overload_with_multi_idx
+        {
+            let (_, master_sigs) = &sig_lists[master_idx];
+            let mut combined_results: Vec<CallSignature> = master_sigs.clone();
 
-                for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
-                    if other_idx == master_idx {
-                        continue;
+            for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
+                if other_idx == master_idx {
+                    continue;
+                }
+                // Single-signature member — combine with each master overload
+                if let Some(other_sig) = other_sigs.first() {
+                    if !other_sig.type_params.is_empty() {
+                        return None; // Can't combine generic
                     }
-                    // Single-signature member — combine with each master overload
-                    if let Some(other_sig) = other_sigs.first() {
-                        if !other_sig.type_params.is_empty() {
-                            return None; // Can't combine generic
+                    for combined in &mut combined_results {
+                        // Intersect this types
+                        if let Some(other_this) = other_sig.this_type {
+                            combined.this_type = Some(match combined.this_type {
+                                Some(existing) => self.interner.intersection2(existing, other_this),
+                                None => other_this,
+                            });
                         }
-                        for combined in &mut combined_results {
-                            // Intersect this types
-                            if let Some(other_this) = other_sig.this_type {
-                                combined.this_type = Some(match combined.this_type {
-                                    Some(existing) => {
-                                        self.interner.intersection2(existing, other_this)
-                                    }
-                                    None => other_this,
-                                });
-                            }
-                            // Union return types
-                            combined.return_type = self
-                                .interner
-                                .factory()
-                                .union(vec![combined.return_type, other_sig.return_type]);
-                        }
+                        // Union return types
+                        combined.return_type = self
+                            .interner
+                            .factory()
+                            .union(vec![combined.return_type, other_sig.return_type]);
                     }
                 }
-
-                return Some(combined_results);
             }
+
+            return Some(combined_results);
+        }
 
         // Multiple members with multiple overloads and no compatible pair → not callable
         None
