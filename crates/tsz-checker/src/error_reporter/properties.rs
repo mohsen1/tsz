@@ -87,6 +87,41 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // For enum container types (e.g., `U8.nonExistent`), tsc displays
+            // "typeof EnumName" for the type in the error message.
+            if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id)
+            {
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        let enum_name = &symbol.escaped_name;
+                        let type_str = format!("typeof {enum_name}");
+                        let (code, message) = if let Some(ref suggestion) = suggestion {
+                            (
+                                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                                format!(
+                                    "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                                ),
+                            )
+                        } else {
+                            (
+                                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                                format!(
+                                    "Property '{prop_name}' does not exist on type '{type_str}'."
+                                ),
+                            )
+                        };
+                        self.ctx.push_diagnostic(Diagnostic::error(
+                            &self.ctx.file_name,
+                            loc.start,
+                            loc.length(),
+                            message,
+                            code,
+                        ));
+                        return;
+                    }
+                }
+            }
+
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
