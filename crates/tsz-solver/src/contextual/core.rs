@@ -81,28 +81,50 @@ impl<'a> ContextualTypeContext<'a> {
         // types in S are identical ignoring return types, U has the same set of call
         // signatures." If parameter types differ across callable members at the same
         // index, no contextual type is provided (triggers TS7006 under noImplicitAny).
-        // Members that don't have a parameter at this index (arity differences) are
-        // excluded — only members that DO provide a type are compared.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
-            let param_types: Vec<TypeId> = members
-                .iter()
-                .filter_map(|&m| {
-                    let ctx = ContextualTypeContext::with_expected_and_options(
-                        self.interner,
-                        m,
-                        self.no_implicit_any,
-                    );
-                    ctx.get_parameter_type(index)
-                })
-                .collect();
+            let mut param_types: Vec<TypeId> = Vec::new();
+            let mut has_callable_member = false;
 
-            if param_types.is_empty() {
+            for &m in members.iter() {
+                // Check if this member is callable (has call signatures)
+                let is_callable = crate::type_queries::is_callable_type(self.interner, m);
+                if !is_callable {
+                    // Non-callable member — excluded from set S per spec
+                    continue;
+                }
+                has_callable_member = true;
+
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    m,
+                    self.no_implicit_any,
+                );
+                match ctx.get_parameter_type(index) {
+                    Some(ty) => param_types.push(ty),
+                    None => {
+                        // Callable member returned None — either:
+                        // - Multiple overloads with disagreeing param types
+                        // - No parameter at this index for any signature
+                        // In either case, the signatures are not identical
+                        // across members, so no contextual type is provided.
+                        // However, for arity differences (member has fewer params),
+                        // tsc still provides contextual types from other members.
+                        // We check: does this callable have ANY signature with a
+                        // param at this index? If yes → internal disagreement → None.
+                        // If no → arity gap → skip this member.
+                        if self.callable_has_param_at_index(m, index) {
+                            return None;
+                        }
+                        // Arity gap — this member simply has fewer params; skip.
+                    }
+                }
+            }
+
+            if !has_callable_member || param_types.is_empty() {
                 return None;
             }
-            // If all members that provide a param type agree, use it.
-            // If they disagree (e.g., (a: number) | (b: string)), return None
-            // which triggers TS7006 under noImplicitAny.
+            // If all callable members that contribute agree on the same type, use it.
             let first = param_types[0];
             if param_types.iter().all(|&t| t == first) {
                 return Some(first);
@@ -764,6 +786,26 @@ impl<'a> ContextualTypeContext<'a> {
         // Generator<Y, R, N> — next type is arg 2
         let mut extractor = ApplicationArgExtractor::new(self.interner, 2);
         extractor.extract(expected)
+    }
+
+    /// Check if a callable type has any call signature with a parameter at the given index.
+    /// This distinguishes "no param at this index" (arity gap) from "params disagree."
+    fn callable_has_param_at_index(&self, type_id: TypeId, index: usize) -> bool {
+        use crate::types::TypeData;
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Function(func_id)) => {
+                let shape = self.interner.function_shape(func_id);
+                shape.params.len() > index || shape.params.iter().any(|p| p.rest)
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner.callable_shape(callable_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| sig.params.len() > index || sig.params.iter().any(|p| p.rest))
+            }
+            _ => false,
+        }
     }
 }
 
