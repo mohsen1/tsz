@@ -268,3 +268,41 @@ pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeReso
         failure_reason: analysis.failure_reason,
     }
 }
+
+/// Variance-aware Application-to-Application assignability check.
+///
+/// When both source and target are Applications with the same base type,
+/// uses computed variance to check arguments without structural expansion.
+/// Must be called BEFORE types are evaluated/expanded.
+///
+/// Returns `Some(true/false)` if conclusive, `None` to fall through.
+pub(crate) fn check_application_variance_assignability<R: tsz_solver::TypeResolver>(
+    inputs: &AssignabilityQueryInputs<'_, R>,
+) -> Option<bool> {
+    let AssignabilityQueryInputs {
+        db,
+        resolver,
+        source,
+        target,
+        flags,
+        inheritance_graph,
+        sound_mode,
+    } = *inputs;
+    let policy = tsz_solver::RelationPolicy::from_flags(flags)
+        .with_strict_subtype_checking(sound_mode)
+        .with_strict_any_propagation(sound_mode);
+    let context = tsz_solver::RelationContext {
+        query_db: Some(db),
+        inheritance_graph: Some(inheritance_graph),
+        class_check: None,
+    };
+    tsz_solver::check_application_variance(
+        db.as_type_database(),
+        resolver,
+        Some(db),
+        source,
+        target,
+        policy,
+        context,
+    )
+}

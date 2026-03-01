@@ -5,12 +5,12 @@
 
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,
-    are_types_overlapping_with_env, check_assignable_gate_with_overrides,
-    classify_for_assignability_eval, classify_for_excess_properties, contains_infer_types,
-    get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
-    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_keyof_type,
-    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, map_compound_members,
-    object_shape_for_type,
+    are_types_overlapping_with_env, check_application_variance_assignability,
+    check_assignable_gate_with_overrides, classify_for_assignability_eval,
+    classify_for_excess_properties, contains_infer_types, get_allowed_keys, get_keyof_type,
+    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_keyof_type, is_relation_cacheable, is_type_parameter_like,
+    keyof_object_properties, map_compound_members, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -449,6 +449,27 @@ impl<'a> CheckerState<'a> {
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         self.ensure_relation_inputs_ready(&[source, target]);
         let target = self.substitute_this_type_if_needed(target);
+
+        // Variance-aware fast path: when both source and target are Application
+        // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
+        // type arguments using computed variance BEFORE structural expansion.
+        // This must run before evaluate_type_for_assignability which would
+        // expand Application types to structural objects, losing variance info.
+        {
+            let flags = self.ctx.pack_relation_flags();
+            let inputs = AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            };
+            if let Some(result) = check_application_variance_assignability(&inputs) {
+                return result;
+            }
+        }
 
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
