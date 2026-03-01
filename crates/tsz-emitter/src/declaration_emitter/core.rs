@@ -2116,8 +2116,21 @@ impl<'a> DeclarationEmitter<'a> {
                         // Skip comments within the declaration's omitted parts (initializer,
                         // inline type comments) to prevent them from leaking as leading
                         // comments on the next statement.
-                        if let Some(dn) = self.arena.get(*decl_idx) {
-                            self.skip_comments_in_node(dn.pos, dn.end);
+                        // Use the initializer/type end position as the bound, not the full
+                        // declaration's end — the parser may set `end` to include trailing
+                        // trivia that extends into the next statement's leading JSDoc comments.
+                        {
+                            let skip_end = if decl.initializer.is_some() {
+                                self.arena.get(decl.initializer).map_or(0, |n| n.end)
+                            } else if decl.type_annotation.is_some() {
+                                self.arena.get(decl.type_annotation).map_or(0, |n| n.end)
+                            } else {
+                                self.arena.get(decl.name).map_or(0, |n| n.end)
+                            };
+                            if skip_end > 0
+                                && let Some(dn) = self.arena.get(*decl_idx) {
+                                    self.skip_comments_in_node(dn.pos, skip_end);
+                                }
                         }
                     }
 
