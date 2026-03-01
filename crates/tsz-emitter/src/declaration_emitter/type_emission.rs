@@ -359,12 +359,8 @@ impl<'a> DeclarationEmitter<'a> {
 
             // Literal types
             k if k == SyntaxKind::StringLiteral as u16 => {
-                if let Some(lit) = self.arena.get_literal(type_node) {
-                    let quote = self.original_quote_char(type_node);
-                    self.write(quote);
-                    self.write(&lit.text);
-                    self.write(quote);
-                }
+                // Delegate to emit_node which handles string escape sequences
+                self.emit_node(type_idx);
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(type_node) {
