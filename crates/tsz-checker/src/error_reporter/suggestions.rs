@@ -129,6 +129,18 @@ impl<'a> CheckerState<'a> {
     }
 
     fn collect_accessible_type_property_names(&self, type_id: TypeId) -> Vec<String> {
+        // For enum types, the solver can't access binder exports.
+        // Collect enum member names directly from the binder's symbol exports.
+        if let Some(def_id) = tsz_solver::type_queries::get_enum_def_id(self.ctx.types, type_id) {
+            if let Some(&sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id) {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if let Some(exports) = symbol.exports.as_ref() {
+                        return exports.iter().map(|(name, _)| name.clone()).collect();
+                    }
+                }
+            }
+        }
+
         crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
             self.ctx.types,
             type_id,
