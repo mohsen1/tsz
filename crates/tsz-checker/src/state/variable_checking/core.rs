@@ -604,14 +604,12 @@ impl<'a> CheckerState<'a> {
                 if declared_type == TypeId::SYMBOL
                     && checker.is_const_variable_declaration(decl_idx)
                     && checker.is_unique_symbol_type_annotation(var_decl.type_annotation)
-                {
-                    if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
+                    && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
                         return checker
                             .ctx
                             .types
                             .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
                     }
-                }
                 // Type annotation determines the final type
                 return declared_type;
             }
@@ -686,14 +684,13 @@ impl<'a> CheckerState<'a> {
                     // `const k = Symbol()` — infer unique symbol type.
                     // In TypeScript, const declarations initialized with Symbol() get
                     // a unique symbol type (typeof k), not the general `symbol` type.
-                    if checker.is_symbol_call_initializer(var_decl.initializer) {
-                        if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
+                    if checker.is_symbol_call_initializer(var_decl.initializer)
+                        && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
                             return checker
                                 .ctx
                                 .types
                                 .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
                         }
-                    }
                     return init_type;
                 }
 

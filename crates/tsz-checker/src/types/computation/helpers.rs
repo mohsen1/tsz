@@ -834,14 +834,12 @@ impl<'a> CheckerState<'a> {
             if annotation_type == TypeId::SYMBOL
                 && self.is_const_variable_declaration(idx)
                 && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
-            {
-                if let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
+                && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
                     return self
                         .ctx
                         .types
                         .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
                 }
-            }
             return annotation_type;
         }
 
@@ -880,14 +878,14 @@ impl<'a> CheckerState<'a> {
             // `const k = Symbol()` — infer unique symbol type.
             // In TypeScript, const declarations initialized with Symbol() get
             // a unique symbol type (typeof k), not the general `symbol` type.
-            if init_type == TypeId::SYMBOL && self.is_symbol_call_initializer(var_decl.initializer)
+            if init_type == TypeId::SYMBOL
+                && self.is_symbol_call_initializer(var_decl.initializer)
+                && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
             {
-                if let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name) {
-                    return self
-                        .ctx
-                        .types
-                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
-                }
+                return self
+                    .ctx
+                    .types
+                    .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
             }
 
             // const: preserve literal type

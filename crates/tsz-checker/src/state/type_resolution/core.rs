@@ -1193,8 +1193,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Pre-compute property names for computed property name expressions in interface members.
-    /// Iterates over all members of all declarations, finds COMPUTED_PROPERTY_NAME nodes,
-    /// evaluates the expression type, and builds a map from expression NodeIndex to Atom.
+    /// Iterates over all members of all declarations, finds `COMPUTED_PROPERTY_NAME` nodes,
+    /// evaluates the expression type, and builds a map from expression `NodeIndex` to Atom.
     pub(crate) fn precompute_computed_property_names(
         &mut self,
         declarations: &[NodeIndex],
