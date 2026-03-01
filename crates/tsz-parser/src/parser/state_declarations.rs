@@ -1052,17 +1052,17 @@ impl ParserState {
                 // If `:` was the unexpected token (like `a: 1`), skip past `:` and its
                 // value so the recovery can pick up the next member correctly.
                 if self.is_token(SyntaxKind::ColonToken) {
-                    self.next_token(); // skip `:`
-                    // Check if next token starts a new member (e.g., the `1` in `a: 1`)
-                    let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
-                        || self.is_token(SyntaxKind::StringLiteral)
-                        || self.is_token(SyntaxKind::NumericLiteral)
-                        || self.is_token(SyntaxKind::BigIntLiteral)
-                        || self.is_token(SyntaxKind::PrivateIdentifier)
-                        || self.is_identifier_or_keyword();
-                    if starts_member {
-                        continue;
+                    // Skip past the entire `: value` construct (including any trailing
+                    // `= expr`). This prevents the value from being reparsed as a new
+                    // enum member name (which would cause false TS2452).
+                    while !self.is_token(SyntaxKind::CommaToken)
+                        && !self.is_token(SyntaxKind::CloseBraceToken)
+                        && !self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        self.next_token();
                     }
+                    self.parse_optional(SyntaxKind::CommaToken);
+                    continue;
                 } else {
                     let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
                         || self.is_token(SyntaxKind::StringLiteral)
