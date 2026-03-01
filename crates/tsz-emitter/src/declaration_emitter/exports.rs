@@ -720,7 +720,7 @@ impl<'a> DeclarationEmitter<'a> {
                 ));
             }
             EnumValue::Float(f) => {
-                self.write(&f.to_string());
+                self.write(&Self::format_js_number(*f));
             }
             EnumValue::Computed => {
                 // For computed values, emit 0 as fallback

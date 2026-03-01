@@ -1695,11 +1695,29 @@ impl<'a> DeclarationEmitter<'a> {
             tsz_solver::types::LiteralValue::String(atom) => {
                 format!("\"{}\"", interner.resolve_atom(*atom))
             }
-            tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
+            tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
             tsz_solver::types::LiteralValue::BigInt(atom) => {
                 format!("{}n", interner.resolve_atom(*atom))
             }
+        }
+    }
+
+    /// Format a f64 value as JavaScript would display it.
+    ///
+    /// Handles special values: Infinity → "Infinity", NaN → "NaN".
+    /// Regular numbers use Rust's default f64 formatting which matches JS.
+    pub(crate) fn format_js_number(n: f64) -> String {
+        if n.is_infinite() {
+            if n.is_sign_positive() {
+                "Infinity".to_string()
+            } else {
+                "-Infinity".to_string()
+            }
+        } else if n.is_nan() {
+            "NaN".to_string()
+        } else {
+            n.to_string()
         }
     }
 
