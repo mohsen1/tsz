@@ -987,6 +987,7 @@ impl Server {
         item: &tsz::lsp::completions::CompletionItem,
         line_map: &LineMap,
         source_text: &str,
+        include_insert_text: bool,
     ) -> serde_json::Value {
         let kind = Self::completion_kind_to_str(item.kind);
         let sort_text = item.effective_sort_text();
@@ -999,7 +1000,9 @@ impl Server {
 
         if item.has_action {
             entry["hasAction"] = serde_json::json!(true);
-            if let Some(insert_text) = item.insert_text.as_ref() {
+            if include_insert_text
+                && let Some(insert_text) = item.insert_text.as_ref()
+            {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
             let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
@@ -1103,10 +1106,22 @@ impl Server {
                 self.maybe_add_verbatim_commonjs_auto_import_items(&file, &source_text, items);
             Self::sort_tsserver_completion_items(&mut items);
             let items = Self::prune_deeper_auto_import_duplicates(items);
+            let include_insert_text = Self::bool_pref_or_default(
+                Some(preferences),
+                "includeCompletionsWithInsertText",
+                false,
+            );
 
             let entries: Vec<serde_json::Value> = items
                 .iter()
-                .map(|item| Self::completion_entry_from_item(item, &line_map, &source_text))
+                .map(|item| {
+                    Self::completion_entry_from_item(
+                        item,
+                        &line_map,
+                        &source_text,
+                        include_insert_text,
+                    )
+                })
                 .collect();
             let is_new_identifier_location = completion_result
                 .as_ref()
