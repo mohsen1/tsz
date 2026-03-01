@@ -1612,7 +1612,11 @@ impl ParserState {
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             if self.is_argument_list_recovery_boundary() {
-                self.error_argument_expression_expected();
+                // At EOF, don't emit TS1135 — let parse_expected(CloseParenToken)
+                // emit the more informative TS1005 "')' expected" instead.
+                if !self.is_token(SyntaxKind::EndOfFileToken) {
+                    self.error_argument_expression_expected();
+                }
                 break;
             }
 
