@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-03-01T05:14:51Z",
-  "git_sha": "19ac448d2f650232e668319a5c3c7f6b07b2017c",
+  "timestamp": "2026-03-01T06:11:10Z",
+  "git_sha": "4a18ab34632dcaab043ecf08f93a09e5f5f24a7c",
   "summary": {
     "total_tests": 12570,
-    "passed": 9726,
-    "failed": 2844,
-    "pass_rate": 77.4
+    "passed": 9738,
+    "failed": 2832,
+    "pass_rate": 77.5
   },
   "areas_by_pass_rate": [
     {
@@ -16,11 +16,11 @@
       "pass_rate": 58.82
     },
     {
-      "area": "jsx",
-      "total": 195,
-      "passed": 116,
-      "failed": 79,
-      "pass_rate": 59.49
+      "area": "types/union",
+      "total": 25,
+      "passed": 15,
+      "failed": 10,
+      "pass_rate": 60.0
     },
     {
       "area": "es2021/logicalAssignment",
@@ -35,6 +35,13 @@
       "passed": 6,
       "failed": 4,
       "pass_rate": 60.0
+    },
+    {
+      "area": "jsx",
+      "total": 195,
+      "passed": 118,
+      "failed": 77,
+      "pass_rate": 60.51
     },
     {
       "area": "jsdoc",
@@ -72,6 +79,13 @@
       "pass_rate": 62.5
     },
     {
+      "area": "types/intersection",
+      "total": 24,
+      "passed": 15,
+      "failed": 9,
+      "pass_rate": 62.5
+    },
+    {
       "area": "expressions/typeGuards",
       "total": 63,
       "passed": 40,
@@ -84,13 +98,6 @@
       "passed": 28,
       "failed": 16,
       "pass_rate": 63.64
-    },
-    {
-      "area": "types/union",
-      "total": 25,
-      "passed": 16,
-      "failed": 9,
-      "pass_rate": 64.0
     },
     {
       "area": "classes/constructorDeclarations",
@@ -125,13 +132,6 @@
       "total": 198,
       "passed": 132,
       "failed": 66,
-      "pass_rate": 66.67
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 16,
-      "failed": 8,
       "pass_rate": 66.67
     },
     {
@@ -352,18 +352,18 @@
       "pass_rate": 76.92
     },
     {
-      "area": "compiler",
-      "total": 6509,
-      "passed": 5022,
-      "failed": 1487,
-      "pass_rate": 77.15
-    },
-    {
       "area": "transpile",
       "total": 22,
       "passed": 17,
       "failed": 5,
       "pass_rate": 77.27
+    },
+    {
+      "area": "compiler",
+      "total": 6508,
+      "passed": 5034,
+      "failed": 1474,
+      "pass_rate": 77.35
     },
     {
       "area": "classes/propertyMemberDeclarations",
@@ -1034,11 +1034,11 @@
       "count": 11
     },
     {
-      "code": "TS2305",
-      "count": 11
+      "code": "TS2591",
+      "count": 10
     },
     {
-      "code": "TS2591",
+      "code": "TS2551",
       "count": 10
     }
   ],
@@ -1120,11 +1120,11 @@
       "count": 5
     },
     {
-      "code": "TS2488",
+      "code": "TS2430",
       "count": 5
     },
     {
-      "code": "TS2430",
+      "code": "TS2488",
       "count": 5
     },
     {
@@ -1247,7 +1247,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2322",
-      "count": 68
+      "count": 67
     },
     {
       "code": "TS2339",
@@ -1255,11 +1255,11 @@
     },
     {
       "code": "TS2345",
-      "count": 53
+      "count": 52
     },
     {
       "code": "TS7006",
-      "count": 29
+      "count": 16
     },
     {
       "code": "TS2307",
@@ -1283,10 +1283,14 @@
     },
     {
       "code": "TS2344",
-      "count": 5
+      "count": 6
     },
     {
       "code": "TS2349",
+      "count": 5
+    },
+    {
+      "code": "TS2769",
       "count": 5
     },
     {
@@ -1294,15 +1298,15 @@
       "count": 5
     },
     {
+      "code": "TS2416",
+      "count": 4
+    },
+    {
       "code": "TS2305",
       "count": 4
     },
     {
       "code": "TS2353",
-      "count": 4
-    },
-    {
-      "code": "TS2769",
       "count": 4
     },
     {
@@ -1323,10 +1327,6 @@
     },
     {
       "code": "TS7057",
-      "count": 3
-    },
-    {
-      "code": "TS2416",
       "count": 3
     },
     {
@@ -1449,7 +1449,7 @@
   "false_positive_codes": [
     {
       "code": "TS2322",
-      "count": 78
+      "count": 77
     },
     {
       "code": "TS2345",
@@ -1457,11 +1457,11 @@
     },
     {
       "code": "TS2339",
-      "count": 53
+      "count": 54
     },
     {
       "code": "TS7006",
-      "count": 42
+      "count": 31
     },
     {
       "code": "TS2307",
@@ -1473,7 +1473,7 @@
     },
     {
       "code": "TS2769",
-      "count": 8
+      "count": 9
     },
     {
       "code": "TS18048",
@@ -1682,15 +1682,15 @@
       "count": 11
     },
     {
-      "code": "TS2305",
-      "count": 11
-    },
-    {
       "code": "TS2591",
       "count": 10
     },
     {
       "code": "TS2551",
+      "count": 10
+    },
+    {
+      "code": "TS2305",
       "count": 10
     },
     {
@@ -1737,7 +1737,7 @@
     },
     {
       "code": "TS2339",
-      "count": 149
+      "count": 150
     },
     {
       "code": "TS2345",
@@ -1745,7 +1745,7 @@
     },
     {
       "code": "TS7006",
-      "count": 76
+      "count": 57
     },
     {
       "code": "TS5107",
@@ -1768,15 +1768,15 @@
       "count": 25
     },
     {
+      "code": "TS2365",
+      "count": 22
+    },
+    {
       "code": "TS2693",
       "count": 21
     },
     {
       "code": "TS7053",
-      "count": 21
-    },
-    {
-      "code": "TS2365",
       "count": 21
     },
     {
@@ -1800,6 +1800,10 @@
       "count": 17
     },
     {
+      "code": "TS2769",
+      "count": 16
+    },
+    {
       "code": "TS1212",
       "count": 15
     },
@@ -1810,10 +1814,6 @@
     {
       "code": "TS2300",
       "count": 14
-    },
-    {
-      "code": "TS2769",
-      "count": 13
     },
     {
       "code": "TS18048",
@@ -1844,7 +1844,7 @@
       "count": 10
     },
     {
-      "code": "TS2459",
+      "code": "TS2344",
       "count": 10
     },
     {
@@ -1864,7 +1864,7 @@
       "count": 9
     },
     {
-      "code": "TS2344",
+      "code": "TS2459",
       "count": 9
     },
     {
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 363,
+    "false_positive": 353,
     "all_missing": 511,
-    "wrong_code": 1961,
-    "close_to_passing": 1660
+    "wrong_code": 1958,
+    "close_to_passing": 1657
   }
 }
