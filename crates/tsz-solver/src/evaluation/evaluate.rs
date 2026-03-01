@@ -213,6 +213,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.mark_exceeded();
     }
 
+    /// Instantiate an Application type WITHOUT recursively evaluating the result.
+    ///
+    /// For tail-call optimization in conditional types: expands `TrimLeft<T>`
+    /// to its body with args substituted, but does NOT call `evaluate()` on
+    /// the result. This avoids incrementing the depth guard, allowing the
+    /// tail-call loop in `evaluate_conditional` to handle the result directly.
+    ///
+    /// Returns `Some(instantiated_body)` if the type is an Application that
+    /// could be instantiated. Returns `None` if the type is not an Application,
+    /// or if it couldn't be resolved/instantiated.
+    pub(crate) fn try_instantiate_application_for_tail_call(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = match self.interner.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => app_id,
+            _ => return None,
+        };
+
+        let app = self.interner.type_application(app_id);
+
+        let base_key = self.interner.lookup(app.base)?;
+        let def_id = match base_key {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            _ => None,
+        }?;
+
+        let type_params = self.resolver.get_lazy_type_params(def_id)?;
+        let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
+
+        // Expand type arguments
+        let body_is_conditional_with_app_infer =
+            self.is_conditional_with_application_infer(resolved);
+        let expanded_args = if body_is_conditional_with_app_infer {
+            self.expand_type_args_preserve_applications(&app.args)
+        } else {
+            self.expand_type_args(&app.args)
+        };
+
+        // Instantiate the body with the type arguments — but do NOT evaluate
+        let instantiated =
+            instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
+        Some(instantiated)
+    }
+
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
     pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {

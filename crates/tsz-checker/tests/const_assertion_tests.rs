@@ -115,25 +115,25 @@ fn test_expect_error(source: &str, expected_error_substring: &str) {
 
     checker.check_source_file(root);
 
-    let errors: Vec<_> = checker
+    let found_error = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code != 2318)
-        .collect();
+        .any(|d| d.message_text.contains(expected_error_substring));
 
-    assert!(
-        errors
-            .iter()
-            .any(|d| d.message_text.contains(expected_error_substring)),
-        "Expected error containing '{}', but got:\n{}",
-        expected_error_substring,
-        errors
-            .iter()
-            .map(|d| format!("  {}", d.message_text))
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
+    if !found_error {
+        panic!(
+            "Expected error containing '{}', but got:\n{}",
+            expected_error_substring,
+            checker
+                .ctx
+                .diagnostics
+                .iter()
+                .map(|d| format!("  {}", d.message_text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 }
 
 #[test]
@@ -249,11 +249,18 @@ const y: `hello` = x; // Should be allowed
 
 #[test]
 fn test_const_assertion_null_and_undefined() {
-    // tsc emits TS1355: `as const` can only be applied to literals (string, number,
-    // boolean, array, object) or enum member refs — not null/undefined.
+    // tsc emits TS1355 for `null as const` and `undefined as const` because
+    // null/undefined are not in the allowed list (enum members, string, number,
+    // boolean, array, or object literals).
     test_expect_error(
         r#"
 const x = null as const;
+"#,
+        "A 'const' assertion can only be applied to",
+    );
+    test_expect_error(
+        r#"
+const y = undefined as const;
 "#,
         "A 'const' assertion can only be applied to",
     );

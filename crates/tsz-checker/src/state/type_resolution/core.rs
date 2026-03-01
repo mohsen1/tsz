@@ -118,6 +118,10 @@ impl<'a> CheckerState<'a> {
                 // Eagerly evaluate type alias applications to detect TS2589
                 // (excessive instantiation depth). Without this, the application
                 // stays lazy and deep recursion is never detected.
+                // Skip when args contain type parameters — the alias body
+                // may be self-referential (recursive conditional), and eager
+                // evaluation with unresolved params causes false TS2589.
+                // Actual TS2589 detection happens at instantiation with concrete types.
                 let lib_binders = self.get_lib_binders();
                 let is_type_alias = self
                     .ctx
@@ -125,7 +129,17 @@ impl<'a> CheckerState<'a> {
                     .get_symbol_with_libs(sym_id, &lib_binders)
                     .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
                 if is_type_alias {
-                    let _ = self.evaluate_application_type(type_id);
+                    let args_have_type_params = query::get_application_info(
+                        self.ctx.types,
+                        type_id,
+                    )
+                    .is_some_and(|(_, args)| {
+                        args.iter()
+                            .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
+                    });
+                    if !args_have_type_params {
+                        let _ = self.evaluate_application_type(type_id);
+                    }
                 }
 
                 return type_id;
@@ -513,6 +527,9 @@ impl<'a> CheckerState<'a> {
                 // Eagerly evaluate type alias applications to detect TS2589
                 // (excessive instantiation depth). Without this, the application
                 // stays lazy and deep recursion is never detected.
+                // Skip when args contain type parameters — the alias body
+                // may be self-referential (recursive conditional), and eager
+                // evaluation with unresolved params causes false TS2589.
                 if let Some(sym_id) = sym_id {
                     let lib_binders = self.get_lib_binders();
                     let is_type_alias = self
@@ -521,18 +538,28 @@ impl<'a> CheckerState<'a> {
                         .get_symbol_with_libs(sym_id, &lib_binders)
                         .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
                     if is_type_alias {
-                        // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
-                        *self.ctx.depth_exceeded.borrow_mut() = false;
-                        let _ = self.evaluate_application_type(result);
+                        let args_have_type_params = query::get_application_info(
+                            self.ctx.types,
+                            result,
+                        )
+                        .is_some_and(|(_, args)| {
+                            args.iter()
+                                .any(|&arg| query::contains_type_parameters(self.ctx.types, arg))
+                        });
+                        if !args_have_type_params {
+                            // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
+                            *self.ctx.depth_exceeded.borrow_mut() = false;
+                            let _ = self.evaluate_application_type(result);
 
-                        // TS2589: emit at the type reference node if depth was exceeded
-                        if *self.ctx.depth_exceeded.borrow() {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
-                                idx,
-                                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
-                            );
+                            // TS2589: emit at the type reference node if depth was exceeded
+                            if *self.ctx.depth_exceeded.borrow() {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.error_at_node(
+                                    idx,
+                                    diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                    diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                                );
+                            }
                         }
                     }
                 }

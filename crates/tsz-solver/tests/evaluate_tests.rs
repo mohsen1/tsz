@@ -10258,7 +10258,10 @@ fn test_index_access_tuple_string_literal_length() {
     let length_key = interner.literal_string("length");
 
     let result = evaluate_index_access(&interner, tuple, length_key);
-    assert_eq!(result, TypeId::NUMBER);
+    // Fixed-length tuples return their literal length (e.g., 2 for [string, number]).
+    // This matches tsc behavior: `[string, number]["length"]` is `2`, not `number`.
+    let expected = interner.literal_number(2.0);
+    assert_eq!(result, expected);
 }
 
 #[test]

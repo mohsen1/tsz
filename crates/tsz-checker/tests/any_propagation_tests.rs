@@ -407,8 +407,8 @@ takesAny({ a: 1 });  // Should pass
 
 #[test]
 fn test_any_with_const_assertion() {
-    // tsc emits TS1355: `as const` can only be applied to literals/enum refs,
-    // not to variables — even when the variable has type `any`.
+    // tsc emits TS1355 for `a as const` because `a` is a variable reference,
+    // not an enum member or literal. This is correct even when `a: any`.
     test_expect_error(
         r#"
 let a: any = 42;
