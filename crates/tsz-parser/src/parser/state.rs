@@ -612,10 +612,13 @@ impl ParserState {
         } else {
             // Force error emission for missing ) in common patterns.
             // This bypasses the should_report_error() distance check.
+            // At EOF, only force-emit if no previous error — otherwise the missing )
+            // is likely cascading from an earlier error (e.g., unterminated regex/literal
+            // consuming the closing paren).
             let force_emit = kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
                     || self.is_token(SyntaxKind::CloseBraceToken)
-                    || self.is_token(SyntaxKind::EndOfFileToken));
+                    || (self.is_token(SyntaxKind::EndOfFileToken) && self.last_error_pos == 0));
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
@@ -649,7 +652,10 @@ impl ParserState {
                             // at EOF, statement boundaries, or block delimiters.
                             // Only suppress if on same line with no clear boundary.
                             if self.is_token(SyntaxKind::EndOfFileToken) {
-                                false
+                                // At EOF with previous errors, suppress: the missing )
+                                // is likely cascading from an earlier error (e.g., unterminated
+                                // regex/literal consuming the closing paren).
+                                self.last_error_pos != 0
                             } else if self.scanner.has_preceding_line_break() {
                                 // At a line break, suppress unless it's a clear boundary
                                 !self.is_statement_start()
