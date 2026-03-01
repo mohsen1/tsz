@@ -955,6 +955,25 @@ impl<'a> HoverProvider<'a> {
                 compiler_options,
             );
             let callee_type_id = checker.get_type_of_node(call.expression);
+            if let Some(function_shape_id) =
+                tsz_solver::visitor::function_shape_id(self.interner, callee_type_id)
+            {
+                let function = self.interner.function_shape(function_shape_id);
+                if let Some(param) = function.params.get(arg_position)
+                    && let Some(callable_param) =
+                        tsz_solver::visitor::callable_shape_id(self.interner, param.type_id)
+                {
+                    let callable_param_shape = self.interner.callable_shape(callable_param);
+                    if let Some(inner_sig) = callable_param_shape.call_signatures.first()
+                        && let Some(inner_param) = inner_sig.params.get(param_index)
+                    {
+                        let text = checker.format_type(inner_param.type_id);
+                        if !text.is_empty() && text != "error" {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
             if let Some(callable_shape_id) =
                 tsz_solver::visitor::callable_shape_id(self.interner, callee_type_id)
             {
