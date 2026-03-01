@@ -673,17 +673,13 @@ fn convert_options_to_tsconfig(
         opts.insert(tsconfig_key.to_string(), json_value);
     }
 
-    // Mirror TypeScript strict-family defaulting behavior when `strict: true`.
+    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
     // tsz's config parser handles `strict: true` → sub-options expansion, but the
     // conformance test runner strips source pragmas before writing test files, so
     // tsz can only read options from the tsconfig. We must expand strict here to
     // ensure tsz gets the correct sub-options.
-    //
-    // Only expand when `strict: true`. `strict: false` just means "don't auto-enable"
-    // — the sub-options default to false anyway. Explicitly inserting e.g.
-    // `alwaysStrict: false` would trigger TS5107 deprecation diagnostics that TSC
-    // doesn't emit, since TSC never materializes these defaults as explicit config keys.
-    if let Some(serde_json::Value::Bool(true)) = opts.get("strict") {
+    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+        let strict = *strict;
         for key in [
             "noImplicitAny",
             "noImplicitThis",
@@ -695,7 +691,7 @@ fn convert_options_to_tsconfig(
             "alwaysStrict",
         ] {
             opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(true));
+                .or_insert(serde_json::Value::Bool(strict));
         }
     }
 
