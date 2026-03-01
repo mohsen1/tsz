@@ -5,12 +5,12 @@ set -euo pipefail
 # This prepares benchmark data + WASM + docs sync, then starts local preview.
 #
 # Usage:
-#   ./script/start-website.sh
+#   ./scripts/start-website.sh
 #
 # Optional:
-#   TSZ_WEBSITE_REAL_BENCH=1 ./script/start-website.sh
+#   TSZ_WEBSITE_REAL_BENCH=1 ./scripts/start-website.sh
 #   (runs quick real benchmarks before starting, instead of sample chart data)
-#   TSZ_WEBSITE_BUILD_WASM=1 ./script/start-website.sh
+#   TSZ_WEBSITE_BUILD_WASM=1 ./scripts/start-website.sh
 #   (builds wasm package for playground if missing)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
