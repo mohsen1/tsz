@@ -1,7 +1,4 @@
-//! Tests for variable declaration and redeclaration checking (TS2481, TS2397, TS2403).
-//!
-//! Extracted from core.rs to keep it under the 2000 LOC limit.
-
+#[cfg(test)]
 mod test_utils {
     pub fn check_and_collect(source: &str, error_code: u32) -> Vec<(u32, String)> {
         crate::test_utils::check_source_diagnostics(source)
@@ -12,6 +9,7 @@ mod test_utils {
     }
 }
 
+#[cfg(test)]
 mod ts2481_tests {
     use super::test_utils::check_and_collect;
 
@@ -82,6 +80,7 @@ mod ts2481_tests {
     }
 }
 
+#[cfg(test)]
 mod ts2397_tests {
     use super::test_utils::check_and_collect;
 
@@ -125,6 +124,7 @@ mod ts2397_tests {
     }
 }
 
+#[cfg(test)]
 mod ts2403_false_positive_tests {
     use crate::test_utils::check_source_diagnostics;
 

@@ -354,10 +354,10 @@ impl<'a> CheckerState<'a> {
                 };
                 (var_data.initializer.is_some(), var_data.exclamation_token)
             } else if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                let Some(_var_data) = self.ctx.arena.get_binding_element(decl_node) else {
+                let Some(var_data) = self.ctx.arena.get_binding_element(decl_node) else {
                     return false;
                 };
-                (true, false)
+                (var_data.initializer.is_some(), false)
             } else {
                 return false;
             };
