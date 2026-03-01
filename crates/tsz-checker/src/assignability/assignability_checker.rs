@@ -1061,6 +1061,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Decompose intersection: `"a"` is comparable to `string & Brand` because
+        // `"a"` is assignable to `string` (one constituent). tsc's comparable relation
+        // treats intersections as comparable if the source overlaps with ANY member.
+        if let Some(members) = query::intersection_members(self.ctx.types, source_apparent) {
+            for member in &members {
+                if self.is_assignable_to(*member, target_apparent)
+                    || self.is_assignable_to(target_apparent, *member)
+                {
+                    return true;
+                }
+            }
+        }
+        if let Some(members) = query::intersection_members(self.ctx.types, target_apparent) {
+            for member in &members {
+                if self.is_assignable_to(source_apparent, *member)
+                    || self.is_assignable_to(*member, source_apparent)
+                {
+                    return true;
+                }
+            }
+        }
+
         // Additional check: Two object types where ALL properties are optional always
         // overlap at `{}`, making them comparable even if property types differ.
         // Example: `{ b?: number }` vs `{ b?: string }` are comparable because both
