@@ -216,6 +216,7 @@ impl<'a> Completions<'a> {
                 }
             }
             let current_word = &trimmed[idx..];
+
             if matches!(
                 current_word,
                 "new"
@@ -257,6 +258,7 @@ impl<'a> Completions<'a> {
             if prev_sig == '.' {
                 return false;
             }
+
             // Check if we're in a class/interface member position with a partial identifier
             if self.is_in_class_or_interface_member_position(node_idx, offset) {
                 return true;
