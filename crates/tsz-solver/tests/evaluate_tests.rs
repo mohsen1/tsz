@@ -31563,14 +31563,113 @@ fn test_omit_preserves_readonly() {
 
     let result = evaluate_mapped(&interner, &mapped);
 
-    // Check result has readonly property
+    // Check result has readonly property — with the subset-based homomorphic detection,
+    // mapped types like Pick/Omit whose constraint is a subset of keyof T correctly
+    // inherit readonly from the source properties.
     match interner.lookup(result) {
         Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
-            // Note: Whether readonly is preserved depends on implementation
+            assert!(
+                shape.properties[0].readonly,
+                "Omit/Pick should preserve readonly from source property"
+            );
         }
         _ => panic!("Expected object"),
+    }
+}
+
+#[test]
+fn test_omit_preserves_optional_via_subset_homomorphic() {
+    // Tests that Omit<A, 'a'> preserves optional modifiers from source type A.
+    // This validates the subset-based homomorphic mapped type detection:
+    // the constraint "b" | "c" is a subset of keyof A = "a" | "b" | "c",
+    // so the mapped type is detected as homomorphic and modifiers are inherited.
+    let interner = TypeInterner::new();
+
+    let key_a = interner.intern_string("a");
+    let key_b = interner.intern_string("b");
+    let key_c = interner.intern_string("c");
+
+    // Original: { a: number; b?: string; readonly c: boolean }
+    let original = interner.object(vec![
+        PropertyInfo::new(key_a, TypeId::NUMBER),
+        PropertyInfo {
+            name: key_b,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+        PropertyInfo {
+            name: key_c,
+            type_id: TypeId::BOOLEAN,
+            write_type: TypeId::BOOLEAN,
+            optional: false,
+            readonly: true,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        },
+    ]);
+
+    // Constraint: "b" | "c" (subset of keyof original, simulating Omit<A, 'a'>)
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let constraint = interner.union(vec![lit_b, lit_c]);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
+
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
+
+    let mapped = MappedType {
+        type_param: key_param,
+        constraint,
+        name_type: None,
+        template: index_access,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let result = evaluate_mapped(&interner, &mapped);
+
+    match interner.lookup(result) {
+        Some(TypeData::Object(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 2, "Should have 2 properties (b, c)");
+
+            let b_prop = shape.properties.iter().find(|p| p.name == key_b).unwrap();
+            let c_prop = shape.properties.iter().find(|p| p.name == key_c).unwrap();
+
+            assert!(
+                b_prop.optional,
+                "b should remain optional (inherited from source)"
+            );
+            assert!(
+                !b_prop.readonly,
+                "b should not be readonly (not readonly in source)"
+            );
+            assert!(
+                c_prop.readonly,
+                "c should remain readonly (inherited from source)"
+            );
+            assert!(
+                !c_prop.optional,
+                "c should not be optional (not optional in source)"
+            );
+        }
+        _ => panic!("Expected object type"),
     }
 }
 
