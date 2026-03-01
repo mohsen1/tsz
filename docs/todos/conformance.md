@@ -1,7 +1,44 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9753/12570 (77.6%) — full suite, error-code level
+**Current score**: ~9719/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01e — types/tuple: IIFE contextual return type for generator yield inference
+
+### Fixed: Generator IIFE callee contextual typing — Checker (call.rs)
+
+**Area**: types/tuple (58.8%), but fix also affects es6/yieldExpressions area
+
+**Root cause**: When a generator function expression is immediately invoked (IIFE pattern), the call expression's contextual type (e.g., `Iterable<(x: string) => number>` from an outer yield) was passed directly to the function expression resolver. The function type resolver's `get_return_type()` expected a callable type to extract the return type, but got `Iterable<...>` instead — NOT a callable. This prevented the generator yield type from being inferred, so callback parameters inside the inner generator's yield expressions got `any` instead of their contextual types (false TS7006).
+
+**How tsc handles it**: tsc provides the callee of a call expression with a contextual type that wraps the call expression's contextual type into a callable signature. For an IIFE with contextual type `T`, the callee gets `() => T` as its contextual type, allowing return type extraction.
+
+**Fix** (call.rs): Before evaluating the callee of a call expression, check if the callee is a function/arrow expression (unwrapping parenthesized expressions). If so, and the call expression has a contextual type `T`, wrap it as `FunctionShape::new(vec![], T)` — a synthetic `() => T` callable. This lets the function type resolver extract the return type via `get_return_type()`, which in turn enables `get_generator_yield_type()` for generator function expressions. The original contextual type is restored after callee evaluation.
+
+**Tests**: 3 unit tests:
+- `test_iife_contextual_return_type_for_callback` — basic IIFE returning callback
+- `test_iife_parenthesized_contextual_return_type` — `(function(){})()` pattern
+- `test_iife_contextual_return_type_object_with_callback` — IIFE returning object with callback
+
+**Net impact**: +3 conformance tests (generatorTypeCheck29, generatorTypeCheck30, generatorTypeCheck64), plus privateNamesConstructorChain-1 as a bonus. 0 regressions.
+
+### Broader TS7006 false positive analysis:
+- 57 tests have extra TS7006 (false implicit-any)
+- 16 tests would pass if ONLY their extra TS7006 was fixed
+- Root causes fall into several categories:
+  1. **Generator IIFE yield typing** (3 tests — FIXED in this session)
+  2. **Generic inference + contextual typing** (5 tests — complex: `deprecate<T>`, `Effect<A>`, object binding patterns, overloaded constructors)
+  3. **Reverse mapped type inference** (2 tests — solver needs intersection-aware reverse mapping)
+  4. **JSX contextual types** (1 test — blocked by G4/G5 bail-outs)
+  5. **JSDoc/salsa** (3 tests — `this` type contextual typing in JS files)
+  6. **Recursive conditional type inference** (1 test — `validateDefinition<def>` pattern)
+  7. **Other** (1 test — `intlNumberFormatES2023` needs lib types)
+
+### Remaining types/tuple gaps:
+- Same as session 2026-03-01d notes (14 failing, 7 with diff=0)
+- Extra TS2322/TS2345/TS2339 in tuple tests are primarily false positives from overly strict assignability or missing simplification of generic indexed access types
 
 ---
 
