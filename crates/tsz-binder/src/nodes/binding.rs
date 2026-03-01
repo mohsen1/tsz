@@ -1159,19 +1159,20 @@ impl BinderState {
         // and won't be found in current_scope. Look it up via node_symbols which
         // was populated during hoisting.
         if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-            && let Some(&existing_id) = self.node_symbols.get(&declaration.0) {
-                // Already hoisted — just ensure we don't double-add the declaration
-                if let Some(sym) = self.symbols.get_mut(existing_id) {
-                    if !sym.declarations.contains(&declaration) {
-                        sym.declarations.push(declaration);
-                    }
-                    if is_exported {
-                        sym.is_exported = true;
-                    }
+            && let Some(&existing_id) = self.node_symbols.get(&declaration.0)
+        {
+            // Already hoisted — just ensure we don't double-add the declaration
+            if let Some(sym) = self.symbols.get_mut(existing_id) {
+                if !sym.declarations.contains(&declaration) {
+                    sym.declarations.push(declaration);
                 }
-                self.declare_in_persistent_scope(name.to_string(), existing_id);
-                return existing_id;
+                if is_exported {
+                    sym.is_exported = true;
+                }
             }
+            self.declare_in_persistent_scope(name.to_string(), existing_id);
+            return existing_id;
+        }
 
         let sym_id = self.symbols.alloc(flags, name.to_string());
         // Set parent to the current container's symbol (namespace, class, etc.)
