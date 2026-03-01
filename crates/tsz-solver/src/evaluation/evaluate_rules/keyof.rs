@@ -138,6 +138,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(constraint) = param.constraint {
                         if constraint == evaluated_operand {
                             self.interner().keyof(operand)
+                        } else if matches!(
+                            self.interner().lookup(constraint),
+                            Some(TypeData::TypeParameter(_))
+                        ) {
+                            // When the constraint is itself a type parameter
+                            // (e.g., B extends A where A is generic), do NOT
+                            // recurse. keyof B ≠ keyof A even though B extends A,
+                            // because B may have additional keys. Collapsing
+                            // keyof B → keyof A breaks subtype comparisons.
+                            self.interner().keyof(operand)
                         } else {
                             self.recurse_keyof(constraint)
                         }

@@ -10529,6 +10529,51 @@ fn test_keyof_type_param_no_constraint_deferred() {
 }
 
 #[test]
+fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
+    // When B extends A (both type parameters), keyof B must NOT be
+    // collapsed to keyof A. B may have more keys than A, so
+    // keyof B ⊇ keyof A — they are distinct types.
+    let interner = TypeInterner::new();
+
+    let a_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let b_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: Some(a_param), // B extends A
+        default: None,
+        is_const: false,
+    }));
+
+    let keyof_a = evaluate_keyof(&interner, a_param);
+    let keyof_b = evaluate_keyof(&interner, b_param);
+
+    // keyof A should be deferred (preserved as KeyOf)
+    assert!(
+        matches!(interner.lookup(keyof_a), Some(TypeData::KeyOf(_))),
+        "keyof A should be deferred, got {:?}",
+        interner.lookup(keyof_a)
+    );
+
+    // keyof B should also be deferred and DISTINCT from keyof A
+    assert!(
+        matches!(interner.lookup(keyof_b), Some(TypeData::KeyOf(_))),
+        "keyof B should be deferred, got {:?}",
+        interner.lookup(keyof_b)
+    );
+
+    // They must be different TypeIds (keyof B ≠ keyof A)
+    assert_ne!(
+        keyof_a, keyof_b,
+        "keyof B should NOT be collapsed to keyof A when B extends A"
+    );
+}
+
+#[test]
 fn test_keyof_resolves_ref() {
     use crate::TypeEnvironment;
     use crate::def::DefId;
