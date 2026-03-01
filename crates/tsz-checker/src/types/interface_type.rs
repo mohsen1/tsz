@@ -161,60 +161,72 @@ impl<'a> CheckerState<'a> {
             } else if member_node.kind == PROPERTY_SIGNATURE || member_node.kind == METHOD_SIGNATURE
             {
                 // Extract property
-                if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                    && let Some(name_atom) = self.get_member_name_atom(sig.name)
-                {
-                    if member_node.kind == METHOD_SIGNATURE
-                        && let Some(ref _params) = sig.parameters
-                    {}
-                    let type_id = if sig.type_annotation.is_some() {
-                        self.get_type_from_type_node(sig.type_annotation)
-                    } else {
-                        TypeId::ANY
-                    };
-
-                    properties.push(PropertyInfo {
-                        name: name_atom,
-                        type_id,
-                        write_type: type_id,
-                        optional: sig.question_token,
-                        readonly: self.has_readonly_modifier(&sig.modifiers),
-                        is_method: member_node.kind == METHOD_SIGNATURE,
-                        visibility: Visibility::Public,
-                        parent_id: None,
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    // Try literal property name first, then fall back to
+                    // type-based resolution for computed property names
+                    // (e.g., [k] where k is a unique symbol variable).
+                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
+                        self.get_property_name_resolved(sig.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
                     });
+                    if let Some(name_atom) = name_atom {
+                        if member_node.kind == METHOD_SIGNATURE
+                            && let Some(ref _params) = sig.parameters
+                        {}
+                        let type_id = if sig.type_annotation.is_some() {
+                            self.get_type_from_type_node(sig.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+
+                        properties.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: sig.question_token,
+                            readonly: self.has_readonly_modifier(&sig.modifiers),
+                            is_method: member_node.kind == METHOD_SIGNATURE,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                        });
+                    }
                 }
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
-                if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
-                    && let Some(name_atom) = self.get_member_name_atom(accessor.name)
-                {
-                    let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
-                        getter: None,
-                        setter: None,
+                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                    let name_atom = self.get_member_name_atom(accessor.name).or_else(|| {
+                        self.get_property_name_resolved(accessor.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
                     });
+                    if let Some(name_atom) = name_atom {
+                        let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                        });
 
-                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        let getter_type = if accessor.type_annotation.is_some() {
-                            self.get_type_from_type_node(accessor.type_annotation)
+                        if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                            let getter_type = if accessor.type_annotation.is_some() {
+                                self.get_type_from_type_node(accessor.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            entry.getter = Some(getter_type);
                         } else {
-                            TypeId::ANY
-                        };
-                        entry.getter = Some(getter_type);
-                    } else {
-                        let setter_type = accessor
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                            .and_then(|param| {
-                                (param.type_annotation.is_some())
-                                    .then(|| self.get_type_from_type_node(param.type_annotation))
-                            })
-                            .unwrap_or(TypeId::UNKNOWN);
-                        entry.setter = Some(setter_type);
+                            let setter_type = accessor
+                                .parameters
+                                .nodes
+                                .first()
+                                .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                                .and_then(|param| {
+                                    (param.type_annotation.is_some()).then(|| {
+                                        self.get_type_from_type_node(param.type_annotation)
+                                    })
+                                })
+                                .unwrap_or(TypeId::UNKNOWN);
+                            entry.setter = Some(setter_type);
+                        }
                     }
                 }
             } else if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {

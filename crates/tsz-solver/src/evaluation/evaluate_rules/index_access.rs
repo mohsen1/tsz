@@ -13,7 +13,7 @@ use crate::types::{
 use crate::utils;
 use crate::visitor::{
     TypeVisitor, array_element_type, intersection_list_id, keyof_inner_type, literal_number,
-    literal_string, tuple_list_id, union_list_id,
+    tuple_list_id, union_list_id,
 };
 use crate::{ApparentMemberKind, TypeDatabase};
 
@@ -820,8 +820,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         props: &[PropertyInfo],
         index_type: TypeId,
     ) -> TypeId {
-        // If index is a literal string, look up the property directly
-        if let Some(name) = literal_string(self.interner(), index_type) {
+        // If index is a literal string or unique symbol, look up the property directly
+        if let Some(name) =
+            crate::type_queries::get_literal_property_name(self.interner(), index_type)
+        {
             for prop in props {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -878,8 +880,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().union(results);
         }
 
-        // If index is a literal string, look up the property first, then fallback to string index.
-        if let Some(name) = literal_string(self.interner(), index_type) {
+        // If index is a literal string or unique symbol, look up the property first,
+        // then fallback to string index.
+        if let Some(name) =
+            crate::type_queries::get_literal_property_name(self.interner(), index_type)
+        {
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);
@@ -956,8 +961,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().union(results);
         }
 
-        // If index is a literal string, look up properties first, then fallback to index sigs.
-        if let Some(name) = literal_string(self.interner(), index_type) {
+        // If index is a literal string or unique symbol, look up properties first,
+        // then fallback to index sigs.
+        if let Some(name) =
+            crate::type_queries::get_literal_property_name(self.interner(), index_type)
+        {
             for prop in &shape.properties {
                 if prop.name == name {
                     return self.optional_property_type(prop);

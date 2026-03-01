@@ -1262,7 +1262,6 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub fn get_type_of_symbol(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_solver::SymbolRef;
-
         let factory = self.ctx.types.factory();
         self.record_symbol_dependency(sym_id);
 

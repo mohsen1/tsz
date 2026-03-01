@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.file_locals.get(&ident.escaped_text)
     }
 
-    fn is_unique_symbol_type_annotation(&self, type_annotation: NodeIndex) -> bool {
+    pub(crate) fn is_unique_symbol_type_annotation(&self, type_annotation: NodeIndex) -> bool {
         let Some(type_node) = self.ctx.arena.get(type_annotation) else {
             return false;
         };
