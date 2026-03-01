@@ -973,6 +973,18 @@ impl<'a> HoverProvider<'a> {
                         }
                     }
                 }
+                if let Some(param) = function.params.get(arg_position)
+                    && let Some(function_param) =
+                        tsz_solver::visitor::function_shape_id(self.interner, param.type_id)
+                {
+                    let function_param_shape = self.interner.function_shape(function_param);
+                    if let Some(inner_param) = function_param_shape.params.get(param_index) {
+                        let text = checker.format_type(inner_param.type_id);
+                        if !text.is_empty() && text != "error" {
+                            return Some(text);
+                        }
+                    }
+                }
             }
             if let Some(callable_shape_id) =
                 tsz_solver::visitor::callable_shape_id(self.interner, callee_type_id)
@@ -987,6 +999,19 @@ impl<'a> HoverProvider<'a> {
                     if let Some(inner_sig) = callable_param_shape.call_signatures.first()
                         && let Some(inner_param) = inner_sig.params.get(param_index)
                     {
+                        let text = checker.format_type(inner_param.type_id);
+                        if !text.is_empty() && text != "error" {
+                            return Some(text);
+                        }
+                    }
+                }
+                if let Some(signature) = callable.call_signatures.first()
+                    && let Some(param) = signature.params.get(arg_position)
+                    && let Some(function_param) =
+                        tsz_solver::visitor::function_shape_id(self.interner, param.type_id)
+                {
+                    let function_param_shape = self.interner.function_shape(function_param);
+                    if let Some(inner_param) = function_param_shape.params.get(param_index) {
                         let text = checker.format_type(inner_param.type_id);
                         if !text.is_empty() && text != "error" {
                             return Some(text);
