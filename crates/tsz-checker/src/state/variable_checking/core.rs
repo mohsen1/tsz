@@ -1892,4 +1892,103 @@ var x = E.a;
             .collect::<Vec<_>>();
         assert_eq!(ts2403.len(), 1, "Expected 1 TS2403 for enum var redecl");
     }
+
+    #[test]
+    fn for_loop_var_redecl_emits_ts2403() {
+        // var declarations in for-loop initializers should trigger TS2403
+        // when re-declared with incompatible types.
+        let source = r#"
+for(var a: any;;) break;
+for(var a: number;;) break;
+for(var a: string;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            2,
+            "Expected 2 TS2403 for for-loop var redecls: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_var_redecl_with_initializer_emits_ts2403() {
+        // var with initializer in for-loop also triggers TS2403
+        let source = r#"
+for(var a: any;;) break;
+for(var a = 1;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for for-loop var with initializer: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_var_compatible_no_ts2403() {
+        // Same type should NOT trigger TS2403
+        let source = r#"
+for(var a: number;;) break;
+for(var a: number;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for compatible for-loop var redecls: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn nested_for_loop_var_emits_ts2403() {
+        // var in nested block scopes (if inside for) still hoists to function scope
+        let source = r#"
+var a: string;
+if (true) {
+    for(var a: number;;) break;
+}
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for nested for-loop var: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn for_loop_let_no_cross_scope_ts2403() {
+        // let declarations in for-loops are block-scoped, should NOT trigger TS2403
+        let source = r#"
+for(let a: any;;) break;
+for(let a: number;;) break;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 for let in separate for-loops: {ts2403:?}"
+        );
+    }
 }
