@@ -1225,28 +1225,30 @@ impl<'a> CheckerState<'a> {
                 // Check string index compatibility
                 if let (Some(derived_val), Some(base_val)) =
                     (derived_string_index_type, base_string_index_value)
-                    && !self.is_assignable_to(derived_val, base_val) {
-                        self.error_at_node(
+                    && !self.is_assignable_to(derived_val, base_val)
+                {
+                    self.error_at_node(
                             iface_data.name,
                             &format!(
                                 "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                             ),
                             diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                         );
-                    }
+                }
 
                 // Check number index compatibility
                 if let (Some(derived_val), Some(base_val)) =
                     (derived_number_index_type, base_number_index_value)
-                    && !self.is_assignable_to(derived_val, base_val) {
-                        self.error_at_node(
+                    && !self.is_assignable_to(derived_val, base_val)
+                {
+                    self.error_at_node(
                             iface_data.name,
                             &format!(
                                 "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                             ),
                             diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                         );
-                    }
+                }
             }
 
             self.pop_type_parameters(base_type_param_updates);
