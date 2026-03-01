@@ -563,8 +563,9 @@ impl<'a> CheckerState<'a> {
 
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
-                    let (decl_idx, decl_flags, decl_is_local, _) = declarations[i];
-                    let (other_idx, other_flags, other_is_local, _) = declarations[j];
+                    let (decl_idx, decl_flags, decl_is_local, decl_is_exported) = declarations[i];
+                    let (other_idx, other_flags, other_is_local, other_is_exported) =
+                        declarations[j];
 
                     if !decl_is_local && !other_is_local {
                         continue;
@@ -590,11 +591,16 @@ impl<'a> CheckerState<'a> {
 
                     // Check for function overloads
 
-                    // TS2323: Check exported variable conflict using symbol.is_exported
+                    // TS2323: exported variable redeclaration.
+                    // Only flag when the file is an external module AND both
+                    // declarations are individually exported at the module level.
+                    // Namespace-internal `export var` redeclarations are allowed
+                    // because `var` is function-scoped and redeclarable; TS2323
+                    // only applies to module-level export conflicts.
                     let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
                     let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
                     if decl_is_var && other_is_var {
-                        if symbol.is_exported {
+                        if is_external_module && decl_is_exported && other_is_exported {
                             if decl_is_local {
                                 conflicts.insert(decl_idx);
                             }
@@ -602,7 +608,6 @@ impl<'a> CheckerState<'a> {
                                 conflicts.insert(other_idx);
                             }
                         }
-                        // If symbol is not exported, they merge (no conflict)
                         continue;
                     }
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
