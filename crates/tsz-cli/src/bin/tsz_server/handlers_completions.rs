@@ -1248,17 +1248,23 @@ impl Server {
                     } else {
                         (String::new(), None)
                     };
-                    // Try to find the matching completion item
-                    let mut item = items.iter().find(|i| {
-                        if i.label != name {
-                            return false;
-                        }
-                        if let Some(source) = requested_source.as_deref() {
-                            i.source.as_deref() == Some(source)
-                        } else {
-                            true
-                        }
-                    });
+                    // Try to find the matching completion item.
+                    // When source metadata is missing for duplicate labels, prefer
+                    // ClassMemberSnippet entries to keep tsserver details/code-action
+                    // pairing stable for snippet-backed completions.
+                    let mut item = if let Some(source) = requested_source.as_deref() {
+                        items
+                            .iter()
+                            .find(|i| i.label == name && i.source.as_deref() == Some(source))
+                    } else {
+                        items
+                            .iter()
+                            .find(|i| {
+                                i.label == name
+                                    && i.source.as_deref() == Some("ClassMemberSnippet/")
+                            })
+                            .or_else(|| items.iter().find(|i| i.label == name))
+                    };
                     if item.is_none() && requested_source.as_deref() == Some("ClassMemberSnippet/")
                     {
                         item = snippet_items.iter().find(|i| {
