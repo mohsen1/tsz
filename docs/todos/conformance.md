@@ -5,6 +5,41 @@
 
 ---
 
+## Session 2026-03-01l — types/conditional: relax conditional-to-conditional subtype check_type comparison
+
+### Fixed: Conditional type subtype check required strict equivalence for check_types — Solver (conditionals.rs)
+
+**Area**: types/conditional, broader impact on generic interfaces with conditional type members
+
+**Root cause**: `check_conditional_subtype()` in `conditionals.rs` used `types_equivalent()` (bidirectional subtype check) for comparing check_types of two conditional types. When `evaluate_type()` expands generic interfaces like `Covariant<A>` into their structural form before subtype checking, the conditional type properties `A extends string ? A : number` vs `B extends string ? B : number` failed the equivalence check because A ≢ B (even though B <: A).
+
+**Key discovery**: The checker's `evaluate_type_for_assignability()` expands Application types BEFORE calling the solver's subtype checker. So `Covariant<A>` becomes `{ foo: A extends string ? A : number }` and the Application-level variance-aware path in `check_application_to_application_subtype` is never reached. The fix must be at the conditional type comparison level.
+
+**Fix**: Changed `check_conditional_subtype()` to use relatedness in either direction for check_type comparison instead of strict equivalence:
+- Before: `types_equivalent(source.check_type, target.check_type)` → requires A <: B AND B <: A
+- After: `check_subtype(s.check_type, t.check_type) || check_subtype(t.check_type, s.check_type)` → requires A <: B OR B <: A
+- This matches tsc's `isRelatedTo(source.checkType, target.checkType) || isRelatedTo(target.checkType, source.checkType)`
+- Extends types still use strict equivalence (unchanged)
+
+**Tests**: 3 unit tests:
+- `test_conditional_subtype_with_related_check_types` — B extends string ? B : number <: A extends string ? A : number when B <: A
+- `test_conditional_subtype_unrelated_check_types_rejected` — string vs number check types correctly rejected
+- `test_conditional_subtype_same_check_type_still_works` — identical conditionals still work
+
+**Impact**: +2 conformance tests (9735 → 9737 on error-code level before fingerprint matching changes). 0 regressions.
+
+### Remaining types/conditional gaps:
+1. **conditionalTypes2.ts** — Contravariant/Invariant cases still fail because `keyof B <: keyof A` is incorrectly accepted by solver when B <: A. This is a pre-existing keyof subtyping bug, not caused by this change.
+2. **conditionalTypes2.ts** — Intersection member ordering: `Foo & Bar` vs `Bar & Foo` in diagnostic messages
+3. **conditionalTypesExcessProperties.ts** — Object property ordering in diagnostic messages (`{ arg: A; test: string }` vs `{ test: string; arg: A }`)
+4. **conditionalTypes1.ts** — Missing TS2403 (subsequent variable declaration type mismatch)
+5. **inferTypes1.ts** — Missing TS2322 (mapped type key constraint), extra TS2349/TS2556 (complex generic inference)
+
+### Architecture note:
+The root issue is that `evaluate_type_for_assignability()` eagerly expands Application types. A future improvement would be to preserve Application identity through the subtype checker so the variance-aware `check_application_to_application_subtype` path can be used. This would handle all three variance cases (covariant, contravariant, invariant) correctly without relying on conditional-level fixes.
+
+---
+
 ## Session 2026-03-01k — types/conditional: defer conditional when extends_type has type params
 
 ### Fixed: Conditional types with unresolved extends_type eagerly took false branch — Solver (conditional.rs)
