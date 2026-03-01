@@ -32,7 +32,8 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                 if file.file_name.ends_with(".d.ts") {
                     continue;
                 }
-                let helpers = required_helpers(file, options.checker.target);
+                let helpers =
+                    required_helpers(file, options.checker.target, options.es_module_interop);
                 if let Some((_helper_name, start, length)) = helpers.first() {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
@@ -60,7 +61,9 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
                     continue;
                 }
 
-                for (helper_name, start, length) in required_helpers(file, options.checker.target) {
+                for (helper_name, start, length) in
+                    required_helpers(file, options.checker.target, false)
+                {
                     result.push(Diagnostic::error(
                         file.file_name.clone(),
                         start,
@@ -81,6 +84,7 @@ pub(super) fn detect_missing_tslib_helper_diagnostics(
 pub(super) fn required_helpers(
     file: &BoundFile,
     target: tsz_common::ScriptTarget,
+    es_module_interop: bool,
 ) -> Vec<(&'static str, u32, u32)> {
     let mut saw_await: Option<(u32, u32)> = None;
     let mut saw_yield: Option<(u32, u32)> = None;
@@ -135,7 +139,154 @@ pub(super) fn required_helpers(
         return vec![("__asyncGenerator", start, length)];
     }
 
+    // esModuleInterop helpers: __importStar for namespace imports/re-exports,
+    // __importDefault for default named imports/re-exports.
+    if es_module_interop {
+        if let Some(helper) = detect_es_module_interop_helper(file) {
+            return vec![helper];
+        }
+    }
+
     Vec::new()
+}
+
+/// Detect esModuleInterop helpers needed in a file.
+///
+/// Patterns:
+/// - `import * as X from "m"` (non-type-only) → `__importStar` at import statement
+/// - `import { default as X } from "m"` (non-type-only) → `__importDefault` at `default` keyword
+/// - `export { default } from "m"` or `export { default as X } from "m"` → `__importDefault` at `default` keyword
+/// - `export * as ns from "m"` → `__importStar` at export statement
+///
+/// Note: `import X from "m"` (bare default import) does NOT require __importDefault in tsc.
+fn detect_es_module_interop_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        // Check import declarations: `import * as X from "m"`
+        if let Some(import_decl) = file.arena.get_import_decl(node) {
+            if import_decl.is_type_only {
+                continue;
+            }
+            let Some(clause_node) = file.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = file.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+            let Some(bindings_node) = file.arena.get(clause.named_bindings) else {
+                continue;
+            };
+
+            // `import * as X from "m"` → NAMESPACE_IMPORT
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return Some(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+            }
+
+            // `import { ..., default as X, ... } from "m"` → NAMED_IMPORTS with a `default` specifier
+            if let Some(named_imports) = file.arena.get_named_imports(bindings_node) {
+                for &elem_idx in &named_imports.elements.nodes {
+                    let Some(elem_node) = file.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = file.arena.get_specifier(elem_node) else {
+                        continue;
+                    };
+                    if specifier.is_type_only {
+                        continue;
+                    }
+                    // Check if property_name (the original name) is "default"
+                    if let Some(prop_node) = file.arena.get(specifier.property_name) {
+                        if prop_node.kind == SyntaxKind::DefaultKeyword as u16 {
+                            return Some((
+                                "__importDefault",
+                                prop_node.pos,
+                                prop_node.end.saturating_sub(prop_node.pos),
+                            ));
+                        }
+                        if let Some(ident) = file.arena.get_identifier(prop_node) {
+                            if ident.escaped_text == "default" {
+                                return Some((
+                                    "__importDefault",
+                                    prop_node.pos,
+                                    prop_node.end.saturating_sub(prop_node.pos),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check export declarations
+        if let Some(export_decl) = file.arena.get_export_decl(node) {
+            if export_decl.is_type_only {
+                continue;
+            }
+            // Must have a module_specifier (re-export from another module)
+            if file.arena.get(export_decl.module_specifier).is_none() {
+                continue;
+            }
+
+            let Some(clause_node) = file.arena.get(export_decl.export_clause) else {
+                continue;
+            };
+
+            // `export * as ns from "m"` — the export_clause is a plain identifier (not NAMED_EXPORTS)
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                return Some(("__importStar", node.pos, node.end.saturating_sub(node.pos)));
+            }
+
+            // `export { default } from "m"` or `export { default as X } from "m"` → NAMED_EXPORTS
+            if let Some(named_exports) = file.arena.get_named_imports(clause_node) {
+                for &elem_idx in &named_exports.elements.nodes {
+                    let Some(elem_node) = file.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = file.arena.get_specifier(elem_node) else {
+                        continue;
+                    };
+                    if specifier.is_type_only {
+                        continue;
+                    }
+                    // For export specifiers, check property_name first (original name),
+                    // then fall back to name (when there's no rename, name IS the original)
+                    let check_node_idx = if file.arena.get(specifier.property_name).is_some() {
+                        specifier.property_name
+                    } else {
+                        specifier.name
+                    };
+                    let Some(check_node) = file.arena.get(check_node_idx) else {
+                        continue;
+                    };
+                    if check_node.kind == SyntaxKind::DefaultKeyword as u16 {
+                        return Some((
+                            "__importDefault",
+                            check_node.pos,
+                            check_node.end.saturating_sub(check_node.pos),
+                        ));
+                    }
+                    if let Some(ident) = file.arena.get_identifier(check_node) {
+                        if ident.escaped_text == "default" {
+                            return Some((
+                                "__importDefault",
+                                check_node.pos,
+                                check_node.end.saturating_sub(check_node.pos),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Determine which ES decorator helpers are needed for a file.
