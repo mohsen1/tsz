@@ -1617,21 +1617,29 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                let member_name = self.get_enum_member_name(member.name);
-                if let Some(value) = member_values.get(&member_name) {
-                    match value {
-                        crate::enums::evaluator::EnumValue::Computed => {
-                            // Computed values: no initializer in .d.ts
+                // For ambient enums (inside declare context), only emit
+                // values for members with explicit initializers.
+                // For implementation enums, always emit computed values.
+                let is_ambient = self.inside_declare_namespace;
+                let has_explicit_init = member.initializer.is_some();
+                let should_emit_value = !is_ambient || has_explicit_init || is_const;
+                if should_emit_value {
+                    let member_name = self.get_enum_member_name(member.name);
+                    if let Some(value) = member_values.get(&member_name) {
+                        match value {
+                            crate::enums::evaluator::EnumValue::Computed => {
+                                // Computed values: no initializer in .d.ts
+                            }
+                            _ => {
+                                self.write(" = ");
+                                self.emit_enum_value(value);
+                            }
                         }
-                        _ => {
-                            self.write(" = ");
-                            self.emit_enum_value(value);
-                        }
+                    } else if !is_ambient {
+                        // Fallback to index for non-ambient enums if evaluation failed
+                        self.write(" = ");
+                        self.write(&i.to_string());
                     }
-                } else {
-                    // Fallback to index if evaluation failed
-                    self.write(" = ");
-                    self.write(&i.to_string());
                 }
             }
             if i < enum_data.members.nodes.len() - 1 {
