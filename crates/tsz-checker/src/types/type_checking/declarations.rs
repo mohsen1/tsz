@@ -458,6 +458,28 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        // Subtypes of Function (e.g., `interface SubFunc extends Function { prop: number }`)
+        // are also callable, returning `any`. tsc's `isFunctionObjectType` checks if the
+        // type has a `bind` member (inherited from Function) to identify Function-like types.
+        // Only check this when the type has no call signatures of its own.
+        {
+            let has_call_sigs =
+                tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type_for_call)
+                    .map_or(false, |sigs| !sigs.is_empty());
+            if !has_call_sigs {
+                let callee_resolved = self.resolve_lazy_type(callee_type_for_call);
+                let has_bind = tsz_solver::type_queries::find_property_in_object_by_str(
+                    self.ctx.types,
+                    callee_resolved,
+                    "bind",
+                )
+                .is_some();
+                if has_bind {
+                    return TypeId::ANY;
+                }
+            }
+        }
+
         // Check if callee_type_for_call is a union containing Function members
         if let Some(members_vec) = query::union_members(self.ctx.types, callee_type_for_call) {
             let members = members_vec;
