@@ -67,11 +67,14 @@ impl<'a> CheckerState<'a> {
                 members.iter().any(|&m| self.is_iterable_type(m))
             }
             FullIterableTypeKind::Object(shape_id) => {
-                // Check if object has a [Symbol.iterator] method
-                // Fall back to property access resolution for computed properties
-                // (e.g., `[Symbol.iterator]: any` may not be stored as a method in the shape)
-                self.object_has_iterator_method(shape_id)
-                    || self.type_has_symbol_iterator_via_property_access(type_id)
+                // Check if object has a [Symbol.iterator] method in its shape.
+                // If found (Some), use that result directly (valid or invalid).
+                // If not found (None), fall back to property access resolution for
+                // computed properties from lib types or inherited properties.
+                match self.object_has_iterator_method(shape_id) {
+                    Some(result) => result,
+                    None => self.type_has_symbol_iterator_via_property_access(type_id),
+                }
             }
             FullIterableTypeKind::Application { .. } => {
                 // Application types (Set<T>, Map<K,V>, Iterable<T>, etc.) may have
@@ -109,27 +112,34 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an object shape has a Symbol.iterator method.
     ///
-    /// An object is iterable if it has a [Symbol.iterator]() method that returns an iterator.
-    /// An iterator (with just a `next()` method) is NOT automatically iterable.
-    fn object_has_iterator_method(&self, shape_id: tsz_solver::ObjectShapeId) -> bool {
+    /// Returns `Some(true)` if found and valid, `Some(false)` if found but invalid
+    /// (optional or has required params), `None` if not found in the shape.
+    fn object_has_iterator_method(&self, shape_id: tsz_solver::ObjectShapeId) -> Option<bool> {
         let shape = self.ctx.types.object_shape(shape_id);
 
         // Check for [Symbol.iterator] method (iterable protocol)
         for prop in &shape.properties {
             let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
             if prop_name.as_ref() == "[Symbol.iterator]" {
+                // Optional [Symbol.iterator] is not a valid iterable
+                if prop.optional {
+                    return Some(false);
+                }
                 if prop.is_method {
-                    return true;
+                    // Must be callable with zero arguments
+                    return Some(self.is_callable_with_no_required_args(prop.type_id));
                 }
                 // Non-method properties typed as `any` are callable, so treat them as valid.
                 // e.g., `class Foo { [Symbol.iterator]: any; }`
                 if prop.type_id == TypeId::ANY {
-                    return true;
+                    return Some(true);
                 }
+                // Found the property but it's not a method and not `any` — not valid
+                return Some(false);
             }
         }
 
-        false
+        None
     }
 
     /// Check if a type has [Symbol.iterator] using the full property access resolution.
