@@ -674,10 +674,18 @@ impl<'a> CheckerState<'a> {
             } => {
                 // Suppress TS2554/TS2555 when parse errors exist to avoid cascading diagnostics
                 if !self.ctx.has_parse_errors {
-                    // Determine which error to emit:
-                    // - TS2555: "Expected at least N arguments" only for rest params (unbounded)
-                    // - TS2554: "Expected N arguments" or "Expected N-M arguments" otherwise
-                    if actual < expected_min && expected_max.is_none() {
+                    // Suppress arity errors when the call contains non-tuple spread
+                    // arguments — the spread provides an indeterminate number of values.
+                    // TSC only emits TS2556 in this case, not TS2555/TS2554.
+                    let has_non_tuple_spread = args.iter().any(|&arg_idx| {
+                        self.ctx
+                            .arena
+                            .get(arg_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                    });
+                    if has_non_tuple_spread {
+                        // TS2556 was already emitted; don't cascade with TS2555/TS2554.
+                    } else if actual < expected_min && expected_max.is_none() {
                         // Too few arguments with rest parameters (unbounded) - use TS2555
                         self.error_expected_at_least_arguments_at(expected_min, actual, idx);
                     } else {

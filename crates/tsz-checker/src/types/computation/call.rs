@@ -826,7 +826,20 @@ impl<'a> CheckerState<'a> {
                 actual,
             } => {
                 if !self.ctx.has_parse_errors {
-                    if actual < expected_min && expected_max.is_none() {
+                    // Suppress arity errors when the call contains non-tuple spread
+                    // arguments. The spread could provide any number of values at
+                    // runtime, so the actual argument count is indeterminate.
+                    // TSC only emits TS2556 in this case, not TS2555/TS2554.
+                    let has_non_tuple_spread = args.iter().any(|&arg_idx| {
+                        self.ctx
+                            .arena
+                            .get(arg_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                    });
+                    if has_non_tuple_spread {
+                        // TS2556 was already emitted by collect_call_argument_types;
+                        // don't cascade with a misleading TS2555/TS2554.
+                    } else if actual < expected_min && expected_max.is_none() {
                         // Too few arguments with rest parameters (unbounded) - use TS2555
                         self.error_expected_at_least_arguments_at(expected_min, actual, call_idx);
                     } else {
