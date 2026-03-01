@@ -184,6 +184,24 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node(prop.initializer)
                     };
 
+                    // In destructuring assignment targets with defaults
+                    // (e.g. `{ a: target = default } = source`), the property type
+                    // for the target object should be the target variable's type,
+                    // not the assignment expression's type.  The assignment
+                    // expression `target = default` returns the default's type
+                    // which may differ from the target's declared type.
+                    let value_type = if self.ctx.in_destructuring_target
+                        && let Some(init_node) = self.ctx.arena.get(prop.initializer)
+                        && init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(bin) = self.ctx.arena.get_binary_expr(init_node)
+                        && bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                    {
+                        // Use the target (LHS) type as the property type
+                        self.get_type_of_assignment_target(bin.left)
+                    } else {
+                        value_type
+                    };
+
                     // Restore context
                     self.ctx.contextual_type = prev_context;
 
@@ -237,6 +255,25 @@ impl<'a> CheckerState<'a> {
                     // Track this named property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (prop.name, name.clone()));
 
+                    // In destructuring assignment targets, a property with a default
+                    // value (e.g. `{ a: target = default } = source`) makes the property
+                    // optional in the source type.  The parser represents
+                    // `target = default` as a BinaryExpression with EqualsToken.
+                    let is_optional_destructuring = self.ctx.in_destructuring_target
+                        && self
+                            .ctx
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|init_node| {
+                                init_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                    && self.ctx.arena.get_binary_expr(init_node).is_some_and(
+                                        |bin| {
+                                            bin.operator_token
+                                                == tsz_scanner::SyntaxKind::EqualsToken as u16
+                                        },
+                                    )
+                            });
+
                     let order = prop_order;
                     prop_order += 1;
                     properties.insert(
@@ -245,7 +282,7 @@ impl<'a> CheckerState<'a> {
                             name: name_atom,
                             type_id: value_type,
                             write_type: value_type,
-                            optional: false,
+                            optional: is_optional_destructuring,
                             readonly: false,
                             is_method: false,
                             visibility: Visibility::Public,
@@ -471,6 +508,12 @@ impl<'a> CheckerState<'a> {
                     // Track this shorthand property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (elem_idx, name.clone()));
 
+                    // In destructuring assignment targets, a shorthand with a default
+                    // value (e.g. `{ x = 0 } = source`) makes the property optional
+                    // in the source type.
+                    let is_optional_shorthand =
+                        self.ctx.in_destructuring_target && shorthand.equals_token;
+
                     let order = prop_order;
                     prop_order += 1;
                     properties.insert(
@@ -479,7 +522,7 @@ impl<'a> CheckerState<'a> {
                             name: name_atom,
                             type_id: value_type,
                             write_type: value_type,
-                            optional: false,
+                            optional: is_optional_shorthand,
                             readonly: false,
                             is_method: false,
                             visibility: Visibility::Public,
