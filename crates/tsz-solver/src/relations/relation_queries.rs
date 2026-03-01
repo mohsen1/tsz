@@ -278,6 +278,135 @@ fn configured_subtype_checker<'a, R: TypeResolver>(
     checker
 }
 
+/// Variance-aware Application-to-Application assignability check.
+///
+/// When both source and target are type applications with the same base
+/// (e.g., `Covariant<A>` vs `Covariant<B>`), computes variance for each
+/// type parameter and checks arguments accordingly. This avoids structural
+/// expansion which would lose variance information.
+///
+/// Returns `Some(true/false)` if variance check is conclusive,
+/// `None` if the types are not suitable for variance-based checking
+/// (different bases, non-Application types, unknown variance).
+pub fn check_application_variance<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    query_db: Option<&dyn QueryDatabase>,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
+) -> Option<bool> {
+    use crate::types::TypeData;
+    use crate::visitor::lazy_def_id;
+
+    let (s_app_id, t_app_id) = match (db.lookup(source), db.lookup(target)) {
+        (Some(TypeData::Application(s)), Some(TypeData::Application(t))) => (s, t),
+        _ => return None,
+    };
+
+    let s_app = db.type_application(s_app_id);
+    let t_app = db.type_application(t_app_id);
+
+    // Only for same-base applications with matching arg counts
+    if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
+        return None;
+    }
+
+    let def_id = lazy_def_id(db, s_app.base)?;
+
+    // Query variance: first try the QueryDatabase cache, then the resolver,
+    // and finally compute it on the fly from the resolver's type params + body.
+    let variances = query_db
+        .and_then(|qdb| QueryDatabase::get_type_param_variance(qdb, def_id))
+        .or_else(|| resolver.get_type_param_variance(def_id))
+        .or_else(|| {
+            // Compute variance on the fly using the resolver's type params + body
+            let qdb = query_db?;
+            let params = resolver.get_lazy_type_params(def_id)?;
+            if params.is_empty() {
+                return None;
+            }
+            let body = resolver.resolve_lazy(def_id, db)?;
+            let mut variances = Vec::with_capacity(params.len());
+            for param in &params {
+                let v = crate::relations::variance::compute_variance(qdb, body, param.name);
+                variances.push(v);
+            }
+            Some(std::sync::Arc::from(variances))
+        });
+
+    let variances = variances?;
+    if variances.len() != s_app.args.len() {
+        return None;
+    }
+
+    // If all parameters are independent (no variance info), we can't make any
+    // conclusion from variance alone — fall through to structural checking.
+    if variances.iter().all(|v| v.is_empty()) {
+        return None;
+    }
+
+    // Clone args to avoid borrow conflicts
+    let s_args: Vec<TypeId> = s_app.args.to_vec();
+    let t_args: Vec<TypeId> = t_app.args.to_vec();
+
+    // Set up a compat checker for the argument checks
+    let mut checker = configured_compat_checker(db, resolver, policy, context);
+    if let Some(qdb) = query_db {
+        checker.set_query_db(qdb);
+    }
+
+    let mut all_ok = true;
+    let mut any_checked = false;
+    for (i, variance) in variances.iter().enumerate() {
+        let s_arg = s_args[i];
+        let t_arg = t_args[i];
+
+        if variance.is_invariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_covariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_contravariant() {
+            any_checked = true;
+            if !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        }
+        // Independent: no check needed
+    }
+
+    // If we didn't actually check any parameter (all independent), fall through
+    if !any_checked {
+        return None;
+    }
+
+    if all_ok {
+        return Some(true);
+    }
+
+    // For non-transparent types (classes, enums), fast-fail.
+    // For interfaces/type aliases, fall through to structural checking.
+    let def_kind = resolver.get_def_kind(def_id);
+    if !matches!(
+        def_kind,
+        Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+    ) {
+        return Some(false);
+    }
+
+    None
+}
+
 #[cfg(test)]
 #[path = "../../tests/relation_queries_tests.rs"]
 mod tests;

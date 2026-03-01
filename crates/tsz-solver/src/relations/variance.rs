@@ -302,35 +302,25 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         let current_polarity = self.get_current_polarity();
 
         for prop in &shape.properties {
-            // Read type is always checked at current polarity
+            // TypeScript treats all properties as covariant for variance inference,
+            // regardless of mutability. This matches tsc behavior where `{ x: T }`
+            // is covariant in T even though the property is mutable (a well-known
+            // unsoundness in TS for usability). Only explicit write_type differences
+            // (set accessors with different types) contribute contravariant position.
             self.visit_with_polarity(prop.type_id, current_polarity);
 
-            // CRITICAL FIX: Mutable properties are ALWAYS invariant
-            // If write_type is different, use it; otherwise use type_id
-            // This ensures { x: T } is invariant (not covariant!)
-            if !prop.readonly {
-                let write_ty = if prop.write_type != TypeId::NONE {
-                    prop.write_type
-                } else {
-                    prop.type_id
-                };
-                self.visit_with_polarity(write_ty, !current_polarity);
+            if prop.write_type != TypeId::NONE && prop.write_type != prop.type_id {
+                self.visit_with_polarity(prop.write_type, !current_polarity);
             }
         }
 
-        // Index signatures follow same rule as properties
+        // Index signatures: same covariant-only rule for tsc parity
         if let Some(ref idx) = shape.string_index {
             self.visit_with_polarity(idx.value_type, current_polarity);
-            if !idx.readonly {
-                self.visit_with_polarity(idx.value_type, !current_polarity);
-            }
         }
 
         if let Some(ref idx) = shape.number_index {
             self.visit_with_polarity(idx.value_type, current_polarity);
-            if !idx.readonly {
-                self.visit_with_polarity(idx.value_type, !current_polarity);
-            }
         }
     }
 
@@ -454,13 +444,13 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         let cond = self.db.conditional_type(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();
 
-        // FIX: check_type is COVARIANT (preserves polarity)
-        self.visit_with_polarity(cond.check_type, current_polarity);
+        // In TypeScript, conditional types `T extends U ? X : Y` determine variance
+        // solely from the branch types X and Y. The check_type T acts as a guard
+        // condition, not a usage position, so it doesn't contribute to variance.
+        // Similarly, extends_type U is a bound, not a variance contributor.
+        // This matches tsc's probe-based variance inference behavior.
 
-        // extends_type is CONTRAVARIANT (flips polarity)
-        self.visit_with_polarity(cond.extends_type, !current_polarity);
-
-        // True and false branches are COVARIANT (preserve polarity)
+        // True and false branches preserve polarity (covariant positions)
         self.visit_with_polarity(cond.true_type, current_polarity);
         self.visit_with_polarity(cond.false_type, current_polarity);
     }
