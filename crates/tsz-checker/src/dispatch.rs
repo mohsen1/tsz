@@ -342,8 +342,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .checker
                             .get_generator_return_type_argument(expression_type);
                     }
-                    // Collect yield* element type for unannotated generators
-                    if self.checker.ctx.current_yield_type().is_none() {
+                    // Collect yield* element type for unannotated generators when resolvable
+                    // (skip when async iterator info is None/fallback ANY)
+                    if self.checker.ctx.current_yield_type().is_none() && async_info.is_some() {
                         self.checker.ctx.generator_yield_operand_types.push(element);
                     }
                     element

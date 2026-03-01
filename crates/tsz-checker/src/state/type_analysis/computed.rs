@@ -1394,6 +1394,28 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
+                        // When esModuleInterop / allowSyntheticDefaultImports is
+                        // enabled and the module uses `export =`, synthesize a
+                        // "default" property on the namespace so that
+                        // `ns.default` resolves to the export= value.
+                        if let Some(eq_type) = export_equals_type
+                            && self.ctx.allow_synthetic_default_imports() {
+                                let default_atom = self.ctx.types.intern_string("default");
+                                if !props.iter().any(|p| p.name == default_atom) {
+                                    props.push(PropertyInfo {
+                                        name: default_atom,
+                                        type_id: eq_type,
+                                        write_type: eq_type,
+                                        optional: false,
+                                        readonly: false,
+                                        is_method: false,
+                                        visibility: Visibility::Public,
+                                        parent_id: None,
+                                        declaration_order: 0,
+                                    });
+                                }
+                            }
+
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
                         // types as `typeof import("module")` in diagnostics.
@@ -1403,6 +1425,16 @@ impl<'a> CheckerState<'a> {
                         self.ctx.module_namespace_resolution_set.remove(module_name);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
+                                // When esModuleInterop / allowSyntheticDefaultImports
+                                // is enabled, intersect with the namespace type so
+                                // that `ns.default` resolves to the export= value.
+                                if self.ctx.allow_synthetic_default_imports() {
+                                    return (
+                                        factory
+                                            .intersection(vec![export_equals_type, namespace_type]),
+                                        Vec::new(),
+                                    );
+                                }
                                 return (export_equals_type, Vec::new());
                             }
                             return (

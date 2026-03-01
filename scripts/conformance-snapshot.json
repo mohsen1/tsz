@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-01T23:10:04Z",
-  "git_sha": "6382f958289ae0cf0e336d7691df4cb38d5ed7b7",
+  "timestamp": "2026-03-01T23:10:17Z",
+  "git_sha": "b7a31a9b6c17cbad8320543652af406232d16e9e",
   "summary": {
     "total_tests": 12570,
-    "passed": 9771,
-    "failed": 2799,
+    "passed": 9773,
+    "failed": 2797,
     "pass_rate": 77.7
   },
   "areas_by_pass_rate": [
@@ -59,6 +59,13 @@
     },
     {
       "area": "expressions/functionCalls",
+      "total": 24,
+      "passed": 15,
+      "failed": 9,
+      "pass_rate": 62.5
+    },
+    {
+      "area": "types/intersection",
       "total": 24,
       "passed": 15,
       "failed": 9,
@@ -121,20 +128,6 @@
       "pass_rate": 66.32
     },
     {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 132,
-      "failed": 66,
-      "pass_rate": 66.67
-    },
-    {
-      "area": "types/intersection",
-      "total": 24,
-      "passed": 16,
-      "failed": 8,
-      "pass_rate": 66.67
-    },
-    {
       "area": "node/allowJs",
       "total": 21,
       "passed": 14,
@@ -175,6 +168,13 @@
       "passed": 17,
       "failed": 8,
       "pass_rate": 68.0
+    },
+    {
+      "area": "classes/members",
+      "total": 197,
+      "passed": 134,
+      "failed": 63,
+      "pass_rate": 68.02
     },
     {
       "area": "internalModules/exportDeclarations",
@@ -375,9 +375,9 @@
     {
       "area": "compiler",
       "total": 6512,
-      "passed": 5059,
-      "failed": 1453,
-      "pass_rate": 77.69
+      "passed": 5060,
+      "failed": 1452,
+      "pass_rate": 77.7
     },
     {
       "area": "enums",
@@ -719,7 +719,7 @@
   "top_failures": [
     {
       "code": "TS2322",
-      "count": 44
+      "count": 45
     },
     {
       "code": "TS2339",
@@ -923,7 +923,7 @@
   "partial_codes": [
     {
       "code": "TS2322",
-      "count": 126
+      "count": 127
     },
     {
       "code": "TS2339",
@@ -963,7 +963,7 @@
     },
     {
       "code": "TS5107",
-      "count": 23
+      "count": 22
     },
     {
       "code": "TS2300",
@@ -1045,7 +1045,7 @@
   "one_missing_zero_extra": [
     {
       "code": "TS2322",
-      "count": 66
+      "count": 67
     },
     {
       "code": "TS2339",
@@ -1192,11 +1192,11 @@
       "count": 3
     },
     {
-      "code": "TS2341",
+      "code": "TS2488",
       "count": 3
     },
     {
-      "code": "TS2488",
+      "code": "TS2341",
       "count": 3
     },
     {
@@ -1251,7 +1251,7 @@
     },
     {
       "code": "TS2339",
-      "count": 61
+      "count": 60
     },
     {
       "code": "TS2345",
@@ -1290,11 +1290,11 @@
       "count": 5
     },
     {
-      "code": "TS2416",
-      "count": 4
+      "code": "TS2769",
+      "count": 5
     },
     {
-      "code": "TS2769",
+      "code": "TS2416",
       "count": 4
     },
     {
@@ -1326,10 +1326,6 @@
       "count": 3
     },
     {
-      "code": "TS2536",
-      "count": 3
-    },
-    {
       "code": "TS2349",
       "count": 3
     },
@@ -1354,10 +1350,6 @@
       "count": 2
     },
     {
-      "code": "TS7055",
-      "count": 2
-    },
-    {
       "code": "TS2708",
       "count": 2
     },
@@ -1371,6 +1363,10 @@
     },
     {
       "code": "TS2503",
+      "count": 2
+    },
+    {
+      "code": "TS2536",
       "count": 2
     },
     {
@@ -1444,6 +1440,10 @@
     {
       "code": "TS5097",
       "count": 2
+    },
+    {
+      "code": "TS6053",
+      "count": 2
     }
   ],
   "false_positive_codes": [
@@ -1457,7 +1457,7 @@
     },
     {
       "code": "TS2339",
-      "count": 54
+      "count": 53
     },
     {
       "code": "TS7006",
@@ -1473,7 +1473,7 @@
     },
     {
       "code": "TS2769",
-      "count": 8
+      "count": 9
     },
     {
       "code": "TS18048",
@@ -1560,18 +1560,18 @@
       "count": 3
     },
     {
-      "code": "TS2536",
+      "code": "TS2741",
       "count": 3
     },
     {
-      "code": "TS2741",
+      "code": "TS18047",
       "count": 3
     }
   ],
   "top_missing_codes": [
     {
       "code": "TS2322",
-      "count": 126
+      "count": 127
     },
     {
       "code": "TS2339",
@@ -1611,7 +1611,7 @@
     },
     {
       "code": "TS5107",
-      "count": 23
+      "count": 22
     },
     {
       "code": "TS2300",
@@ -1737,7 +1737,7 @@
     },
     {
       "code": "TS2339",
-      "count": 149
+      "count": 148
     },
     {
       "code": "TS2345",
@@ -1797,11 +1797,7 @@
     },
     {
       "code": "TS2769",
-      "count": 15
-    },
-    {
-      "code": "TS2300",
-      "count": 14
+      "count": 16
     },
     {
       "code": "TS2403",
@@ -1809,6 +1805,10 @@
     },
     {
       "code": "TS18048",
+      "count": 13
+    },
+    {
+      "code": "TS2300",
       "count": 13
     },
     {
@@ -1820,12 +1820,12 @@
       "count": 12
     },
     {
-      "code": "TS1212",
+      "code": "TS2349",
       "count": 12
     },
     {
-      "code": "TS2349",
-      "count": 11
+      "code": "TS1212",
+      "count": 12
     },
     {
       "code": "TS17009",
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 328,
-    "all_missing": 498,
-    "wrong_code": 1972,
-    "close_to_passing": 1668
+    "false_positive": 327,
+    "all_missing": 499,
+    "wrong_code": 1969,
+    "close_to_passing": 1665
   }
 }
