@@ -82,16 +82,25 @@ impl Server {
         let probe_positions = Self::completion_probe_positions(position, line_map, source_text);
         let mut selected_position = position;
         let mut selected_result = None;
+        let mut selected_score = (false, false, false);
         for probe_position in probe_positions {
             let candidate = provider.get_completion_result(root, probe_position);
-            let has_useful_member_entries = candidate
+            let score = candidate
                 .as_ref()
-                .is_some_and(|result| result.is_member_completion && !result.entries.is_empty());
-            if selected_result.is_none() || has_useful_member_entries {
+                .map(|result| {
+                    (
+                        result.is_member_completion && !result.entries.is_empty(),
+                        !result.entries.is_empty(),
+                        result.is_new_identifier_location,
+                    )
+                })
+                .unwrap_or((false, false, false));
+            if selected_result.is_none() || score > selected_score {
                 selected_position = probe_position;
                 selected_result = candidate;
+                selected_score = score;
             }
-            if has_useful_member_entries {
+            if selected_score.0 {
                 break;
             }
         }
