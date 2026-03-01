@@ -465,7 +465,7 @@ impl<'a> CheckerState<'a> {
         {
             let has_call_sigs =
                 tsz_solver::type_queries::get_call_signatures(self.ctx.types, callee_type_for_call)
-                    .map_or(false, |sigs| !sigs.is_empty());
+                    .is_some_and(|sigs| !sigs.is_empty());
             if !has_call_sigs {
                 let callee_resolved = self.resolve_lazy_type(callee_type_for_call);
                 let has_bind = tsz_solver::type_queries::find_property_in_object_by_str(

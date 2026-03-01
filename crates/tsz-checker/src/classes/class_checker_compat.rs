@@ -174,7 +174,7 @@ impl<'a> CheckerState<'a> {
         iface_data: &tsz_parser::parser::node::InterfaceData,
     ) {
         use tsz_parser::parser::syntax_kind_ext::{
-            CALL_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
+            CALL_SIGNATURE, INDEX_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{TypeSubstitution, instantiate_type};
 
@@ -278,6 +278,51 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Collect derived interface index signatures across all declarations.
+        // These are checked against base index signatures for TS2430 compatibility.
+        let mut derived_string_index_type: Option<TypeId> = None;
+        let mut derived_number_index_type: Option<TypeId> = None;
+        for &decl_idx in &all_iface_decls {
+            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
+            {
+                for &member_idx in &decl_iface.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != INDEX_SIGNATURE {
+                        continue;
+                    }
+                    if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
+                        let param_idx = index_sig
+                            .parameters
+                            .nodes
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE);
+                        let key_type = if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation.is_some()
+                        {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        let value_type = if index_sig.type_annotation.is_some() {
+                            self.get_type_from_type_node(index_sig.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        if key_type == TypeId::NUMBER {
+                            derived_number_index_type = Some(value_type);
+                        } else {
+                            derived_string_index_type = Some(value_type);
+                        }
+                    }
+                }
+            }
+        }
+
         // Maps member name -> (base_heritage_idx, base_name, type_id, is_optional)
         // base_heritage_idx uniquely identifies each extends-clause entry, so
         // `extends A<string>, A<number>` correctly detects conflicts even though
@@ -288,6 +333,12 @@ impl<'a> CheckerState<'a> {
         > = rustc_hash::FxHashMap::default();
         let mut inherited_non_public_class_member_sources: rustc_hash::FxHashMap<String, String> =
             rustc_hash::FxHashMap::default();
+
+        // Track inherited index signatures for cross-base conflict detection (TS2430).
+        // (base_heritage_idx, base_name, value_type) — if a new base has a conflicting
+        // index signature, the interface "incorrectly extends" that base.
+        let mut inherited_string_index: Option<(NodeIndex, String, TypeId)> = None;
+        let mut inherited_number_index: Option<(NodeIndex, String, TypeId)> = None;
 
         // Collect ALL heritage clauses across ALL declarations of this interface
         let mut all_heritage_types: Vec<(NodeIndex, NodeIndex)> = Vec::new(); // (clause_idx, type_idx)
@@ -505,6 +556,74 @@ impl<'a> CheckerState<'a> {
                             member_key,
                             (type_idx, base_name.clone(), member_type, member_optional),
                         );
+                    }
+                }
+
+                // Process index signatures from this base level.
+                // Check for cross-base index signature conflicts (TS2430).
+                for &member_idx in &iface.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != INDEX_SIGNATURE {
+                        continue;
+                    }
+                    if let Some(idx_sig) = self.ctx.arena.get_index_signature(member_node) {
+                        let param_idx = idx_sig
+                            .parameters
+                            .nodes
+                            .first()
+                            .copied()
+                            .unwrap_or(NodeIndex::NONE);
+                        let key_type = if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation.is_some()
+                        {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        let value_type = if idx_sig.type_annotation.is_some() {
+                            self.get_type_from_type_node(idx_sig.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        let value_type =
+                            instantiate_type(self.ctx.types, value_type, &substitution);
+
+                        let inherited_slot = if key_type == TypeId::NUMBER {
+                            &mut inherited_number_index
+                        } else {
+                            &mut inherited_string_index
+                        };
+
+                        if let Some((prev_heritage_idx, ref _prev_base_name, prev_val)) =
+                            *inherited_slot
+                        {
+                            if prev_heritage_idx != type_idx {
+                                // Different bases provide conflicting index signatures.
+                                // tsc emits TS2430 ("incorrectly extends") against the
+                                // later base, not TS2320 ("cannot simultaneously extend").
+                                if !self.is_assignable_to(prev_val, value_type)
+                                    && !self.is_assignable_to(value_type, prev_val)
+                                {
+                                    // The later base's index signature conflicts with
+                                    // what was inherited from earlier bases.
+                                    // tsc reports TS2430 against the later base only.
+                                    self.error_at_node(
+                                        iface_data.name,
+                                        &format!(
+                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                                        ),
+                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                    );
+                                    self.pop_type_parameters(level_type_param_updates);
+                                    return;
+                                }
+                            }
+                        } else {
+                            *inherited_slot = Some((type_idx, base_name.clone(), value_type));
+                        }
                     }
                 }
 
@@ -1045,6 +1164,89 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 }
+            }
+
+            // Check index signature compatibility: if the derived interface declares
+            // an index signature, the base interface's index signature (if any) must be
+            // compatible. E.g., `interface F extends E` where F has `[s: string]: number`
+            // and E has `[s: string]: string` → TS2430.
+            if derived_string_index_type.is_some() || derived_number_index_type.is_some() {
+                let mut base_string_index_value: Option<TypeId> = None;
+                let mut base_number_index_value: Option<TypeId> = None;
+
+                for &base_iface_idx in &base_iface_indices {
+                    let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                        continue;
+                    };
+                    let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
+                        continue;
+                    };
+
+                    for &base_member_idx in &base_iface.members.nodes {
+                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
+                            continue;
+                        };
+                        if base_member_node.kind != INDEX_SIGNATURE {
+                            continue;
+                        }
+                        if let Some(base_idx_sig) =
+                            self.ctx.arena.get_index_signature(base_member_node)
+                        {
+                            let param_idx = base_idx_sig
+                                .parameters
+                                .nodes
+                                .first()
+                                .copied()
+                                .unwrap_or(NodeIndex::NONE);
+                            let key_type = if let Some(param_node) = self.ctx.arena.get(param_idx)
+                                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                                && param.type_annotation.is_some()
+                            {
+                                self.get_type_from_type_node(param.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            let value_type = if base_idx_sig.type_annotation.is_some() {
+                                self.get_type_from_type_node(base_idx_sig.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            let value_type =
+                                instantiate_type(self.ctx.types, value_type, &substitution);
+                            if key_type == TypeId::NUMBER {
+                                base_number_index_value = Some(value_type);
+                            } else {
+                                base_string_index_value = Some(value_type);
+                            }
+                        }
+                    }
+                }
+
+                // Check string index compatibility
+                if let (Some(derived_val), Some(base_val)) =
+                    (derived_string_index_type, base_string_index_value)
+                    && !self.is_assignable_to(derived_val, base_val) {
+                        self.error_at_node(
+                            iface_data.name,
+                            &format!(
+                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            ),
+                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                        );
+                    }
+
+                // Check number index compatibility
+                if let (Some(derived_val), Some(base_val)) =
+                    (derived_number_index_type, base_number_index_value)
+                    && !self.is_assignable_to(derived_val, base_val) {
+                        self.error_at_node(
+                            iface_data.name,
+                            &format!(
+                                "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
+                            ),
+                            diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                        );
+                    }
             }
 
             self.pop_type_parameters(base_type_param_updates);
