@@ -328,29 +328,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if crate::visitor::contains_type_parameters(self.interner(), check_type) {
                     let constraint = self.resolve_generic_constraint(check_type);
                     if let Some(constraint) = constraint
-                        && constraint != check_type {
-                            let mut bindings2 = FxHashMap::default();
-                            let mut visited2 = FxHashSet::default();
-                            let mut checker2 =
-                                SubtypeChecker::with_resolver(self.interner(), self.resolver());
-                            checker2.allow_bivariant_rest = true;
-                            if self.match_infer_pattern(
-                                constraint,
-                                extends_type,
-                                &mut bindings2,
-                                &mut visited2,
-                                &mut checker2,
-                            ) {
-                                // Constraint matched the infer pattern. Take the true branch
-                                // with the inferred type bindings from the constraint match.
-                                // Example: ReturnType<T[M]> where T[M]'s constraint is () => unknown
-                                // matches (...args) => infer R, giving R = unknown.
-                                // True branch is R, so result is unknown.
-                                let substituted_true =
-                                    self.substitute_infer(cond.true_type, &bindings2);
-                                return self.evaluate(substituted_true);
-                            }
+                        && constraint != check_type
+                    {
+                        let mut bindings2 = FxHashMap::default();
+                        let mut visited2 = FxHashSet::default();
+                        let mut checker2 =
+                            SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                        checker2.allow_bivariant_rest = true;
+                        if self.match_infer_pattern(
+                            constraint,
+                            extends_type,
+                            &mut bindings2,
+                            &mut visited2,
+                            &mut checker2,
+                        ) {
+                            // Constraint matched the infer pattern. Take the true branch
+                            // with the inferred type bindings from the constraint match.
+                            // Example: ReturnType<T[M]> where T[M]'s constraint is () => unknown
+                            // matches (...args) => infer R, giving R = unknown.
+                            // True branch is R, so result is unknown.
+                            let substituted_true =
+                                self.substitute_infer(cond.true_type, &bindings2);
+                            return self.evaluate(substituted_true);
                         }
+                    }
                 }
 
                 // Infer match failed (and constraint doesn't match either) — take the false branch.
@@ -512,15 +513,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Fallback: try resolving the object type's constraint
                 let obj_constraint = self.resolve_generic_constraint(obj);
                 if let Some(obj_constraint) = obj_constraint
-                    && obj_constraint != obj {
-                        let resolved =
-                            self.evaluate(self.interner().index_access(obj_constraint, idx));
-                        if resolved != type_id
-                            && !crate::visitor::contains_type_parameters(self.interner(), resolved)
-                        {
-                            return Some(resolved);
-                        }
+                    && obj_constraint != obj
+                {
+                    let resolved = self.evaluate(self.interner().index_access(obj_constraint, idx));
+                    if resolved != type_id
+                        && !crate::visitor::contains_type_parameters(self.interner(), resolved)
+                    {
+                        return Some(resolved);
                     }
+                }
                 None
             }
             _ => None,
