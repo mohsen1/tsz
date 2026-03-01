@@ -33,7 +33,7 @@ thread_local! {
 }
 
 // Global instantiation depth limit — tighter than the per-context MAX_INSTANTIATION_DEPTH (50).
-const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = 10;
+const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = 50;
 
 // Global instantiation fuel limit — maximum non-cached `evaluate_application_type`
 // invocations per file. react16.d.ts can trigger thousands of unique Application

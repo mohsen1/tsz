@@ -135,7 +135,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum recursive expansion depth for a single `DefId`.
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
-    const MAX_DEF_DEPTH: u32 = 50;
+    const MAX_DEF_DEPTH: u32 = 100;
 
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
