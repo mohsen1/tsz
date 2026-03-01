@@ -303,7 +303,9 @@ impl<'a> CheckerState<'a> {
             let prev_context = self.ctx.contextual_type;
             if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some() {
-                    self.ctx.contextual_type = helper.get_tuple_element_type(index);
+                    let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
+                    self.ctx.contextual_type =
+                        helper.get_tuple_element_type_with_count(index, elem_count);
                 } else {
                     self.ctx.contextual_type = helper.get_array_element_type();
                 }

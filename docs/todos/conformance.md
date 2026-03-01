@@ -1,7 +1,71 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9722/12570 (77.3%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01b — types/tuple: variadic tuple contextual typing
+
+### Fixed: Contextual typing for variadic tuple rest parameters — Solver (contextual/extractors.rs, contextual/core.rs) + Checker (helpers.rs)
+
+**Area**: types/tuple (58.8%)
+
+**Root cause**: `extract_param_type_at()` in the solver's contextual typing path used naive direct indexing into tuple elements. For variadic tuples like `[...((arg: number) => void)[], (arg: string) => void]`, calling `f1(x => x)` where `f1(...args: Funcs)`:
+- The contextual path indexed `elements[0]` (the variadic array type `((arg: number) => void)[]`)
+- Should have recognized that with 1 argument, it maps to the last element `(arg: string) => void`
+- Result: no contextual type provided → TS7006 (implicit any) false positive
+
+The solver already had correct variadic-aware logic in `call_args.rs:tuple_rest_element_type()` for runtime type checking, but the contextual typing path in `extractors.rs` didn't use it.
+
+**Fix** (3 files):
+1. **`contextual/extractors.rs`** — Added `extract_param_type_at_for_call()` that passes `arg_count` through to the tuple handling logic. Added `variadic_tuple_element_type()` function that decomposes tuples through prefix/variadic/tail structure using `expand_tuple_rest()`. Only activates for tuples with rest elements followed by tail elements (avoids overhead on simple tuples).
+2. **`contextual/core.rs`** — Added `get_tuple_element_type_with_count()` method on `ContextualTypeContext` for array literal contexts. Updated `TupleElementExtractor` to accept and use `element_count` for variadic-aware mapping.
+3. **`checker/computation/helpers.rs`** — Array literal contextual typing now passes element count to `get_tuple_element_type_with_count()`.
+
+**Performance guard**: The variadic expansion path only activates when:
+- The tuple has a rest element with non-rest elements AFTER it (the variadic pattern)
+- `arg_count` is available (call site or array literal context)
+- This prevents overhead on the vast majority of tuples which are non-variadic
+
+**Tests**: 4 unit tests in `contextual_tests.rs`:
+- `test_variadic_tuple_call_single_arg_gets_tail_type` — 1 arg to `[...T[], U]` gets U
+- `test_variadic_tuple_call_multiple_args_prefix_and_tail` — 3 args: prefix gets T, last gets U
+- `test_variadic_tuple_element_contextual_type_single_element` — array literal `[a]` for `[...T[], U]`
+- `test_variadic_tuple_element_contextual_type_multiple_elements` — array literal `[a, b, c]` for `[...T[], U]`
+
+**Result**: +1 net passing (intersectionTypeInference3 flipped to PASS, improved contextual typing). No regressions. TS7006 false positives eliminated for non-generic variadic tuple call sites and array literals.
+
+### Remaining types/tuple gaps:
+1. **TS7006 in generic variadic tuples** (contextualTypeTupleEnd lines 37-38): `createSelector<S extends SelectorTuple>(...selectors: [...S, f])` — requires generic inference before contextual typing can provide types.
+2. **TS2555 false positive** (contextualTypeTupleEnd line 12): `f1()` emits TS2555 instead of TS2345 for empty-args call on variadic tuple rest params.
+3. **TS1265/TS1266** (variadicTuples2): Parser-level — "A rest element cannot follow another rest element" not implemented.
+4. **TS2344** (variadicTuples1): Type constraint violations for variadic tuple type params.
+5. **TS2556** (variadicTuples1/2): False positive "A spread argument must have a tuple type" in variadic tuple contexts.
+6. **7 fingerprint-only failures**: Error codes match but message text/line differ.
+
+---
+
+## Session 2026-03-01a — jsx: suppress false TS2322 in spreads + IntrinsicAttributes checking
+
+### Fixed: Two JSX attribute checking improvements — Checker (jsx_checker.rs)
+
+**Area**: jsx (59.5% → 60.0%, 78 failures out of 195 tests)
+
+**Fix 1 — Suppress false TS2322 from spread with missing required props**:
+When a spread attribute has a per-property type mismatch AND the spread is also missing required properties from the target, tsc suppresses the TS2322 and lets TS2741 (missing property) take priority. Added early-return in `check_spread_property_types` that detects this scenario.
+
+**Fix 2 — IntrinsicAttributes checking**:
+Added `get_intrinsic_attributes_type()` to resolve `JSX.IntrinsicAttributes` from the JSX namespace. After component props checking, now also checks for missing required properties in IntrinsicAttributes (TS2741). Also restructured key/ref handling to track them as provided attributes.
+
+**Tests**: 4 unit tests (spread with missing props suppresses TS2322, compatible spread no errors, required IntrinsicAttributes missing emits TS2741, optional IntrinsicAttributes no error)
+
+**Result**: +2 net passing conformance tests. No regressions.
+
+### Remaining JSX gaps (updated):
+1. **Union-typed components** (tsxUnionTypeComponent1): `get_jsx_props_type_for_component` doesn't decompose union types — needs architectural work.
+2. **Intersection target types** (tsxAttributeResolution12): tsc builds `IntrinsicAttributes & Props` as target type for assignability — needs intersection type construction refactor.
+3. **Type parameter names in diagnostics**: tsc prints "Type 'T'" but we print expanded constraint type.
 
 ---
 

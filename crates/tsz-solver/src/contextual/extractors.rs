@@ -369,11 +369,22 @@ impl<'a> TypeVisitor for ArrayElementExtractor<'a> {
 pub(crate) struct TupleElementExtractor<'a> {
     db: &'a dyn TypeDatabase,
     index: usize,
+    /// Total number of elements in the source array/tuple literal.
+    /// When provided, enables correct mapping for variadic tuple types.
+    element_count: Option<usize>,
 }
 
 impl<'a> TupleElementExtractor<'a> {
-    pub(crate) fn new(db: &'a dyn TypeDatabase, index: usize) -> Self {
-        Self { db, index }
+    pub(crate) fn new(
+        db: &'a dyn TypeDatabase,
+        index: usize,
+        element_count: Option<usize>,
+    ) -> Self {
+        Self {
+            db,
+            index,
+            element_count,
+        }
     }
 
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -394,6 +405,15 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
 
     fn visit_tuple(&mut self, elements_id: u32) -> Self::Output {
         let elements = self.db.tuple_list(TupleListId(elements_id));
+
+        // Check for variadic tuple pattern: rest element with tail elements after it.
+        let rest_pos = elements.iter().position(|e| e.rest);
+        let has_tail_after_rest = rest_pos.is_some_and(|pos| pos + 1 < elements.len());
+
+        if has_tail_after_rest && let Some(element_count) = self.element_count {
+            return variadic_tuple_element_type(self.db, &elements, self.index, element_count);
+        }
+
         if self.index < elements.len() {
             Some(elements[self.index].type_id)
         } else if let Some(last) = elements.last() {
@@ -429,7 +449,8 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         let types: Vec<TypeId> = members
             .iter()
             .filter_map(|&member| {
-                let mut extractor = TupleElementExtractor::new(self.db, self.index);
+                let mut extractor =
+                    TupleElementExtractor::new(self.db, self.index, self.element_count);
                 extractor.extract(member)
             })
             .collect();
@@ -440,7 +461,7 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         // For intersections, try each member and return the first match.
         let members = self.db.type_list(TypeListId(list_id));
         for &member in members.iter() {
-            let mut extractor = TupleElementExtractor::new(self.db, self.index);
+            let mut extractor = TupleElementExtractor::new(self.db, self.index, self.element_count);
             if let Some(ty) = extractor.extract(member) {
                 return Some(ty);
             }
@@ -586,6 +607,27 @@ pub(crate) fn extract_param_type_at(
     params: &[ParamInfo],
     index: usize,
 ) -> Option<TypeId> {
+    extract_param_type_at_inner(db, params, index, None)
+}
+
+/// Extract the parameter type at `index` with knowledge of the total argument count.
+/// When `arg_count` is provided, variadic tuple rest parameters are resolved correctly
+/// by mapping argument positions through prefix/variadic/tail structure.
+pub(crate) fn extract_param_type_at_for_call(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    index: usize,
+    arg_count: usize,
+) -> Option<TypeId> {
+    extract_param_type_at_inner(db, params, index, Some(arg_count))
+}
+
+fn extract_param_type_at_inner(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    index: usize,
+    arg_count: Option<usize>,
+) -> Option<TypeId> {
     let rest_param = params.last().filter(|p| p.rest);
     let rest_start = if rest_param.is_some() {
         params.len().saturating_sub(1)
@@ -605,8 +647,24 @@ pub(crate) fn extract_param_type_at(
         if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
             return Some(elem);
         }
-        if let Some(TypeData::Tuple(elements)) = db.lookup(last_param.type_id) {
-            let elements = db.tuple_list(elements);
+        if let Some(TypeData::Tuple(elements_id)) = db.lookup(last_param.type_id) {
+            let elements = db.tuple_list(elements_id);
+            // Check for variadic tuple pattern: a rest element with non-rest elements after it.
+            // e.g., [...T[], U] has rest at index 0 with tail element U at index 1.
+            // Only use the expensive variadic expansion path when there are tail elements
+            // after the rest position, which is the signature of variadic tuple types.
+            let rest_pos = elements.iter().position(|e| e.rest);
+            let has_tail_after_rest = rest_pos.is_some_and(|pos| pos + 1 < elements.len());
+
+            if has_tail_after_rest
+                && let Some(count) = arg_count {
+                    // Use variadic-aware mapping: expand the tuple rest structure
+                    // and map argument position through prefix/variadic/tail.
+                    let rest_arg_count = count.saturating_sub(rest_start);
+                    return variadic_tuple_element_type(db, &elements, rest_index, rest_arg_count);
+                }
+
+            // Non-variadic tuple or no arg_count: direct indexing
             if rest_index < elements.len() {
                 return Some(elements[rest_index].type_id);
             } else if let Some(last_elem) = elements.last()
@@ -620,14 +678,16 @@ pub(crate) fn extract_param_type_at(
             if let Some(constraint) = param_info.constraint {
                 let mut mock_params = params.to_vec();
                 mock_params.last_mut().unwrap().type_id = constraint;
-                return extract_param_type_at(db, &mock_params, index);
+                return extract_param_type_at_inner(db, &mock_params, index, arg_count);
             }
         } else if let Some(TypeData::Intersection(members)) = db.lookup(last_param.type_id) {
             let members = db.type_list(members);
             for &m in members.iter() {
                 let mut mock_params = params.to_vec();
                 mock_params.last_mut().unwrap().type_id = m;
-                if let Some(param_type) = extract_param_type_at(db, &mock_params, index) {
+                if let Some(param_type) =
+                    extract_param_type_at_inner(db, &mock_params, index, arg_count)
+                {
                     // Try to evaluate it if it's a generic type or placeholder to see if it yields a concrete type
                     if !matches!(
                         db.lookup(param_type),
@@ -643,7 +703,7 @@ pub(crate) fn extract_param_type_at(
             if evaluated != last_param.type_id {
                 let mut mock_params = params.to_vec();
                 mock_params.last_mut().unwrap().type_id = evaluated;
-                return extract_param_type_at(db, &mock_params, index);
+                return extract_param_type_at_inner(db, &mock_params, index, arg_count);
             }
         }
 
@@ -653,7 +713,9 @@ pub(crate) fn extract_param_type_at(
         {
             let mut mock_params = params.to_vec();
             mock_params.last_mut().unwrap().type_id = constraint;
-            if let Some(param_type) = extract_param_type_at(db, &mock_params, index) {
+            if let Some(param_type) =
+                extract_param_type_at_inner(db, &mock_params, index, arg_count)
+            {
                 // If it yielded something different than the constraint itself, use it
                 if param_type != constraint {
                     return Some(param_type);
@@ -666,6 +728,68 @@ pub(crate) fn extract_param_type_at(
 
     // Index within non-rest params
     (index < params.len()).then(|| params[index].type_id)
+}
+
+/// Map an argument position through a variadic tuple's prefix/variadic/tail structure.
+///
+/// For a tuple like `[A, ...B[], C, D]` with 5 rest arguments:
+/// - Positions `0..prefix_len` map to prefix elements
+/// - Positions after (`rest_arg_count` - `tail_len`) map to tail elements
+/// - Positions in between map to the variadic element type
+fn variadic_tuple_element_type(
+    db: &dyn TypeDatabase,
+    elements: &[crate::TupleElement],
+    offset: usize,
+    rest_arg_count: usize,
+) -> Option<TypeId> {
+    let rest_index = elements.iter().position(|elem| elem.rest)?;
+
+    let (prefix, rest_and_tail) = elements.split_at(rest_index);
+    let rest_elem = &rest_and_tail[0];
+    let outer_tail = &rest_and_tail[1..];
+
+    let expansion = crate::utils::expand_tuple_rest(db, rest_elem.type_id);
+    let prefix_len = prefix.len();
+    let rest_fixed_len = expansion.fixed.len();
+    let expansion_tail_len = expansion.tail.len();
+    let outer_tail_len = outer_tail.len();
+    let total_suffix_len = expansion_tail_len + outer_tail_len;
+
+    if let Some(variadic) = expansion.variadic {
+        let suffix_start = rest_arg_count.saturating_sub(total_suffix_len);
+        if offset >= suffix_start {
+            let suffix_index = offset - suffix_start;
+            if suffix_index < expansion_tail_len {
+                return Some(expansion.tail[suffix_index].type_id);
+            }
+            let outer_index = suffix_index - expansion_tail_len;
+            return outer_tail.get(outer_index).map(|elem| elem.type_id);
+        }
+        if offset < prefix_len {
+            return Some(prefix[offset].type_id);
+        }
+        let fixed_end = prefix_len + rest_fixed_len;
+        if offset < fixed_end {
+            return Some(expansion.fixed[offset - prefix_len].type_id);
+        }
+        return Some(variadic);
+    }
+
+    // No variadic: prefix + expansion.fixed + expansion.tail + outer_tail
+    let mut idx = offset;
+    if idx < prefix_len {
+        return Some(prefix[idx].type_id);
+    }
+    idx -= prefix_len;
+    if idx < rest_fixed_len {
+        return Some(expansion.fixed[idx].type_id);
+    }
+    idx -= rest_fixed_len;
+    if idx < expansion_tail_len {
+        return Some(expansion.tail[idx].type_id);
+    }
+    idx -= expansion_tail_len;
+    outer_tail.get(idx).map(|elem| elem.type_id)
 }
 
 /// Visitor to extract parameter type from callable types.
@@ -822,7 +946,7 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
             return None;
         }
 
-        extract_param_type_at(self.db, &shape.params, self.index)
+        extract_param_type_at_for_call(self.db, &shape.params, self.index, self.arg_count)
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
@@ -834,7 +958,9 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
         for sig in &shape.call_signatures {
             if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
                 matched = true;
-                if let Some(param_type) = extract_param_type_at(self.db, &sig.params, self.index) {
+                if let Some(param_type) =
+                    extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
+                {
                     param_types.push(param_type);
                 }
             }
@@ -844,7 +970,9 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
             param_types = shape
                 .call_signatures
                 .iter()
-                .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
+                .filter_map(|sig| {
+                    extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
+                })
                 .collect();
         }
 
@@ -861,9 +989,12 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                 }
                 if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
                     matched = true;
-                    if let Some(param_type) =
-                        extract_param_type_at(self.db, &sig.params, self.index)
-                    {
+                    if let Some(param_type) = extract_param_type_at_for_call(
+                        self.db,
+                        &sig.params,
+                        self.index,
+                        self.arg_count,
+                    ) {
                         param_types.push(param_type);
                     }
                 }
@@ -873,7 +1004,14 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                     .construct_signatures
                     .iter()
                     .filter(|sig| sig.type_params.is_empty())
-                    .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
+                    .filter_map(|sig| {
+                        extract_param_type_at_for_call(
+                            self.db,
+                            &sig.params,
+                            self.index,
+                            self.arg_count,
+                        )
+                    })
                     .collect();
             }
         }
