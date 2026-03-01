@@ -1419,19 +1419,13 @@ impl Server {
             diagnostics
                 .retain(|d| seen_diags.insert((d.code, d.start, d.length, d.message_text.clone())));
 
-            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
-                .into_iter()
-                .filter(|d| {
-                    CodeFixRegistry::fixes_for_error_code(d.code)
-                        .iter()
-                        .any(|(_, id, _, _)| *id == fix_id)
-                })
-                .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
+            let to_lsp_diag = |d: &tsz::checker::diagnostics::Diagnostic| {
+                tsz::lsp::diagnostics::LspDiagnostic {
                     range: tsz::lsp::position::Range::new(
                         line_map.offset_to_position(d.start, &content),
                         line_map.offset_to_position(d.start + d.length, &content),
                     ),
-                    message: d.message_text,
+                    message: d.message_text.clone(),
                     code: Some(d.code),
                     severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
                     source: Some("tsz".to_string()),
@@ -1440,8 +1434,28 @@ impl Server {
                         .then_some(true),
                     reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
                         .then_some(true),
+                }
+            };
+            let mut filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+                .iter()
+                .filter(|d| {
+                    CodeFixRegistry::fixes_for_error_code(d.code)
+                        .iter()
+                        .any(|(_, id, _, _)| *id == fix_id)
                 })
+                .map(to_lsp_diag)
                 .collect();
+            if filtered_diagnostics.is_empty() {
+                filtered_diagnostics = diagnostics
+                    .iter()
+                    .filter(|d| {
+                        CodeFixRegistry::fixes_for_error_code(d.code)
+                            .iter()
+                            .any(|(_, id, _, _)| *id == fix_id)
+                    })
+                    .map(to_lsp_diag)
+                    .collect();
+            }
 
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
