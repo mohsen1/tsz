@@ -1014,8 +1014,8 @@ impl Server {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
             if item.is_snippet {
+                entry["filterText"] = serde_json::json!(item.label.clone());
                 if !is_class_member_snippet {
-                    entry["filterText"] = serde_json::json!(item.label.clone());
                     entry["isSnippet"] = serde_json::json!(true);
                 }
             }
