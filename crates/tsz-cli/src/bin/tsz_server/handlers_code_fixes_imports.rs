@@ -248,9 +248,13 @@ impl Server {
                     Self::normalize_commonjs_module_specifier(&module_specifier)
                 )
             } else if let Some(rest) = trimmed.strip_prefix("import * as ") {
-                let (local_name, module_specifier) = rest.split_once(" from ")?;
-                let module_specifier = extract_quoted_text(module_specifier)?;
-                let quote = quote_for(rest);
+                let (local_name, module_specifier_raw) = rest.split_once(" from ")?;
+                let module_specifier = extract_quoted_text(module_specifier_raw)?;
+                let quote = module_specifier_raw
+                    .trim_start()
+                    .chars()
+                    .find(|ch| *ch == '\'' || *ch == '"')
+                    .unwrap_or_else(|| quote_for(rest));
                 format!(
                     "const {} = require({quote}{}{quote})",
                     local_name.trim(),
@@ -260,18 +264,27 @@ impl Server {
                 .strip_prefix("import ")
                 .and_then(extract_quoted_text)
             {
-                let quote = quote_for(trimmed);
+                let quote = trimmed
+                    .trim_start_matches("import")
+                    .trim_start()
+                    .chars()
+                    .find(|ch| *ch == '\'' || *ch == '"')
+                    .unwrap_or_else(|| quote_for(trimmed));
                 format!(
                     "require({quote}{}{quote})",
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
             } else if let Some(rest) = trimmed.strip_prefix("import ") {
-                let (local_name, module_specifier) = rest.split_once(" from ")?;
-                let module_specifier = extract_quoted_text(module_specifier)?;
+                let (local_name, module_specifier_raw) = rest.split_once(" from ")?;
+                let module_specifier = extract_quoted_text(module_specifier_raw)?;
                 if local_name.contains('{') || local_name.contains('*') {
                     return None;
                 }
-                let quote = quote_for(rest);
+                let quote = module_specifier_raw
+                    .trim_start()
+                    .chars()
+                    .find(|ch| *ch == '\'' || *ch == '"')
+                    .unwrap_or_else(|| quote_for(rest));
                 format!(
                     "const {} = require({quote}{}{quote})",
                     local_name.trim(),
