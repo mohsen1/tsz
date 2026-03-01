@@ -465,6 +465,18 @@ impl<'a> CheckerState<'a> {
                 break;
             }
 
+            // Stop at JSX element boundaries — JSX attribute errors should anchor
+            // at the attribute itself, not walk up to the enclosing variable
+            // declaration or expression statement. tsc anchors JSX TS2322 errors
+            // at the specific attribute (e.g., `x` in `<Foo x={3} />`), not at the
+            // `let p = <Foo .../>` statement.
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT | syntax_kind_ext::JSX_OPENING_ELEMENT
+            ) {
+                break;
+            }
+
             if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
                 && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
                 && self.is_assignment_operator(binary.operator_token)

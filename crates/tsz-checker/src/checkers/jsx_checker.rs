@@ -1186,8 +1186,10 @@ impl<'a> CheckerState<'a> {
         let props_has_type_params = raw_props_has_type_params
             || tsz_solver::contains_type_parameters(self.ctx.types, props_type);
 
-        // Track provided attribute names for missing-required-property check
-        let mut provided_attrs: Vec<String> = Vec::new();
+        // Track provided attribute names and their types for missing-required-property check.
+        // Types are used to build a proper source type in TS2741 messages (e.g.,
+        // `{ property1: string; property2: number; }` instead of `{ property1, property2 }`).
+        let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let mut spread_covers_all = false;
         let mut has_excess_property_error = false;
 
@@ -1229,7 +1231,8 @@ impl<'a> CheckerState<'a> {
                 // compatibility (they come from IntrinsicAttributes/IntrinsicClassAttributes),
                 // they still need to be tracked as "provided" so the IntrinsicAttributes
                 // missing-required-property check knows they were given.
-                provided_attrs.push(attr_name.clone());
+                // Type will be filled in later after compute_type_of_node is called.
+                provided_attrs.push((attr_name.clone(), TypeId::ANY));
 
                 // Skip type-checking 'key' and 'ref' against component props.
                 // These are special JSX attributes managed by IntrinsicAttributes /
@@ -1332,14 +1335,15 @@ impl<'a> CheckerState<'a> {
                     // Boolean attribute without value (e.g., <input disabled />)
                     // tsc treats shorthand JSX attributes as type 'true' for assignability
                     // since `<Foo x/>` is equivalent to `<Foo x={true}/>`.
-                    // But tsc displays 'boolean' (not 'true') in error messages when
-                    // comparing against non-boolean types (e.g., number).
-                    // So we check assignability with BOOLEAN_TRUE (correct: `true` IS
-                    // assignable to `true`) but report errors with BOOLEAN to match
-                    // tsc's error message format for the common case.
+                    // tsc uses 'true' as the source type in error messages (matching the
+                    // actual value), not 'boolean'.
+                    // Update the attribute type for TS2741 source type formatting.
+                    if let Some(entry) = provided_attrs.last_mut() {
+                        entry.1 = TypeId::BOOLEAN_TRUE;
+                    }
                     if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
                         self.check_assignable_or_report_at(
-                            TypeId::BOOLEAN,
+                            TypeId::BOOLEAN_TRUE,
                             expected_type,
                             attr_data.name,
                             attr_data.name,
@@ -1386,6 +1390,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = Some(expected_type);
                     let actual_type = self.compute_type_of_node(value_node_idx);
                     self.ctx.contextual_type = prev_contextual_type;
+
+                    // Update the attribute type for TS2741 source type formatting.
+                    if let Some(entry) = provided_attrs.last_mut() {
+                        entry.1 = actual_type;
+                    }
 
                     // Check assignability — tsc anchors JSX attribute errors at the
                     // attribute NAME (not the value expression)
@@ -1478,15 +1487,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Extract property names from the spread type for TS2741 tracking.
+                // Extract property names and types from the spread type for TS2741 tracking.
                 // This allows the missing-required-property check to account for
-                // properties provided via spread.
+                // properties provided via spread, with accurate type info for error messages.
                 if let Some(spread_shape) =
                     tsz_solver::type_queries::get_object_shape(self.ctx.types, spread_type)
                 {
                     for prop in &spread_shape.properties {
                         let prop_name = self.ctx.types.resolve_atom(prop.name);
-                        provided_attrs.push(prop_name.to_string());
+                        provided_attrs.push((prop_name.to_string(), prop.type_id));
                     }
                 }
 
@@ -1573,7 +1582,7 @@ impl<'a> CheckerState<'a> {
     fn check_missing_required_jsx_props(
         &mut self,
         props_type: TypeId,
-        provided_attrs: &[String],
+        provided_attrs: &[(String, TypeId)],
         attributes_idx: NodeIndex,
     ) {
         let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
@@ -1595,15 +1604,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if provided_attrs.iter().any(|a| a == &prop_name) {
+            if provided_attrs.iter().any(|(a, _)| a == &prop_name) {
                 continue;
             }
 
-            // Build the "source type" name from provided attributes
+            // Build a synthetic object type from the provided attributes for the
+            // error message. tsc formats this as `{ property1: string; property2: number; }`,
+            // not just `{ property1, property2 }`.
             let source_type = if provided_attrs.is_empty() {
                 "{}".to_string()
             } else {
-                format!("{{ {} }}", provided_attrs.join(", "))
+                let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
+                    .iter()
+                    .map(|(name, type_id)| {
+                        let name_atom = self.ctx.types.intern_string(name);
+                        tsz_solver::PropertyInfo {
+                            name: name_atom,
+                            type_id: *type_id,
+                            write_type: *type_id,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            visibility: tsz_solver::Visibility::Public,
+                            parent_id: None,
+                        }
+                    })
+                    .collect();
+                let obj_type = self.ctx.types.factory().object(properties);
+                self.format_type(obj_type)
             };
             let target_type = self.format_type(props_type);
             let message = format!(
@@ -1633,8 +1661,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Collect provided attribute names
-        let mut provided_attrs: Vec<String> = Vec::new();
+        // Collect provided attribute names with types
+        let mut provided_attrs: Vec<(String, TypeId)> = Vec::new();
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
         };
@@ -1651,7 +1679,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_node) = self.ctx.arena.get(attr_data.name)
                     && let Some(attr_name) = self.get_jsx_attribute_name(name_node)
                 {
-                    provided_attrs.push(attr_name);
+                    provided_attrs.push((attr_name, TypeId::ANY));
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 // Spread of `any` covers all properties
