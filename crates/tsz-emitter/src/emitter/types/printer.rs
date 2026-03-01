@@ -729,6 +729,21 @@ impl<'a> TypePrinter<'a> {
             return format!("typeof {name}");
         }
 
+        // Simple callable: one call signature, no properties/construct/index sigs
+        // → use arrow function syntax: (params) => ReturnType
+        let has_properties = callable.properties.iter().any(|p| {
+            let name = self.resolve_atom(p.name);
+            name != "prototype" && !name.starts_with("__private_brand_")
+        });
+        if callable.call_signatures.len() == 1
+            && callable.construct_signatures.is_empty()
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+        {
+            return self.print_call_signature_arrow(&callable.call_signatures[0]);
+        }
+
         // Collect all signatures (call + construct)
         let mut parts = Vec::new();
 
@@ -872,6 +887,53 @@ impl<'a> TypePrinter<'a> {
         format!(
             "{}{}({}): {}",
             prefix,
+            type_params_str,
+            params.join(", "),
+            return_str
+        )
+    }
+
+    /// Print a call signature in arrow function syntax: (params) => `ReturnType`
+    fn print_call_signature_arrow(&self, sig: &tsz_solver::types::CallSignature) -> String {
+        let type_params_str = if !sig.type_params.is_empty() {
+            let params: Vec<String> = sig
+                .type_params
+                .iter()
+                .map(|tp| self.print_type_parameter_decl(tp))
+                .collect();
+            format!("<{}>", params.join(", "))
+        } else {
+            String::new()
+        };
+
+        let mut params = Vec::new();
+        for param in &sig.params {
+            let mut param_str = String::new();
+            if param.rest {
+                param_str.push_str("...");
+            }
+            if let Some(name) = param.name {
+                param_str.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    param_str.push('?');
+                }
+                param_str.push_str(": ");
+            }
+            param_str.push_str(&self.print_type(param.type_id));
+            params.push(param_str);
+        }
+
+        let mut nested = self.clone();
+        if let Some(indent) = nested.indent_level {
+            nested.indent_level = Some(indent + 1);
+        }
+        let return_str = if let Some(ref pred) = sig.type_predicate {
+            nested.print_type_predicate(pred)
+        } else {
+            nested.print_type(sig.return_type)
+        };
+        format!(
+            "{}({}) => {}",
             type_params_str,
             params.join(", "),
             return_str
