@@ -1,6 +1,6 @@
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
 use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -292,6 +292,147 @@ function test(value: string) {
     if relevant.iter().any(|(code, _)| *code == 2345) {
         panic!(
             "Found TS2345 error — type predicate narrowing to literal union failed: {relevant:?}"
+        );
+    }
+}
+
+/// Regression test: type guard narrowing during return type inference.
+///
+/// When a function body uses a type guard in an if-condition and then returns
+/// the narrowed value, the inferred return type should reflect the narrowing.
+/// Previously, `infer_return_type_from_body` only collected return expressions
+/// without evaluating if-conditions, so the flow analyzer couldn't find the
+/// type predicate and identifiers kept their un-narrowed declared type.
+///
+/// This caused false TS2722 ("Cannot invoke an object which is possibly
+/// 'undefined'") when calling the result of a function that narrows via
+/// Extract<T, Function>.
+#[test]
+fn test_type_guard_narrowing_in_return_type_inference() {
+    let source = r#"
+function isFunction<T>(value: T): value is Extract<T, Function> {
+    return typeof value === "function";
+}
+function getFunction<T>(item: T) {
+    if (isFunction(item)) {
+        return item;
+    }
+    throw new Error();
+}
+function f12(x: string | (() => string) | undefined) {
+    const f = getFunction(x);
+    f();
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // TS2722 would mean the type guard narrowing was not applied during
+    // return type inference, causing the inferred return type to be
+    // the un-narrowed T instead of Extract<T, Function>.
+    if relevant.iter().any(|(code, _)| *code == 2722) {
+        panic!(
+            "Found TS2722 error — type guard narrowing failed during return type inference: {relevant:?}"
+        );
+    }
+}
+
+/// Regression test: simple type predicate narrowing in inferred return type.
+///
+/// Verifies that a function whose body uses `if (isString(x)) return x`
+/// correctly infers the return type as the narrowed type, not the original.
+#[test]
+fn test_simple_type_predicate_return_inference() {
+    let source = r#"
+function isString(value: unknown): value is string {
+    return typeof value === "string";
+}
+function getString(x: string | number) {
+    if (isString(x)) {
+        return x;
+    }
+    throw new Error();
+}
+const s: string = getString("hello");
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    // TS2322 would mean the inferred return type is string | number instead
+    // of string (the type predicate narrowing was not applied).
+    if relevant.iter().any(|(code, _)| *code == 2322) {
+        panic!(
+            "Found TS2322 error — type predicate narrowing not applied to inferred return type: {relevant:?}"
         );
     }
 }
