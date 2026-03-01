@@ -1292,10 +1292,18 @@ impl Server {
                     // When source metadata is missing for duplicate labels, prefer
                     // ClassMemberSnippet entries to keep tsserver details/code-action
                     // pairing stable for snippet-backed completions.
+                    let normalize_source = |s: &str| {
+                        s.trim()
+                            .trim_matches('\"')
+                            .trim_matches('\'')
+                            .to_string()
+                    };
                     let source_matches = |item_source: Option<&str>, requested_source: &str| {
                         let Some(item_source) = item_source else {
                             return false;
                         };
+                        let item_source = normalize_source(item_source);
+                        let requested_source = normalize_source(requested_source);
                         if item_source == requested_source {
                             return true;
                         }
@@ -1305,7 +1313,7 @@ impl Server {
                                 .or_else(|| s.strip_suffix(".cjs"))
                                 .unwrap_or(s)
                         };
-                        strip_js_like(item_source) == strip_js_like(requested_source)
+                        strip_js_like(item_source.as_str()) == strip_js_like(requested_source.as_str())
                     };
                     let mut item = if let Some(source) = requested_source.as_deref() {
                         items.iter().find(|i| {
