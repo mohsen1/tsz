@@ -5800,6 +5800,7 @@ fn test_contextual_typing_for_object_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: types.intern_string("age"),
@@ -5810,6 +5811,7 @@ fn test_contextual_typing_for_object_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -6472,6 +6474,7 @@ fn test_strict_null_checks_property_access() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create union type: { x: number } | null
@@ -6513,6 +6516,7 @@ fn test_strict_null_checks_undefined_type() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create union type: { y: string } | undefined
@@ -6552,6 +6556,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create union type: { z: boolean } | null | undefined
@@ -6603,6 +6608,7 @@ fn test_strict_null_checks_non_nullable_success() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let evaluator = PropertyAccessEvaluator::new(&types);
@@ -9738,6 +9744,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             }]);
             assert_eq!(elem, expected);
         }

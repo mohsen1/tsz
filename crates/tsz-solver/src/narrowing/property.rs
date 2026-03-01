@@ -108,6 +108,7 @@ impl<'a> NarrowingContext<'a> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             };
             let filter_obj = self.db.object(vec![required_prop]);
             let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
@@ -217,6 +218,7 @@ impl<'a> NarrowingContext<'a> {
                     is_method: false,
                     visibility: Visibility::Public,
                     parent_id: None,
+                    declaration_order: 0,
                 };
                 let filter_obj = self.db.object(vec![required_prop]);
                 self.db.intersection2(source_type, filter_obj)

@@ -46,6 +46,7 @@ fn test_collect_properties_single_object() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }];
 
     let obj_type = interner.object(props);
@@ -77,6 +78,7 @@ fn test_collect_properties_intersection() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create object { y: number }
@@ -89,6 +91,7 @@ fn test_collect_properties_intersection() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create intersection obj1 & obj2
@@ -130,6 +133,7 @@ fn test_collect_properties_any_commutative() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Test: obj & any
@@ -158,6 +162,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create object { x: number }
@@ -170,6 +175,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create intersection obj1 & obj2
@@ -204,6 +210,7 @@ fn test_collect_properties_optionality_merging() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create object { x: number }
@@ -216,6 +223,7 @@ fn test_collect_properties_optionality_merging() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create intersection obj1 & obj2
@@ -249,6 +257,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create object { readonly x: string }
@@ -261,6 +270,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create intersection obj1 & obj2
@@ -295,6 +305,7 @@ fn test_collect_properties_nested_intersections() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -306,6 +317,7 @@ fn test_collect_properties_nested_intersections() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let obj3 = interner.object(vec![PropertyInfo {
@@ -317,6 +329,7 @@ fn test_collect_properties_nested_intersections() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create nested intersections: (obj1 & obj2) & obj3

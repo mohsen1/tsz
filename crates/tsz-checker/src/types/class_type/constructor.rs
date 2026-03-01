@@ -201,6 +201,7 @@ impl<'a> CheckerState<'a> {
                             is_method: false,
                             visibility,
                             parent_id: current_sym,
+                            declaration_order: 0,
                         },
                     );
                 }
@@ -381,6 +382,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     visibility: accessor.visibility,
                     parent_id: current_sym,
+                    declaration_order: 0,
                 },
             );
         }
@@ -415,6 +417,7 @@ impl<'a> CheckerState<'a> {
                     is_method: true,
                     visibility: method.visibility,
                     parent_id: current_sym,
+                    declaration_order: 0,
                 },
             );
         }
@@ -433,6 +436,7 @@ impl<'a> CheckerState<'a> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: current_sym,
+                declaration_order: 0,
             },
         );
 

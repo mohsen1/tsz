@@ -233,6 +233,7 @@ if (action.type === "add") {}
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let remove_member = types.object(vec![PropertyInfo {
         name: type_key,
@@ -243,6 +244,7 @@ if (action.type === "add") {}
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let union = types.union(vec![add_member, remove_member]);

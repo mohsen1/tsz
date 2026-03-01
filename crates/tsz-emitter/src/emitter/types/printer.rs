@@ -380,7 +380,19 @@ impl<'a> TypePrinter<'a> {
                 lines.push(line);
             }
 
-            for property in &shape.properties {
+            // Sort properties by declaration order when any have non-zero order,
+            // otherwise fall back to the interning order (sorted by name).
+            let has_decl_order = shape.properties.iter().any(|p| p.declaration_order > 0);
+            let mut sorted_props;
+            let props: &[tsz_solver::types::PropertyInfo] = if has_decl_order {
+                sorted_props = shape.properties.clone();
+                sorted_props.sort_by_key(|p| p.declaration_order);
+                &sorted_props
+            } else {
+                &shape.properties
+            };
+
+            for property in props {
                 if should_skip_property(property) {
                     continue;
                 }
@@ -462,7 +474,18 @@ impl<'a> TypePrinter<'a> {
                 members.push(member);
             }
 
-            for property in &shape.properties {
+            // Sort properties by declaration order when available
+            let has_decl_order = shape.properties.iter().any(|p| p.declaration_order > 0);
+            let mut sorted_props_flat;
+            let props_flat: &[tsz_solver::types::PropertyInfo] = if has_decl_order {
+                sorted_props_flat = shape.properties.clone();
+                sorted_props_flat.sort_by_key(|p| p.declaration_order);
+                &sorted_props_flat
+            } else {
+                &shape.properties
+            };
+
+            for property in props_flat {
                 if should_skip_property(property) {
                     continue;
                 }

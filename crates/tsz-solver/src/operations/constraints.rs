@@ -1122,6 +1122,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             });
         }
 

@@ -1023,6 +1023,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             });
         }
 

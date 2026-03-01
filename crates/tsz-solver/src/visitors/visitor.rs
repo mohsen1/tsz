@@ -1184,6 +1184,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         is_method: prop.is_method,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                 }
 
@@ -1207,6 +1208,7 @@ impl<'a> ConstAssertionVisitor<'a> {
                         is_method: prop.is_method,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                 }
 

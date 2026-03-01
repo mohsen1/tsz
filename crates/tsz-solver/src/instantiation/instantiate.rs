@@ -158,6 +158,7 @@ impl<'a> TypeInstantiator<'a> {
                 is_method: p.is_method,
                 visibility: p.visibility,
                 parent_id: p.parent_id,
+                declaration_order: 0,
             })
             .collect()
     }

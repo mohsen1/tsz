@@ -210,6 +210,7 @@ fn query_cache_caches_object_spread_properties() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let second_obj = db.object_with_flags(
@@ -222,6 +223,7 @@ fn query_cache_caches_object_spread_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

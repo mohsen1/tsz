@@ -170,6 +170,7 @@ fn test_get_property_object() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match judge.get_property(obj, foo_atom) {

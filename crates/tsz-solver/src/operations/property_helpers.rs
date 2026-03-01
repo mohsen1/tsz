@@ -595,6 +595,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         is_method: prop.is_method,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                     let write = (instantiated_write_type != instantiated_read_type)
                         .then_some(instantiated_write_type);

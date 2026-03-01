@@ -430,6 +430,7 @@ fn test_classify_element_indexable_preserves_union_members() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Member 2: object with string index { [s: string]: number }

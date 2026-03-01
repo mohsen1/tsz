@@ -722,7 +722,7 @@ impl std::hash::Hash for OrderedFloat {
 pub use tsz_common::Visibility;
 
 /// Property information for object types
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PropertyInfo {
     pub name: Atom,
     /// Read type (getter/lookup).
@@ -736,6 +736,36 @@ pub struct PropertyInfo {
     pub visibility: Visibility,
     /// Symbol that declared this property (for nominal identity checks)
     pub parent_id: Option<SymbolId>,
+    /// Declaration order for preserving source ordering in emit (excluded from equality/hash).
+    pub declaration_order: u32,
+}
+
+impl PartialEq for PropertyInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.type_id == other.type_id
+            && self.write_type == other.write_type
+            && self.optional == other.optional
+            && self.readonly == other.readonly
+            && self.is_method == other.is_method
+            && self.visibility == other.visibility
+            && self.parent_id == other.parent_id
+    }
+}
+
+impl Eq for PropertyInfo {}
+
+impl std::hash::Hash for PropertyInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.type_id.hash(state);
+        self.write_type.hash(state);
+        self.optional.hash(state);
+        self.readonly.hash(state);
+        self.is_method.hash(state);
+        self.visibility.hash(state);
+        self.parent_id.hash(state);
+    }
 }
 
 impl PropertyInfo {
@@ -751,6 +781,7 @@ impl PropertyInfo {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         }
     }
 

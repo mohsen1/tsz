@@ -442,6 +442,7 @@ fn test_intersection_visibility_merging() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create object { x: string } with public visibility
@@ -597,6 +598,7 @@ fn test_visibility_interning_distinct_shape_ids() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // These should have different TypeIds because visibility differs
@@ -637,6 +639,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: Some(SymbolId(1)),
+        declaration_order: 0,
     }]);
 
     let obj_class2 = interner.object(vec![PropertyInfo {
@@ -648,6 +651,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: Some(SymbolId(2)),
+        declaration_order: 0,
     }]);
 
     // These should have different TypeIds because parent_id differs
@@ -771,6 +775,7 @@ fn test_partial_object_merging_in_intersection() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -782,6 +787,7 @@ fn test_partial_object_merging_in_intersection() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create a primitive type
@@ -876,6 +882,7 @@ fn test_partial_object_and_callable_merging() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -887,6 +894,7 @@ fn test_partial_object_and_callable_merging() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create callable types

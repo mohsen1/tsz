@@ -75,6 +75,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         is_method: true, // This is a method
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }])
 }
 
@@ -90,6 +91,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         is_method: false, // Not a method, just a function property
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }])
 }
 
@@ -105,6 +107,7 @@ fn animal_type(interner: &TypeInterner) -> TypeId {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }])
 }
 
@@ -122,6 +125,7 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ])

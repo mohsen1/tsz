@@ -11401,6 +11401,7 @@ fn test_keyof_readonly_and_optional_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -11411,6 +11412,7 @@ fn test_keyof_readonly_and_optional_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -12440,6 +12442,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -12520,6 +12523,7 @@ fn test_mapped_type_remove_readonly_modifier() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
@@ -12568,6 +12572,7 @@ fn test_mapped_type_remove_optional_modifier() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(b_name, TypeId::NUMBER),
     ]);
@@ -12616,6 +12621,7 @@ fn test_mapped_type_add_readonly_modifier() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::readonly(y_name, TypeId::BOOLEAN),
     ]);
@@ -12664,6 +12670,7 @@ fn test_mapped_type_add_optional_modifier() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::opt(foo_name, TypeId::STRING),
     ]);
@@ -12708,6 +12715,7 @@ fn test_mapped_type_both_modifiers() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -12750,6 +12758,7 @@ fn test_mapped_type_both_remove_modifiers() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -12792,6 +12801,7 @@ fn test_mapped_type_add_readonly_remove_optional() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -12834,6 +12844,7 @@ fn test_mapped_type_remove_readonly_add_optional() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -12883,6 +12894,7 @@ fn test_mapped_type_minus_readonly_on_readonly_source() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
@@ -12930,6 +12942,7 @@ fn test_mapped_type_plus_optional_on_required_source() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::opt(y_name, TypeId::NUMBER),
     ]);
@@ -13093,6 +13106,7 @@ fn test_mapped_type_add_both_modifiers_on_source() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     assert_eq!(result, expected);
@@ -15192,6 +15206,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create Ref(1) for ReadonlyBox type alias
@@ -15248,6 +15263,7 @@ fn test_application_ref_expansion_with_optional_property() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Create Ref(1) for OptionalBox type alias
@@ -16080,6 +16096,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: value_name,
@@ -16090,6 +16107,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -18056,6 +18074,7 @@ fn test_indexed_access_optional_property() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -18083,6 +18102,7 @@ fn test_indexed_access_mixed_optional_required() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -18093,6 +18113,7 @@ fn test_indexed_access_mixed_optional_required() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -18225,6 +18246,7 @@ fn test_indexed_access_readonly_property() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -18388,6 +18410,7 @@ fn test_generator_function_async_return() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let cond = ConditionalType {
@@ -18411,6 +18434,7 @@ fn test_generator_function_async_return() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     subst.insert(t_name, input_obj);
 
@@ -18758,6 +18782,7 @@ fn test_module_augmentation_class_extension() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // T extends { new: ... } ? T : never
@@ -22097,6 +22122,7 @@ fn test_iterable_with_symbol_iterator() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Verify iterator structure
@@ -22879,6 +22905,7 @@ fn test_noinfer_with_object_property() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Object preserves NoInfer in property types (structurally unchanged)
@@ -23357,6 +23384,7 @@ fn test_partial_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: b_name,
@@ -23367,6 +23395,7 @@ fn test_partial_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -23398,6 +23427,7 @@ fn test_partial_nested_object() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let partial_outer = interner.object(vec![PropertyInfo {
@@ -23409,6 +23439,7 @@ fn test_partial_nested_object() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(partial_outer) {
@@ -23449,6 +23480,7 @@ fn test_partial_deep_nesting() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: y_name,
@@ -23459,6 +23491,7 @@ fn test_partial_deep_nesting() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -23502,6 +23535,7 @@ fn test_required_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: b_name,
@@ -23512,6 +23546,7 @@ fn test_required_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -23543,6 +23578,7 @@ fn test_required_nested_optionals() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let required_outer = interner.object(vec![PropertyInfo {
@@ -23554,6 +23590,7 @@ fn test_required_nested_optionals() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(required_outer) {
@@ -23624,6 +23661,7 @@ fn test_readonly_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: b_name,
@@ -23634,6 +23672,7 @@ fn test_readonly_simple_object() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -23715,6 +23754,7 @@ fn test_readonly_nested() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(readonly_obj) {
@@ -23822,6 +23862,7 @@ fn test_partial_with_methods() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(partial_obj) {
@@ -23881,6 +23922,7 @@ fn test_partial_required_inverse() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(required_partial) {
@@ -23909,6 +23951,7 @@ fn test_readonly_with_optional() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     match interner.lookup(readonly_optional) {
@@ -26665,6 +26708,7 @@ fn test_recursive_conditional_type_unwrap_promise() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // For testing: Promise<T> extends Promise<infer U> case
@@ -29242,6 +29286,7 @@ fn test_satisfies_optional_property_satisfied() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -30347,6 +30392,7 @@ fn test_const_object_literal_readonly_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::readonly(interner.intern_string("b"), hello),
     ]);
@@ -30979,6 +31025,7 @@ fn test_pick_preserves_optional() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
     ]);
@@ -31487,6 +31534,7 @@ fn test_omit_preserves_readonly() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
     ]);
@@ -37394,6 +37442,7 @@ fn test_infer_ignores_readonly() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Input: { prop: number } (not readonly)
@@ -39230,6 +39279,7 @@ fn test_infer_return_promise_like() {
         is_method: true,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let source_fn = interner.function(FunctionShape {
@@ -41489,6 +41539,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: key_b,
@@ -41499,6 +41550,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -41555,6 +41607,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: key_b,
@@ -41565,6 +41618,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -41617,6 +41671,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let keyof_source = interner.keyof(source);
