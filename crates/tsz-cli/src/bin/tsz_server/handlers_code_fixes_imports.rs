@@ -230,24 +230,26 @@ impl Server {
             return None;
         }
         let has_semicolon = trimmed.ends_with(';');
+        let quote_for = |text: &str| if text.contains('\'') { '\'' } else { '"' };
 
         let mut require_stmt =
-            if let Some((specs, module_specifier, _quote)) = parse_named_import_line(trimmed) {
+            if let Some((specs, module_specifier, quote)) = parse_named_import_line(trimmed) {
                 let rewritten_specs = specs
                     .iter()
                     .map(|spec| spec.raw.replace(" as ", ": "))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
-                    "const {{ {} }} = require(\"{}\")",
+                    "const {{ {} }} = require({quote}{}{quote})",
                     rewritten_specs,
                     Self::normalize_commonjs_module_specifier(&module_specifier)
                 )
             } else if let Some(rest) = trimmed.strip_prefix("import * as ") {
                 let (local_name, module_specifier) = rest.split_once(" from ")?;
                 let module_specifier = extract_quoted_text(module_specifier)?;
+                let quote = quote_for(rest);
                 format!(
-                    "const {} = require(\"{}\")",
+                    "const {} = require({quote}{}{quote})",
                     local_name.trim(),
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
@@ -255,8 +257,9 @@ impl Server {
                 .strip_prefix("import ")
                 .and_then(extract_quoted_text)
             {
+                let quote = quote_for(trimmed);
                 format!(
-                    "require(\"{}\")",
+                    "require({quote}{}{quote})",
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
             } else if let Some(rest) = trimmed.strip_prefix("import ") {
@@ -265,8 +268,9 @@ impl Server {
                 if local_name.contains('{') || local_name.contains('*') {
                     return None;
                 }
+                let quote = quote_for(rest);
                 format!(
-                    "const {} = require(\"{}\")",
+                    "const {} = require({quote}{}{quote})",
                     local_name.trim(),
                     Self::normalize_commonjs_module_specifier(module_specifier)
                 )
