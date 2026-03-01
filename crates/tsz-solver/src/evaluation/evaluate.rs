@@ -259,11 +259,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(instantiated)
     }
 
+    /// Global thread-local depth counter for cross-evaluator stack overflow prevention.
+    ///
+    /// Each `SubtypeChecker::evaluate_type` creates a fresh `TypeEvaluator` with fresh
+    /// per-evaluator guards. But the OS stack accumulates across ALL of them. For example,
+    /// `Vector<T> implements Seq<T>` where `Opt<T>` has `toVector(): Vector<T>` and
+    /// `Vector` has `Exclude<T, U>` in an overload return type: each structural comparison
+    /// level creates ~8 evaluate calls, and the subtype checker recurses 10+ levels deep,
+    /// producing 100+ nested evaluate frames that overflow the 8MB default stack.
+    ///
+    /// This counter tracks cumulative `evaluate` frames across all `TypeEvaluator` instances
+    /// on the current thread's call stack. When it exceeds `MAX_GLOBAL_EVAL_DEPTH`, we
+    /// bail out with ERROR to prevent stack overflow.
+    const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
+
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
     pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {
-        use crate::recursion::RecursionResult;
-
         // Fast path for intrinsics
         if type_id.is_intrinsic() {
             return type_id;
@@ -273,6 +285,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.guard.is_exceeded() {
             return TypeId::ERROR;
         }
+
+        // Cross-evaluator stack overflow prevention.
+        // See MAX_GLOBAL_EVAL_DEPTH doc comment for rationale.
+        thread_local! {
+            static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
+        let global_depth = GLOBAL_EVAL_DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        if global_depth >= Self::MAX_GLOBAL_EVAL_DEPTH {
+            GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+            self.guard.mark_exceeded();
+            return TypeId::ERROR;
+        }
+        let result = self.evaluate_guarded(type_id);
+        GLOBAL_EVAL_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        result
+    }
+
+    /// Inner evaluate logic, called after global depth check.
+    fn evaluate_guarded(&mut self, type_id: TypeId) -> TypeId {
+        use crate::recursion::RecursionResult;
 
         if let Some(&cached) = self.cache.get(&type_id) {
             return cached;

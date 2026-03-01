@@ -16,6 +16,25 @@ use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_
 use crate::types::{IntrinsicKind, TypeId};
 use crate::visitor::{application_id, enum_components, lazy_def_id};
 
+// Global thread-local fuel counter for cross-instance subtype check termination.
+//
+// Unlike depth counters (which unwind), fuel is monotonically consumed and never
+// restored until the outermost check_subtype call completes. This prevents the
+// "infinite hang" scenario where each property comparison in an implements check
+// triggers a deep evaluation chain — the total work across ALL properties is bounded.
+//
+// The depth counter tracks nesting level (incremented on enter, decremented on leave)
+// to detect when we're back at the outermost call and can reset the fuel.
+thread_local! {
+    static GLOBAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static GLOBAL_SUBTYPE_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+// Maximum number of non-trivial subtype checks per top-level call chain.
+// Generous enough for complex real-world types (react, fp-ts) but restrictive
+// enough to prevent runaway recursion from hanging.
+const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
     /// which implements greatest fixed point semantics - the correct behavior for
@@ -110,6 +129,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
+        // Global fuel guard (cross-instance work limiter)
+        // =========================================================================
+        // Track nesting depth and consume fuel for every non-trivial check.
+        // Fuel is monotonically consumed; depth tracks when we're back at root.
+        let global_depth = GLOBAL_SUBTYPE_DEPTH.with(|d| {
+            let v = d.get();
+            d.set(v + 1);
+            v
+        });
+        let fuel = GLOBAL_SUBTYPE_FUEL.with(|f| {
+            let v = f.get();
+            f.set(v + 1);
+            v
+        });
+
+        // Helper macro to decrement global depth and optionally reset fuel on early returns.
+        macro_rules! leave_global {
+            () => {
+                GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                if global_depth == 0 {
+                    GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
+                }
+            };
+        }
+
+        if fuel >= MAX_GLOBAL_SUBTYPE_FUEL {
+            leave_global!();
+            return SubtypeResult::DepthExceeded;
+        }
+
+        // =========================================================================
         // Cross-checker memoization (QueryCache lookup)
         // =========================================================================
         // Check the shared cache for a previously computed result.
@@ -118,6 +168,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
             if let Some(cached) = db.lookup_subtype_cache(key) {
+                leave_global!();
                 return if cached {
                     SubtypeResult::True
                 } else {
@@ -137,13 +188,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check reversed pair for bivariant cross-recursion detection.
         if self.guard.is_visiting(&(target, source)) {
+            leave_global!();
             return SubtypeResult::CycleDetected;
         }
 
         use crate::recursion::RecursionResult;
         match self.guard.enter(pair) {
-            RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+            RecursionResult::Cycle => {
+                leave_global!();
+                return SubtypeResult::CycleDetected;
+            }
             RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                leave_global!();
                 return SubtypeResult::DepthExceeded;
             }
             RecursionResult::Entered => {}
@@ -238,6 +294,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         && self.resolver.def_to_symbol_id(visiting_t) == Some(t_sid)
                 }) {
                     self.guard.leave(pair);
+                    leave_global!();
                     return SubtypeResult::CycleDetected;
                 }
             }
@@ -247,11 +304,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Check reversed pair for bivariant cross-recursion
             if self.def_guard.is_visiting(&(t_def, s_def)) {
                 self.guard.leave(pair);
+                leave_global!();
                 return SubtypeResult::CycleDetected;
             }
             match self.def_guard.enter((s_def, t_def)) {
                 RecursionResult::Cycle => {
                     self.guard.leave(pair);
+                    leave_global!();
                     return SubtypeResult::CycleDetected;
                 }
                 RecursionResult::Entered => Some((s_def, t_def)),
@@ -288,6 +347,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         self.def_guard.leave(dp);
                     }
                     self.guard.leave(pair);
+                    leave_global!();
                     return result;
                 }
             }
@@ -314,6 +374,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.def_guard.leave(dp);
                 }
                 self.guard.leave(pair);
+                leave_global!();
                 return SubtypeResult::True;
             }
         }
@@ -405,6 +466,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::False => db.insert_subtype_cache(key, false),
                 SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
             }
+        }
+
+        // Decrement global depth; reset fuel when outermost call completes.
+        GLOBAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+        if global_depth == 0 {
+            GLOBAL_SUBTYPE_FUEL.with(|f| f.set(0));
         }
 
         result

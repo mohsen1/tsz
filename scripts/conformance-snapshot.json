@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-01T15:02:18Z",
-  "git_sha": "168d1df18bf83c3fb2e821dc221515f3dc3a85f2",
+  "timestamp": "2026-03-01T15:07:08Z",
+  "git_sha": "4cd861ba5d985d19a4dc8cb0530e3200e142c78d",
   "summary": {
     "total_tests": 12570,
     "passed": 9714,
@@ -121,13 +121,6 @@
       "pass_rate": 66.32
     },
     {
-      "area": "classes/members",
-      "total": 198,
-      "passed": 132,
-      "failed": 66,
-      "pass_rate": 66.67
-    },
-    {
       "area": "types/intersection",
       "total": 24,
       "passed": 16,
@@ -161,6 +154,13 @@
       "passed": 49,
       "failed": 24,
       "pass_rate": 67.12
+    },
+    {
+      "area": "classes/members",
+      "total": 198,
+      "passed": 133,
+      "failed": 65,
+      "pass_rate": 67.17
     },
     {
       "area": "expressions/optionalChaining",
@@ -375,9 +375,9 @@
     {
       "area": "compiler",
       "total": 6473,
-      "passed": 5023,
-      "failed": 1450,
-      "pass_rate": 77.6
+      "passed": 5022,
+      "failed": 1451,
+      "pass_rate": 77.58
     },
     {
       "area": "enums",
@@ -1338,6 +1338,10 @@
       "count": 3
     },
     {
+      "code": "TS2536",
+      "count": 3
+    },
+    {
       "code": "TS2554",
       "count": 3
     },
@@ -1391,10 +1395,6 @@
     },
     {
       "code": "TS2365",
-      "count": 2
-    },
-    {
-      "code": "TS2536",
       "count": 2
     },
     {
@@ -1520,6 +1520,10 @@
       "count": 4
     },
     {
+      "code": "TS2536",
+      "count": 4
+    },
+    {
       "code": "TS2344",
       "count": 4
     },
@@ -1544,11 +1548,11 @@
       "count": 3
     },
     {
-      "code": "TS2538",
+      "code": "TS2449",
       "count": 3
     },
     {
-      "code": "TS2449",
+      "code": "TS2538",
       "count": 3
     },
     {
@@ -1557,10 +1561,6 @@
     },
     {
       "code": "TS2366",
-      "count": 3
-    },
-    {
-      "code": "TS2536",
       "count": 3
     },
     {
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 327,
+    "false_positive": 328,
     "all_missing": 502,
-    "wrong_code": 1969,
-    "close_to_passing": 1673
+    "wrong_code": 1968,
+    "close_to_passing": 1672
   }
 }
