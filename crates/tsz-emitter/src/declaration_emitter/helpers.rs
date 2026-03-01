@@ -148,6 +148,16 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
                 }
             }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(node) {
+                    if unary.operator == SyntaxKind::MinusToken as u16 {
+                        self.write("-");
+                    } else if unary.operator == SyntaxKind::PlusToken as u16 {
+                        self.write("+");
+                    }
+                    self.emit_node(unary.operand);
+                }
+            }
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
                 if let Some(pattern) = self.arena.get_binding_pattern(node) {
                     if pattern.elements.nodes.is_empty() {
