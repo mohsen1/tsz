@@ -27,6 +27,7 @@ impl Server {
             .arguments
             .get("preferences")
             .and_then(|p| p.get("autoImportFileExcludePatterns"))
+            .or_else(|| request.arguments.get("autoImportFileExcludePatterns"))
             .and_then(serde_json::Value::as_array)
             .map(|arr| {
                 arr.iter()
@@ -42,6 +43,7 @@ impl Server {
             .arguments
             .get("preferences")
             .and_then(|p| p.get("autoImportSpecifierExcludeRegexes"))
+            .or_else(|| request.arguments.get("autoImportSpecifierExcludeRegexes"))
             .and_then(serde_json::Value::as_array)
             .map(|arr| {
                 arr.iter()
