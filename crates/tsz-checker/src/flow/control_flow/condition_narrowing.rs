@@ -1003,6 +1003,36 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(right_false);
         }
 
+        // Logical assignment operators (&&=, ||=, ??=) used as conditions:
+        // `if (x &&= y)` / `if (x ||= y)` / `if (x ??= y)`
+        // The flow graph already handles the assignment semantics (two branches
+        // for short-circuit vs assignment, merged at a BRANCH_LABEL). When the
+        // result is used as an `if` condition, apply truthiness narrowing:
+        //
+        // - LHS (x): On TRUE branch, x is guaranteed truthy for all three operators.
+        // - RHS (y): For &&= only, the TRUE branch also guarantees y is truthy,
+        //   because &&= evaluates y only when x is truthy, and the result IS y.
+        //   For ||= and ??=, the TRUE branch doesn't guarantee y was evaluated.
+        if operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || operator == SyntaxKind::BarBarEqualsToken as u16
+            || operator == SyntaxKind::QuestionQuestionEqualsToken as u16
+        {
+            let matches_lhs = self.is_matching_reference(bin.left, target);
+            let matches_rhs = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                && self.is_matching_reference(bin.right, target);
+
+            if matches_lhs || matches_rhs {
+                let env_borrow;
+                let narrowing = if let Some(env) = &self.type_environment {
+                    env_borrow = env.borrow();
+                    NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+                } else {
+                    NarrowingContext::new(self.interner)
+                };
+                return Some(narrowing.narrow_type(type_id, &TypeGuard::Truthy, is_true_branch));
+            }
+        }
+
         None
     }
 }

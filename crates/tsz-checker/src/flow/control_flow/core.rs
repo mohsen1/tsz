@@ -890,12 +890,14 @@ impl<'a> FlowAnalyzer<'a> {
                         if let Some(assigned_type) =
                             self.get_assigned_type(flow.node, reference, is_destructuring)
                         {
-                            // For logical assignments (&&=, ||=, ??=), the expression
-                            // result type already encodes the correct narrowing
-                            // (e.g. NonNullable<x> | y for ??=). Use it directly
-                            // instead of filtering through narrow_assignment, because
-                            // mutual-subtype filtering doesn't correctly handle the
-                            // logical semantics.
+                            // For logical assignments (??=, ||=, &&=), the binder creates
+                            // a two-branch flow graph: one branch for the short-circuit
+                            // (original value, with condition narrowing) and one branch for
+                            // the assignment (RHS value). On the assignment branch, the
+                            // variable holds exactly the RHS value — skip narrow_assignment
+                            // which uses mutual-subtype filtering and can fail when the RHS
+                            // type is structurally different from declared union members
+                            // (e.g., arrow with different return type).
                             if self.is_logical_assignment(flow.node) {
                                 assigned_type
                             } else {

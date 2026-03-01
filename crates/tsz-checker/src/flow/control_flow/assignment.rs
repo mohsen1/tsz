@@ -905,6 +905,25 @@ impl<'a> FlowAnalyzer<'a> {
         )
     }
 
+    /// Check if a flow assignment node corresponds to a logical assignment operator
+    /// (`??=`, `||=`, `&&=`). These operators have special flow semantics: the binder
+    /// creates a two-branch graph (short-circuit vs assignment), so on the assignment
+    /// branch the variable holds exactly the RHS value.
+    pub(crate) fn is_logical_assignment(&self, node: NodeIndex) -> bool {
+        let Some(n) = self.arena.get(node) else {
+            return false;
+        };
+        if n.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(n) else {
+            return false;
+        };
+        bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+            || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+    }
+
     pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {
         if initial_type == TypeId::ANY
             || initial_type == TypeId::ERROR

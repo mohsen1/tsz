@@ -1,7 +1,45 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9723/12559 (77.4%) — full suite, error-code level
+**Current score**: ~9740/12570 (77.5%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01b — types/union: TS2349 for incompatible multi-overload union call signatures
+
+### Fixed: Union types with incompatible multi-overload call signatures now emit TS2349 — Solver (operations/core.rs)
+
+**Area**: types/union (60.0%, 10 failing out of 25 tests)
+
+**Root cause**: When a union type like `F3 | F4` had members with MULTIPLE overloaded call signatures and no compatible set of overloads existed across members, the solver incorrectly succeeded. The existing code in `resolve_union_call` had two gaps:
+1. `compute_union_this_type` skipped multi-overload callables (only processed single-signature members)
+2. `extract_union_call_signature` returned `None` for multi-overload callables, causing `union_call_signature_bounds` to return `Unknown` instead of `Incompatible`
+3. Phase 2 per-member resolution then called `resolve_call` on each member independently, where overload resolution found a matching overload — so both members "succeeded" even though no compatible unified signature existed.
+
+**Fix** (operations/core.rs): Added tsc's `getUnionSignatures` algorithm:
+1. `collect_union_call_signature_lists()` — Collects per-member signature lists from Function and Callable types
+2. `are_signatures_compatible_for_union()` — Checks if two non-generic signatures have matching required param count, param types, and `this` types (mirrors tsc's `compareSignaturesIdentical`)
+3. `find_union_compatible_signatures()` — Phase 1: For each signature in each member, checks if a compatible signature exists in every other member's list. Phase 2: If only ONE member has overloads, uses it as master and combines with single-sig members. Returns `None` if multiple members have overloads and no compatible pair exists.
+4. Integration in `resolve_union_call` Phase 0.5: When ≥2 members have multi-overload callables, calls `find_union_compatible_signatures`. If `None` → `NotCallable` (TS2349). If compatible signatures found, intersects their `this` types and checks against calling context → `ThisTypeMismatch` (TS2684) if incompatible.
+
+**Key design decision**: When only ONE member has multiple overloads, we skip the new check and let the existing per-member resolution handle it. This matches tsc's behavior where `F0 | F3` (F0=single-sig, F3=multi-overload) is callable as long as F0 succeeds independently.
+
+**Tests**: 3 unit tests in `operations_tests.rs`:
+- `test_union_multi_overload_incompatible_not_callable` — F3|F4 with no compatible pair → NotCallable
+- `test_union_multi_overload_compatible_this_mismatch` — F3|F5 with compatible (this:B) → ThisTypeMismatch
+- `test_union_single_plus_multi_overload_succeeds` — F0|F3 → Success
+
+**Impact**: +1 conformance test (9739→9740). `prespecializedGenericMembers1.ts` flipped PASS as a bonus. `unionTypeCallSignatures6.ts` error codes now fully match tsc (TS2349 at line 39, TS2684 at line 40). Fingerprint-level mismatches remain due to intersection member ordering (`B & A` vs `A & B`) and error column offset.
+
+### Remaining gaps in types/union area (10 failing):
+1. **Fingerprint-only** (8 tests): Error codes match but message text, column offsets, or `this` type formatting differs. Key issues:
+   - Intersection member ordering in `this` type names (`B & A` vs `A & B`)
+   - TS2349 error column (col 1 vs col 4 — we anchor at call expression, tsc at member access)
+   - TS2554 argument count messages (different min/max in union call signatures)
+   - TS2341 private member access in union types
+   - TS2322 union type names use expanded types instead of aliases
+2. **TS2322 missing** (unionTypeWithIndexSignature.ts): `both[0] = 'not ok'` should emit TS2322 "Type 'string' is not assignable to type 'number'" — numeric index signature resolution in union types
+3. **TS2349 missing** (unionTypeCallSignatures.ts): Still has per-member arg count mismatch issues
 
 ---
 
