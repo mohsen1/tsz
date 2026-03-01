@@ -80,6 +80,7 @@ fn test_concurrent_object_creation() {
                     is_method: false,
                     visibility: Visibility::Public,
                     parent_id: None,
+                    declaration_order: 0,
                 },
             ];
             interner.object(props)
@@ -203,6 +204,7 @@ fn test_concurrent_property_map_building() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         })
         .collect();
 

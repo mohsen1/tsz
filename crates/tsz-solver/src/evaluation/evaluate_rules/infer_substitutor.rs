@@ -128,6 +128,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_method: prop.is_method,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                 }
                 if changed {
@@ -155,6 +156,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_method: prop.is_method,
                         visibility: prop.visibility,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                 }
                 let string_index = shape.string_index.as_ref().map(|index| {
@@ -432,6 +434,7 @@ impl<'a> InferSubstitutor<'a> {
                             is_method: prop.is_method,
                             visibility: prop.visibility,
                             parent_id: prop.parent_id,
+                            declaration_order: 0,
                         }
                     })
                     .collect();

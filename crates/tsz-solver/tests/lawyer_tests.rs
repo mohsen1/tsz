@@ -721,6 +721,7 @@ fn test_private_brands_nominality() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(1)), // Class A's declaration
+        declaration_order: 0,
     }]);
 
     // Class B with private x: number (parent_id = SymbolId(2))
@@ -733,6 +734,7 @@ fn test_private_brands_nominality() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(2)), // Class B's declaration (different!)
+        declaration_order: 0,
     }]);
 
     // Should NOT be assignable due to different private declarations
@@ -765,6 +767,7 @@ fn test_subclass_inherits_parent_brand() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(1)), // Parent's declaration
+        declaration_order: 0,
     }]);
 
     // Subclass C extends A, inherits private x (parent_id = SymbolId(1) - same as parent!)
@@ -777,6 +780,7 @@ fn test_subclass_inherits_parent_brand() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(1)), // Inherited from parent (same!)
+        declaration_order: 0,
     }]);
 
     // Should be assignable because the private member has the same declaration
@@ -804,6 +808,7 @@ fn test_protected_brands_nominality() {
         is_method: false,
         visibility: Visibility::Protected,
         parent_id: Some(tsz_binder::SymbolId(1)),
+        declaration_order: 0,
     }]);
 
     // Class B with protected x: number (parent_id = SymbolId(2))
@@ -816,6 +821,7 @@ fn test_protected_brands_nominality() {
         is_method: false,
         visibility: Visibility::Protected,
         parent_id: Some(tsz_binder::SymbolId(2)),
+        declaration_order: 0,
     }]);
 
     // Should NOT be assignable due to different protected declarations
@@ -843,6 +849,7 @@ fn test_public_members_structural() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: Some(tsz_binder::SymbolId(1)),
+        declaration_order: 0,
     }]);
 
     // Class B with public x: number (parent_id = SymbolId(2))
@@ -855,6 +862,7 @@ fn test_public_members_structural() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: Some(tsz_binder::SymbolId(2)),
+        declaration_order: 0,
     }]);
 
     // Should be assignable because public members are structural
@@ -882,6 +890,7 @@ fn test_visibility_leakage_prevented() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(1)),
+        declaration_order: 0,
     }]);
 
     // Target: interface with public x
@@ -894,6 +903,7 @@ fn test_visibility_leakage_prevented() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: Some(tsz_binder::SymbolId(2)),
+        declaration_order: 0,
     }]);
 
     // Should NOT be assignable (visibility leakage prevented)
@@ -922,6 +932,7 @@ fn test_private_brands_in_intersection() {
         is_method: false,
         visibility: Visibility::Private,
         parent_id: Some(tsz_binder::SymbolId(1)),
+        declaration_order: 0,
     }]);
 
     // Additional type with public y

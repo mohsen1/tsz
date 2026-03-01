@@ -18,6 +18,7 @@ fn test_merge_properties() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }];
 
     let own_props = vec![
@@ -30,6 +31,7 @@ fn test_merge_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: age_atom, // New
@@ -40,6 +42,7 @@ fn test_merge_properties() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ];
 

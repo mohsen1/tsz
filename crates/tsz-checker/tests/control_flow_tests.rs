@@ -182,6 +182,7 @@ switch (x.kind) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let member_b = types.object(vec![PropertyInfo {
         name: kind_name,
@@ -192,6 +193,7 @@ switch (x.kind) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let union = types.union(vec![member_a, member_b]);
@@ -277,6 +279,7 @@ if (x instanceof Foo) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let union = types.union(vec![TypeId::STRING, obj_type]);
 
@@ -326,6 +329,7 @@ if ("a" in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -336,6 +340,7 @@ if ("a" in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -385,6 +390,7 @@ if ("a" in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -395,6 +401,7 @@ if ("a" in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let union = types.union(vec![type_a, type_b]);
 
@@ -444,6 +451,7 @@ if (#a in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let type_b = types.object(vec![PropertyInfo {
         name: prop_b,
@@ -454,6 +462,7 @@ if (#a in x) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let union = types.union(vec![type_a, type_b]);
 

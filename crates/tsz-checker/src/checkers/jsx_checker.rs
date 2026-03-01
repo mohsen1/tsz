@@ -1635,6 +1635,7 @@ impl<'a> CheckerState<'a> {
                             is_method: false,
                             visibility: tsz_solver::Visibility::Public,
                             parent_id: None,
+                            declaration_order: 0,
                         }
                     })
                     .collect();

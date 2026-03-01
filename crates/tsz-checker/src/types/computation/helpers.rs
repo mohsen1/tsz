@@ -1229,6 +1229,7 @@ impl<'a> CheckerState<'a> {
                     is_method: true,
                     visibility: Visibility::Public,
                     parent_id: None,
+                    declaration_order: 0,
                 };
                 return factory.object(vec![prop]);
             }
@@ -1247,6 +1248,7 @@ impl<'a> CheckerState<'a> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             };
             return factory.object(vec![prop]);
         }

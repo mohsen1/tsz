@@ -23,6 +23,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: name_y,
@@ -33,6 +34,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -45,6 +47,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     let extra_required = interner.object(vec![
@@ -57,6 +60,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: name_z,
@@ -67,6 +71,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -80,6 +85,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: name_y,
@@ -90,6 +96,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ]);
 
@@ -160,6 +167,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         });
     }
 

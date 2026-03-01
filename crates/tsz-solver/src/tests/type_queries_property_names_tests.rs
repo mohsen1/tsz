@@ -11,6 +11,7 @@ fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }])
 }
 

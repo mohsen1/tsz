@@ -30,6 +30,7 @@ fn exposes_state_checking_boundary_queries() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
     let readonly_array = types.readonly_type(array);
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);

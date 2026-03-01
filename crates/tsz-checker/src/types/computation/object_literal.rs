@@ -56,6 +56,7 @@ impl<'a> CheckerState<'a> {
         // Skip duplicate property checks for destructuring assignment targets.
         // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
         let skip_duplicate_check = self.ctx.in_destructuring_target;
+        let mut prop_order: u32 = 0;
 
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API pattern)
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
@@ -236,6 +237,8 @@ impl<'a> CheckerState<'a> {
                     // Track this named property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (prop.name, name.clone()));
 
+                    let order = prop_order;
+                    prop_order += 1;
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -247,6 +250,7 @@ impl<'a> CheckerState<'a> {
                             is_method: false,
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: order,
                         },
                     );
                 } else {
@@ -467,6 +471,8 @@ impl<'a> CheckerState<'a> {
                     // Track this shorthand property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (elem_idx, name.clone()));
 
+                    let order = prop_order;
+                    prop_order += 1;
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -478,6 +484,7 @@ impl<'a> CheckerState<'a> {
                             is_method: false,
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: order,
                         },
                     );
                 } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
@@ -577,6 +584,8 @@ impl<'a> CheckerState<'a> {
                     }
                     explicit_property_names.insert(name_atom);
 
+                    let order = prop_order;
+                    prop_order += 1;
                     properties.insert(
                         name_atom,
                         PropertyInfo {
@@ -588,6 +597,7 @@ impl<'a> CheckerState<'a> {
                             is_method: true, // Object literal methods should be bivariant
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: order,
                         },
                     );
                 } else {
@@ -773,6 +783,7 @@ impl<'a> CheckerState<'a> {
                                 is_method: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
+                                declaration_order: 0,
                             });
                         }
                         self.ctx
@@ -915,6 +926,7 @@ impl<'a> CheckerState<'a> {
                     // Merge getter/setter into a single property with separate
                     // read (type_id) and write (write_type) types.
                     if let Some(existing) = properties.get(&name_atom) {
+                        let existing_order = existing.declaration_order;
                         let (read_type, write_type) = if is_getter {
                             // Getter arriving after setter
                             (accessor_type, existing.write_type)
@@ -934,11 +946,14 @@ impl<'a> CheckerState<'a> {
                                 is_method: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
+                                declaration_order: existing_order,
                             },
                         );
                     } else {
                         // Single accessor so far: getter-only is readonly
                         let readonly = is_getter;
+                        let order = prop_order;
+                        prop_order += 1;
                         properties.insert(
                             name_atom,
                             PropertyInfo {
@@ -950,6 +965,7 @@ impl<'a> CheckerState<'a> {
                                 is_method: false,
                                 visibility: Visibility::Public,
                                 parent_id: None,
+                                declaration_order: order,
                             },
                         );
                     }

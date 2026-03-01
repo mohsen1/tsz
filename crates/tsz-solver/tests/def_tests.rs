@@ -53,6 +53,7 @@ fn test_definition_store_interface() {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             },
             PropertyInfo {
                 name: y_name,
@@ -63,6 +64,7 @@ fn test_definition_store_interface() {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             },
         ],
     );

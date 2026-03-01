@@ -188,6 +188,7 @@ impl<'a> CheckerState<'a> {
                             is_method: member_node.kind == METHOD_SIGNATURE,
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: 0,
                         });
                     }
                 }
@@ -309,6 +310,7 @@ impl<'a> CheckerState<'a> {
                 is_method: false,
                 visibility: Visibility::Public,
                 parent_id: None,
+                declaration_order: 0,
             });
         }
 
@@ -930,6 +932,7 @@ impl<'a> CheckerState<'a> {
                             is_method: member_node.kind == METHOD_SIGNATURE,
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: 0,
                         });
                     }
                 }
@@ -994,6 +997,7 @@ impl<'a> CheckerState<'a> {
                                                 is_method: false,
                                                 visibility: Visibility::Public,
                                                 parent_id: None,
+                                                declaration_order: 0,
                                             });
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
@@ -1022,6 +1026,7 @@ impl<'a> CheckerState<'a> {
                                             is_method: false,
                                             visibility: Visibility::Public,
                                             parent_id: None,
+                                            declaration_order: 0,
                                         });
                                     }
                                 }
@@ -1041,6 +1046,7 @@ impl<'a> CheckerState<'a> {
                                     is_method: true,
                                     visibility: Visibility::Public,
                                     parent_id: None,
+                                    declaration_order: 0,
                                 });
                             }
                         }
@@ -1058,6 +1064,7 @@ impl<'a> CheckerState<'a> {
                                     is_method: false,
                                     visibility: Visibility::Public,
                                     parent_id: None,
+                                    declaration_order: 0,
                                 });
                             }
                         }
@@ -1109,6 +1116,7 @@ impl<'a> CheckerState<'a> {
                                                 is_method: false,
                                                 visibility: Visibility::Public,
                                                 parent_id: None,
+                                                declaration_order: 0,
                                             });
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
@@ -1137,6 +1145,7 @@ impl<'a> CheckerState<'a> {
                                             is_method: false,
                                             visibility: Visibility::Public,
                                             parent_id: None,
+                                            declaration_order: 0,
                                         });
                                     }
                                 }

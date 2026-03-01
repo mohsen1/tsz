@@ -271,6 +271,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         visibility: prop.visibility,
                         is_method: prop.is_method,
                         parent_id: prop.parent_id,
+                        declaration_order: 0,
                     });
                 }
             }

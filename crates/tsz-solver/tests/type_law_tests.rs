@@ -571,6 +571,7 @@ fn test_coinductive_recursive_type_reflexivity() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // Register the type in the environment
@@ -607,6 +608,7 @@ fn test_coinductive_mutually_recursive_types() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     // B = { a: A }
@@ -619,6 +621,7 @@ fn test_coinductive_mutually_recursive_types() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }]);
 
     env.insert(sym_a, type_a);

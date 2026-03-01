@@ -91,6 +91,7 @@ fn test_widen_object_properties() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }];
     let obj_type = interner.object(props);
 
@@ -126,6 +127,7 @@ fn test_widen_nested_object_properties() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }];
     let inner_obj = interner.object(inner_props);
 
@@ -138,6 +140,7 @@ fn test_widen_nested_object_properties() {
         is_method: false,
         visibility: Visibility::Public,
         parent_id: None,
+        declaration_order: 0,
     }];
     let outer_obj = interner.object(outer_props);
 
@@ -183,6 +186,7 @@ fn test_widen_readonly_property_preserved() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -193,6 +197,7 @@ fn test_widen_readonly_property_preserved() {
             is_method: false,
             visibility: Visibility::Public,
             parent_id: None,
+            declaration_order: 0,
         },
     ];
     let obj_type = interner.object(props);

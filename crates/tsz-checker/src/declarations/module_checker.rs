@@ -719,6 +719,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     visibility: Visibility::Public,
                     parent_id: None,
+                    declaration_order: 0,
                 });
             }
 
@@ -758,6 +759,7 @@ impl<'a> CheckerState<'a> {
                             is_method: false,
                             visibility: Visibility::Public,
                             parent_id: None,
+                            declaration_order: 0,
                         });
                     }
                 }
