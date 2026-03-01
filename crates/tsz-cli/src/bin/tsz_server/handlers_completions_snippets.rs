@@ -603,7 +603,16 @@ impl Server {
             self.class_member_snippet_underscored_type_names(file_name, source_text, project_items);
 
         let mut items = Vec::new();
-        for candidate in candidates {
+        for mut candidate in candidates {
+            if candidate.kind == tsz::lsp::completions::CompletionItemKind::Property {
+                let detail = candidate.detail.as_deref().unwrap_or("").trim();
+                if (detail.is_empty() || detail == "any")
+                    && let Some(inferred_detail) =
+                        Self::infer_property_snippet_detail(&candidate.label, project_items)
+                {
+                    candidate = candidate.with_detail(inferred_detail);
+                }
+            }
             let Some(insert_text) = Self::class_member_snippet_insert_text(&candidate) else {
                 continue;
             };
@@ -634,6 +643,25 @@ impl Server {
             items.push(item);
         }
         items
+    }
+
+    fn infer_property_snippet_detail(
+        member_label: &str,
+        project_items: &[CompletionItem],
+    ) -> Option<String> {
+        let mut wanted = Vec::new();
+        if let Some(first) = member_label.chars().next() {
+            let mut pascal = first.to_ascii_uppercase().to_string();
+            pascal.push_str(&member_label[first.len_utf8()..]);
+            wanted.push(pascal.clone());
+            wanted.push(format!("{pascal}_"));
+        }
+        for target in wanted {
+            if project_items.iter().any(|item| item.label == target) {
+                return Some(target);
+            }
+        }
+        None
     }
 
     fn class_member_snippet_underscored_type_names(
