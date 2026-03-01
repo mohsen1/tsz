@@ -841,14 +841,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let actual_start = actual_start as u32;
         while self.comment_emit_idx < self.all_comments.len() {
-            let comment = &self.all_comments[self.comment_emit_idx];
-            if comment.end > actual_start {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+            let c_end = self.all_comments[self.comment_emit_idx].end;
+            if c_end > actual_start {
                 break;
             }
-            let ct = &text[comment.pos as usize..comment.end as usize];
-            if ct.starts_with("/**") {
+            let ct = &text[c_pos as usize..c_end as usize];
+            // Skip empty block comments like /**/
+            if ct.starts_with("/**") && ct != "/**/" {
                 let si = {
-                    let cp = comment.pos as usize;
+                    let cp = c_pos as usize;
                     let mut ls = cp;
                     if ls > 0 {
                         let mut i = ls;
@@ -872,6 +874,19 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     w
+                };
+                // Check if the next comment is a JSDoc comment on the same
+                // source line — if so, emit a space instead of a newline to
+                // keep consecutive JSDoc comments on one line (matching tsc).
+                let next_idx = self.comment_emit_idx + 1;
+                let next_on_same_line = next_idx < self.all_comments.len() && {
+                    let n_pos = self.all_comments[next_idx].pos;
+                    let n_end = self.all_comments[next_idx].end;
+                    n_end <= actual_start && {
+                        let between = &text[c_end as usize..n_pos as usize];
+                        let next_ct = &text[n_pos as usize..n_end as usize];
+                        next_ct.starts_with("/**") && next_ct != "/**/" && !between.contains('\n')
+                    }
                 };
                 self.write_indent();
                 if ct.contains('\n') {
@@ -899,7 +914,11 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.write(ct);
                 }
-                self.write_line();
+                if next_on_same_line {
+                    self.write(" ");
+                } else {
+                    self.write_line();
+                }
             }
             self.comment_emit_idx += 1;
         }
