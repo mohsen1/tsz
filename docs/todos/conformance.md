@@ -1,43 +1,42 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9723/12570 (77.4%) — full suite, error-code level
+**Current score**: ~9753/12570 (77.6%) — full suite, error-code level
 
 ---
 
-## Session 2026-03-01d — types/tuple: homomorphic mapped type detection for Pick/Omit
+## Session 2026-03-01d — interfaces/interfaceDeclarations: TS2430 index signature compatibility
 
-### Fixed: Pick/Omit now detected as homomorphic mapped types — Solver (evaluation/evaluate_rules/mapped.rs)
+### Fixed: TS2430 for incompatible index signatures in interface extends — Checker (class_checker_compat.rs)
 
-**Area**: types/tuple (58.8%), but impact spread across compiler area
+**Area**: interfaces/interfaceDeclarations (was 9.68% → now ~87% after snapshot update)
 
-**Root cause**: `homomorphic_mapped_source()` in mapped.rs Method 2 required exact equality between the constraint keys and `keyof obj`. For `Omit<A, 'a'>` = `{ [P in Exclude<keyof A, 'a'>]: A[P] }`, the constraint evaluates to a **subset** of `keyof A` (e.g., `'b' | 'c' | 'd'` vs `'a' | 'b' | 'c' | 'd'`). Exact equality failed, so the mapped type was not detected as homomorphic, and readonly/optional modifiers were NOT inherited from source properties.
+**Root cause**: `check_interface_extension_compatibility` in class_checker_compat.rs only compared named members (properties, methods, call signatures) but completely skipped INDEX_SIGNATURE members. Two gaps:
+1. **Derived vs base index signature**: When `interface F extends E` where F has `[s: string]: number` and E has `[s: string]: string`, no TS2430 was emitted because the member iteration loop used `else { continue; }` for all non-method/property/call-signature members.
+2. **Cross-base index signature conflicts**: When `interface E extends A, D` where A has `[s: string]: number` and D has `[s: string]: string`, no error was emitted because inherited index signatures weren't tracked for conflict detection.
 
-**How tsc handles it**: tsc treats mapped types as homomorphic when the constraint is derived from `keyof T`, including filtered subsets. For Pick/Omit, the constraint is a subset of `keyof T`, and tsc still preserves source modifiers.
+**Fix** (class_checker_compat.rs):
+1. Added derived interface index signature collection across all declarations (string and number key types)
+2. Added base interface index signature extraction in the per-base comparison section
+3. Added assignability check: derived value type must be assignable to base value type
+4. Added inherited index signature tracking with cross-base conflict detection in the worklist loop
+5. Cross-base conflicts emit TS2430 against the later base (matching tsc behavior)
 
-**Fix**: Added a subset check after the exact equality check. If all string literal keys in the constraint exist in `keyof obj`, the mapped type is detected as homomorphic. Uses `extract_mapped_keys()` on both sides and `FxHashSet` containment check.
+**Tests**: 5 new unit tests in ts2430_tests.rs:
+- `test_index_signature_string_incompatible` — F extends E with incompatible string index
+- `test_index_signature_number_incompatible` — H extends G with incompatible number index
+- `test_index_signature_compatible_no_error` — matching index signatures, no error
+- `test_inherited_index_signatures_conflict_across_bases` — A and D have conflicting indexes
+- `test_inherited_index_signatures_compatible_across_bases` — A and B have compatible indexes
 
-**Tests**: 2 unit tests:
-- `test_omit_preserves_readonly` — strengthened existing test to assert readonly=true
-- `test_omit_preserves_optional_via_subset_homomorphic` — 3-property object, constraint is 2-key subset, verifies both optional and readonly inheritance
+**Impact**: +4 conformance tests (9749→9753 after including remote changes):
+- derivedTypeIncompatibleSignatures, inheritedStringIndexersFromDifferentBaseTypes, subtypingWithNumericIndexer2, subtypingWithStringIndexer2. No regressions.
 
-**Net impact**: +3 conformance tests, 0 regressions
-- **New passes**: omitTypeHelperModifiers01, prespecializedGenericMembers1, privateNamesConstructorChain-1
-
-### Remaining TS2540 gaps (not addressed in this session):
-- TS2540 for readonly tuple element access (`tuple[0] = ...`) — readonlyArraysAndTuples.ts
-- TS2540 for `Object.freeze` return type — objectFreeze.ts
-- TS2540 for `as const` assertions — constAssertions.ts
-- TS2540 for enum members — enumMergeWithExpando.ts
-- TS2540 for JSDoc @readonly — jsdocReadonly.ts (also missing JSDoc property resolution)
-
-### types/tuple area remaining gaps (14 failures):
-- 7 tests with diff=0 (error codes match, fingerprint-level mismatch: line/column/message text)
-- variadicTuples2.ts: missing TS1265/TS1266 (parser: leading/trailing rest element syntax)
-- restTupleElements1.ts: missing TS17019/TS2574, extra TS1005/TS7006
-- contextualTypeTupleEnd.ts: missing TS2345 (emits TS2555 instead for variadic tuple rest param with 0 args), extra TS7006 (contextual typing of callbacks in variadic tuple not working)
-- readonlyArraysAndTuples.ts: missing TS1354/TS2540
-- variadicTuples1.ts: 60 errors vs tsc's 22 — many extra TS2322 from overly strict spread/tuple assignability
+### Remaining TS2430 gaps:
+1. **overloadOnConstInheritance2** — Call signature overload compatibility. Deriver has single `addEventListener(x: 'bar'): string` while Base has two overloads. Our code compares individual signatures 1:1 instead of comparing the full callable type (all overloads combined). Fix would require aggregating all member signatures with the same name into a unified callable type before comparison.
+2. **callSignatureAssignabilityInInheritance4** — False positive TS2430 for generic call signatures. Interface I extends A with compatible generic signatures but we incorrectly flag it. Root cause is generic signature subtype checking doesn't handle complex type parameter relationships correctly.
+3. **subclassThisTypeAssignable01/02** — Pre-existing false positive TS2430 for ClassComponent extending Lifecycle with ThisType references. Not related to index signatures.
+4. **interfaceDeclaration4** — Pre-existing false positive TS2430 for interface I3 extends I1 with parser errors.
 
 ---
 
