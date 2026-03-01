@@ -91,6 +91,12 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
             {
                 return Some(*instance_type);
+            } else if let Some(symbol) = symbol
+                && (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
+                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
+            {
+                // Type alias merged with namespace: return the alias body, not Lazy(DefId)
+                return Some(*instance_type);
             }
 
             // Look up the cached type for this symbol (constructor type for classes)
