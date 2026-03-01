@@ -1536,11 +1536,23 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(accessor.type_annotation);
         } else if is_getter && !is_private {
             if let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name]) {
-                self.write(": ");
-                self.write(&self.print_type_id(type_id));
+                // If solver returned `any` but body clearly returns void, prefer void
+                if type_id == tsz_solver::types::TypeId::ANY
+                    && accessor_body.is_some()
+                    && self.body_returns_void(accessor_body)
+                {
+                    self.write(": void");
+                } else {
+                    self.write(": ");
+                    self.write(&self.print_type_id(type_id));
+                }
+            } else if accessor_body.is_some() {
+                if self.body_returns_void(accessor_body) {
+                    self.write(": void");
+                } else if !self.source_is_declaration_file {
+                    self.write(": any");
+                }
             } else if !self.source_is_declaration_file {
-                // In non-declaration source files, getters without explicit return type
-                // need an inferred type; default to `any` if solver didn't provide one
                 self.write(": any");
             }
         }
