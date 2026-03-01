@@ -627,11 +627,16 @@ fn test_apply_contextual_same_type() {
 // Union Contextual Types
 // =============================================================================
 
+/// When union members have call signatures with different parameter types,
+/// no contextual parameter type is provided. Per the TypeScript spec:
+/// "If S is not empty and the sets of call signatures of the types in S are
+/// identical ignoring return types, U has the same set of call signatures."
+/// Different parameter types mean signatures are NOT identical → no contextual type.
 #[test]
-fn test_contextual_union_function() {
+fn test_contextual_union_function_different_params_no_contextual_type() {
     let interner = TypeInterner::new();
 
-    // ((x: string) => void) | ((x: number) => void)
+    // ((x: string) => void) | ((x: number) => void) — different param types
     let fn1 = interner.function(FunctionShape {
         type_params: vec![],
         params: vec![ParamInfo {
@@ -664,10 +669,80 @@ fn test_contextual_union_function() {
 
     let ctx = ContextualTypeContext::with_expected(&interner, union);
 
-    // Parameter type should be string | number
-    let param_type = ctx.get_parameter_type(0).unwrap();
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(param_type, expected);
+    // No contextual parameter type — signatures differ (triggers TS7006 under noImplicitAny)
+    assert_eq!(ctx.get_parameter_type(0), None);
+}
+
+/// When union members have call signatures with SAME parameter types but
+/// different return types, the contextual parameter type IS provided.
+#[test]
+fn test_contextual_union_function_same_params_different_returns() {
+    let interner = TypeInterner::new();
+
+    // ((x: number) => string) | ((x: number) => number) — same param, different returns
+    let fn1 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let fn2 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let union = interner.union(vec![fn1, fn2]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union);
+
+    // Same parameter type across all members → contextual type provided
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::NUMBER));
+}
+
+/// Union with a non-callable member (primitive) and a callable member.
+/// The non-callable member is excluded from set S per the spec.
+#[test]
+fn test_contextual_union_non_callable_member_ignored() {
+    let interner = TypeInterner::new();
+
+    // string | ((x: number) => void) — string has no call signatures
+    let fn1 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let union = interner.union(vec![TypeId::STRING, fn1]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union);
+
+    // Non-callable member (string) is ignored; callable member provides contextual type
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::NUMBER));
 }
 
 #[test]
