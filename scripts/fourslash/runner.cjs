@@ -186,6 +186,7 @@ async function runSequential(opts, testsToRun) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
             if (isBaselineOnlyFailure(errMsg)) {
+            if (isBaselineOnlyFailure(errMsg)) {
                 passed++;
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
@@ -332,6 +333,7 @@ async function runParallel(opts, testsToRun) {
                     if (msg.passed) {
                         passed++;
                     } else {
+                        if (isBaselineOnlyFailure(msg.error)) {
                         if (isBaselineOnlyFailure(msg.error)) {
                             passed++;
                             completed++;
