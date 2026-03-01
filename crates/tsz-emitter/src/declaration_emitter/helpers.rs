@@ -871,6 +871,39 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Emit all inline block comments (both `/*...*/` and `/**...*/`) that appear
+    /// before `name_pos`. Used for variable declarations where tsc preserves
+    /// comments between the keyword and the variable name (e.g. `var /*4*/ point`).
+    pub(crate) fn emit_inline_block_comments(&mut self, name_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = name_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            let ct = &text[comment.pos as usize..comment.end as usize];
+            if ct.starts_with("/*") {
+                self.write(ct);
+                self.write(" ");
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
     pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
         if self.remove_comments {
             return;
