@@ -239,7 +239,12 @@ impl Server {
             if let Some((specs, module_specifier, quote)) = parse_named_import_line(trimmed) {
                 let rewritten_specs = specs
                     .iter()
-                    .map(|spec| spec.raw.replace(" as ", ": "))
+                    .map(|spec| {
+                        spec.raw
+                            .trim_start_matches("type ")
+                            .trim_start()
+                            .replace(" as ", ": ")
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
