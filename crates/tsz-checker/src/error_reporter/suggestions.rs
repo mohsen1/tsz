@@ -46,7 +46,10 @@ impl<'a> CheckerState<'a> {
             if len_diff > maximum_length_difference {
                 continue;
             }
-            if name_len < 3 && candidate.to_lowercase() != prop_name.to_lowercase() {
+            // tsc: skip short candidates (< 3 chars) unless they match the
+            // lowercased input name. This prevents short property names like "p1"
+            // from being falsely suggested for unrelated names like "p51".
+            if candidate_len < 3 && *candidate != prop_name.to_lowercase() {
                 continue;
             }
             if candidate.to_lowercase() == prop_name.to_lowercase() {
