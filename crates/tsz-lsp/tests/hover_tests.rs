@@ -241,6 +241,17 @@ fn test_hover_contextual_parameter_in_call_argument_function_expression() {
 }
 
 #[test]
+fn test_hover_contextual_parameter_in_property_access_call_argument() {
+    let source = "interface IFoo { n: number; }\nconst api: { run: (f: (n: number) => IFoo) => void } = { run: () => {} };\napi.run(function(n) {\n    return <IFoo>({ n: n });\n});";
+    let info = get_hover_at(source, 2, 17)
+        .expect("Should find hover info for call-argument parameter with property-access callee");
+    assert_eq!(
+        info.display_string, "(parameter) n: number",
+        "Call-argument function parameter hover should use contextual type for property-access callees"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";

@@ -576,6 +576,12 @@ impl<'a> HoverProvider<'a> {
             break;
         }
 
+        if let Some(call_argument_type) = self
+            .contextual_parameter_type_from_call_argument_expression(current_fn_expr, param_index)
+        {
+            return Some(call_argument_type);
+        }
+
         self.contextual_parameter_type_from_property_assignment(current_fn_expr, param_index)
     }
 
@@ -900,6 +906,78 @@ impl<'a> HoverProvider<'a> {
             return (!text.is_empty() && text != "error").then_some(text);
         }
 
+        None
+    }
+
+    fn contextual_parameter_type_from_call_argument_expression(
+        &self,
+        mut fn_expr_idx: NodeIndex,
+        param_index: usize,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        while fn_expr_idx.is_some() {
+            let parent_idx = self.arena.get_extended(fn_expr_idx)?.parent;
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                fn_expr_idx = parent_idx;
+                continue;
+            }
+            if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+
+            let call = self.arena.get_call_expr(parent_node)?;
+            let arg_position = call
+                .arguments
+                .as_ref()?
+                .nodes
+                .iter()
+                .position(|&idx| idx == fn_expr_idx)?;
+
+            let compiler_options = tsz_checker::context::CheckerOptions {
+                strict: self.strict,
+                no_implicit_any: self.strict,
+                no_implicit_returns: false,
+                no_implicit_this: self.strict,
+                strict_null_checks: self.strict,
+                strict_function_types: self.strict,
+                strict_property_initialization: self.strict,
+                use_unknown_in_catch_variables: self.strict,
+                isolated_modules: false,
+                ..Default::default()
+            };
+            let mut checker = CheckerState::new(
+                self.arena,
+                self.binder,
+                self.interner,
+                self.file_name.clone(),
+                compiler_options,
+            );
+            let callee_type_id = checker.get_type_of_node(call.expression);
+            if let Some(callable_shape_id) =
+                tsz_solver::visitor::callable_shape_id(self.interner, callee_type_id)
+            {
+                let callable = self.interner.callable_shape(callable_shape_id);
+                if let Some(signature) = callable.call_signatures.first()
+                    && let Some(param) = signature.params.get(arg_position)
+                    && let Some(callable_param) =
+                        tsz_solver::visitor::callable_shape_id(self.interner, param.type_id)
+                {
+                    let callable_param_shape = self.interner.callable_shape(callable_param);
+                    if let Some(inner_sig) = callable_param_shape.call_signatures.first()
+                        && let Some(inner_param) = inner_sig.params.get(param_index)
+                    {
+                        let text = checker.format_type(inner_param.type_id);
+                        if !text.is_empty() && text != "error" {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+
+            return None;
+        }
         None
     }
 
