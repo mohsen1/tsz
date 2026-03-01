@@ -1000,9 +1000,7 @@ impl Server {
 
         if item.has_action {
             entry["hasAction"] = serde_json::json!(true);
-            if include_insert_text
-                && let Some(insert_text) = item.insert_text.as_ref()
-            {
+            if include_insert_text && let Some(insert_text) = item.insert_text.as_ref() {
                 entry["insertText"] = serde_json::json!(insert_text);
             }
             let is_class_member_snippet = item.source.as_deref() == Some("ClassMemberSnippet/");
@@ -1253,23 +1251,21 @@ impl Server {
                     } else if let Some(obj) = entry_name.as_object() {
                         let source_from_value = |value: Option<&serde_json::Value>| {
                             value.and_then(|v| {
-                                v.as_str()
-                                    .map(|s| s.trim().to_string())
-                                    .or_else(|| {
-                                        v.as_array().and_then(|arr| {
-                                            let mut text = String::new();
-                                            for part in arr {
-                                                let part_text = part
-                                                    .as_object()
-                                                    .and_then(|obj| obj.get("text"))
-                                                    .and_then(serde_json::Value::as_str)
-                                                    .unwrap_or_default();
-                                                text.push_str(part_text);
-                                            }
-                                            let text = text.trim().to_string();
-                                            (!text.is_empty()).then_some(text)
-                                        })
+                                v.as_str().map(|s| s.trim().to_string()).or_else(|| {
+                                    v.as_array().and_then(|arr| {
+                                        let mut text = String::new();
+                                        for part in arr {
+                                            let part_text = part
+                                                .as_object()
+                                                .and_then(|obj| obj.get("text"))
+                                                .and_then(serde_json::Value::as_str)
+                                                .unwrap_or_default();
+                                            text.push_str(part_text);
+                                        }
+                                        let text = text.trim().to_string();
+                                        (!text.is_empty()).then_some(text)
                                     })
+                                })
                             })
                         };
                         (

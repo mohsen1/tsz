@@ -990,7 +990,11 @@ impl<'a> HoverProvider<'a> {
                 tsz_solver::visitor::callable_shape_id(self.interner, callee_type_id)
             {
                 let callable = self.interner.callable_shape(callable_shape_id);
-                if let Some(signature) = callable.call_signatures.first()
+                if let Some(signature) = callable
+                    .call_signatures
+                    .iter()
+                    .find(|sig| sig.params.get(arg_position).is_some())
+                    .or_else(|| callable.call_signatures.first())
                     && let Some(param) = signature.params.get(arg_position)
                     && let Some(callable_param) =
                         tsz_solver::visitor::callable_shape_id(self.interner, param.type_id)
@@ -1005,7 +1009,11 @@ impl<'a> HoverProvider<'a> {
                         }
                     }
                 }
-                if let Some(signature) = callable.call_signatures.first()
+                if let Some(signature) = callable
+                    .call_signatures
+                    .iter()
+                    .find(|sig| sig.params.get(arg_position).is_some())
+                    .or_else(|| callable.call_signatures.first())
                     && let Some(param) = signature.params.get(arg_position)
                     && let Some(function_param) =
                         tsz_solver::visitor::function_shape_id(self.interner, param.type_id)
