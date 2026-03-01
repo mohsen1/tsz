@@ -286,7 +286,20 @@ impl<'a> TypePrinter<'a> {
             tsz_solver::types::LiteralValue::String(atom) => {
                 format!("\"{}\"", self.resolve_atom(*atom))
             }
-            tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
+            tsz_solver::types::LiteralValue::Number(n) => {
+                let v = n.0;
+                if v.is_infinite() {
+                    if v.is_sign_positive() {
+                        "Infinity".to_string()
+                    } else {
+                        "-Infinity".to_string()
+                    }
+                } else if v.is_nan() {
+                    "NaN".to_string()
+                } else {
+                    v.to_string()
+                }
+            }
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
             tsz_solver::types::LiteralValue::BigInt(atom) => {
                 format!("{}n", self.resolve_atom(*atom))
