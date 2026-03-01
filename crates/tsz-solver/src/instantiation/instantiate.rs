@@ -628,8 +628,34 @@ impl<'a> TypeInstantiator<'a> {
                 // This converts MappedType { constraint: "host"|"port", ... }
                 // into Object { host?: string, port?: number }
                 // Without this, the MappedType is returned unevaluated, causing subtype checks to fail.
+                //
+                // However, skip eager evaluation when the template is a Conditional whose
+                // extends_type is directly a Lazy(DefId) reference. This pattern occurs in
+                // mapped type key filters like `T[K] extends Function ? never : K`, where
+                // `Function` is a global lib interface referenced as Lazy(DefId). The
+                // instantiator's NoopResolver can't resolve these references, causing the
+                // conditional's subtype check to always fail and incorrectly accept all keys.
+                // The checker will re-evaluate later with a proper resolver.
+                //
+                // We check for direct Lazy (not contained-in) to avoid matching cases like
+                // `undefined extends T[P] ? never : P` where the extends_type is an
+                // IndexAccess that may contain Lazy internally but can be evaluated.
                 let mapped_type = self.interner.mapped(instantiated);
-                crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
+                let has_lazy_extends = if let Some(cond) =
+                    crate::type_queries::get_conditional_type(self.interner, new_template)
+                {
+                    matches!(
+                        self.interner.lookup(cond.extends_type),
+                        Some(crate::types::TypeData::Lazy(_))
+                    )
+                } else {
+                    false
+                };
+                if has_lazy_extends {
+                    mapped_type
+                } else {
+                    crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
+                }
             }
 
             // Index access: instantiate both parts and evaluate immediately
