@@ -235,6 +235,7 @@ impl Server {
                 import_module_specifier_ending,
                 import_module_specifier_preference,
             );
+            let import_candidates_is_empty = import_candidates.is_empty();
 
             let context = CodeActionContext {
                 diagnostics: filtered_diagnostics,
@@ -647,7 +648,7 @@ impl Server {
                             .filter(|(_, fix_id, _, _)| {
                                 if *code
                                     == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
-                                    && import_candidates.is_empty()
+                                    && import_candidates_is_empty
                                 {
                                     return *fix_id == "addMissingConst";
                                 }

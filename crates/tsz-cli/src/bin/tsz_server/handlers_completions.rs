@@ -1130,6 +1130,9 @@ impl Server {
                     )
                 })
                 .collect();
+            let has_class_member_snippet = items
+                .iter()
+                .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
             let is_new_identifier_location = completion_result
                 .as_ref()
                 .map(|r| r.is_new_identifier_location)
@@ -1312,18 +1315,22 @@ impl Server {
                         let Some(item_source) = item_source else {
                             return false;
                         };
-                        let item_source = normalize_source(item_source);
-                        let requested_source = normalize_source(requested_source);
+                        let normalize_no_ext = |s: &str| {
+                            let s = normalize_source(s);
+                            let s = s
+                                .strip_suffix(".js")
+                                .or_else(|| s.strip_suffix(".mjs"))
+                                .or_else(|| s.strip_suffix(".cjs"))
+                                .unwrap_or(&s)
+                                .to_string();
+                            s
+                        };
+                        let item_source = normalize_no_ext(item_source);
+                        let requested_source = normalize_no_ext(requested_source);
                         if item_source == requested_source {
                             return true;
                         }
-                        let strip_js_like = |s: &str| {
-                            s.strip_suffix(".js")
-                                .or_else(|| s.strip_suffix(".mjs"))
-                                .or_else(|| s.strip_suffix(".cjs"))
-                                .unwrap_or(s)
-                        };
-                        strip_js_like(item_source.as_str()) == strip_js_like(requested_source.as_str())
+                        false
                     };
                     let mut item = if let Some(source) = requested_source.as_deref() {
                         items.iter().find(|i| {
