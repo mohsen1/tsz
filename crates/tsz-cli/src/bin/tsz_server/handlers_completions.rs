@@ -1107,14 +1107,10 @@ impl Server {
                 .iter()
                 .map(|item| Self::completion_entry_from_item(item, &line_map, &source_text))
                 .collect();
-            let has_class_member_snippet = items
-                .iter()
-                .any(|item| item.source.as_deref() == Some("ClassMemberSnippet/"));
             let is_new_identifier_location = completion_result
                 .as_ref()
                 .map(|r| r.is_new_identifier_location)
-                .unwrap_or(false)
-                || has_class_member_snippet;
+                .unwrap_or(false);
 
             Some(serde_json::json!({
                 "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
