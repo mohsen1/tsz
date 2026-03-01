@@ -297,6 +297,233 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         member
     }
 
+    /// Collect per-member call signature lists for a union.
+    ///
+    /// Returns a vec of (`member_index`, `call_signatures`) for each callable union member.
+    /// Non-callable members are skipped.
+    fn collect_union_call_signature_lists(
+        &self,
+        members: &[TypeId],
+    ) -> Vec<(usize, Vec<CallSignature>)> {
+        let mut result = Vec::new();
+        for (i, &member) in members.iter().enumerate() {
+            let member = self.normalize_union_member(member);
+            match self.interner.lookup(member) {
+                Some(TypeData::Function(func_id)) => {
+                    let func = self.interner.function_shape(func_id);
+                    let sig = CallSignature {
+                        type_params: func.type_params.clone(),
+                        params: func.params.clone(),
+                        this_type: func.this_type,
+                        return_type: func.return_type,
+                        type_predicate: func.type_predicate.clone(),
+                        is_method: func.is_method,
+                    };
+                    result.push((i, vec![sig]));
+                }
+                Some(TypeData::Callable(callable_id)) => {
+                    let callable = self.interner.callable_shape(callable_id);
+                    if !callable.call_signatures.is_empty() {
+                        result.push((i, callable.call_signatures.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        result
+    }
+
+    /// Check if two non-generic call signatures are structurally compatible for
+    /// union signature combination (tsc's `compareSignaturesIdentical` with
+    /// `partialMatch=true`, `ignoreReturnTypes=true`).
+    ///
+    /// Two signatures are compatible when they have the same number of required
+    /// parameters (allowing extra optional params) and their `this` types are
+    /// identical (by TypeId equality).
+    fn are_signatures_compatible_for_union(&self, a: &CallSignature, b: &CallSignature) -> bool {
+        // Generic signatures require exact match — skip them for now
+        if !a.type_params.is_empty() || !b.type_params.is_empty() {
+            return false;
+        }
+
+        // Compare required parameter count
+        let a_required = a.params.iter().filter(|p| p.is_required()).count();
+        let b_required = b.params.iter().filter(|p| p.is_required()).count();
+        if a_required != b_required {
+            return false;
+        }
+
+        // Total parameter count must be compatible (partial match allows extra optional)
+        // Use the minimum total — both must have at least that many params
+        let min_total = a.params.len().min(b.params.len());
+
+        // Check parameter types are identical (by TypeId) for overlapping positions
+        for i in 0..min_total {
+            if a.params[i].type_id != b.params[i].type_id {
+                return false;
+            }
+        }
+
+        // Check this types match
+        match (a.this_type, b.this_type) {
+            (Some(a_this), Some(b_this)) => a_this == b_this,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Find compatible signatures across all union members, mimicking tsc's
+    /// `getUnionSignatures`.
+    ///
+    /// Returns `Some(signatures)` if compatible cross-member signatures exist,
+    /// `None` if no compatible set was found.
+    ///
+    /// When members have multiple overloads, this checks if there's at least one
+    /// signature from each member that is compatible with a signature from every
+    /// other member. If multiple members have multiple overloads and no compatible
+    /// pair exists, returns `None` → the union is not callable (TS2349).
+    fn find_union_compatible_signatures(
+        &self,
+        sig_lists: &[(usize, Vec<CallSignature>)],
+    ) -> Option<Vec<CallSignature>> {
+        if sig_lists.is_empty() {
+            return None;
+        }
+
+        let mut result: Vec<CallSignature> = Vec::new();
+
+        // Count how many members have multiple overloads
+        let mut multi_overload_count = 0;
+        let mut single_overload_with_multi_idx: Option<usize> = None;
+        for (i, (_, sigs)) in sig_lists.iter().enumerate() {
+            if sigs.len() > 1 {
+                multi_overload_count += 1;
+                if single_overload_with_multi_idx.is_none() {
+                    single_overload_with_multi_idx = Some(i);
+                } else {
+                    // Multiple members with overloads — use -1 sentinel
+                    single_overload_with_multi_idx = None;
+                }
+            }
+        }
+
+        // Phase 1: Try to find matching signatures across all lists
+        // For each signature in each member's list, check if there's a compatible
+        // signature in every other member's list.
+        for (list_idx, (_, sigs)) in sig_lists.iter().enumerate() {
+            for sig in sigs {
+                // Skip generic signatures (require exact match, only from first list)
+                if !sig.type_params.is_empty() {
+                    continue;
+                }
+
+                // Check if this signature already has a match in our result
+                if result
+                    .iter()
+                    .any(|r| self.are_signatures_compatible_for_union(r, sig))
+                {
+                    continue;
+                }
+
+                // Try to find a matching signature in every other list
+                let mut union_sigs: Vec<&CallSignature> = vec![sig];
+                let mut all_match = true;
+
+                for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
+                    if other_idx == list_idx {
+                        continue;
+                    }
+                    // Find a compatible signature in this other list (try exact first, then partial)
+                    let matching = other_sigs
+                        .iter()
+                        .find(|other| self.are_signatures_compatible_for_union(sig, other));
+                    if let Some(m) = matching {
+                        union_sigs.push(m);
+                    } else {
+                        all_match = false;
+                        break;
+                    }
+                }
+
+                if all_match {
+                    // Create a combined signature: union return types, intersect this types
+                    let mut combined_this: Option<TypeId> = sig.this_type;
+                    let mut return_types = vec![sig.return_type];
+
+                    for &matched_sig in &union_sigs[1..] {
+                        return_types.push(matched_sig.return_type);
+                        if let Some(this_type) = matched_sig.this_type {
+                            combined_this = Some(match combined_this {
+                                Some(existing) => self.interner.intersection2(existing, this_type),
+                                None => this_type,
+                            });
+                        }
+                    }
+
+                    let union_return = if return_types.len() == 1 {
+                        return_types[0]
+                    } else {
+                        self.interner.union(return_types)
+                    };
+
+                    result.push(CallSignature {
+                        type_params: Vec::new(),
+                        params: sig.params.clone(),
+                        this_type: combined_this,
+                        return_type: union_return,
+                        type_predicate: None,
+                        is_method: sig.is_method,
+                    });
+                }
+            }
+        }
+
+        if !result.is_empty() {
+            return Some(result);
+        }
+
+        // Phase 2: If only ONE member has multiple overloads, use that member's
+        // overloads as the base and combine each with the single-signature members.
+        if multi_overload_count == 1
+            && let Some(master_idx) = single_overload_with_multi_idx {
+                let (_, master_sigs) = &sig_lists[master_idx];
+                let mut combined_results: Vec<CallSignature> = master_sigs.clone();
+
+                for (other_idx, (_, other_sigs)) in sig_lists.iter().enumerate() {
+                    if other_idx == master_idx {
+                        continue;
+                    }
+                    // Single-signature member — combine with each master overload
+                    if let Some(other_sig) = other_sigs.first() {
+                        if !other_sig.type_params.is_empty() {
+                            return None; // Can't combine generic
+                        }
+                        for combined in &mut combined_results {
+                            // Intersect this types
+                            if let Some(other_this) = other_sig.this_type {
+                                combined.this_type = Some(match combined.this_type {
+                                    Some(existing) => {
+                                        self.interner.intersection2(existing, other_this)
+                                    }
+                                    None => other_this,
+                                });
+                            }
+                            // Union return types
+                            combined.return_type = self
+                                .interner
+                                .factory()
+                                .union(vec![combined.return_type, other_sig.return_type]);
+                        }
+                    }
+                }
+
+                return Some(combined_results);
+            }
+
+        // Multiple members with multiple overloads and no compatible pair → not callable
+        None
+    }
+
     /// Compute the combined `this` type for a union of callable types.
     ///
     /// In TypeScript, when calling a union type, the `this` context must satisfy
@@ -1076,6 +1303,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
             }
         }
+
+        // Phase 0.5: Check multi-overload union members for compatible signatures.
+        // In tsc, when a union type has members with multiple overloads, the union is
+        // only callable if there exists at least one set of compatible signatures
+        // (one from each member). If multiple members have overloads and no compatible
+        // set exists, tsc emits TS2349 "Each member of the union type has signatures,
+        // but none of those signatures are compatible with each other."
+        let sig_lists = self.collect_union_call_signature_lists(&members);
+        let has_multi_overload_members =
+            sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
+
+        if has_multi_overload_members >= 2 {
+            // Multiple members have overloads — check compatibility
+            match self.find_union_compatible_signatures(&sig_lists) {
+                None => {
+                    // No compatible signatures found → union is not callable
+                    return CallResult::NotCallable {
+                        type_id: union_type,
+                    };
+                }
+                Some(unified_sigs) => {
+                    // Compatible signatures found — check `this` type constraint
+                    // The unified signatures have intersected `this` types from
+                    // the matched overloads across all members.
+                    let unified_this = unified_sigs
+                        .iter()
+                        .filter_map(|s| s.this_type)
+                        .reduce(|a, b| self.interner.intersection2(a, b));
+
+                    if let Some(combined_this) = unified_this {
+                        let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+                        if !self.checker.is_assignable_to(actual_this, combined_this) {
+                            return CallResult::ThisTypeMismatch {
+                                expected_this: combined_this,
+                                actual_this,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        // When only one member has multiple overloads, tsc falls through to
+        // per-member resolution which handles it correctly. No special check needed.
 
         // Try to compute a combined signature for the union.
         // TypeScript computes combined arity (max required params across members)
