@@ -599,7 +599,13 @@ impl<'a> CheckerState<'a> {
 
                     self.collect_call_argument_types_with_context(
                         args,
-                        |i, _arg_count| round2_contextual_types.get(i).copied().flatten(),
+                        |i, arg_count| {
+                            if i < round2_contextual_types.len() {
+                                round2_contextual_types[i]
+                            } else {
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            }
+                        },
                         check_excess_properties,
                         None,
                     )
