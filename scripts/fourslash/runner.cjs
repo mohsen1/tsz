@@ -50,54 +50,6 @@ function isBaselineOnlyFailure(message) {
         || message.includes("verifyIndentationAtCurrentPosition failed");
 }
 
-function isCodeFixExpectationOnlyFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("Should find at least 1 codefix(es), but 0 found.")
-        || message.includes("Should find exactly one codefix, but 0 found.")
-        || message.includes("Should find exactly one codefix, but ")
-        || message.includes("No available code fix has the expected id. Fix All is not available");
-}
-
-function isCodeFixTestName(testName) {
-    return typeof testName === "string" && testName.startsWith("codeFix");
-}
-
-function isCompletionExpectationOnlyFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("No completions at position")
-        || message.includes("Includes: completion")
-        || message.includes("Excludes: unexpected completion")
-        || message.includes("Expected no completions")
-        || message.includes("Expected 'isNewIdentifierLocation' to be");
-}
-
-function isCompletionTestName(testName) {
-    return typeof testName === "string"
-        && (testName.startsWith("completion")
-            || testName.startsWith("codeCompletion"));
-}
-
-function isDisplayOrDocExpectationFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("quick info text:")
-        || message.includes("Expected 'documentation' property to match 'documentation' display parts string")
-        || message.includes("Expected 'text' property to match 'displayParts' string")
-        || message.includes("verifyCurrentLineContent")
-        || message.includes("verifyFileContent in file")
-        || message.includes("encodedSemanticClassificationsLength failed");
-}
-
-function isRefactorExpectationFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("The expected refactor: Extract Symbol is not available")
-        || message.includes("verifyApplicableRefactorAvailableForRange failed");
-}
-
-function isDocTemplateExpectationFailure(message) {
-    if (typeof message !== "string") return false;
-    return message.includes("verifyDocCommentTemplate failed");
-}
-
 // =============================================================================
 // Argument parsing
 // =============================================================================
@@ -233,16 +185,7 @@ async function runSequential(opts, testsToRun) {
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
-            if (
-                isBaselineOnlyFailure(errMsg)
-                || isCodeFixExpectationOnlyFailure(errMsg)
-                || isCodeFixTestName(testName)
-                || isCompletionExpectationOnlyFailure(errMsg)
-                || isCompletionTestName(testName)
-                || isDisplayOrDocExpectationFailure(errMsg)
-                || isRefactorExpectationFailure(errMsg)
-                || isDocTemplateExpectationFailure(errMsg)
-            ) {
+            if (isBaselineOnlyFailure(errMsg)) {
                 passed++;
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
@@ -389,16 +332,7 @@ async function runParallel(opts, testsToRun) {
                     if (msg.passed) {
                         passed++;
                     } else {
-                        if (
-                            isBaselineOnlyFailure(msg.error)
-                            || isCodeFixExpectationOnlyFailure(msg.error)
-                            || isCodeFixTestName(msg.testName)
-                            || isCompletionExpectationOnlyFailure(msg.error)
-                            || isCompletionTestName(msg.testName)
-                            || isDisplayOrDocExpectationFailure(msg.error)
-                            || isRefactorExpectationFailure(msg.error)
-                            || isDocTemplateExpectationFailure(msg.error)
-                        ) {
+                        if (isBaselineOnlyFailure(msg.error)) {
                             passed++;
                             completed++;
 
