@@ -438,6 +438,11 @@ pub struct CheckerContext<'a> {
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
 
+    /// Depth counter for conditional type `extends` clauses.
+    /// Incremented when recursing into the `extends_type` of a conditional type,
+    /// used to validate TS1338: `infer` only allowed in conditional extends.
+    pub in_conditional_extends_depth: u32,
+
     /// Temporary scope for value parameters visible to `typeof` in return type annotations.
     /// Populated during signature processing so `typeof paramName` in return types
     /// can resolve to the parameter's type.

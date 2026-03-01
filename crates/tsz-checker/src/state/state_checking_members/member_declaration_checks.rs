@@ -401,9 +401,13 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
                 if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
-                    // Check check_type and extends_type first (infer type params not in scope yet)
+                    // Check check_type (infer NOT allowed here)
                     self.check_type_for_missing_names(cond.check_type);
+
+                    // Check extends_type (infer IS allowed here — TS1338 validation)
+                    self.ctx.in_conditional_extends_depth += 1;
                     self.check_type_for_missing_names(cond.extends_type);
+                    self.ctx.in_conditional_extends_depth -= 1;
 
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
@@ -444,6 +448,16 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::INFER_TYPE => {
                 if let Some(infer) = self.ctx.arena.get_infer_type(node) {
+                    // TS1338: 'infer' declarations are only permitted in the 'extends'
+                    // clause of a conditional type.
+                    if self.ctx.in_conditional_extends_depth == 0 {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            type_idx,
+                            diagnostic_messages::INFER_DECLARATIONS_ARE_ONLY_PERMITTED_IN_THE_EXTENDS_CLAUSE_OF_A_CONDITIONAL_TYP,
+                            diagnostic_codes::INFER_DECLARATIONS_ARE_ONLY_PERMITTED_IN_THE_EXTENDS_CLAUSE_OF_A_CONDITIONAL_TYP,
+                        );
+                    }
                     self.check_type_parameter_node_for_missing_names(infer.type_parameter);
                 }
             }
