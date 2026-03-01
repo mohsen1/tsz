@@ -280,8 +280,9 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // If target has an index signature, it accepts any properties
-            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+            // The global `Object` and `Function` interfaces from lib.d.ts accept
+            // any object — skip excess property checking when they are the target.
+            if self.is_global_object_or_function_shape(&target_shape) {
                 return;
             }
             // This is the "freshness" or "strict object literal" check
