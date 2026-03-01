@@ -4044,3 +4044,60 @@ const result: string = f();
         "Should not emit TS2722 for non-generic type guard return inference. Got: {diagnostics:?}"
     );
 }
+
+/// Switch clause narrowing must use the narrowed type from preceding control flow.
+/// When `if (c !== undefined)` narrows a union, the switch default should see the
+/// narrowed type (without undefined), not the original declared type.
+#[test]
+fn test_switch_clause_uses_narrowed_type_from_preceding_if() {
+    let source = r#"
+interface A { kind: 'A'; }
+interface B { kind: 'B'; }
+type C = A | B | undefined;
+declare var c: C;
+if (c !== undefined) {
+    switch (c.kind) {
+        case 'A': break;
+        case 'B': break;
+        default: let x: never = c;
+    }
+}
+"#;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Switch default should narrow to `never` after exhaustive cases when preceded by undefined-excluding guard. Got: {diagnostics:?}"
+    );
+}
+
+/// Switch clause narrowing must propagate truthiness narrowing.
+/// After `if (c)` (truthy check), switch cases should see the non-falsy type.
+#[test]
+fn test_switch_clause_uses_truthiness_narrowing() {
+    let source = r#"
+interface A { kind: 'A'; }
+interface B { kind: 'B'; }
+type C = A | B | null | undefined;
+declare var c: C;
+if (c) {
+    switch (c.kind) {
+        case 'A': break;
+        case 'B': break;
+        default: let x: never = c;
+    }
+}
+"#;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Switch default should narrow to `never` after exhaustive cases when preceded by truthiness guard. Got: {diagnostics:?}"
+    );
+}
