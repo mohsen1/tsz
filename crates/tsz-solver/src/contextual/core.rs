@@ -76,7 +76,13 @@ impl<'a> ContextualTypeContext<'a> {
     pub fn get_parameter_type(&self, index: usize) -> Option<TypeId> {
         let expected = self.expected?;
 
-        // Handle Union explicitly - collect parameter types from all members
+        // Handle Union explicitly - collect parameter types from callable members.
+        // Per TypeScript spec: "If S is not empty and the sets of call signatures of the
+        // types in S are identical ignoring return types, U has the same set of call
+        // signatures." If parameter types differ across callable members at the same
+        // index, no contextual type is provided (triggers TS7006 under noImplicitAny).
+        // Members that don't have a parameter at this index (arity differences) are
+        // excluded — only members that DO provide a type are compared.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let param_types: Vec<TypeId> = members
@@ -91,7 +97,17 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return collect_single_or_union(self.interner, param_types);
+            if param_types.is_empty() {
+                return None;
+            }
+            // If all members that provide a param type agree, use it.
+            // If they disagree (e.g., (a: number) | (b: string)), return None
+            // which triggers TS7006 under noImplicitAny.
+            let first = param_types[0];
+            if param_types.iter().all(|&t| t == first) {
+                return Some(first);
+            }
+            return None;
         }
 
         // Handle Application explicitly - unwrap to base type
