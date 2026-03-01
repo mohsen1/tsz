@@ -197,8 +197,6 @@ impl Server {
                     .map(to_lsp_diag)
                     .collect();
             }
-            let no_filtered_diagnostics = filtered_diagnostics.is_empty();
-
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
@@ -543,7 +541,7 @@ impl Server {
                 };
             }
 
-            if response_actions.is_empty() && no_filtered_diagnostics && !error_codes.is_empty() {
+            if response_actions.is_empty() && !error_codes.is_empty() {
                 if error_codes.len() == 1
                     && error_codes[0] != NON_OVERLAPPING_TYPES_ERROR_CODE
                     && unknown_conversion_content.is_some()
