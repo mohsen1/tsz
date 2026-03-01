@@ -1191,6 +1191,35 @@ mod tests {
     }
 
     #[test]
+    fn conditional_type_intersection_assignment_ts2322() {
+        // tsc emits TS2322 for both assignments because Something<A> contains
+        // a deferred conditional type in its intersection.
+        let source = r#"
+            type Something<T> = { test: string } & (T extends object ? {
+                arg: T
+            } : {
+                arg?: undefined
+            });
+
+            function testFunc2<A extends object>(a: A, sa: Something<A>) {
+                sa = { test: 'hi', arg: a };
+                sa = { test: 'bye', arg: a, arr: a };
+            }
+        "#;
+
+        let diagnostics = diagnostics_for(source);
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert!(
+            ts2322_count >= 2,
+            "expected at least 2 TS2322 for assigning to intersection with deferred conditional, got {ts2322_count}. Diagnostics: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn constructor_accessibility_assignment_error_targets_lhs() {
         let source = r#"
             class Foo {

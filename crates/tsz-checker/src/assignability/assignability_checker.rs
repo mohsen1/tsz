@@ -644,13 +644,20 @@ impl<'a> CheckerState<'a> {
 
         let resolved_target = self.resolve_type_for_property_access(target);
         let Some(target_shape) = object_shape_for_type(self.ctx.types, resolved_target) else {
-            return true;
+            // If we can't extract a simple object shape from the target (e.g., it's
+            // an intersection with a deferred conditional type), we should NOT skip
+            // the assignability error. The solver already determined the types are
+            // incompatible, and inability to extract properties for excess-property
+            // analysis doesn't mean the assignment is valid.
+            return false;
         };
 
         let source_props = source_shape.properties.as_slice();
         let target_props = target_shape.properties.as_slice();
 
-        // Check if any source property that exists in target has a wrong type
+        // Check if any source property that exists in target has a wrong type.
+        // Also collect the matching properties so we can verify structural assignability.
+        let mut matching_props = Vec::new();
         for source_prop in source_props {
             if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
                 let source_prop_type = source_prop.type_id;
@@ -670,7 +677,18 @@ impl<'a> CheckerState<'a> {
                 if !is_assignable {
                     return false;
                 }
+                matching_props.push(source_prop.clone());
             }
+        }
+
+        // All matching properties are compatible. Verify that the failure is truly
+        // caused by excess properties alone by checking if an object with only the
+        // matching properties would be assignable. If not, the failure is structural
+        // (e.g., target contains a deferred conditional type) and we should NOT
+        // suppress TS2322.
+        let trimmed_source = self.ctx.types.object(matching_props);
+        if !self.is_assignable_to(trimmed_source, target) {
+            return false;
         }
 
         true
@@ -1307,12 +1325,29 @@ impl<'a> CheckerState<'a> {
                 failure_reason: None,
             };
         }
-        gate.analysis.unwrap_or(
+        let mut result = gate.analysis.unwrap_or(
             crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,
                 failure_reason: None,
             },
-        )
+        );
+
+        // When the failure is ExcessProperty but the target contains a deferred
+        // conditional type, the real issue is structural (the deferred conditional
+        // makes the assignment incompatible regardless of excess properties).
+        // tsc emits TS2322 rather than TS2353 in this case. Evaluate the target
+        // to check for conditional members and downgrade to a generic TS2322.
+        if matches!(
+            &result.failure_reason,
+            Some(tsz_solver::SubtypeFailureReason::ExcessProperty { .. })
+        ) {
+            let evaluated_target = self.evaluate_type_for_assignability(target);
+            if tsz_solver::has_deferred_conditional_member(self.ctx.types, evaluated_target) {
+                result.failure_reason = None;
+            }
+        }
+
+        result
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
