@@ -420,16 +420,25 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_array_element_type();
         }
 
-        // Handle Intersection - pick the first array member's element type
+        // Handle Intersection - intersect element types from all array members
+        // For `Array<{key, value}> & Array<{value}>`, the contextual element type
+        // should be `{key, value} & {value}` (= `{key, value}`), not just the first
+        // member's element type. This prevents false excess property errors when
+        // a property exists in one intersection member but not another.
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
-            for &m in members.iter() {
-                let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                if let Some(elem_type) = ctx.get_array_element_type() {
-                    return Some(elem_type);
-                }
-            }
-            return None;
+            let elem_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_array_element_type()
+                })
+                .collect();
+            return match elem_types.len() {
+                0 => None,
+                1 => Some(elem_types[0]),
+                _ => Some(self.interner.intersection(elem_types)),
+            };
         }
 
         let mut extractor = ArrayElementExtractor::new(self.interner);
