@@ -1453,18 +1453,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // the declared type of the variable minus nullish instead of the
                     // flow-narrowed type. This prevents false TS2339 "Property does not exist
                     // on type 'never'" errors on expressions like `x!.slice()`.
-                    if result == TypeId::NEVER && operand_type != TypeId::NEVER
+                    if result == TypeId::NEVER
+                        && operand_type != TypeId::NEVER
                         && let Some(expr_node) = self.checker.ctx.arena.get(unary.expression)
-                            && expr_node.kind == SyntaxKind::Identifier as u16
-                            && let Some(sym_id) =
-                                self.checker.resolve_identifier_symbol(unary.expression)
-                        {
-                            let declared_type = self.checker.get_type_of_symbol(sym_id);
-                            let declared_result = tsz_solver::remove_nullish(db, declared_type);
-                            if declared_result != TypeId::NEVER {
-                                return declared_result;
-                            }
+                        && expr_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(sym_id) =
+                            self.checker.resolve_identifier_symbol(unary.expression)
+                    {
+                        let declared_type = self.checker.get_type_of_symbol(sym_id);
+                        let declared_result = tsz_solver::remove_nullish(db, declared_type);
+                        if declared_result != TypeId::NEVER {
+                            return declared_result;
                         }
+                    }
                     result
                 } else {
                     TypeId::ERROR
