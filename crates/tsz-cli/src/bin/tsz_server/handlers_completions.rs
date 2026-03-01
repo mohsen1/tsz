@@ -1292,10 +1292,25 @@ impl Server {
                     // When source metadata is missing for duplicate labels, prefer
                     // ClassMemberSnippet entries to keep tsserver details/code-action
                     // pairing stable for snippet-backed completions.
+                    let source_matches = |item_source: Option<&str>, requested_source: &str| {
+                        let Some(item_source) = item_source else {
+                            return false;
+                        };
+                        if item_source == requested_source {
+                            return true;
+                        }
+                        let strip_js_like = |s: &str| {
+                            s.strip_suffix(".js")
+                                .or_else(|| s.strip_suffix(".mjs"))
+                                .or_else(|| s.strip_suffix(".cjs"))
+                                .unwrap_or(s)
+                        };
+                        strip_js_like(item_source) == strip_js_like(requested_source)
+                    };
                     let mut item = if let Some(source) = requested_source.as_deref() {
-                        items
-                            .iter()
-                            .find(|i| i.label == name && i.source.as_deref() == Some(source))
+                        items.iter().find(|i| {
+                            i.label == name && source_matches(i.source.as_deref(), source)
+                        })
                     } else {
                         items
                             .iter()
