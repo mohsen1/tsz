@@ -136,7 +136,6 @@ FAIL TypeScript/tests/cases/compiler/conflictingTypeAnnotatedVar.ts
 FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia3.tsx
 FAIL TypeScript/tests/cases/compiler/conflictMarkerTrivia4.ts
 FAIL TypeScript/tests/cases/compiler/consistentAliasVsNonAliasRecordBehavior.ts
-FAIL TypeScript/tests/cases/compiler/constantEnumAssert.ts
 FAIL TypeScript/tests/cases/compiler/constDeclarations-invalidContexts.ts
 FAIL TypeScript/tests/cases/compiler/constDeclarationShadowedByVarDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/constEnumErrors.ts
@@ -1683,7 +1682,6 @@ FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnArrowFunct
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnAwait.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnEnum2.ts
 FAIL TypeScript/tests/cases/conformance/decorators/invalid/decoratorOnFunctionExpression.ts
-FAIL TypeScript/tests/cases/conformance/directives/multiline.tsx
 FAIL TypeScript/tests/cases/conformance/directives/ts-expect-error.ts
 FAIL TypeScript/tests/cases/conformance/directives/ts-ignore.ts
 FAIL TypeScript/tests/cases/conformance/dynamicImport/importCallExpressionCheckReturntype1.ts
@@ -1729,7 +1727,6 @@ FAIL TypeScript/tests/cases/conformance/es6/classDeclaration/parseClassDeclarati
 FAIL TypeScript/tests/cases/conformance/es6/classExpressions/typeArgumentInferenceWithClassExpression2.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames12_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames19_ES6.ts
-FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames32_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType10_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType6_ES6.ts
 FAIL TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNamesContextualType7_ES6.ts
@@ -2022,7 +2019,6 @@ FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/chained.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/chained2.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular1.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular3.ts
-FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/computedPropertyName.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/enums.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDefault.ts
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/exportNamespace10.ts
@@ -2468,8 +2464,6 @@ FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName30.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName35.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName36.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName38.ts
-FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName39.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName6.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement2.ts
 FAIL TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement21.ts
@@ -2593,6 +2587,7 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
+FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -3778,6 +3773,7 @@ PASS TypeScript/tests/cases/compiler/conflictMarkerDiff3Trivia1.ts
 PASS TypeScript/tests/cases/compiler/conflictMarkerDiff3Trivia2.ts
 PASS TypeScript/tests/cases/compiler/conflictMarkerTrivia1.ts
 PASS TypeScript/tests/cases/compiler/conflictMarkerTrivia2.ts
+PASS TypeScript/tests/cases/compiler/constantEnumAssert.ts
 PASS TypeScript/tests/cases/compiler/constantOverloadFunction.ts
 PASS TypeScript/tests/cases/compiler/constantOverloadFunctionNoSubtypeError.ts
 PASS TypeScript/tests/cases/compiler/constDeclarations-access.ts
@@ -8786,6 +8782,7 @@ PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyN
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames31_ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames31_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames32_ES5.ts
+PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames32_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames33_ES5.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames33_ES6.ts
 PASS TypeScript/tests/cases/conformance/es6/computedProperties/computedPropertyNames34_ES5.ts
@@ -10066,6 +10063,7 @@ PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/ambient.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/cjsImportInES2015.ts
+PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/computedPropertyName.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_missingBraces.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_moduleSpecifier-isolatedModules.ts
 PASS TypeScript/tests/cases/conformance/externalModules/typeOnly/exportDeclaration_moduleSpecifier.ts
@@ -11387,6 +11385,8 @@ PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName33.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName34.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName37.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName38.ts
+PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName39.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName4.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName40.ts
 PASS TypeScript/tests/cases/conformance/parser/ecmascript6/ComputedPropertyNames/parserComputedPropertyName41.ts
@@ -11838,7 +11838,6 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
-PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
