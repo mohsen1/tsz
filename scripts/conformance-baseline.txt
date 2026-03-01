@@ -483,7 +483,7 @@ FAIL TypeScript/tests/cases/compiler/genericAssignmentCompatWithInterfaces1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall3.ts
 FAIL TypeScript/tests/cases/compiler/genericCallbackInvokedInsideItsContainingFunction1.ts
-FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
+FAIL TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
 FAIL TypeScript/tests/cases/compiler/genericCallInferenceUsingThisTypeNoInvalidCacheReuseAfterMappedTypeApplication1.ts
 FAIL TypeScript/tests/cases/compiler/genericCallWithObjectLiteralArguments1.ts
 FAIL TypeScript/tests/cases/compiler/genericClassesRedeclaration.ts
@@ -1034,7 +1034,6 @@ FAIL TypeScript/tests/cases/compiler/optionalParamterAndVariableDeclaration2.ts
 FAIL TypeScript/tests/cases/compiler/optionalParamTypeComparison.ts
 FAIL TypeScript/tests/cases/compiler/optionalPropertiesSyntax.ts
 FAIL TypeScript/tests/cases/compiler/optionalSetterParam.ts
-FAIL TypeScript/tests/cases/compiler/optionalTupleElementsAndUndefined.ts
 FAIL TypeScript/tests/cases/compiler/optionsCompositeWithIncrementalFalse.ts
 FAIL TypeScript/tests/cases/compiler/optionsInlineSourceMapMapRoot.ts
 FAIL TypeScript/tests/cases/compiler/orderMattersForSignatureGroupIdentity.ts
@@ -5173,7 +5172,7 @@ PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty.ts
 PASS TypeScript/tests/cases/compiler/genericBaseClassLiteralProperty2.ts
 PASS TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts
 PASS TypeScript/tests/cases/compiler/genericCallbacksAndClassHierarchy.ts
-PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType2.ts
+PASS TypeScript/tests/cases/compiler/genericCallInferenceConditionalType1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceInConditionalTypes1.ts
 PASS TypeScript/tests/cases/compiler/genericCallInferenceWithGenericLocalFunction.ts
 PASS TypeScript/tests/cases/compiler/genericCallOnMemberReturningClosedOverObject.ts
@@ -6520,6 +6519,7 @@ PASS TypeScript/tests/cases/compiler/optionalParamReferencingOtherParams2.ts
 PASS TypeScript/tests/cases/compiler/optionalParamReferencingOtherParams3.ts
 PASS TypeScript/tests/cases/compiler/optionalPropertiesInClasses.ts
 PASS TypeScript/tests/cases/compiler/optionalPropertiesTest.ts
+PASS TypeScript/tests/cases/compiler/optionalTupleElementsAndUndefined.ts
 PASS TypeScript/tests/cases/compiler/optionsInlineSourceMapSourcemap.ts
 PASS TypeScript/tests/cases/compiler/optionsInlineSourceMapSourceRoot.ts
 PASS TypeScript/tests/cases/compiler/optionsOutAndNoModuleGen.ts
