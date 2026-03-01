@@ -1302,6 +1302,57 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
 
+        // Case 4: template is an Object type — recurse through matching properties.
+        // This handles templates like `{ dependencies: KeepLiteralStrings<T[K]> }` where
+        // the source is an object with the same properties. We find a property whose
+        // template value contains the target placeholder and reverse through it.
+        if let Some(
+            TypeData::Object(template_shape_id) | TypeData::ObjectWithIndex(template_shape_id),
+        ) = self.interner.lookup(template)
+        {
+            let template_obj = self.interner.object_shape(template_shape_id);
+            if let Some(
+                TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
+            ) = self.interner.lookup(source_value)
+            {
+                let source_obj = self.interner.object_shape(source_shape_id);
+                // Match properties by name and try to reverse through each
+                let template_props = template_obj.properties.clone();
+                let source_props = source_obj.properties.clone();
+                for t_prop in &template_props {
+                    for s_prop in &source_props {
+                        if t_prop.name == s_prop.name
+                            && let Some(reversed) = self.reverse_infer_through_template(
+                                s_prop.type_id,
+                                t_prop.type_id,
+                                target_placeholder,
+                            ) {
+                                return Some(reversed);
+                            }
+                    }
+                }
+            }
+            // Template is an Object but source doesn't match or no property reversed — can't reverse
+            return None;
+        }
+
+        // Case 5: template is a Union type — try reversing through each member.
+        // This handles templates like `(() => T[K]) | Definition<T[K]>` where the
+        // source value can match one of the union members. We try each member in
+        // order and return the first successful reversal.
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(template) {
+            let members = self.interner.type_list(members_id).to_vec();
+            for &member in &members {
+                if let Some(reversed) =
+                    self.reverse_infer_through_template(source_value, member, target_placeholder)
+                {
+                    return Some(reversed);
+                }
+            }
+            // None of the union members could be reversed
+            return None;
+        }
+
         // For any other template shape (conditional types, etc.),
         // we can't safely reverse.
         None
