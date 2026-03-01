@@ -1,6 +1,6 @@
 use super::*;
 use crate::TypeInterner;
-use crate::{CompatChecker, InferenceContext, infer_generic_function};
+use crate::{CompatChecker, InferenceContext, TupleElement, infer_generic_function};
 #[test]
 fn test_contextual_no_context() {
     let interner = TypeInterner::new();
@@ -1116,4 +1116,228 @@ fn test_contextual_property_union_of_two_objects() {
     assert!(prop_type.is_some());
     let expected = interner.union_preserve_members(vec![TypeId::NUMBER, TypeId::STRING]);
     assert_eq!(prop_type.unwrap(), expected);
+}
+
+// =============================================================================
+// Variadic Tuple Contextual Typing
+// =============================================================================
+
+/// For `f(...args: [...T[], U])` called with 1 arg, the arg should get type U (tail element).
+#[test]
+fn test_variadic_tuple_call_single_arg_gets_tail_type() {
+    let interner = TypeInterner::new();
+
+    // Build: (arg: number) => void
+    let fn_number = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Build: (arg: string) => void
+    let fn_string = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Build variadic tuple: [...((arg: number) => void)[], (arg: string) => void]
+    let fn_number_array = interner.array(fn_number);
+    let variadic_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: fn_number_array,
+            name: None,
+            optional: false,
+            rest: true, // ...((arg: number) => void)[]
+        },
+        TupleElement {
+            type_id: fn_string,
+            name: None,
+            optional: false,
+            rest: false, // (arg: string) => void
+        },
+    ]);
+
+    // Build function: f(...args: Funcs)
+    let f = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: variadic_tuple,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, f);
+
+    // f(x => x) — 1 arg: should get (arg: string) => void (the tail element)
+    let param_type = ctx.get_parameter_type_for_call(0, 1);
+    assert_eq!(param_type, Some(fn_string));
+}
+
+/// For `f(...args: [...T[], U])` called with 3 args, args 0-1 get T, arg 2 gets U.
+#[test]
+fn test_variadic_tuple_call_multiple_args_prefix_and_tail() {
+    let interner = TypeInterner::new();
+
+    let fn_number = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let fn_string = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let fn_number_array = interner.array(fn_number);
+    let variadic_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: fn_number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: fn_string,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let f = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: variadic_tuple,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, f);
+
+    // f(a, b, c) — 3 args: args 0,1 should get fn_number (variadic), arg 2 should get fn_string (tail)
+    assert_eq!(ctx.get_parameter_type_for_call(0, 3), Some(fn_number));
+    assert_eq!(ctx.get_parameter_type_for_call(1, 3), Some(fn_number));
+    assert_eq!(ctx.get_parameter_type_for_call(2, 3), Some(fn_string));
+}
+
+/// For tuple element contextual typing: `const x: [...T[], U] = [a]` — element 0 gets type U.
+#[test]
+fn test_variadic_tuple_element_contextual_type_single_element() {
+    let interner = TypeInterner::new();
+
+    // Build variadic tuple: [...number[], string]
+    let num_array = interner.array(TypeId::NUMBER);
+    let variadic_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: num_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, variadic_tuple);
+
+    // With 1 element, index 0 should map to the tail (string)
+    assert_eq!(
+        ctx.get_tuple_element_type_with_count(0, 1),
+        Some(TypeId::STRING)
+    );
+}
+
+/// For tuple element contextual typing: `const x: [...T[], U] = [a, b, c]` — last is U, rest are T.
+#[test]
+fn test_variadic_tuple_element_contextual_type_multiple_elements() {
+    let interner = TypeInterner::new();
+
+    let num_array = interner.array(TypeId::NUMBER);
+    let variadic_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: num_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, variadic_tuple);
+
+    // With 3 elements: indices 0,1 should map to variadic (number), index 2 to tail (string)
+    assert_eq!(
+        ctx.get_tuple_element_type_with_count(0, 3),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.get_tuple_element_type_with_count(1, 3),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.get_tuple_element_type_with_count(2, 3),
+        Some(TypeId::STRING)
+    );
 }

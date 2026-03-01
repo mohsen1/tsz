@@ -433,6 +433,24 @@ impl<'a> ContextualTypeContext<'a> {
 
     /// Get the contextual type for a specific tuple element.
     pub fn get_tuple_element_type(&self, index: usize) -> Option<TypeId> {
+        self.get_tuple_element_type_inner(index, None)
+    }
+
+    /// Get the contextual type for a tuple element, with knowledge of the total element count.
+    /// This enables correct mapping for variadic tuple types like `[...T[], U]`.
+    pub fn get_tuple_element_type_with_count(
+        &self,
+        index: usize,
+        element_count: usize,
+    ) -> Option<TypeId> {
+        self.get_tuple_element_type_inner(index, Some(element_count))
+    }
+
+    fn get_tuple_element_type_inner(
+        &self,
+        index: usize,
+        element_count: Option<usize>,
+    ) -> Option<TypeId> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect tuple element types from all members
@@ -442,7 +460,7 @@ impl<'a> ContextualTypeContext<'a> {
                 .iter()
                 .filter_map(|&m| {
                     let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                    ctx.get_tuple_element_type(index)
+                    ctx.get_tuple_element_type_inner(index, element_count)
                 })
                 .collect();
             return collect_single_or_union(self.interner, elem_types);
@@ -453,7 +471,7 @@ impl<'a> ContextualTypeContext<'a> {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                return ctx.get_tuple_element_type(index);
+                return ctx.get_tuple_element_type_inner(index, element_count);
             }
         }
 
@@ -462,7 +480,7 @@ impl<'a> ContextualTypeContext<'a> {
             crate::type_queries::get_type_parameter_constraint(self.interner, expected)
         {
             let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
-            return ctx.get_tuple_element_type(index);
+            return ctx.get_tuple_element_type_inner(index, element_count);
         }
 
         // Handle Mapped, Conditional, and Lazy types by evaluating them first
@@ -472,11 +490,11 @@ impl<'a> ContextualTypeContext<'a> {
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                return ctx.get_tuple_element_type(index);
+                return ctx.get_tuple_element_type_inner(index, element_count);
             }
         }
 
-        let mut extractor = TupleElementExtractor::new(self.interner, index);
+        let mut extractor = TupleElementExtractor::new(self.interner, index, element_count);
         extractor.extract(expected)
     }
 
