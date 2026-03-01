@@ -6,7 +6,7 @@ use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
-use crate::types::{TypeData, Visibility};
+use crate::types::{MappedType, TypeData, Visibility};
 
 #[test]
 fn test_call_simple_function() {
@@ -9624,5 +9624,73 @@ fn test_union_single_plus_multi_overload_succeeds() {
     assert!(
         matches!(result, CallResult::Success(_)),
         "Expected success for single+multi overload union, got {result:?}"
+    );
+}
+
+/// Test that `resolve_call` correctly handles `IndexAccess` types where the
+/// object type is a type parameter with a mapped type constraint.
+///
+/// This covers the pattern: `T extends { [P in K]: () => void }`, `obj[key]()`
+/// where `T[K]` should resolve through the constraint's mapped type to
+/// `() => void`, which is callable.
+///
+/// Note: In production, `Record<K, F>` is stored as `Application(Lazy(DefId), [K, F])`
+/// and requires a full resolver to expand. This test uses an inlined mapped type
+/// to validate the `IndexAccess` -> Mapped -> callable resolution chain without
+/// needing DefId resolution infrastructure.
+#[test]
+fn test_call_index_access_on_mapped_type_constraint() {
+    let interner = TypeInterner::new();
+    let mut compat = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut compat);
+
+    // Create type parameter K extends string
+    let k_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+
+    // Create a function type: () => void
+    let fn_type = interner.function(FunctionShape {
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Create a mapped type: { [P in K]: () => void }
+    // This is what Record<K, () => void> evaluates to
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: k_type,
+        name_type: None,
+        template: fn_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Create type parameter T extends { [P in K]: () => void }
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(mapped),
+        default: None,
+        is_const: false,
+    }));
+
+    // Create IndexAccess: T[K]
+    let index_access = interner.index_access(t_type, k_type);
+
+    // resolve_call on T[K] should succeed because T[K] resolves
+    // through the constraint to () => void
+    let result = evaluator.resolve_call(index_access, &[]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected T[K] to be callable when T extends {{ [P in K]: () => void }}, got {result:?}"
     );
 }

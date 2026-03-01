@@ -906,7 +906,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Resolve meta-types to their actual types before checking callability.
                 // This handles cases like index access types like T["method"],
                 // and mapped types.
-                let resolved = crate::evaluation::evaluate::evaluate_type(self.interner, func_type);
+                //
+                // Use checker.evaluate_type() which has a full resolver context,
+                // rather than the standalone evaluate_type() with NoopResolver.
+                // This is needed because IndexAccess types like T[K] where
+                // T extends Record<K, F> require resolving Lazy(DefId) references
+                // (e.g., Record's DefId) to expand Application types into their
+                // structural form (mapped types) before the index can be resolved.
+                let resolved = self.checker.evaluate_type(func_type);
                 if resolved != func_type {
                     self.resolve_call(resolved, arg_types)
                 } else {
