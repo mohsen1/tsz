@@ -9233,3 +9233,232 @@ fn test_union_call_no_this_requirements_succeeds() {
         "Expected success for union with no this requirements, got {result:?}"
     );
 }
+
+/// When ALL union members have multiple overloads and no pair of signatures is
+/// compatible across members, the union should be `NotCallable` (→ TS2349).
+///
+/// Mirrors: `type F3 = { (this: A): void; (this: B): void; }`
+///          `type F4 = { (this: C): void; (this: D): void; }`
+///          `(f3_or_f4: F3 | F4) => f3_or_f4()` → TS2349
+#[test]
+fn test_union_multi_overload_incompatible_not_callable() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
+    let type_d = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("d"),
+        TypeId::NUMBER,
+    )]);
+
+    // F3 = { (this: A): void; (this: B): void }
+    let f3 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_a),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // F4 = { (this: C): void; (this: D): void }
+    let f4 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_c),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_d),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // Union F3 | F4 — no compatible pair → NotCallable
+    let union = interner.union(vec![f3, f4]);
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::NotCallable { .. }),
+        "Expected NotCallable for incompatible multi-overload union, got {result:?}"
+    );
+}
+
+/// When union members with multiple overloads share a compatible signature,
+/// the union IS callable but the `this` type is the intersection of the
+/// compatible overloads' `this` types.
+///
+/// Mirrors: `type F3 = { (this: A): void; (this: B): void; }`
+///          `type F5 = { (this: C): void; (this: B): void; }`
+///          `(f3_or_f5: F3 | F5) => f3_or_f5()` → TS2684 if `this` ≠ B
+#[test]
+fn test_union_multi_overload_compatible_this_mismatch() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
+
+    // F3 = { (this: A): void; (this: B): void }
+    let f3 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_a),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // F5 = { (this: C): void; (this: B): void }
+    let f5 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_c),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // Union F3 | F5 — compatible pair: (this: B): void from both
+    let union = interner.union(vec![f3, f5]);
+
+    // Call with this = void (no this context) → should fail with ThisTypeMismatch
+    // because the compatible signature requires this: B
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::ThisTypeMismatch { .. }),
+        "Expected ThisTypeMismatch for compatible multi-overload union with void this, got {result:?}"
+    );
+}
+
+/// When a union has one single-signature member and one multi-overload member,
+/// it falls through to per-member resolution. The single-signature member's
+/// success makes the call valid.
+#[test]
+fn test_union_single_plus_multi_overload_succeeds() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    // F0 = () => void — single signature, no this
+    let f0 = interner.function(FunctionShape {
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let type_a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    // F3 = { (this: A): void; (this: B): void }
+    let f3 = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_a),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_params: vec![],
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    // Union F0 | F3 — F0 has single signature, per-member resolution handles it
+    let union = interner.union(vec![f0, f3]);
+    let result = evaluator.resolve_call(union, &[]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Expected success for single+multi overload union, got {result:?}"
+    );
+}
