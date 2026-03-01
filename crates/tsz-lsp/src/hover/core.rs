@@ -398,6 +398,12 @@ impl<'a> HoverProvider<'a> {
                     }
                 }
             }
+            if let Some(module_ref) = self.find_import_equals_module_ref_text(symbol) {
+                return format!(
+                    "namespace {module_ref}\nimport {} = {module_ref}",
+                    symbol.escaped_name
+                );
+            }
             if let Some(module_name) = symbol.import_module.as_deref() {
                 if decl_node_idx.is_some()
                     && let Some(decl_node) = self.arena.get(decl_node_idx)
