@@ -902,10 +902,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             } else {
                 None
             };
-            if let Some(obj_target) = object_target {
-                if !self.has_conflicting_properties_with_object(source, obj_target) {
-                    return true;
-                }
+            if let Some(obj_target) = object_target
+                && !self.has_conflicting_properties_with_object(source, obj_target)
+            {
+                return true;
             }
         }
 

@@ -192,7 +192,12 @@ impl<'a> CheckerState<'a> {
         let mut has_nominal_members = false;
         let mut merged_interface_type_for_class: Option<TypeId> = None;
 
-        // Process all class members
+        // Phase 1: Process all non-method members (properties, accessors, constructors, index sigs).
+        // Methods are deferred to phase 2 so that a partial instance type (with property types)
+        // can be pushed as `this`, allowing method body inference to resolve `this.x` references.
+        let mut deferred_methods: Vec<(NodeIndex, &tsz_parser::parser::node::MethodDeclData)> =
+            Vec::new();
+
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -266,26 +271,8 @@ impl<'a> CheckerState<'a> {
                     if self.member_requires_nominal(&method.modifiers, method.name) {
                         has_nominal_members = true;
                     }
-                    let Some(name) = self.get_property_name_resolved(method.name) else {
-                        continue;
-                    };
-                    let name_atom = self.ctx.types.intern_string(&name);
-                    let signature = self.call_signature_from_method(method, member_idx);
-                    let visibility = self.get_visibility_from_modifiers(&method.modifiers);
-                    let entry = methods.entry(name_atom).or_insert(MethodAggregate {
-                        overload_signatures: Vec::new(),
-                        impl_signatures: Vec::new(),
-                        overload_optional: false,
-                        impl_optional: false,
-                        visibility,
-                    });
-                    if method.body.is_none() {
-                        entry.overload_signatures.push(signature);
-                        entry.overload_optional |= method.question_token;
-                    } else {
-                        entry.impl_signatures.push(signature);
-                        entry.impl_optional |= method.question_token;
-                    }
+                    // Defer method processing to phase 2
+                    deferred_methods.push((member_idx, method));
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
@@ -491,6 +478,46 @@ impl<'a> CheckerState<'a> {
                     declaration_order: 0,
                 },
             );
+        }
+
+        // Phase 2: Process deferred methods with a partial `this` type so that
+        // method body inference can resolve `this.x` references (e.g. `return this.b`).
+        if !deferred_methods.is_empty() {
+            // Build a partial instance type from properties collected so far
+            let partial_props: Vec<PropertyInfo> = properties.values().cloned().collect();
+            let partial_type = factory.object_with_index(ObjectShape {
+                flags: ObjectFlags::empty(),
+                properties: partial_props,
+                string_index: string_index.clone(),
+                number_index: number_index.clone(),
+                symbol: current_sym,
+            });
+            self.ctx.this_type_stack.push(partial_type);
+
+            for (member_idx, method) in deferred_methods {
+                let Some(name) = self.get_property_name_resolved(method.name) else {
+                    continue;
+                };
+                let name_atom = self.ctx.types.intern_string(&name);
+                let signature = self.call_signature_from_method(method, member_idx);
+                let visibility = self.get_visibility_from_modifiers(&method.modifiers);
+                let entry = methods.entry(name_atom).or_insert(MethodAggregate {
+                    overload_signatures: Vec::new(),
+                    impl_signatures: Vec::new(),
+                    overload_optional: false,
+                    impl_optional: false,
+                    visibility,
+                });
+                if method.body.is_none() {
+                    entry.overload_signatures.push(signature);
+                    entry.overload_optional |= method.question_token;
+                } else {
+                    entry.impl_signatures.push(signature);
+                    entry.impl_optional |= method.question_token;
+                }
+            }
+
+            self.ctx.this_type_stack.pop();
         }
 
         // Convert methods to callable properties
