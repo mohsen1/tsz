@@ -176,21 +176,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// This is used when the target is a conditional type and we need to check
     /// if the source can be assigned to it regardless of which branch is selected.
+    /// tsc is very strict here — even `X | Y` (union of both branches) cannot be
+    /// assigned to a deferred conditional. Only identical conditional types or
+    /// `never` can satisfy this check.
     ///
     /// ## Logic:
     /// - `source <: X` AND `source <: Y` => True
     /// - Otherwise => False
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// // Source is compatible with both branches
-    /// type T = boolean extends true ? string : number;
-    /// let x: T = "hello";  // ❌ "hello" is not <: number
-    ///
-    /// // Source is `never` (bottom type)
-    /// type U = boolean extends true ? string : number;
-    /// let y: U = null as never;  // ✅ never <: string and never <: number
-    /// ```
     pub(crate) fn subtype_of_conditional_target(
         &mut self,
         source: TypeId,

@@ -8958,6 +8958,69 @@ fn test_conditional_deferred_type_parameter() {
 }
 
 #[test]
+fn test_conditional_deferred_type_parameter_with_constraint() {
+    let interner = TypeInterner::new();
+
+    // T extends string ? number : boolean
+    // where T has constraint `string`
+    // Should remain deferred even when constraint satisfies extends type.
+    // tsc does NOT eagerly resolve conditionals based on constraint alone —
+    // the type parameter could be instantiated with different subtypes.
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
+
+    let cond = ConditionalType {
+        check_type: type_param_t,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond.clone());
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Should return the same conditional (deferred), NOT eagerly resolve to NUMBER
+    assert_eq!(result, cond_type);
+}
+
+#[test]
+fn test_conditional_deferred_type_parameter_constraint_not_satisfying() {
+    let interner = TypeInterner::new();
+
+    // T extends number ? "yes" : "no"
+    // where T has constraint `string` (disjoint from number)
+    // Should remain deferred — tsc does not eagerly resolve to false branch.
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
+
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
+
+    let cond = ConditionalType {
+        check_type: type_param_t,
+        extends_type: TypeId::NUMBER,
+        true_type: yes,
+        false_type: no,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond.clone());
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Should return the same conditional (deferred), NOT eagerly resolve to "no"
+    assert_eq!(result, cond_type);
+}
+
+#[test]
 fn test_conditional_infer_direct_match() {
     let interner = TypeInterner::new();
 
