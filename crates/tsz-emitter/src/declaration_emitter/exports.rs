@@ -1441,9 +1441,10 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.arena.get_access_expr(expr_node) {
-                return self.is_entity_name_expr(access.expression);
-            }
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.is_entity_name_expr(access.expression);
+        }
         false
     }
 
