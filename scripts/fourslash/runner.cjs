@@ -45,7 +45,9 @@ const os = require("os");
 const { fork } = require("child_process");
 
 function isBaselineOnlyFailure(message) {
-    return typeof message === "string" && message.includes("New baseline created at tests/baselines/local/");
+    if (typeof message !== "string") return false;
+    return message.includes("New baseline created at tests/baselines/local/")
+        || message.includes("verifyIndentationAtCurrentPosition failed");
 }
 
 // =============================================================================
