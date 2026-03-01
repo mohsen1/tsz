@@ -388,7 +388,6 @@ FAIL TypeScript/tests/cases/compiler/escapedIdentifiers.ts
 FAIL TypeScript/tests/cases/compiler/esmNoSynthesizedDefault.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropDefaultImports.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropImportCall.ts
-FAIL TypeScript/tests/cases/compiler/esModuleInteropImportNamespace.ts
 FAIL TypeScript/tests/cases/compiler/esModuleInteropPrettyErrorRelatedInformation.ts
 FAIL TypeScript/tests/cases/compiler/esNextWeakRefs_IterableWeakMap.ts
 FAIL TypeScript/tests/cases/compiler/evalOrArgumentsInDeclarationFunctions.ts
@@ -2545,7 +2544,6 @@ FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionAsWeakTyp
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionNarrowing.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionReductionStrict.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeAssignment.ts
-FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithIndexSignatures.ts
 FAIL TypeScript/tests/cases/conformance/types/intersection/intersectionWithUnionConstraint.ts
 FAIL TypeScript/tests/cases/conformance/types/keyof/circularIndexedAccessErrors.ts
@@ -4803,6 +4801,7 @@ PASS TypeScript/tests/cases/compiler/esModuleInterop.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropDefaultMemberMustBeSyntacticallyDefaultExport.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropEnablesSyntheticDefaultImports.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropImportDefaultWhenAllNamedAreDefaultAlias.ts
+PASS TypeScript/tests/cases/compiler/esModuleInteropImportNamespace.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropImportTSLibHasImport.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropNamedDefaultImports.ts
 PASS TypeScript/tests/cases/compiler/esModuleInteropTslibHelpers.ts
@@ -11845,6 +11844,7 @@ PASS TypeScript/tests/cases/conformance/types/intersection/intersectionThisTypes
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeEquivalence.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference2.ts
+PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeInference3.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeMembers.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeOverloading.ts
 PASS TypeScript/tests/cases/conformance/types/intersection/intersectionTypeReadonly.ts
