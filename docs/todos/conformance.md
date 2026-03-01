@@ -1,7 +1,41 @@
 # Conformance TODO
 
 **Goal**: `./scripts/conformance.sh` prints ZERO failures.
-**Current score**: ~9721/12570 (77.3%) — full suite, error-code level
+**Current score**: ~9706/12570 (77.2%) — full suite, error-code level
+
+---
+
+## Session 2026-03-01g — types/tuple: tuple element evaluation and Lazy index type validation
+
+### Fixed: Two solver-level issues — evaluate.rs, extended.rs
+
+**Area**: types/tuple (58.8%), also benefits generic conditional type inference
+
+**Root cause 1 — False TS2538 for type aliases as index types**: `get_invalid_index_type_member` in `extended.rs` classified `TypeData::Lazy(_)` as invalid for indexing. But `Lazy` types are deferred references to type aliases (e.g., `type SS1 = string`) which can resolve to valid index types. This caused false TS2538 ("Type 'SS1' cannot be used as an index type") for code like `{ [S in SS1]: V }[SS1]`.
+
+**Fix**: Removed `TypeData::Lazy` from the invalid index type match arm. Lazy types now fall through to the default `false` case, treating them as potentially valid until resolution.
+
+**Root cause 2 — Tuple elements not evaluated**: The type evaluator's `visit_type_key` dispatch in `evaluate.rs` had no handler for `TypeData::Tuple`. Tuples passed through unchanged without evaluating their element types. This meant spread elements with complex types like `...{ [S in SS1]: [a: number] }[SS1]` weren't simplified to `...[a: number]`.
+
+**Fix**: Added `visit_tuple` method to the evaluator. It recursively evaluates tuple element types, but only those that are meta-types (`IndexAccess`, `Mapped`, `Lazy`, `Application`, etc.) — type parameters, conditionals, unions, and concrete types are skipped to avoid exponential blowup with recursive conditional types. Rest/spread elements whose evaluated type is a tuple get flattened inline.
+
+**Tests**: 4 unit tests:
+- `test_lazy_type_not_invalid_for_indexing` — Lazy(DefId) is not flagged as invalid index type
+- `test_concrete_invalid_types_still_flagged` — Objects, arrays still flagged; string/number valid
+- `test_tuple_evaluates_index_access_element` — Tuple with IndexAccess element gets evaluated
+- `test_tuple_preserves_concrete_elements` — Tuple with only concrete types passes through unchanged
+
+**Impact**: +2 conformance tests (genericTupleWithSimplifiableElements, privateNamesConstructorChain-1). 0 regressions.
+
+### Design decision: conservative tuple evaluation
+The `is_evaluable_meta_type` filter is critical for correctness. Early implementation that evaluated ALL tuple elements caused 2 regressions:
+- `tailRecursiveConditionalTypes` — hit TS2589 excessive depth because recursive conditional types produce tuples that were re-evaluated infinitely
+- `mappedTypeTupleConstraintAssignability` — generic mapped type over tuple lost assignability because the mapped type got expanded prematurely
+
+The conservative filter only evaluates types that are "reducible" (IndexAccess, Mapped, Lazy, Application, KeyOf, TemplateLiteral, StringIntrinsic, ReadonlyType, TypeQuery) while preserving deferred types (TypeParameter, Conditional, Union, Intersection) unchanged.
+
+### Remaining types/tuple gaps (12 failing):
+- Same as session 2026-03-01f notes, minus genericTupleWithSimplifiableElements which is now passing
 
 ---
 
