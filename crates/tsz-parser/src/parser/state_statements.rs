@@ -195,10 +195,19 @@ impl ParserState {
             let stmt = self.parse_statement();
             if stmt.is_none() {
                 // Statement parsing failed, resync to recover
-                // Suppress cascading errors when a recent error was within 3 chars
+                // Suppress cascading errors when:
+                // 1. A recent error was within 3 chars, OR
+                // 2. The token is a closing bracket/paren that is likely a
+                //    stray artifact from earlier bracket-mismatch errors.
                 let current = self.token_pos();
+                let is_stray_close = self.last_error_pos != 0
+                    && matches!(
+                        self.token(),
+                        SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+                    );
                 if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !is_stray_close
                 {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
