@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
-        let (return_type, type_predicate) =
+        let (mut return_type, type_predicate) =
             if method.type_annotation.is_none() && method.body.is_some() {
                 // Infer return type from body when there's no annotation
                 // Push the this type for proper resolution
@@ -84,6 +84,48 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.return_type_and_predicate(method.type_annotation, &params)
             };
+
+        // Wrap unannotated generator/async method return types (matching get_type_of_function).
+        let has_annotation = method.type_annotation.is_some();
+        let is_generator = method.asterisk_token;
+        let is_async = self.has_async_modifier(&method.modifiers);
+
+        if !has_annotation && is_generator {
+            let gen_name = if is_async {
+                "AsyncGenerator"
+            } else {
+                "Generator"
+            };
+            let _resolved = self.resolve_lib_type_by_name(gen_name);
+            let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx.types.factory().lazy(def_id)
+            });
+            if let Some(base) = lazy_base {
+                return_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .application(base, vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN]);
+            }
+        } else if !has_annotation && is_async {
+            if let Some(inner) = self.unwrap_promise_type(return_type) {
+                return_type = inner;
+            }
+            let promise_base = {
+                let lib_binders = self.get_lib_binders();
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs("Promise", &lib_binders)
+                    .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                    .unwrap_or(TypeId::PROMISE_BASE)
+            };
+            return_type = self
+                .ctx
+                .types
+                .factory()
+                .application(promise_base, vec![return_type]);
+        }
 
         self.pop_type_parameters(type_param_updates);
 
