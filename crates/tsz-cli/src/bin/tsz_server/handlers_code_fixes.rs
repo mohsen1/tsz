@@ -196,6 +196,18 @@ impl Server {
             let auto_import_specifier_exclude_regexes =
                 Self::extract_auto_import_specifier_exclude_regexes(request)
                     .unwrap_or_else(|| self.auto_import_specifier_exclude_regexes.clone());
+            let import_module_specifier_ending = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("importModuleSpecifierEnding"))
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("importModuleSpecifierEnding")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .or(self.completion_import_module_specifier_ending.as_deref());
             let import_module_specifier_preference = request
                 .arguments
                 .get("preferences")
@@ -213,6 +225,7 @@ impl Server {
                 &filtered_diagnostics,
                 &auto_import_file_exclude_patterns,
                 &auto_import_specifier_exclude_regexes,
+                import_module_specifier_ending,
                 import_module_specifier_preference,
             );
 
@@ -1423,6 +1436,18 @@ impl Server {
             let auto_import_specifier_exclude_regexes =
                 Self::extract_auto_import_specifier_exclude_regexes(request)
                     .unwrap_or_else(|| self.auto_import_specifier_exclude_regexes.clone());
+            let import_module_specifier_ending = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("importModuleSpecifierEnding"))
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    request
+                        .arguments
+                        .get("importModuleSpecifierEnding")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .or(self.completion_import_module_specifier_ending.as_deref());
             let import_module_specifier_preference = request
                 .arguments
                 .get("preferences")
@@ -1441,6 +1466,7 @@ impl Server {
                     &filtered_diagnostics,
                     &auto_import_file_exclude_patterns,
                     &auto_import_specifier_exclude_regexes,
+                    import_module_specifier_ending,
                     import_module_specifier_preference,
                 )
             } else {
