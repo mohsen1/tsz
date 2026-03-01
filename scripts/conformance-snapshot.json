@@ -1,13 +1,20 @@
 {
-  "timestamp": "2026-03-01T09:42:13Z",
-  "git_sha": "a42817d896354ef0d490eb31211b42a71dd51ab9",
+  "timestamp": "2026-03-01T10:07:37Z",
+  "git_sha": "07cbc4de36dc9a1e3c6f664dfaee2f0d8274ee1a",
   "summary": {
     "total_tests": 12570,
-    "passed": 9753,
-    "failed": 2817,
-    "pass_rate": 77.6
+    "passed": 9718,
+    "failed": 2852,
+    "pass_rate": 77.3
   },
   "areas_by_pass_rate": [
+    {
+      "area": "expressions/functionCalls",
+      "total": 24,
+      "passed": 14,
+      "failed": 10,
+      "pass_rate": 58.33
+    },
     {
       "area": "types/tuple",
       "total": 34,
@@ -56,13 +63,6 @@
       "passed": 16,
       "failed": 10,
       "pass_rate": 61.54
-    },
-    {
-      "area": "expressions/functionCalls",
-      "total": 24,
-      "passed": 15,
-      "failed": 9,
-      "pass_rate": 62.5
     },
     {
       "area": "expressions/typeGuards",
@@ -177,6 +177,13 @@
       "pass_rate": 68.0
     },
     {
+      "area": "internalModules/exportDeclarations",
+      "total": 22,
+      "passed": 15,
+      "failed": 7,
+      "pass_rate": 68.18
+    },
+    {
       "area": "classes",
       "total": 16,
       "passed": 11,
@@ -226,6 +233,13 @@
       "pass_rate": 70.0
     },
     {
+      "area": "types/typeRelationships",
+      "total": 264,
+      "passed": 186,
+      "failed": 78,
+      "pass_rate": 70.45
+    },
+    {
       "area": "expressions/contextualTyping",
       "total": 17,
       "passed": 12,
@@ -254,24 +268,10 @@
       "pass_rate": 71.43
     },
     {
-      "area": "types/typeRelationships",
-      "total": 264,
-      "passed": 192,
-      "failed": 72,
-      "pass_rate": 72.73
-    },
-    {
       "area": "classes/classStaticBlock",
       "total": 33,
       "passed": 24,
       "failed": 9,
-      "pass_rate": 72.73
-    },
-    {
-      "area": "internalModules/exportDeclarations",
-      "total": 22,
-      "passed": 16,
-      "failed": 6,
       "pass_rate": 72.73
     },
     {
@@ -352,6 +352,13 @@
       "pass_rate": 76.92
     },
     {
+      "area": "compiler",
+      "total": 6509,
+      "passed": 5019,
+      "failed": 1490,
+      "pass_rate": 77.11
+    },
+    {
       "area": "transpile",
       "total": 22,
       "passed": 17,
@@ -364,13 +371,6 @@
       "passed": 65,
       "failed": 19,
       "pass_rate": 77.38
-    },
-    {
-      "area": "compiler",
-      "total": 6508,
-      "passed": 5042,
-      "failed": 1466,
-      "pass_rate": 77.47
     },
     {
       "area": "es6/spread",
@@ -406,6 +406,13 @@
       "passed": 8,
       "failed": 2,
       "pass_rate": 80.0
+    },
+    {
+      "area": "interfaces/declarationMerging",
+      "total": 26,
+      "passed": 21,
+      "failed": 5,
+      "pass_rate": 80.77
     },
     {
       "area": "importAttributes",
@@ -464,6 +471,13 @@
       "pass_rate": 85.26
     },
     {
+      "area": "parser/ecmascript5",
+      "total": 687,
+      "passed": 590,
+      "failed": 97,
+      "pass_rate": 85.88
+    },
+    {
       "area": "es6/unicodeExtendedEscapes",
       "total": 64,
       "passed": 55,
@@ -476,13 +490,6 @@
       "passed": 153,
       "failed": 25,
       "pass_rate": 85.96
-    },
-    {
-      "area": "parser/ecmascript5",
-      "total": 687,
-      "passed": 591,
-      "failed": 96,
-      "pass_rate": 86.03
     },
     {
       "area": "jsdoc/declarations",
@@ -511,13 +518,6 @@
       "passed": 58,
       "failed": 8,
       "pass_rate": 87.88
-    },
-    {
-      "area": "interfaces/declarationMerging",
-      "total": 26,
-      "passed": 23,
-      "failed": 3,
-      "pass_rate": 88.46
     },
     {
       "area": "statements/VariableStatements",
@@ -927,7 +927,7 @@
     },
     {
       "code": "TS2339",
-      "count": 99
+      "count": 98
     },
     {
       "code": "TS1005",
@@ -1034,11 +1034,11 @@
       "count": 11
     },
     {
-      "code": "TS2591",
-      "count": 10
+      "code": "TS2305",
+      "count": 11
     },
     {
-      "code": "TS2305",
+      "code": "TS2591",
       "count": 10
     }
   ],
@@ -1080,6 +1080,10 @@
       "count": 8
     },
     {
+      "code": "TS2403",
+      "count": 8
+    },
+    {
       "code": "TS7053",
       "count": 8
     },
@@ -1089,10 +1093,6 @@
     },
     {
       "code": "TS2451",
-      "count": 7
-    },
-    {
-      "code": "TS2403",
       "count": 7
     },
     {
@@ -1283,7 +1283,7 @@
     },
     {
       "code": "TS2344",
-      "count": 6
+      "count": 5
     },
     {
       "code": "TS2403",
@@ -1556,11 +1556,11 @@
       "count": 3
     },
     {
-      "code": "TS2538",
+      "code": "TS2449",
       "count": 3
     },
     {
-      "code": "TS2449",
+      "code": "TS2538",
       "count": 3
     },
     {
@@ -1575,7 +1575,7 @@
     },
     {
       "code": "TS2339",
-      "count": 99
+      "count": 98
     },
     {
       "code": "TS1005",
@@ -1682,11 +1682,11 @@
       "count": 11
     },
     {
-      "code": "TS2591",
-      "count": 10
+      "code": "TS2305",
+      "count": 11
     },
     {
-      "code": "TS2305",
+      "code": "TS2591",
       "count": 10
     },
     {
@@ -1796,11 +1796,11 @@
       "count": 17
     },
     {
-      "code": "TS2349",
-      "count": 16
+      "code": "TS2769",
+      "count": 15
     },
     {
-      "code": "TS2769",
+      "code": "TS2349",
       "count": 15
     },
     {
@@ -1848,6 +1848,10 @@
       "count": 10
     },
     {
+      "code": "TS2459",
+      "count": 10
+    },
+    {
       "code": "TS2708",
       "count": 9
     },
@@ -1860,19 +1864,15 @@
       "count": 9
     },
     {
-      "code": "TS2459",
-      "count": 9
-    },
-    {
-      "code": "TS2344",
-      "count": 9
-    },
-    {
       "code": "TS2554",
       "count": 9
     },
     {
       "code": "TS2449",
+      "count": 8
+    },
+    {
+      "code": "TS2344",
       "count": 8
     },
     {
@@ -1893,9 +1893,9 @@
     }
   ],
   "categories": {
-    "false_positive": 348,
+    "false_positive": 349,
     "all_missing": 510,
-    "wrong_code": 1950,
-    "close_to_passing": 1646
+    "wrong_code": 1985,
+    "close_to_passing": 1682
   }
 }
