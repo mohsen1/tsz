@@ -162,6 +162,13 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(prev_type);
         self.ensure_relation_input_ready(current_type);
 
+        // Evaluate Application types (mapped types, conditional types) so that
+        // e.g. `UnNullify<[1, 2?]>` is reduced to `[1, 2?]` before comparison.
+        // Without this, unevaluated Application types fail identity/subtype checks
+        // against their evaluated equivalents, causing false TS2403 errors.
+        let prev_type = self.evaluate_type_for_assignability(prev_type);
+        let current_type = self.evaluate_type_for_assignability(current_type);
+
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking
         {

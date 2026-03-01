@@ -1790,6 +1790,47 @@ var v: [1, (2 | undefined)?];
     }
 
     #[test]
+    fn type_alias_application_no_false_ts2403() {
+        // Type alias applications should be compatible with their evaluated forms.
+        // Uses simple alias (no lib types needed) to test that Application types
+        // are evaluated before TS2403 comparison.
+        let source = r#"
+type Pair<A, B> = [A, B];
+var v: [1, 2];
+var v: Pair<1, 2>;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for type alias application: {ts2403:?}"
+        );
+    }
+
+    #[test]
+    fn identity_mapped_type_no_false_ts2403() {
+        // Mapped type application should evaluate to same structure.
+        // Uses inline identity mapped type (no lib dependency).
+        let source = r#"
+type Id<T> = { [K in keyof T]: T[K] };
+var v: { x: number };
+var v: Id<{ x: number }>;
+"#;
+        let ts2403 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            0,
+            "No TS2403 expected for identity mapped type: {ts2403:?}"
+        );
+    }
+
+    #[test]
     fn typeof_var_redecl_no_false_ts2403() {
         // From typeofANonExportedType.ts
         let source = r#"
