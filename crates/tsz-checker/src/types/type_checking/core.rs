@@ -1716,9 +1716,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Suppress TS2536 when the index type is deferred — i.e., it involves
-            // a conditional, application, or error type that can't be fully resolved
-            // at the generic level. TSC defers these checks to instantiation time.
+            // a conditional, application, keyof, or error type that can't be fully
+            // resolved at the generic level. TSC defers these checks to instantiation
+            // time.
             // Example: { 0: X; 1: Y }[HasTail<T> extends true ? 0 : 1]
+            // KeyOf types remain deferred when wrapping type parameters (e.g.,
+            // `keyof T` where T extends object) because the constraint has no
+            // useful keys. This is valid for `K extends keyof T` patterns.
             // Check BOTH the evaluated type AND the original (pre-evaluation) type,
             // because evaluation may partially resolve an Application into a
             // Conditional, or may produce ERROR.
@@ -1726,6 +1730,7 @@ impl<'a> CheckerState<'a> {
                 ty == TypeId::ERROR
                     || tsz_solver::is_conditional_type(self.ctx.types, ty)
                     || tsz_solver::is_generic_application(self.ctx.types, ty)
+                    || tsz_solver::type_queries::is_keyof_type(self.ctx.types, ty)
             };
             if is_deferred_index(index_type_for_check) || is_deferred_index(index_type) {
                 return;
